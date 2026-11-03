@@ -1,0 +1,47 @@
+{
+  "name": "patrick",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A personal workbench that connects evidence, decisions, and verifiable delivery.",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "dev": "node --import tsx --watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run typecheck && npm test && npm run build && node scripts/validate-prd.mjs",
+    "demo": "node --import tsx src/index.ts --demo",
+    "doctor": "node --import tsx scripts/doctor.ts",
+    "backup": "node --import tsx scripts/backup.ts",
+    "report": "node --import tsx scripts/report.ts",
+    "restore": "node --import tsx scripts/restore.ts",
+    "service": "node --import tsx scripts/install-service.ts",
+    "install-service": "node --import tsx scripts/install-service.ts",
+    "mcp": "node --import tsx src/mcp.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.5",
+    "@larksuiteoapi/node-sdk": "^1.50.0",
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@agentclientprotocol/sdk": "^0.14.0",
+    "better-sqlite3": "^12.4.1",
+    "chokidar": "^4.0.3",
+    "hono": "^4.10.4",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.9.1",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
