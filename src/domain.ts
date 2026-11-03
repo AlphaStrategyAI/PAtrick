@@ -10,10 +10,10 @@ export interface Scope { projectId: string; domain: string }
 export interface Project extends Scope {
   id: string; name: string; description: string; repository: string; repositoryProvider: 'github' | 'gitlab';
   prdPath: string; allowedPaths: string[]; trustedChecks: string[]; trustedAppIds: number[];
-  ownerId: string; autoMerge: boolean; budgetUsd: number; executionRunner?: 'grok' | 'dsh'; sourceDir?: string; createdAt: string;
+  reviewIntervalDays?: number; ownerId: string; autoMerge: boolean; budgetUsd: number; executionRunner?: 'grok' | 'dsh'; sourceDir?: string; createdAt: string;
 }
 export interface SourceRevision extends Scope {
-  id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading';
+  purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading';
   externalId: string; revision: string; title: string; content: string; locator: string;
   authorId: string; retention: 'permanent' | 'ephemeral'; status: 'active' | 'superseded' | 'withdrawn'; createdAt: string;
 }
@@ -45,7 +45,7 @@ export interface DecisionSnapshot extends Scope {
   schemaVersion: 1; id: string; taskId: string; taskVersion: number; attemptId: string; inputHash: string;
   sourceId: string; sourceRevision: string; goal: { title: string; description: string };
   decision: Decision; rules: Rule[]; sourceRefs: { id: string; revision: string }[];
-  expectedOutcome: string | null; research?: ResearchRecord; recordedAt: string;
+  reviewAt?: string; reviewIntervalDays?: number; expectedOutcome: string | null; research?: ResearchRecord; recordedAt: string;
 }
 export interface CaseOutcome { id: string; receiptId: string; recordedAt: string; summary: string }
 export interface ResearchSource {

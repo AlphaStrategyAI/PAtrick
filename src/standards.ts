@@ -35,7 +35,9 @@ export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerIn
     if (!snapshot || digest(snapshot.decision) !== digest(decision) || snapshot.inputHash !== attempt.inputHash) throw new DomainError('The judgment snapshot identifier is already occupied.', 'snapshot_conflict', 409);
     return structuredClone(snapshot);
   }
-  const snapshot: DecisionSnapshot = { schemaVersion: 1, id, projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, sourceId: input.source.id, sourceRevision: input.source.revision, goal: { title: task.title, description: task.description }, decision: structuredClone(decision), rules, sourceRefs, expectedOutcome: decision.expectedOutcome ?? null, ...(input.research ? { research: structuredClone(input.research) } : {}), recordedAt: now() };
+  const recordedAt = now(), reviewIntervalDays = input.project.reviewIntervalDays ?? 7;
+  if (!Number.isInteger(reviewIntervalDays) || reviewIntervalDays < 1 || reviewIntervalDays > 365) throw new DomainError('Invalid project review interval.');
+  const snapshot: DecisionSnapshot = { schemaVersion: 1, id, projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, sourceId: input.source.id, sourceRevision: input.source.revision, goal: { title: task.title, description: task.description }, decision: structuredClone(decision), rules, sourceRefs, expectedOutcome: decision.expectedOutcome ?? null, ...(input.research ? { research: structuredClone(input.research) } : {}), recordedAt, reviewIntervalDays, reviewAt: new Date(Date.parse(recordedAt) + reviewIntervalDays * 86400_000).toISOString() };
   store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.snapshot', status: 'completed', payload: { snapshot }, updatedAt: snapshot.recordedAt });
   return snapshot;
 }

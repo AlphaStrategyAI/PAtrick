@@ -13,7 +13,7 @@ export const projectSchema = z.object({
   trustedChecks: z.array(z.string().min(1)).default([]), trustedAppIds: z.array(z.number().int().positive()).default([]),
   ownerId: z.string().min(1), autoMerge: z.boolean().default(false), budgetUsd: z.number().positive().max(10000).default(5),
   executionRunner: z.enum(['grok', 'dsh']).default('grok'),
-  sourceDir: z.string().optional(), createdAt: z.string().default(now),
+  reviewIntervalDays: z.number().int().min(1).max(365).default(7), sourceDir: z.string().optional(), createdAt: z.string().default(now),
 }).superRefine((p, ctx) => {
   if (p.id !== p.projectId) ctx.addIssue({ code: 'custom', message: 'Project ID must match scope.' });
   if(p.repository.split('/').some(segment=>segment==='.'||segment==='..'))ctx.addIssue({code:'custom',message:'Repository namespace cannot contain traversal segments.'});

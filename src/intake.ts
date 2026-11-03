@@ -4,7 +4,7 @@ import type { Store } from './store.js';
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
   locator?: string; authorId?: string; retention?: SourceRevision['retention']; revision?: string;
-  status?: 'active' | 'withdrawn';
+  purpose?: 'task' | 'reference'; status?: 'active' | 'withdrawn';
 }
 const finished = new Set(['delivered', 'archived', 'cancelled']);
 
@@ -100,6 +100,8 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
   const project = store.get('projects', input.projectId) ?? config.projects.find(p => p.id === input.projectId);
   if (!project) throw new DomainError('Unknown project.', 'unknown_project', 404);
   if (!input.externalId?.trim() || !input.title?.trim() || typeof input.content !== 'string' || input.content.length > 2_000_000) throw new DomainError('A source identifier, title and bounded text are required.');
+  const purpose = input.purpose ?? 'task';
+  if (!['task', 'reference'].includes(purpose)) throw new DomainError('Unknown source purpose.');
   const kind = input.kind ?? 'manual';
   if (!['file', 'feishu', 'github', 'conversation', 'manual', 'reading'].includes(kind)) throw new DomainError('Unknown source kind.');
   const scope = { projectId: project.id, domain: project.domain };
@@ -115,6 +117,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
     const hashId = stableId('source-hash', id);
     const knownHash = store.get('cursors', hashId)?.value;
     if (existing) {
+      if ((existing.purpose ?? 'task') !== purpose) throw new DomainError('This source revision has a different purpose.', 'purpose_conflict', 409);
       if (knownHash && knownHash !== contentHash) throw new DomainError('This source revision already has different content.', 'revision_conflict', 409);
       if (existing.status !== 'active') throw new DomainError('A revoked source revision cannot be reused. Send a new revision.', 'revoked_revision', 409);
       const task = store.list('tasks').find(t => t.sourceId === id);
@@ -130,9 +133,13 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
     }
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
     const createdAt = now();
-    const source: SourceRevision = { ...scope, id, kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
+    const source: SourceRevision = { ...scope, id, purpose, kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
     store.save('sources', source);
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
+    if (purpose === 'reference') {
+      store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention, purpose } });
+      return undefined;
+    }
     const task: Task = { ...scope, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
     store.save('tasks', task);
     store.save('events', { ...scope, id: stableId('ingest', id), taskId: task.id, type: 'source.received', message: 'Source revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention } });
