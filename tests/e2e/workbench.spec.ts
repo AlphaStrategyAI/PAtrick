@@ -179,6 +179,7 @@ test('project creation accepts repository service, trusted CI identities and opt
   const form = page.locator('#projects .project-form');
   await form.getByLabel('项目名称', { exact: true }).fill(name);
   await form.getByRole('combobox', { name: '仓库服务', exact: true }).selectOption('gitlab');
+  await form.getByRole('combobox', { name: /^执行首选/ }).selectOption('dsh');
   await form.getByLabel('目标仓库').fill('team/subgroup/notes');
   await form.getByLabel('PRD 路径', { exact: true }).fill('docs/PRD.md');
   await form.getByLabel('允许修改的路径').fill('docs/PRD.md');
@@ -191,7 +192,7 @@ test('project creation accepts repository service, trusted CI identities and opt
   await expect(page.locator('.project-switcher summary')).toContainText(name);
   const updated = await (await request.get('/api/state')).json();
   const created = updated.projects.find((project: { name: string }) => project.name === name);
-  expect(created).toMatchObject({ repositoryProvider: 'gitlab', repository: 'team/subgroup/notes', trustedAppIds: [101, 202, 303], sourceDir, autoMerge: false });
+  expect(created).toMatchObject({ repositoryProvider: 'gitlab', repository: 'team/subgroup/notes', executionRunner: 'dsh', trustedAppIds: [101, 202, 303], sourceDir, autoMerge: false });
   await page.locator('.project-switcher summary').click();
   await page.locator('.project-menu a').filter({ hasText: originalProject.name }).click();
   await expect(page.locator('.project-switcher summary')).toContainText(originalProject.name);

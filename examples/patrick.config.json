@@ -8,6 +8,7 @@
       "description": "Approved pilot repository. Confirm validate and its actual GitHub App ID before enabling autoMerge.",
       "repository": "AlphaStrategyAI/PAtrick",
       "repositoryProvider": "github",
+      "executionRunner": "grok",
       "prdPath": "docs/product/PRD.md",
       "allowedPaths": ["docs/product/PRD.md"],
       "trustedChecks": ["validate"],

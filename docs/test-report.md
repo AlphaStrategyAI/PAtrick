@@ -1,8 +1,8 @@
 # Verification report · 2026-11-03
 
-This report records the local release candidate. It does not establish live acceptance of external accounts, model identity, billing, VM isolation, VPN routing, or off-machine recovery.
+This report separates the initial candidate's historical checks from the [runner-selection follow-up](#runner-selection-follow-up), which passed 166 local tests and 14 browser tests. It does not establish live acceptance of external accounts, model identity, billing, VM isolation, VPN routing, or off-machine recovery.
 
-## Executed checks
+## Initial-candidate checks
 
 - Runtime: Node.js **24.22.2**.
 - Parent-executed local runtime smoke: a temporary live workspace returned **401** for unauthenticated `/api/state` and **200** for owner Bearer access, generated an owner-only access token (**600**), rejected a second writer, and restarted after clean lease release. No external calls were made; the temporary directory was removed.
@@ -11,7 +11,7 @@ This report records the local release candidate. It does not establish live acce
 - `npm run test:coverage`: exit **0**, **135/135** passed. Statement/line coverage **85.95%**, branch coverage **79.68%**, function coverage **82.81%**. Run began at **17:00:55 Asia/Shanghai**. The configured coverage lane excludes web view files, `index.ts`, and `mcp.ts`; browser tests cover the rendered UI separately. Low coverage in actual Lima/online research paths remains a live acceptance gap.
 - `npm run test:e2e`: exit **0**, **14/14 Chromium tests**, no skips, **23.8 seconds**. This run used a separate demo database and synthetic adapters; no remote repository or Feishu mutation occurred.
 - Independent code review: verified findings were repaired and rechecked. Covered retraction privacy, source/Vault reverts, cost reservations, scoped egress, lookup relevance, writer reconciliation, branch/head/CI binding, snapshot integrity, and network admission/draining.
-- Final built application: `node dist/index.js` with an isolated demo workspace. gstack browser inspection found no horizontal overflow at **375px** and no current-page console errors after clearing unrelated research-page history.
+- Initial-candidate built application: `node dist/index.js` with an isolated demo workspace. gstack browser inspection found no horizontal overflow at **375px** and no current-page console errors after clearing unrelated research-page history.
 - `npm run doctor`: exit **2**, as expected for the unconfigured live environment. Node 24 is present; live project settings, repository credentials for the service, admitted isolated workers, Feishu, research gateway, Lima, and restic are not configured together.
 
 ## What the automated tests prove
@@ -31,3 +31,11 @@ Browser tests exercise task creation, exact quotations, task drawers and seven-l
 The user authorized `AlphaStrategyAI/PAtrick` as the pilot repository. `docs/product/PRD.md` is the formal target, and the included workflow exposes a `validate` job. The trusted application identity and head-bound check results must be read from an actual workflow run before enabling automatic delivery.
 
 No Grok/Codex/dsh Lima run, Feishu owner round trip, bilingual online research round trip, dual-VPN qualification, launchd installation, restic upload, or isolated-machine takeover has been claimed. See [the requirement checklist](acceptance.md), [deployment guide](deployment.md), and [operations guide](operations.md).
+
+## Runner-selection follow-up
+
+At 17:42:23 Asia/Shanghai, `npm run check` passed **166 tests in 19 suites**, typecheck, build and PRD validation. The 31 added tests cover explicit dsh-first execution, actual-executor-aware independent checking, admission/budget preservation and HTTP preference persistence. Chromium **14/14** passed again in **18.9 seconds**, including owner selection of dsh in the project form. Independent follow-up review found no P1/P2 issues and passed 54 related tests. The earlier coverage figures above remain the measured initial-candidate record; they are not a new coverage measurement for this follow-up.
+
+A release-owner read-only probe through the actual Node 24 `GitHubWriter.baseline/readBaseline` succeeded against `AlphaStrategyAI/PAtrick`: `main` baseline `895e8575248ef774427f7a3efd734c482159f469`, formal PRD absent (`404` handled as a new file), **0 remote mutations**. This verifies authenticated transport and baseline reading, not worker execution or delivery.
+
+Initial commit `ac442a50634b22d1852551b47dd224cbaffc48ab` passed both [push CI](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41610890461) and [PR CI](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41612244871), with `validate`, GitHub Actions App ID `15368`, and the exact reviewed head SHA. Those runs cover that initial commit only; the runner-selection change requires CI bound to its new published head. [PR #1](https://github.com/AlphaStrategyAI/PAtrick/pull/1) exists; automatic approval review rejected the default-branch merge because explicit authorization was missing, and the user decision is pending. No merge was performed. Neither these CI results nor the local follow-up establish live model/Feishu/Lima acceptance.

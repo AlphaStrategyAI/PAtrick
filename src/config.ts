@@ -12,6 +12,7 @@ export const projectSchema = z.object({
   prdPath: repoPath, allowedPaths: z.array(repoPath.or(z.string().regex(/^[a-zA-Z0-9_./-]+\/$/))).min(1),
   trustedChecks: z.array(z.string().min(1)).default([]), trustedAppIds: z.array(z.number().int().positive()).default([]),
   ownerId: z.string().min(1), autoMerge: z.boolean().default(false), budgetUsd: z.number().positive().max(10000).default(5),
+  executionRunner: z.enum(['grok', 'dsh']).default('grok'),
   sourceDir: z.string().optional(), createdAt: z.string().default(now),
 }).superRefine((p, ctx) => {
   if (p.id !== p.projectId) ctx.addIssue({ code: 'custom', message: 'Project ID must match scope.' });

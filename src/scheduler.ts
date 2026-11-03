@@ -16,13 +16,15 @@ export class Scheduler {
   async run(task: Task, project: Project, input: WorkerInput): Promise<unknown> {
     const frozen = structuredClone(input); const inputHash = digest(frozen);
     const execution = this.store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.role === 'execute' && a.status === 'succeeded').at(-1);
-    const policies = preferred[input.role].flatMap(runner => {
+    const runnerOrder = input.role === 'execute' && project.executionRunner === 'dsh' ? ['dsh', 'grok', 'codex'] as const : preferred[input.role];
+    const admitted = runnerOrder.flatMap(runner => {
       const policy = this.config.runnerPolicies.find(p => p.runner === runner && p.admitted && p.roles.includes(input.role) && p.domains.includes(task.domain));
-      if (!policy) return [];
-      // A shared runner is allowed only with explicitly admitted independent read-only checking.
-      if (input.role === 'check' && execution && execution.runner === runner && !policy.independentReview) return [];
-      return [policy];
+      return policy ? [policy] : [];
     });
+    // Prefer another runner before an explicitly admitted independent session on the actual executor.
+    const policies = input.role === 'check' && execution
+      ? [...admitted.filter(policy => policy.runner !== execution.runner), ...admitted.filter(policy => policy.runner === execution.runner && policy.independentReview)]
+      : admitted;
     let previous: Attempt | undefined; let reason = '';
     for (const policy of policies) {
       const current = this.current(task);

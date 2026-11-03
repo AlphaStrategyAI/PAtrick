@@ -10,7 +10,7 @@ export interface Scope { projectId: string; domain: string }
 export interface Project extends Scope {
   id: string; name: string; description: string; repository: string; repositoryProvider: 'github' | 'gitlab';
   prdPath: string; allowedPaths: string[]; trustedChecks: string[]; trustedAppIds: number[];
-  ownerId: string; autoMerge: boolean; budgetUsd: number; sourceDir?: string; createdAt: string;
+  ownerId: string; autoMerge: boolean; budgetUsd: number; executionRunner?: 'grok' | 'dsh'; sourceDir?: string; createdAt: string;
 }
 export interface SourceRevision extends Scope {
   id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading';

@@ -30,4 +30,8 @@ describe('authenticated workbench HTTP',()=>{
     const response=await app.request('/api/questions/missing/answer',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({taskVersion:1,questionVersion:1,choice:'A',actorId:'someone-else',eventId:'e'})});
     expect(response.status).toBe(404);
   });
+  it('persists the owner-selected dsh execution preference in a new project',async()=>{
+    const {app,store}=setup('demo');const response=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({name:'Execution preference',repository:'owner/repo',prdPath:'docs/PRD.md',allowedPaths:['docs/PRD.md'],executionRunner:'dsh'})});
+    expect(response.status).toBe(200);const data=await response.json();expect(data.project.executionRunner).toBe('dsh');expect(store.get('projects',data.project.id)?.executionRunner).toBe('dsh');
+  });
 });

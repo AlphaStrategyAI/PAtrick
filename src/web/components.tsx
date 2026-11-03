@@ -83,6 +83,7 @@ export function ProjectForm({ config, compact = false }: { config: AppConfig; co
     </div>
     <label>项目说明<textarea name="description" rows={2} maxlength={2000} placeholder="这个项目正在解决什么问题？"/></label>
     <label>仓库服务<select name="repositoryProvider"><option value="github">GitHub</option><option value="gitlab">GitLab</option></select></label>
+    <label>执行首选<select name="executionRunner"><option value="grok">Grok Build</option><option value="dsh">DeepSeek Harness</option></select><span class="field-hint">不可用时切换到同一数据域内已准入的备选。检查优先使用与实际执行不同的运行器。</span></label>
     <label>目标仓库<input name="repository" required placeholder="owner/repository"/><span class="field-hint">GitHub 填写 owner/repo；GitLab 可填写带子组的项目路径。</span></label>
     <div class="form-grid">
       <label>PRD 路径<input name="prdPath" required value="docs/PRD.md"/></label>
