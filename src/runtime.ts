@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readConfig } from './config.js';
-import { DomainError, now, stableId, type AppConfig, type DeliveryWriter } from './domain.js';
+import { DomainError, now, stableId, type AppConfig, type DeliveryWriter, type Scope } from './domain.js';
 import { Store } from './store.js';
 import { Workbench } from './orchestrator.js';
 import { configureDemo, DemoWorker, demoResearch, demoWriter, seedDemo } from './demo.js';
@@ -14,6 +14,7 @@ import { SourceCollector } from './collector.js';
 import { FeishuChannel } from './integrations/feishu.js';
 import { NetworkGuardian, readNetworkTargets, systemNetworkActions } from './integrations/network.js';
 import { acquireHostLease } from './lease.js';
+import { runOutcomeReviews } from './reviews.js';
 
 export async function createRuntime(config:AppConfig=readConfig()) {
   mkdirSync(config.dataDir,{recursive:true,mode:0o700});
@@ -41,9 +42,15 @@ export async function createRuntime(config:AppConfig=readConfig()) {
     if(config.mode==='live'&&config.networkFile)guardian=new NetworkGuardian(readNetworkTargets(config.networkFile),systemNetworkActions(),result=>{for(const project of store.list('projects').filter(p=>p.domain===result.domain))store.save('events',{id:stableId('network',project.id,result.id,result.checkedAt),projectId:project.id,domain:project.domain,type:'network.path',message:result.reason,data:{state:result.state,targetId:result.id},createdAt:now()});});
     if(config.mode==='live'&&config.feishu)feishu=new FeishuChannel(store,config,engine);
     if(config.mode==='demo')await seedDemo(store,config,engine);
+    const reviewOutcomes=(scope?:Scope)=>{
+      const at=new Date();
+      return store.list('projects').filter(project=>project.ownerId===config.ownerId&&(!scope||project.id===scope.projectId&&project.domain===scope.domain)).reduce((count,project)=>count+runOutcomeReviews(store,at,project),0);
+    };
+    reviewOutcomes();
     const collector=new SourceCollector(store,config,engine);
     let closing:Promise<void>|undefined;let networkCheck:Promise<unknown>|undefined;
     const checkNetwork=()=>networkCheck??=(async()=>{if(!guardian)return;const resume=await engine.pause();try{await guardian.check();}finally{resume();}})().finally(()=>{networkCheck=undefined;});
-    return {config,store,engine,collector,feishu,guardian,checkNetwork,close(){return closing??=(async()=>{await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
+    const reviewTimer=setInterval(()=>{try{reviewOutcomes();}catch{console.error('Outcome review scan failed; retrying at the next scheduled minute.');}},60000);reviewTimer.unref();
+    return {config,store,engine,collector,feishu,guardian,checkNetwork,reviewOutcomes,close(){return closing??=(async()=>{clearInterval(reviewTimer);await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
   }catch(error){release();throw error;}
 }

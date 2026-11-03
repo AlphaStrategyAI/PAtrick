@@ -230,6 +230,9 @@ export class Store {
   /** Import only our structured card format; existing withdrawal records always win. */
   private recoverVault(): void {
     if (!this.vaultDir) return;
+    // Capture authority before any editable projection can be written back into SQLite.
+    const trustedSources = new Map(this.list('sources').map(source => [source.id, source]));
+    const trustedTasks = this.list('tasks');
     const records: { table: Table; entity: Entities[Table]; path: string; text: string }[] = [];
     const walk = (directory: string) => {
       for (const item of readdirSync(directory, { withFileTypes: true })) {
@@ -255,10 +258,16 @@ export class Store {
     for (const record of records) {
       const { table, entity, path, text } = record;
       const existing = this.get(table, entity.id);
+      let sourceEdited: boolean | undefined;
       if (existing && 'status' in existing && existing.status !== 'active') {this.publish({table,entity:existing},true);continue;}
       if (table === 'sources') {
         const s = entity as Entities['sources'];
         if (s.retention !== 'permanent' || typeof s.content !== 'string' || typeof s.revision !== 'string' || !['active', 'superseded', 'withdrawn'].includes(s.status)) continue;
+        // Purpose normalization is recovery bookkeeping, not an independent content edit.
+        sourceEdited = text !== this.markdown(table, entity);
+        const canonical = trustedSources.get(s.id);
+        const executable = trustedTasks.some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain);
+        s.purpose = canonical ? canonical.purpose ?? 'task' : executable ? 'task' : 'reference';
       }
       if (table === 'cards') {
         const c = entity as Entities['cards']; const source = this.get('sources', c.sourceId);
@@ -277,7 +286,7 @@ export class Store {
         if (r.kind === 'principle' && (!Array.isArray(r.caseIds) || !r.caseIds.length || r.caseIds.some(id => this.get('cases', id)?.status !== 'active'))) continue;
       }
       if (!existing) this.write(table, entity);
-      if (text !== this.markdown(table, entity)) { this.preserveVaultPaths.add(path); edits.push(record); }
+      if (sourceEdited ?? text !== this.markdown(table, entity)) { this.preserveVaultPaths.add(path); edits.push(record); }
     }
     for (const record of edits) {
       if (!this.get('projects', record.entity.projectId)) continue;
@@ -285,7 +294,9 @@ export class Store {
       const externalId=`vault:${relative(this.vaultDir,record.path)}`,lineage=this.list('sources').filter(source=>source.projectId===record.entity.projectId&&source.domain===record.entity.domain&&source.kind==='file'&&source.externalId===externalId),current=lineage.find(source=>source.status==='active');
       if(current&&digest(current.content)===digest(content))continue;
       const revision=stableId('vault-occurrence',lineage.at(-1)?.id??'first',digest(content));
-      try { ingestSource(this, { projects: [] }, { projectId: record.entity.projectId, kind: 'file', externalId,revision, title: `Vault edit: ${'title' in record.entity ? record.entity.title : record.entity.id}`, content, locator: record.path, retention: 'permanent' }); }
+      // Source purpose was resolved from pre-recovery authority, never from editable frontmatter.
+      const purpose=record.table==='sources'?(record.entity as Entities['sources']).purpose??'reference':'task';
+      try { ingestSource(this, { projects: [] }, { projectId: record.entity.projectId, kind: 'file', externalId,revision, title: `Vault edit: ${'title' in record.entity ? record.entity.title : record.entity.id}`, content, locator: record.path, retention: 'permanent',purpose }); }
       catch { /* Revoked/conflicting edits remain intact for explicit review. */ }
     }
   }

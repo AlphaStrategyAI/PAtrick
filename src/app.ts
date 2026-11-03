@@ -10,6 +10,7 @@ import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness } from './readiness.js';
 import { weeklyReport } from './reports.js';
+import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
 import type { Store } from './store.js';
 import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
@@ -53,6 +54,31 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.post('/logout',c=>{deleteCookie(c,'patrick_session',{path:'/'});return c.redirect('/login',303);});
   const body=async(c:any):Promise<Record<string,unknown>>=>c.req.header('Content-Type')?.includes('application/json')?c.req.json():c.req.parseBody();
   const respond=(c:any,data:Record<string,unknown>,redirect:string)=>c.req.header('Accept')?.includes('application/json')?c.json({...data,redirect}):c.redirect(redirect,303);
+  const reviewProject=(projectId:string|undefined,domain:string|undefined)=>{
+    const project=store.get('projects',projectId??'');
+    if(!project||project.domain!==domain)throw new DomainError('Project not found.','not_found',404);
+    if(project.ownerId!==config.ownerId)throw new DomainError('Only the project owner may access outcome reviews and references.','forbidden',403);
+    return project;
+  };
+  app.post('/api/reference-sources',async c=>{
+    const data=z.object({projectId:z.string().min(1),domain:z.string().min(1),externalId:z.string().trim().min(1),revision:z.string().trim().min(1),title:z.string().trim().min(1).max(200),content:z.string().min(1).max(1_000_000).refine(text=>text.trim().length>0,'Reference text is required.'),retention:z.enum(['permanent','ephemeral']),locator:z.string().optional()}).strict().parse(await body(c));
+    const project=reviewProject(data.projectId,data.domain);
+    engine.ingest({...data,kind:'reading',purpose:'reference',authorId:config.ownerId});
+    const source=store.get('sources',stableId('source',{projectId:project.id,domain:project.domain},'reading',data.externalId,data.revision))!;
+    const {content,...metadata}=source;
+    return c.json({source:metadata});
+  });
+  app.post('/api/judgments/:id/evidence',async c=>c.json({evidence:recordOutcomeEvidence(store,config,c.req.param('id'),await body(c),config.ownerId)}));
+  app.get('/api/reviews',c=>{
+    const project=reviewProject(c.req.query('project'),c.req.query('domain'));
+    return c.json({reviews:outcomeReviewViews(store,project)});
+  });
+  app.post('/api/reviews/run',async c=>{
+    const scope=z.object({projectId:z.string().min(1),domain:z.string().min(1)}).strict().parse(await body(c));
+    const project=reviewProject(scope.projectId,scope.domain);
+    runOutcomeReviews(store,new Date(),project);
+    return c.json({reviews:outcomeReviewViews(store,project)});
+  });
   app.get('/api/state',c=>{
     const requested=c.req.query('project'),project=requested?store.get('projects',requested):undefined;
     if(requested&&!project)return c.json({error:'Project not found.'},404);
@@ -94,7 +120,9 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.post('/api/projects',async c=>{
     const value=await body(c),name=String(value.name??'').trim(),id=stableId('project',name,randomUUID()).slice(0,12);
     const array=(v:unknown)=>Array.isArray(v)?v.map(String):String(v??'').split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
-    const project=projectSchema.parse({id,projectId:id,name,domain:value.domain||'personal',description:value.description??'',repository:value.repository,repositoryProvider:value.repositoryProvider??'github',prdPath:value.prdPath,allowedPaths:array(value.allowedPaths),trustedChecks:array(value.trustedChecks),trustedAppIds:array(value.trustedAppIds).map(Number),ownerId:config.ownerId,autoMerge:value.autoMerge===true||value.autoMerge==='on',budgetUsd:Number(value.budgetUsd||5),sourceDir:value.sourceDir||undefined,executionRunner:value.executionRunner??'grok',createdAt:now()});
+    const interval=value.reviewIntervalDays;
+    const reviewIntervalDays=!c.req.header('Content-Type')?.includes('application/json')&&typeof interval==='string'?(interval.trim()?Number(interval):undefined):interval;
+    const project=projectSchema.parse({id,projectId:id,name,domain:value.domain||'personal',description:value.description??'',repository:value.repository,repositoryProvider:value.repositoryProvider??'github',prdPath:value.prdPath,allowedPaths:array(value.allowedPaths),trustedChecks:array(value.trustedChecks),trustedAppIds:array(value.trustedAppIds).map(Number),ownerId:config.ownerId,autoMerge:value.autoMerge===true||value.autoMerge==='on',budgetUsd:Number(value.budgetUsd||5),sourceDir:value.sourceDir||undefined,executionRunner:value.executionRunner??'grok',reviewIntervalDays,createdAt:now()});
     store.save('projects',project);config.projects.push(project);return respond(c,{project,message:'项目已创建。外部连接可在连接设置中核对。'},`/?project=${id}`);
   });
   const pages:Record<string,string>={'/':'workbench','/knowledge':'knowledge','/standards':'standards','/sources':'sources','/activity':'activity','/settings':'settings'};

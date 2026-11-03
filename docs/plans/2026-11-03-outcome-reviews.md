@@ -66,7 +66,7 @@ Views are scoped, omit withdrawn subjects or readable payloads with withdrawn/ob
 
 ## Task 2: HTTP and background integration
 
-**Owner:** one integration implementer under root coordination, exclusively `src/app.ts`, `src/runtime.ts`, `src/index.ts`, new `tests/integration/outcome-reviews-http.test.ts` and new `tests/integration/outcome-reviews-runtime.test.ts`.
+**Owner:** one integration implementer under root coordination, exclusively `src/app.ts`, `src/runtime.ts`, `src/index.ts`, `src/store.ts` for reference-purpose recovery, new `tests/integration/outcome-reviews-http.test.ts`, new `tests/integration/outcome-reviews-runtime.test.ts` and new `tests/integration/reference-vault.test.ts`.
 
 - `POST /api/reference-sources`: owner authenticated; require project/domain, external ID, revision, title, content, explicit permanent/ephemeral retention. Use `engine.ingest` with `purpose: 'reference'`, kind `reading` and server owner identity. Return the current source metadata, without creating an execution task. Reject wrong scope and purpose conflicts.
 - `POST /api/judgments/:id/evidence`: parse and call `recordOutcomeEvidence(..., config.ownerId)`. Return `{ evidence }`; no request field can forge the recorder.
@@ -74,10 +74,12 @@ Views are scoped, omit withdrawn subjects or readable payloads with withdrawn/ob
 - `POST /api/reviews/run`: owner authenticated, body project/domain required. Scan only that scope with real server time, never accept a caller clock; return current scoped views. Running a scan is local bookkeeping with no remote/model call.
 - Existing `POST /api/projects` forwards a supplied `reviewIntervalDays` through the new project schema, accepting JSON numbers or numeric form values; a missing/blank form field uses seven, while zero, fractions, non-numbers and out-of-range values are rejected.
 - Runtime exposes a scoped review scan or calls the core scan, runs it on startup after demo setup, and schedules it once per minute alongside existing timers. Graceful shutdown clears its timer before closing Store. Restore/restart uses the same ledger and does not duplicate rounds.
+- Every review route and automatic runtime scan enforces the current project owner. Scheduled scan failures are reported without evidence/error contents and retried on the next minute; explicit scan failures remain visible to callers.
+- Independent edits of reference Vault projections preserve the authoritative stored reference purpose across ordinary scans and restart, including when frontmatter is tampered with. Existing task sources keep their prior edit/recovery behavior.
 
-- [ ] Write request regressions first; observe new routes returning 404 before implementation. Exercise actual authentication, source import with no task, evidence record/retry, unknown scope, malformed numeric evidence, and rejection of caller time/identity.
-- [ ] Wire routes and runtime lifecycle, retaining existing CSRF/body limits/error behavior. Run the new request suite and existing HTTP/runtime suites.
-- [ ] Obtain task review and record results before UI handoff.
+- [x] Write request regressions first; observe new routes returning 404 before implementation. Exercise actual authentication, source import with no task, evidence record/retry, unknown scope, malformed numeric evidence, and rejection of caller time/identity.
+- [x] Wire routes and runtime lifecycle, retaining existing CSRF/body limits/error behavior. Final covering verification passed 138 tests in 11 files and typecheck.
+- [x] Obtain task review and record results before UI handoff. Frozen v3 passed both gates after owner-boundary, scheduled-error containment and authoritative-purpose recovery fixes; older SQLite/newer Vault, tampered metadata and repeated recovery have regressions.
 
 ## Task 3: Readable review UI and documentation
 
