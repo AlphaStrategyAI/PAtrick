@@ -101,6 +101,14 @@ Validate that the Lima instance has no default host filesystem mount and no forw
 
 Unavailable runners may be replaced automatically. Test failures trigger business repair, not fallback. Every real switch records a notice for the owner; notification failure should remain queued. All unavailable candidates retain the task with a future probe. Questions release the worker indefinitely, and no answer means no automatic choice. Repair is bounded to two rounds and the task budget.
 
+## Review a judgment and its result
+
+Open **Standards → Weekly reflection** or expand a rule's decision cases to review the original goal, judgment, used rule contents/versions, citations and expected outcome. Its `decisionSnapshot` copies the question's judgment at the time, even after the task advances and judges again. Task details retain the task's current progress and judgment; no-question judgment snapshots are available in the host action ledger. Published case Markdown separates `Judgment at the time` from `Observed results`; do not substitute today's rule text for the frozen version.
+
+The host records a successful `decide` snapshot in the existing `actions` ledger as `kind: 'decision.snapshot'`, with `payload.snapshot`. Task and Question retain `decisionSnapshotId` references. The snapshot binds a successful attempt and input hash and includes only the rules the decision actually used. Feedback appends a `CaseOutcome` linked to a validated `receiptId`; retrying the same receipt does not add another outcome. That record supports delivery feedback, while prediction accuracy and business impact still need separate observable evidence.
+
+For compatibility, CLI decision output may omit `expectedOutcome` or set it to `null`; the current prompt asks for an explicit prediction with uncertainty, or `null` when unknown. The host normalizes an omitted prediction to `null`. Older cases without a snapshot remain explicitly unknown; do not reconstruct their original judgment from current rules or later feedback. A legacy `outcome` without receipt linkage is displayed with an explicit unverified-result notice. Source withdrawal removes readable snapshots and related case/question/task derivatives while retaining only permitted receipt audit; dependency cleanup also follows older `decision.snapshot` actions when the current judgment no longer cites their sources. `ephemeral` content and its readable derivatives stay in the current process rather than persistent records; a permanent task must reject temporary-source citations or rules that would preserve such evidence.
+
 ## Feishu settings and catch-up
 
 Required environment names are:

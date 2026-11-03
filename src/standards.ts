@@ -1,4 +1,4 @@
-import { DomainError, caseOutputSchema, digest, now, stableId, type DecisionCase, type Question, type QuestionAnswer, type Rule, type SourceRevision, type Task } from './domain.js';
+import { DomainError, caseOutputSchema, digest, now, stableId, type Decision, type DecisionCase, type DecisionSnapshot, type DeliveryReceipt, type Question, type QuestionAnswer, type Rule, type SourceRevision, type Task, type WorkerInput } from './domain.js';
 import { Store } from './store.js';
 
 export function publishObservations(store: Store, source: SourceRevision, output: unknown): Rule[] {
@@ -18,15 +18,48 @@ export function frozenAnswer(question: Question, answer: QuestionAnswer): string
   return `${answer.choice} · ${s.label}\n${s.description}\nRationale: ${s.rationale}\nTradeoff: ${s.tradeoff}\nEvidence: ${s.evidenceUrls.join(', ')}${answer.text ? `\nOwner comment: ${answer.text}` : ''}`;
 }
 
+/** Keep the successful attempt's inputs, rather than resolving mutable rule IDs later. */
+export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerInput, decision: Decision): DecisionSnapshot {
+  const attempt = store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.role === 'decide' && a.status === 'succeeded').at(-1);
+  if (!attempt || attempt.inputHash !== digest(input)) throw new DomainError('The judgment has no matching successful frozen attempt.', 'invalid_decision_snapshot', 409);
+  const rules = [...new Set(decision.ruleIds)].map(id => {
+    const frozen = input.rules.find(rule => rule.id === id), current = store.get('rules', id);
+    if (!frozen || !current || digest(frozen) !== digest(current)) throw new DomainError('A used rule changed during judgment. Re-evaluate the current rules.', 'stale_rule', 409);
+    return structuredClone(frozen);
+  });
+  const sourceRefs = [...new Map([{ id: input.source.id, revision: input.source.revision }, ...decision.citations.map(c => ({ id: c.sourceId, revision: c.revision })), ...rules.flatMap(r => r.citations.map(c => ({ id: c.sourceId, revision: c.revision })))].map(ref => [ref.id, ref])).values()];
+  const id = stableId('decision-snapshot', task.id, task.version, attempt.id);
+  const existing = store.get('actions', id);
+  if (existing) {
+    const snapshot = existing.payload.snapshot as DecisionSnapshot | undefined;
+    if (!snapshot || digest(snapshot.decision) !== digest(decision) || snapshot.inputHash !== attempt.inputHash) throw new DomainError('The judgment snapshot identifier is already occupied.', 'snapshot_conflict', 409);
+    return structuredClone(snapshot);
+  }
+  const snapshot: DecisionSnapshot = { schemaVersion: 1, id, projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, sourceId: input.source.id, sourceRevision: input.source.revision, goal: { title: task.title, description: task.description }, decision: structuredClone(decision), rules, sourceRefs, expectedOutcome: decision.expectedOutcome ?? null, ...(input.research ? { research: structuredClone(input.research) } : {}), recordedAt: now() };
+  store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.snapshot', status: 'completed', payload: { snapshot }, updatedAt: snapshot.recordedAt });
+  return snapshot;
+}
+
+export function appendCaseOutcome(store: Store, task: Task, receipt: DeliveryReceipt, summary: string): void {
+  for (const c of store.list('cases')) if (c.taskId === task.id && c.status === 'active') {
+    const id = stableId('case-outcome', c.id, receipt.id);
+    if (c.outcomes?.some(outcome => outcome.id === id)) continue;
+    store.save('cases', { ...c, outcome: summary, outcomes: [...(c.outcomes ?? []), { id, receiptId: receipt.id, recordedAt: now(), summary }] });
+  }
+}
+
 /** Only the authenticated answer path can call this; model extraction never creates principles. */
 export function recordOwnerDecision(store: Store, task: Task, question: Question, answer: QuestionAnswer): DecisionCase {
   const source = store.get('sources', task.sourceId);
   if (!source || source.status !== 'active') throw new DomainError('The question source is no longer active.', 'stale_source', 409);
   const words = frozenAnswer(question, answer); const at = now();
+  const snapshotAction = question.decisionSnapshotId ? store.get('actions', question.decisionSnapshotId) : undefined;
+  const snapshot = snapshotAction?.payload.snapshot as DecisionSnapshot | undefined;
+  if (question.decisionSnapshotId && (!snapshot || snapshotAction?.kind !== 'decision.snapshot' || snapshot.taskId !== task.id || snapshot.taskVersion !== question.taskVersion || snapshot.projectId !== task.projectId || snapshot.domain !== task.domain || snapshot.sourceId !== task.sourceId || snapshot.sourceRevision !== task.sourceRevision)) throw new DomainError('The frozen question judgment is unavailable or out of scope.', 'invalid_decision_snapshot', 409);
   const answerSource: SourceRevision = { id: stableId('owner-answer', question.id), projectId: task.projectId, domain: task.domain, kind: 'conversation', externalId: `answer:${question.id}`, revision: digest(words), title: `Owner decision: ${question.title}`, content: words, locator: `question:${question.id}@${question.version}`, authorId: answer.actorId, retention: source.retention, status: 'active', createdAt: at };
   store.save('sources', answerSource);
   const caseId = stableId('decision-case', question.id); const ruleId = stableId('explicit-rule', question.id);
-  const decisionCase: DecisionCase = { id: caseId, projectId: task.projectId, domain: task.domain, taskId: task.id, questionId: question.id, decisionId: stableId('decision', task.id, question.taskVersion), actorId: answer.actorId, choice: answer.choice, originalWords: words, rationale: answer.text && answer.choice !== 'C' ? answer.text : 'Owner rationale not separately stated.', alternatives: [question.options.A.description, question.options.B.description], ruleIds: [ruleId], sourceId: answerSource.id, status: 'active', createdAt: at };
+  const decisionCase: DecisionCase = { id: caseId, projectId: task.projectId, domain: task.domain, taskId: task.id, questionId: question.id, decisionId: snapshot?.id ?? stableId('decision', task.id, question.taskVersion), actorId: answer.actorId, choice: answer.choice, originalWords: words, rationale: answer.text && answer.choice !== 'C' ? answer.text : 'Owner rationale not separately stated.', alternatives: [question.options.A.description, question.options.B.description], ruleIds: [ruleId], sourceId: answerSource.id, status: 'active', createdAt: at, ...(snapshot ? { decisionSnapshot: structuredClone(snapshot) } : {}) };
   store.save('cases', decisionCase);
   const rule: Rule = { id: ruleId, projectId: task.projectId, domain: task.domain, title: question.title, statement: words, conditions: `Applies only to task ${task.id}, question ${question.id}, project ${task.projectId}, domain ${task.domain}; no broader preference is inferred.`, exceptions: 'Reconfirm after source changes or outside this decision.', version: 1, kind: 'principle', status: 'active', caseIds: [caseId], citations: [{ sourceId: answerSource.id, revision: answerSource.revision, quote: words, locator: answerSource.locator }, { sourceId: source.id, revision: source.revision, quote: source.content.slice(0, 200) || '[source metadata]', locator: source.locator }], createdAt: at, reviewAt: new Date(Date.now() + 30 * 86400_000).toISOString() };
   store.save('rules', rule);
@@ -34,11 +67,12 @@ export function recordOwnerDecision(store: Store, task: Task, question: Question
 }
 
 export function applicableRules(store: Store, task: Task): Rule[] {
+  const temporaryTask = store.get('sources', task.sourceId)?.retention === 'ephemeral';
   return store.list('rules').filter(rule => {
     if (rule.projectId !== task.projectId || rule.domain !== task.domain || rule.status !== 'active' || Date.parse(rule.reviewAt) <= Date.now()) return false;
     if (!rule.citations.length || rule.citations.some(citation => {
       const source = store.get('sources', citation.sourceId);
-      return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain;
+      return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && source.retention === 'ephemeral';
     })) return false;
     return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; });
   });

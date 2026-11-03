@@ -10,6 +10,8 @@ The workbench has three columns: work in progress, questions waiting for you, an
 
 This is one Node.js 24 / TypeScript ESM project: Hono server-rendered HTML, plain progressive JavaScript/CSS, better-sqlite3 with FTS5, Zod, Vitest, and Playwright. The service owns state and writes. Workers propose knowledge, decisions, plans, or isolated artifacts; a model's “done” message is never delivery proof.
 
+- **Judgment history:** The host freezes each successful decision's goal, original judgment, used rule contents/versions, citations, and prediction (`null` when unknown). Owner decision cases retain that snapshot and append receipt-linked feedback; missing historical snapshots remain unknown. Predictions and delivery feedback have separate evidence requirements; business impact still requires independent measurement.
+
 ## Try the local demo
 
 Use Node **24**, including the Node binary used by background services:
@@ -104,7 +106,7 @@ The stdio MCP entry connects to the running HTTP service. Configure `PATRICK_URL
 - `src/scheduler.ts`, `orchestrator.ts`, `integrations/`: admitted workers, durable workflow, research, platform writers, Feishu, MCP, and network boundaries.
 - `src/app.ts`, `src/web/`, `public/`: authenticated Hono pages and progressive interactions.
 - `scripts/`, `examples/`: local diagnostics, backup/recovery, and [launchd templates](examples/launchd/README.md).
-- [Technical scheme](docs/designs/PAtrick技术方案.md), [implementation plan](docs/plans/2026-11-03-patrick-implementation.md), and [formal PRD](docs/product/PRD.md): source requirements, planned work, and the pilot output document.
+- [Technical scheme](docs/designs/PAtrick技术方案.md), [implementation plan](docs/plans/2026-11-03-patrick-implementation.md), [judgment-history repair plan](docs/plans/2026-11-03-decision-snapshots.md), and [formal PRD](docs/product/PRD.md): source requirements, planned work, local repair evidence, and the pilot output document.
 
 This repository provides local and launchd operation guidance. No public hosting deployment is requested or implied. Development/operations and learning roles can extend the same contracts, but their sources, actions, and domains need separate real acceptance.
 

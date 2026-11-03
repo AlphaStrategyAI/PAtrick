@@ -1,4 +1,4 @@
-import { DomainError, digest, now, stableId, type AppConfig, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
+import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
 import type { Store } from './store.js';
 
 export interface IngestInput {
@@ -27,7 +27,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     store.save('rules', { ...rule, status: 'suspended' });
   }
   const invalidCaseTasks = new Set<string>();
-  for (const decisionCase of store.list('cases')) if (decisionCase.sourceId === sourceId || decisionCase.ruleIds.some(id => invalidRules.has(id))) {
+  for (const decisionCase of store.list('cases')) if (decisionCase.sourceId === sourceId || decisionCase.decisionSnapshot?.sourceRefs.some(ref => ref.id === sourceId) || decisionCase.ruleIds.some(id => invalidRules.has(id))) {
     invalidCaseTasks.add(decisionCase.taskId);
     store.save('cases', { ...decisionCase, status: 'withdrawn', originalWords: '[withdrawn]' });
     const question = store.get('questions', decisionCase.questionId);
@@ -42,7 +42,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     for (const attempt of store.list('attempts')) if (attempt.taskId === task.id && attempt.status === 'running') store.save('attempts', { ...attempt, status: 'stale', finishedAt: changed, error: 'Source changed during execution.' });
     for (const action of store.list('actions')) if (action.taskId === task.id && action.status === 'pending') store.save('actions', { ...action, status: 'completed', payload: { invalidated: true, reason: status }, updatedAt: changed });
     for (const message of store.list('outbox')) if (message.taskId === task.id && message.status === 'pending') store.save('outbox', { ...message, status: 'sent', text: '[invalidated]', remoteId: 'invalidated' });
-    store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
+    store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
   }
   store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: `source.${status}`, message: `Source ${sourceId} ${status}; dependent evidence and actions invalidated.`, createdAt: changed, data: { sourceId } });
 }
@@ -52,13 +52,18 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   const origin = store.get('sources', sourceId); if (!origin) return;
   const scoped = (entity: { projectId: string; domain: string }) => entity.projectId === origin.projectId && entity.domain === origin.domain;
   const sources = store.list('sources').filter(scoped), tasks = store.list('tasks').filter(scoped), rules = store.list('rules').filter(scoped), cases = store.list('cases').filter(scoped), questions = store.list('questions').filter(scoped), cards = store.list('cards').filter(scoped);
+  const historicalJudgments = store.list('actions').filter(action => scoped(action) && action.kind === 'decision.snapshot');
   const sourceIds = new Set([sourceId]), taskIds = new Set<string>(), ruleIds = new Set<string>(), caseIds = new Set<string>();
   let previousSize = -1;
   while (previousSize !== sourceIds.size + taskIds.size + ruleIds.size + caseIds.size) {
     previousSize = sourceIds.size + taskIds.size + ruleIds.size + caseIds.size;
     for (const rule of rules) if (rule.citations.some(c => sourceIds.has(c.sourceId))) ruleIds.add(rule.id);
-    for (const c of cases) if (sourceIds.has(c.sourceId) || c.ruleIds.some(id => ruleIds.has(id)) || taskIds.has(c.taskId)) { caseIds.add(c.id); taskIds.add(c.taskId); sourceIds.add(c.sourceId); }
+    for (const c of cases) if (sourceIds.has(c.sourceId) || c.decisionSnapshot?.sourceRefs.some(ref => sourceIds.has(ref.id)) || c.ruleIds.some(id => ruleIds.has(id)) || taskIds.has(c.taskId)) { caseIds.add(c.id); taskIds.add(c.taskId); sourceIds.add(c.sourceId); }
     for (const task of tasks) if (sourceIds.has(task.sourceId) || task.decision?.citations.some(c => sourceIds.has(c.sourceId)) || task.decision?.ruleIds.some(id => ruleIds.has(id))) taskIds.add(task.id);
+    for (const action of historicalJudgments) {
+      const snapshot = action.payload.snapshot as DecisionSnapshot | undefined;
+      if (action.taskId && snapshot && (sourceIds.has(snapshot.sourceId) || snapshot.sourceRefs.some(ref => sourceIds.has(ref.id)))) taskIds.add(action.taskId);
+    }
     for (const q of questions) if (taskIds.has(q.taskId)) { const id = stableId('owner-answer', q.id); if (sources.some(s => s.id === id)) sourceIds.add(id); }
   }
   const cardIds = new Set(cards.filter(c => sourceIds.has(c.sourceId)).map(c => c.id));
@@ -70,14 +75,14 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   for (const source of sources) if (sourceIds.has(source.id)) write('sources', { ...source, status: 'withdrawn', title: '[withdrawn]', content: '', locator: `withdrawn:${source.id}` });
   for (const card of cards) if (cardIds.has(card.id)) write('cards', { ...card, title: '[withdrawn]', body: '', quote: '', aliases: [], locator: `withdrawn:${card.sourceId}`, status: 'withdrawn' });
   for (const rule of rules) if (ruleIds.has(rule.id)) write('rules', { ...rule, title: '[withdrawn]', statement: '[Evidence withdrawn]', conditions: '[withdrawn]', exceptions: '[withdrawn]', status: 'suspended', citations: rule.citations.map(c => ({ ...c, quote: '[withdrawn]', locator: `withdrawn:${c.sourceId}` })) });
-  for (const c of cases) if (caseIds.has(c.id)) write('cases', { ...c, originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, status: 'withdrawn' });
+  for (const c of cases) if (caseIds.has(c.id)) write('cases', { ...c, originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, decisionSnapshot: undefined, outcomes: undefined, status: 'withdrawn' });
   const option = { label: '[withdrawn]', description: '[withdrawn]', rationale: '[withdrawn]', tradeoff: '[withdrawn]', evidenceUrls: [] };
   for (const q of questions) if (taskIds.has(q.taskId)) write('questions', { ...q, title: '[withdrawn]', context: '', options: { A: option, B: option }, research: { queries: [], summary: '', gaps: [] }, answer: undefined, status: 'stale' });
   for (const task of tasks) if (taskIds.has(task.id)) {
     const terminal = finished.has(task.status);
     const status = terminal ? task.status : sourceIds.has(task.sourceId) ? 'cancelled' : 'deciding';
     const alreadyRedacted = task.error === 'Evidence withdrawn; readable content retracted.' && !task.description && !task.decision && !task.plan && !task.artifact && !task.review && !task.feedback;
-    write('tasks', { ...task, title: '[Evidence withdrawn]', description: '', decision: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
+    write('tasks', { ...task, title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
   }
   for (const event of store.list('events')) if (scoped(event) && (event.taskId && taskIds.has(event.taskId) || refers(event.data) || mentions(event.data) || mentions(event.message))) write('events', { ...event, message: 'Evidence retracted.', data: { retracted: true } });
   for (const attempt of store.list('attempts')) if (taskIds.has(attempt.taskId)) write('attempts', { ...attempt, error: undefined, ...(attempt.status === 'running' ? { status: 'stale' as const, finishedAt: now() } : {}) });

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { publishKnowledge } from './knowledge.js';
-import { applicableRules, frozenAnswer, publishObservations, recordOwnerDecision } from './standards.js';
+import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
 
@@ -68,7 +68,7 @@ export class Workbench {
       const at = now(); recordOwnerDecision(this.store, task, question, answer);
       this.store.save('questions', { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } });
       this.store.save('cursors', { id: eventId, projectId: task.projectId, domain: task.domain, value: fingerprint, updatedAt: at });
-      const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
+      const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
       this.store.save('tasks', resumed);
       this.event(task, 'answer.accepted', 'Owner answer accepted; the original task resumed once.', { questionId: question.id, choice: answer.choice });
       return resumed;
@@ -173,10 +173,11 @@ export class Workbench {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
         const decision = decisionSchema.parse(output); this.validateDecision(task, decision);
-        if (decision.action === 'archive') this.advance(task, 'decide', { status: 'archived', decision });
-        else if (decision.action === 'proceed') this.advance(task, 'plan', { decision });
-        else if (!input.research) this.advance(task, 'research', { decision });
-        else { this.validateResearch(input.research); this.openQuestion(task, project, decision, input.research); }
+        const snapshot = recordDecisionSnapshot(this.store, task, input, decision);
+        if (decision.action === 'archive') this.advance(task, 'decide', { status: 'archived', decision, decisionSnapshotId: snapshot.id });
+        else if (decision.action === 'proceed') this.advance(task, 'plan', { decision, decisionSnapshotId: snapshot.id });
+        else if (!input.research) this.advance(task, 'research', { decision, decisionSnapshotId: snapshot.id });
+        else { this.validateResearch(input.research); this.openQuestion(task, project, decision, input.research, snapshot.id); }
       } else if (task.stage === 'plan') {
         const plan = executionPlanSchema.parse(output);
         if (plan.baselineSha !== input.baselineSha) throw new DomainError('The plan uses a different repository baseline.', 'invalid_plan');
@@ -194,7 +195,7 @@ export class Workbench {
         const feedback = feedbackSchema.parse(output); const receipt = this.store.get('receipts', task.receiptId ?? '');
         if (!receipt) throw new DomainError('Feedback cannot complete work without a verified receipt.', 'missing_receipt');
         this.validateReceipt(task, project, receipt);
-        for (const decisionCase of this.store.list('cases')) if (decisionCase.taskId === task.id && decisionCase.status === 'active') this.store.save('cases', { ...decisionCase, outcome: feedback.summary });
+        appendCaseOutcome(this.store, task, receipt, feedback.summary);
         this.advance(task, 'feedback', { status: 'delivered', feedback: feedback.summary, error: undefined });
         this.enqueue(task, stableId('delivered', task.id, task.version), `${task.title} 已交付：${receipt.pullRequestUrl}\n${feedback.summary}`);
       }
@@ -240,9 +241,10 @@ export class Workbench {
 
   private validateDecision(task: Task, decision: ReturnType<typeof decisionSchema.parse>): void {
     if (decision.action === 'proceed' && !decision.citations.length) throw new DomainError('Proceed requires at least one current authorized source quotation or bound owner-answer quotation.', 'missing_evidence');
+    const temporaryTask = this.store.get('sources', task.sourceId)?.retention === 'ephemeral';
     for (const citation of decision.citations) {
       const source = this.store.get('sources', citation.sourceId);
-      if (source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !source.content.includes(citation.quote) || source.locator !== citation.locator) throw new DomainError('Decision cites unavailable or out-of-scope evidence.', 'invalid_citation', 403);
+      if (source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !source.content.includes(citation.quote) || source.locator !== citation.locator || !temporaryTask && source.retention === 'ephemeral') throw new DomainError('Decision cites unavailable, out-of-scope or temporary-only evidence.', 'invalid_citation', 403);
     }
     const rules = new Set(applicableRules(this.store, task).map(rule => rule.id));
     if (decision.ruleIds.some(id => !rules.has(id))) throw new DomainError('Decision cites a rule outside its current authorized scope.', 'invalid_rule', 403);
@@ -264,13 +266,13 @@ export class Workbench {
     for (const language of ['zh', 'en']) if (!record.queries.some(q => q.language === language && q.sources.length) && !record.gaps.length) throw new DomainError('A missing-language evidence gap must be explicit.', 'insufficient_research');
   }
 
-  private openQuestion(task: Task, project: Project, decision: ReturnType<typeof decisionSchema.parse>, research: ResearchRecord): void {
+  private openQuestion(task: Task, project: Project, decision: ReturnType<typeof decisionSchema.parse>, research: ResearchRecord, decisionSnapshotId: string): void {
     const q = decision.question!;
     const urls = new Set(research.queries.flatMap(query => query.sources.flatMap(source => [source.url, source.canonicalUrl])));
     if (q.A.description === q.B.description || q.A.label === q.B.label || [q.A, q.B].some(suggestion => suggestion.evidenceUrls.some(url => !urls.has(url)))) throw new DomainError('Two distinct recommendations must cite the opened research sources.', 'invalid_recommendations');
     const version = this.store.list('questions').filter(question => question.taskId === task.id).length + 1;
-    const question: Question = { id: stableId('question', task.id, task.version, version), projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, version, ownerId: project.ownerId, title: q.title, context: q.context, options: { A: structuredClone(q.A), B: structuredClone(q.B) }, research: structuredClone(research), status: 'open', createdAt: now() };
-    this.store.save('questions', question); this.advance(task, 'decide', { status: 'awaiting_answer', decision, questionId: question.id });
+    const question: Question = { id: stableId('question', task.id, task.version, version), projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, version, ownerId: project.ownerId, title: q.title, context: q.context, options: { A: structuredClone(q.A), B: structuredClone(q.B) }, research: structuredClone(research), status: 'open', createdAt: now(), decisionSnapshotId };
+    this.store.save('questions', question); this.advance(task, 'decide', { status: 'awaiting_answer', decision, decisionSnapshotId, questionId: question.id });
     this.enqueue(task, stableId('question-notice', question.id), `${question.title}\n${question.context}\nA · ${q.A.label}: ${q.A.description}\n依据：${q.A.rationale}\n代价：${q.A.tradeoff}\n${q.A.evidenceUrls.join('\n')}\nB · ${q.B.label}: ${q.B.description}\n依据：${q.B.rationale}\n代价：${q.B.tradeoff}\n${q.B.evidenceUrls.join('\n')}\nC · 我自己决定（自由输入）\n问题 ${question.id} · 版本 ${question.version}`);
   }
 

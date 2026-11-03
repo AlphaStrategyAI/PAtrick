@@ -185,7 +185,10 @@ export class Store {
     if (table === 'sources') body = (entity as Entities['sources']).content;
     if (table === 'cards') { const card = entity as Entities['cards']; body = `${card.body}\n\n> ${card.quote.replaceAll('\n', '\n> ')}\n\nSource: ${card.locator}\nRevision: ${card.sourceRevision}`; }
     if (table === 'rules') { const rule = entity as Entities['rules']; body = `${rule.statement}\n\nKind: ${rule.kind}\nVersion: ${rule.version}\nConditions: ${rule.conditions}\nExceptions: ${rule.exceptions}\n\n${rule.citations.map(c => `> ${c.quote}\n\nSource: ${c.locator} (${c.revision})`).join('\n\n')}`; }
-    if (table === 'cases') { const c = entity as Entities['cases']; body = `${c.originalWords}\n\nChoice: ${c.choice}\nActor: ${c.actorId}\nQuestion: ${c.questionId}\nRationale: ${c.rationale}\nOutcome: ${c.outcome ?? 'Not observed'}`; }
+    if (table === 'cases') {
+      const c = entity as Entities['cases'], s = c.decisionSnapshot;
+      body = `${c.originalWords}\n\nChoice: ${c.choice}\nActor: ${c.actorId}\nQuestion: ${c.questionId}\nRationale: ${c.rationale}\n\n## Judgment at the time\n\n${s ? `Goal: ${s.goal.title}\n\n${s.decision.summary}\n\n${s.decision.rationale}\n\nExpected outcome: ${s.expectedOutcome ?? 'Not stated'}\n\n${s.rules.map(rule => `Used rule: ${rule.title} @ v${rule.version}\n${rule.statement}`).join('\n\n')}` : 'Historical judgment snapshot unavailable.'}\n\n## Observed results\n\n${c.outcomes?.length ? c.outcomes.map(outcome => `${outcome.recordedAt} · Receipt ${outcome.receiptId}\n${outcome.summary}`).join('\n\n') : c.outcome ?? 'Not observed'}`;
+    }
     return `${meta.join('\n')}\n# ${title}\n\n${body}\n`;
   }
   private publish(job: VaultJob, startup = false): void {
@@ -220,7 +223,7 @@ export class Store {
       const r = entity as Entities['rules'];
       if (r.status !== 'active' || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision; })) return { ...r, status: 'suspended', title: '[withdrawn]', statement: '[Evidence no longer active]', conditions: '[withdrawn]', exceptions: '[withdrawn]', citations: r.citations.map(c => ({ ...c, quote: '[inactive]', locator: `withdrawn:${c.sourceId}` })) };
     }
-    if (table === 'cases') { const c = entity as Entities['cases']; if (c.status !== 'active' || this.get('sources', c.sourceId)?.status !== 'active') return { ...c, status: 'withdrawn', originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined }; }
+    if (table === 'cases') { const c = entity as Entities['cases']; if (c.status !== 'active' || this.get('sources', c.sourceId)?.status !== 'active' || c.decisionSnapshot?.sourceRefs.some(ref => { const source = this.get('sources', ref.id); return source?.status !== 'active' || source.revision !== ref.revision; })) return { ...c, status: 'withdrawn', originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, decisionSnapshot: undefined, outcomes: undefined }; }
     return entity;
   }
 

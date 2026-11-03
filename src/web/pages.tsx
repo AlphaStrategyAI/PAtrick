@@ -1,6 +1,6 @@
 import { html } from 'hono/html';
 import type { Child } from 'hono/jsx';
-import type { AppConfig, AuditEvent, Entities, KnowledgeCard, Project, Rule, SourceRevision, Table, Task } from '../domain.js';
+import type { AppConfig, AuditEvent, DecisionCase, Entities, KnowledgeCard, Project, Rule, SourceRevision, Table, Task } from '../domain.js';
 import type { Store } from '../store.js';
 import { Badge, date, Empty, ExternalLink, Icon, type IconName, Monogram, money, PageHead, ProjectForm, relative, roleLabels, shortHash, sourceLabels, Status, terminalStatuses } from './components.js';
 import { QuestionForm, TaskDetail } from './task.js';
@@ -83,23 +83,81 @@ function Standards({ context }: { context: ViewContext }) {
   const reflection = context.project ? weeklyReport(context.store, { projectId: context.project.id, domain: context.project.domain }) : null;
   return <><PageHead eyebrow="THE WAY YOU DECIDE" title="判断标准" description="记住你的选择，也尊重每一次选择的边界。"/><div class="standards-explainer"><Icon name="standards"/><p><strong>原则来自你的明确决定。</strong>观察是待验证的归纳，外部参考保留出处；它们会清楚区分。</p></div>{reflection?.focus && <WeeklyReflection report={reflection} context={context}/>}<div class="content-toolbar"><div class="filter-tabs">{[{ id: 'all', label: '全部标准' }, { id: 'principle', label: '本人原则' }, { id: 'observation', label: '观察' }, { id: 'external', label: '外部参考' }].map(item => <a href={context.href('/standards', { kind: item.id })} class={kind === item.id ? 'is-active' : ''}>{item.label}</a>)}</div><span class="metadata">{rules.length} 项标准 · {cases.filter(item => item.status === 'active').length} 个有效案例</span></div>{rules.length ? <div class="rules-list">{rules.map(rule => <RuleItem rule={rule} context={context}/>)}</div> : <div class="surface"><Empty icon="standards" title="你的标准，将从真实选择中生长" body="当你回答一个需要取舍的问题，PAtrick 会保留原话与适用范围。模型的推测会作为观察记录。"><a href={context.href('/')} class="button button-secondary">回到工作台<Icon name="arrow"/></a></Empty></div>}</>;
 }
+function canReadDecisionCase(item: DecisionCase, context: ViewContext): boolean {
+  if (item.status !== 'active') return false;
+  const sources = context.scoped('sources');
+  if (!sources.some(source => source.id === item.sourceId && source.status === 'active')) return false;
+  const snapshot = item.decisionSnapshot;
+  if (!snapshot) return true;
+  if (snapshot.projectId !== item.projectId || snapshot.domain !== item.domain || snapshot.taskId !== item.taskId) return false;
+  const references = [
+    { id: snapshot.sourceId, revision: snapshot.sourceRevision },
+    ...snapshot.sourceRefs,
+    ...snapshot.decision.citations.map(citation => ({ id: citation.sourceId, revision: citation.revision })),
+    ...snapshot.rules.flatMap(rule => rule.citations.map(citation => ({ id: citation.sourceId, revision: citation.revision }))),
+  ];
+  return references.every(ref => sources.some(source => source.id === ref.id && source.revision === ref.revision && source.status !== 'withdrawn'));
+}
+function InitialDecision({ item }: { item: DecisionCase }) {
+  const snapshot = item.decisionSnapshot;
+  return <section aria-label="当时初判">
+    <h3>当时初判</h3>
+    {snapshot ? <>
+      <p><strong>当时目标：</strong>{snapshot.goal.title}</p>
+      {snapshot.goal.description && <details class="source-detail"><summary>当时任务背景<Icon name="chevron"/></summary><p>{snapshot.goal.description}</p></details>}
+      <p><strong>初判：</strong>{snapshot.decision.summary}</p>
+      <p><strong>判断依据：</strong>{snapshot.decision.rationale}</p>
+      <p class="small-label">当时使用的规则</p>
+      {snapshot.rules.length ? <ul class="content-list">{snapshot.rules.map(rule => <li><strong>{rule.title} · v{rule.version}</strong><p>{rule.statement}</p><p class="metadata">适用范围：{rule.conditions || '未记录'} · 例外：{rule.exceptions || '未记录'}</p></li>)}</ul> : <p>{snapshot.decision.ruleIds.length ? '当时使用的规则版本未知' : '当时未引用个人规则'}</p>}
+      <p><strong>当时预测：</strong>{snapshot.expectedOutcome || '当时预测未知'}</p>
+      {snapshot.decision.citations.length > 0 && <details class="source-detail"><summary>当时引用的证据<Icon name="chevron"/></summary><ul class="content-list">{snapshot.decision.citations.map(citation => <li><q>{citation.quote}</q><p class="metadata">{citation.locator} · 来源 {citation.sourceId} · 修订 {shortHash(citation.revision)}</p></li>)}</ul></details>}
+      <p class="metadata">记录于 {date(snapshot.recordedAt, true)} · 当时任务 v{snapshot.taskVersion}</p>
+    </> : <><p>当时初判未留存</p><p>当时使用的规则版本未知</p><p>当时预测未知</p></>}
+  </section>;
+}
+function CaseOutcomes({ item }: { item: DecisionCase }) {
+  return <section aria-label="后来回执结果">
+    <h3>后来回执结果</h3>
+    {item.outcomes?.length ? <ol class="content-list">{item.outcomes.map(outcome => <li><p>{outcome.summary}</p><p class="metadata">回执 <code>{outcome.receiptId}</code> · <time datetime={outcome.recordedAt}>{date(outcome.recordedAt, true)}</time></p></li>)}</ol> : item.outcome ? <><p>{item.outcome}</p><p class="metadata">旧结果记录未留存回执关联，不能据此确认已验证的结果。</p></> : <p>待观察，尚无回执结果。</p>}
+  </section>;
+}
+function CurrentCaseRules({ rules, context }: { rules: Rule[]; context: ViewContext }) {
+  return <section aria-label="当前规则"><h3>关联的当前规则</h3>{rules.length ? <ul class="content-list">{rules.map(rule => <li><a class="text-link" href={`${context.href('/standards')}#${encodeURIComponent(`rule-${rule.id}`)}`}>{rule.title} · v{rule.version}<Icon name="arrow"/></a></li>)}</ul> : <p>尚未形成有效规则</p>}</section>;
+}
 function WeeklyReflection({ report, context }: { report: ReturnType<typeof weeklyReport>; context: ViewContext }) {
   const focus = report.focus;
-  if (!focus) return null;
+  if (!focus || !canReadDecisionCase(focus.case, context)) return null;
   return <section class="weekly-reflection surface" aria-labelledby="weekly-reflection-title">
     <header class="weekly-reflection-heading"><div><p class="eyebrow">ONE DECISION, IN RETROSPECT</p><h2 id="weekly-reflection-title">每周回看</h2></div><span class="metadata">近七天 · 来自 {report.sampleSize} 个有效案例</span></header>
     <p class="small-label">当时，你的决定</p>
     <blockquote>{focus.case.originalWords}</blockquote>
-    <div class="weekly-reflection-context">
-      <div><h3>关联的当前规则</h3>{focus.rules.length ? <ul>{focus.rules.map(rule => <li>{rule.title} · v{rule.version}</li>)}</ul> : <p>尚未形成有效规则</p>}</div>
-      <div><h3>观察到的结果</h3><p>{focus.outcome || '待观察'}</p></div>
-    </div>
+    <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
+    <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
     <footer><time datetime={focus.case.createdAt}>{date(focus.case.createdAt, true)}</time><a href={context.href(`/tasks/${focus.case.taskId}`)} class="text-link" data-task-link>回看这次决定<Icon name="arrow"/></a></footer>
   </section>;
 }
 function RuleItem({ rule, context }: { rule: Rule; context: ViewContext }) {
   const cases = context.scoped('cases').filter(item => rule.caseIds.includes(item.id));
-  return <article class="rule-card"><div class="rule-number">{String(context.scoped('rules').findIndex(item => item.id === rule.id) + 1).padStart(2, '0')}</div><div class="rule-main"><div class="card-topline"><div class="badge-group"><Badge tone={rule.kind === 'principle' ? 'green' : rule.kind === 'observation' ? 'amber' : 'neutral'}>{({ principle: '本人原则', observation: '观察 · 待验证', external: '外部参考' })[rule.kind]}</Badge><Badge>v{rule.version}</Badge></div><span class="metadata">{({ active: '有效', suspended: '已暂停', superseded: '已被新版替换' })[rule.status]}</span></div><h2>{rule.title}</h2><p class="rule-statement">{rule.statement}</p><div class="rule-scope"><span><strong>适用范围</strong>{rule.conditions || '尚未明确'}</span><span><strong>例外与边界</strong>{rule.exceptions || '尚无已记录的例外'}</span></div><details class="rule-evidence"><summary><Icon name="book"/>{cases.length} 个决策案例 · {rule.citations.length} 处依据<Icon name="chevron"/></summary>{cases.map(item => <div class="decision-case"><div><Badge>选项 {item.choice}</Badge><span class="metadata">{date(item.createdAt, true)}</span>{item.status === 'withdrawn' && <Badge tone="amber">已撤回</Badge>}</div><blockquote>{item.originalWords}</blockquote><p>{item.rationale || '当时未明确说明理由。'}</p>{item.outcome && <p><strong>后来结果：</strong>{item.outcome}</p>}<a class="text-link" href={context.href(`/tasks/${item.taskId}`)} data-task-link>查看当时的任务<Icon name="arrow"/></a></div>)}{rule.citations.map(citation => <div class="citation"><blockquote>{citation.quote}</blockquote><p class="metadata">{citation.locator} · 修订 {shortHash(citation.revision)}</p></div>)}{rule.supersedes && <p class="metadata">替代规则：{rule.supersedes}</p>}</details><footer class="rule-footer"><span>{context.project?.name} · {rule.domain}</span><span>复核于 {date(rule.reviewAt)}</span></footer></div></article>;
+  return <article class="rule-card" id={`rule-${rule.id}`}>
+    <div class="rule-number">{String(context.scoped('rules').findIndex(item => item.id === rule.id) + 1).padStart(2, '0')}</div>
+    <div class="rule-main">
+      <div class="card-topline"><div class="badge-group"><Badge tone={rule.kind === 'principle' ? 'green' : rule.kind === 'observation' ? 'amber' : 'neutral'}>{({ principle: '本人原则', observation: '观察 · 待验证', external: '外部参考' })[rule.kind]}</Badge><Badge>{rule.status === 'active' ? '当前规则' : '规则记录'} · v{rule.version}</Badge></div><span class="metadata">{({ active: '有效', suspended: '已暂停', superseded: '已被新版替换' })[rule.status]}</span></div>
+      <h2>{rule.title}</h2><p class="rule-statement">{rule.statement}</p>
+      <div class="rule-scope"><span><strong>适用范围</strong>{rule.conditions || '尚未明确'}</span><span><strong>例外与边界</strong>{rule.exceptions || '尚无已记录的例外'}</span></div>
+      <details class="rule-evidence"><summary><Icon name="book"/>{cases.length} 个决策案例 · {rule.citations.length} 处依据<Icon name="chevron"/></summary>
+        {cases.map(item => canReadDecisionCase(item, context) ? <div class="decision-case">
+          <div><Badge>选项 {item.choice}</Badge><span class="metadata">{date(item.createdAt, true)}</span></div>
+          <blockquote>{item.originalWords}</blockquote><p>{item.rationale || '当时未明确说明理由。'}</p>
+          <div class="weekly-reflection-context"><InitialDecision item={item}/><CaseOutcomes item={item}/></div>
+          <div class="weekly-reflection-context"><CurrentCaseRules rules={context.scoped('rules').filter(current => current.status === 'active' && current.caseIds.includes(item.id))} context={context}/></div>
+          <a class="text-link" href={context.href(`/tasks/${item.taskId}`)} data-task-link>查看当时的任务<Icon name="arrow"/></a>
+        </div> : <div class="decision-case"><Badge tone="amber">已撤回或来源不可用</Badge><p>案例证据已不可用，不再展示当时初判与结果。</p></div>)}
+        {rule.citations.map(citation => <div class="citation"><blockquote>{citation.quote}</blockquote><p class="metadata">{citation.locator} · 修订 {shortHash(citation.revision)}</p></div>)}
+        {rule.supersedes && <p class="metadata">替代规则：{rule.supersedes}</p>}
+      </details>
+      <footer class="rule-footer"><span>{context.project?.name} · {rule.domain}</span><span>复核于 {date(rule.reviewAt)}</span></footer>
+    </div>
+  </article>;
 }
 function Sources({ context }: { context: ViewContext }) {
   const status = context.url.searchParams.get('status') ?? 'active';

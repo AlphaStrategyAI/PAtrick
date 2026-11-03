@@ -10,6 +10,8 @@ PAtrick 把项目证据、你的明确决定和可核交付连起来。第一条
 
 项目使用 Node.js 24、TypeScript ESM、Hono 服务端 HTML、普通渐进 JavaScript/CSS、better-sqlite3/FTS5、Zod、Vitest 和 Playwright。宿主管理权限、状态和写入；worker 只提交候选或隔离产物。模型说“完成”不能代替 CI、合并和文件读回证据。
 
+- **判断历史**：宿主冻结每次成功初判的目标、原判、实际采用规则的内容与版本、引文和预测（未知为 `null`）。本人决策案例保留当时快照，再追加绑定交付回执的反馈；历史记录缺少快照时明确未知。预测和交付反馈各有证据要求，业务效果仍需独立观测。
+
 ## 本地体验
 
 ```bash
@@ -99,7 +101,7 @@ stdio MCP 连接已经运行的 HTTP 服务，在私有客户端环境设置 `PA
 
 `src/domain.ts` 定义共享契约；`store/intake/knowledge/standards` 管理账本、修订、检索和本人标准；`scheduler/orchestrator/integrations` 负责角色与外部边界；`src/app.ts`、`src/web/`、`public/` 提供认证 SSR 与交互；`scripts/`、`examples/` 提供本地运维与 [launchd 模板](examples/launchd/README.md)。
 
-[技术方案](docs/designs/PAtrick技术方案.md)、[实施计划](docs/plans/2026-11-03-patrick-implementation.md)、[正式 PRD](docs/product/PRD.md) 分别保存来源要求、计划和试点产出；105 条要求及分层证据见验收清单。
+[技术方案](docs/designs/PAtrick技术方案.md)、[实施计划](docs/plans/2026-11-03-patrick-implementation.md)、[判断历史修复计划](docs/plans/2026-11-03-decision-snapshots.md)、[正式 PRD](docs/product/PRD.md) 分别保存来源要求、计划、本地修复证据和试点产出；105 条要求及分层证据见验收清单。
 
 当前交接范围是本地运行和 launchd 运维，没有要求公共托管部署。开发运维、学习及更多来源可沿同一契约扩展，但需分别真实验收。无自动入口的来源应显示未覆盖。
 

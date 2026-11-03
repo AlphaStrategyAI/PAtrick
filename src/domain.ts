@@ -21,7 +21,7 @@ export interface Task extends Scope {
   id: string; sourceId: string; sourceRevision: string; title: string; description: string; status: TaskStatus;
   version: number; createdAt: string; updatedAt: string; runAfter: string; attempts: number; repairCount: number;
   budgetUsd: number; spentUsd: number; stage: Role | 'research' | 'delivery'; questionId?: string;
-  decision?: Decision; plan?: ExecutionPlan; artifact?: Artifact; review?: Review; receiptId?: string;
+  decision?: Decision; decisionSnapshotId?: string; plan?: ExecutionPlan; artifact?: Artifact; review?: Review; receiptId?: string;
   feedback?: string; error?: string; blockedFrom?: TaskStatus; baselineFiles?: {path:string;content:string}[];
 }
 export interface Citation { sourceId: string; revision: string; quote: string; locator: string }
@@ -39,7 +39,15 @@ export interface DecisionCase extends Scope {
   id: string; taskId: string; questionId: string; decisionId: string; actorId: string; choice: 'A' | 'B' | 'C';
   originalWords: string; rationale: string; alternatives: string[]; ruleIds: string[]; sourceId: string;
   status: 'active' | 'withdrawn'; createdAt: string; outcome?: string;
+  decisionSnapshot?: DecisionSnapshot; outcomes?: CaseOutcome[];
 }
+export interface DecisionSnapshot extends Scope {
+  schemaVersion: 1; id: string; taskId: string; taskVersion: number; attemptId: string; inputHash: string;
+  sourceId: string; sourceRevision: string; goal: { title: string; description: string };
+  decision: Decision; rules: Rule[]; sourceRefs: { id: string; revision: string }[];
+  expectedOutcome: string | null; research?: ResearchRecord; recordedAt: string;
+}
+export interface CaseOutcome { id: string; receiptId: string; recordedAt: string; summary: string }
 export interface ResearchSource {
   url: string; title: string; language: 'zh' | 'en'; publishedAt: string; accessedAt: string; excerpt: string;
   primary: boolean; canonicalUrl: string; conditions: string;
@@ -53,6 +61,7 @@ export interface Question extends Scope {
   id: string; taskId: string; taskVersion: number; version: number; ownerId: string; title: string; context: string;
   options: { A: Suggestion; B: Suggestion }; research: ResearchRecord; status: 'open' | 'answered' | 'stale';
   createdAt: string; answeredAt?: string; answer?: { choice: 'A' | 'B' | 'C'; text: string; actorId: string; eventId: string };
+  decisionSnapshotId?: string;
 }
 export interface AuditEvent extends Scope {
   id: string; taskId?: string; type: string; message: string; createdAt: string; data: Record<string, unknown>;
@@ -87,6 +96,7 @@ export const suggestionSchema = z.object({ label: z.string().min(1), description
 export const decisionSchema = z.object({
   action: z.enum(['proceed', 'ask', 'archive']), summary: z.string().min(1), rationale: z.string().min(1),
   citations: z.array(citationSchema), ruleIds: z.array(z.string()),
+  expectedOutcome: z.string().min(1).nullable().optional(),
   question: z.object({ title: z.string().min(1), context: z.string(), A: suggestionSchema, B: suggestionSchema }).optional(),
 }).superRefine((v, ctx) => {
   if (v.action === 'ask' && !v.question) ctx.addIssue({ code: 'custom', message: 'A question with exactly two recommendations is required.' });
