@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { readConfig, projectSchema } from '../../src/config.js';
 import { ingestSource } from '../../src/intake.js';
 import { Store } from '../../src/store.js';
-import type { RunnerPolicy, WorkerInput } from '../../src/domain.js';
+import type { AppConfig, RunnerPolicy, WorkerInput } from '../../src/domain.js';
 import type { CurrentBillingContext, IncludedAdmission } from '../../src/billing.js';
 
 export function makeBillingFixture(options: { maxAttemptsPerTask?: number } = {}) {
@@ -13,7 +13,7 @@ export function makeBillingFixture(options: { maxAttemptsPerTask?: number } = {}
   const store = new Store(':memory:');
   const project = projectSchema.parse({ id: 'synthetic', projectId: 'synthetic', domain: 'synthetic', name: 'Synthetic', repository: 'fixture/repo', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], ownerId: 'synthetic-owner', budgetUsd: 0 });
   const included: RunnerPolicy = { runner: 'codex', roles: ['knowledge_extract'], domains: ['synthetic'], provider: 'synthetic-provider', model: 'synthetic-model', admitted: true, costPerRunUsd: 0, independentReview: false, billing: { mode: 'included-subscription', admissionId: 'synthetic-proof' } };
-  const config = { ...readConfig({ PATRICK_MODE: 'test' }), billingBoundary: 'included-only' as const, maxAttemptsPerTask: options.maxAttemptsPerTask ?? 32, projects: [project], runnerPolicies: [included] };
+  const config: AppConfig = { ...readConfig({ PATRICK_MODE: 'test' }), billingBoundary: 'included-only' as const, maxAttemptsPerTask: options.maxAttemptsPerTask ?? 32, projects: [project], runnerPolicies: [included] };
   store.save('projects', project);
   const task = ingestSource(store, config, { projectId: project.id, externalId: 'synthetic-source', title: 'Synthetic', content: 'Synthetic fixture only.' })!;
   task.attemptLimit = config.maxAttemptsPerTask; store.save('tasks', task);

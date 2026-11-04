@@ -39,6 +39,10 @@ function setup(options: Options = {}) {
   return { store, config, engine, calls, notifications, ingest, create, options, deliveryCount: () => deliveries };
 }
 afterEach(() => { for (const store of stores.splice(0)) store.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+async function workerStarted(calls: unknown[]) {
+  for (let turn = 0; turn < 32 && calls.length === 0; turn++) await Promise.resolve();
+  expect(calls).toHaveLength(1);
+}
 
 describe('single worker durable business flow', () => {
   it('runs all seven roles without a question and delivers only after receipt and feedback', async () => {
@@ -155,7 +159,7 @@ describe('single worker durable business flow', () => {
   it('drains a held worker and refuses new task stages after shutdown starts', async () => {
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
     const f = setup({ beforeRun: async input => { if (input.role === 'knowledge_extract') await held; } }); f.ingest();
-    const running = f.engine.tick(); expect(f.calls).toHaveLength(1);
+    const running = f.engine.tick(); await workerStarted(f.calls);
     let closed = false; const closing = f.engine.shutdown().then(() => { closed = true; });
     await Promise.resolve(); expect(closed).toBe(false);
     await f.engine.tick(); expect(f.store.list('attempts')).toHaveLength(1);
@@ -208,7 +212,7 @@ describe('single worker durable business flow', () => {
 
   it('retains a paid attempt reservation when source withdrawal rejects a late result', async () => {
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
-    const f = setup({ beforeRun: async () => held }); const task = f.ingest(); const running = f.engine.tick();
+    const f = setup({ beforeRun: async () => held }); const task = f.ingest(); const running = f.engine.tick(); await workerStarted(f.calls);
     f.engine.withdraw(task.sourceId); release(); await running;
     expect(f.store.get('tasks', task.id)?.status).toBe('cancelled'); expect(f.store.get('tasks', task.id)?.spentUsd).toBeCloseTo(.01);
     expect(f.store.list('attempts')[0]?.costUsd).toBe(.01); expect(f.store.list('attempts')[0]?.status).toBe('stale'); expect(f.store.list('cards')).toHaveLength(0);

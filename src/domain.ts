@@ -13,6 +13,8 @@ export type AttemptBilling = {
   ordinal: number; attemptLimit: number; policyHash: string;
   billingBoundary: BillingBoundary; authorityEpoch: string; abandonedAt?: string;
   admissionId?: string; evidenceDigest?: string; profileHash?: string;
+  /** Switch bookkeeping only; dispatch always binds the complete Attempt.inputHash. */
+  switchInputHash?: string;
   dispatchState: 'reserved' | 'dispatched' | 'adapter-entered';
 };
 
@@ -177,8 +179,16 @@ export class DomainError extends Error {
   constructor(message: string, public code = 'invalid', public status = 400) { super(message); this.name = 'DomainError'; }
 }
 export class WorkerUnavailable extends Error { constructor(message: string) { super(message); this.name = 'WorkerUnavailable'; } }
+/** Host adapter observation; model output is never decoded into this type/error. */
+export type HostSubscriptionObservation = { observedAt: string; evidenceDigest: string } & (
+  | { disposition: 'verified-no-charge-refusal'; reason: 'quota' | 'persistent-rate-limit' | 'expired-credential' | 'invalid-credential' | 'provider-refusal'; noChargeEvidenceDigest: string }
+  | { disposition: 'billing-incident'; reason: 'paid-route-used' | 'extra-credit-used' | 'no-charge-boundary-breached' | 'charge-danger-unknown' }
+);
 export class SubscriptionAccessError extends DomainError {
-  constructor(code: 'subscription_quota' | 'subscription_auth' | 'subscription_overflow', message: string) { super(message, code, 409); }
+  constructor(public readonly observation: HostSubscriptionObservation, message: string) {
+    super(message, observation?.disposition === 'verified-no-charge-refusal' ? 'subscription_unavailable' : 'billing_policy_violation', 409);
+    this.name = 'SubscriptionAccessError';
+  }
 }
 export function now(): string { return new Date().toISOString(); }
 export function digest(value: string | object): string { return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex'); }

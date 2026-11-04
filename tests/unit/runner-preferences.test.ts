@@ -22,7 +22,7 @@ function setup(options: Options = {}) {
   const source: SourceRevision = { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'revision-1', title: 'Retain drafts', content: 'Keep drafts after failed exports.', locator: 'manual:idea', authorId: 'owner', retention: 'permanent', status: 'active', createdAt };
   const initialTask: Task = { id: 'task', projectId: project.id, domain: project.domain, sourceId: source.id, sourceRevision: source.revision, title: source.title, description: source.content, status: 'executing', version: 1, createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: options.taskBudget ?? 10, spentUsd: 0, stage: 'execute', plan: { taskVersion: 1, sourceRevision: source.revision, baselineSha: 'baseline', summary: 'Retain drafts', paths: ['docs/PRD.md'], steps: ['Update PRD'], tests: ['validate'], stopConditions: ['Source changes'] } };
   store.save('projects', project); store.save('sources', source); store.save('tasks', initialTask);
-  const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: '', vaultDir: '', ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project], scanIntervalMs: 1000, workers: {}, runnerPolicies: (['grok', 'dsh', 'codex'] as const).map(runner => ({ runner, roles: [...roles], domains: ['personal'], provider: `${runner}-provider`, model: `${runner}-model`, admitted: true, costPerRunUsd: .01, independentReview: false, ...options.policies?.[runner] })) };
+  const config: AppConfig = { billingBoundary: 'metered-only', mode: 'test', host: '127.0.0.1', port: 0, dataDir: '', vaultDir: '', ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project], scanIntervalMs: 1000, workers: {}, runnerPolicies: (['grok', 'dsh', 'codex'] as const).map(runner => ({ runner, roles: [...roles], domains: ['personal'], provider: `${runner}-provider`, model: `${runner}-model`, admitted: true, costPerRunUsd: .01, independentReview: false, ...options.policies?.[runner] })) };
   const calls: { runner: Runner; role: Role }[] = [];
   const workers: WorkerAdapter[] = (['grok', 'dsh', 'codex'] as const).map(name => ({ name, async run(input) {
     calls.push({ runner: name, role: input.role });
@@ -179,5 +179,21 @@ describe('independent review preference', () => {
     expect(f.runners('check')).toEqual(['grok', 'dsh']);
     expect(f.store.get('tasks', 'task')?.spentUsd).toBeCloseTo(.05);
     expect(f.store.list('events').at(-1)?.type).toBe('budget_exhausted');
+  });
+});
+
+describe('shared authoritative attempt cap across role preferences', () => {
+  it.each(roles)('lets the final legal %s slot complete and allocates no next call', async role => {
+    const f = setup(); f.config.maxAttemptsPerTask = 1;
+    if (role === 'check') f.store.save('tasks', { ...f.store.get('tasks', 'task')!, artifact: { taskVersion: 1, planHash: 'synthetic-plan', baselineSha: 'baseline', files: [{ path: 'docs/PRD.md', content: 'Synthetic' }], tests: [{ command: 'validate', passed: true, output: 'Synthetic' }], summary: 'Synthetic artifact' } });
+    expect(await f.run(role)).toBeDefined(); expect(f.calls).toHaveLength(1);
+    expect(await f.run(role)).toBeUndefined(); expect(f.calls).toHaveLength(1); expect(f.store.list('attempts')).toHaveLength(1);
+    expect(f.store.get('tasks', 'task')).toMatchObject({ attempts: 1, attemptLimit: 1, billingStop: { code: 'subscription_attempt_limit' } });
+  });
+  it('shares one durable limit across all seven roles without resetting on stage changes', async () => {
+    const f = setup(); f.config.maxAttemptsPerTask = 7;
+    for (const role of roles) expect(await f.run(role)).toBeDefined();
+    expect(f.store.list('attempts').map(a => a.billing?.ordinal)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await f.run('knowledge_extract')).toBeUndefined(); expect(f.calls).toHaveLength(7);
   });
 });
