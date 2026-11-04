@@ -30,7 +30,12 @@ export async function probeGuest(operation,dependenciesOverride) {
     return Object.freeze({version:1,operation,outcome:'pass',reason:'ok',policyHash:state.manifest.installation.policyHash,topologyFingerprint:state.inventory.fingerprint,inventoryCoverage:state.inventory.coverage,ipv6UpstreamDisabled:state.inventory.ipv6UpstreamDisabled});
   }
   if(state.fence.status!=='ready')fail('installed_mismatch');
+  if(operation==='snapshot')return installer.withInstallationMutex(deps,async()=>{
+    const locked=await installer.inspectInstalled(deps);if(locked.fence.status!=='ready')fail('installed_mismatch');locked.drain();locked.modules.assertReadiness(locked.nft(),locked.proxy(),locked.policy,locked.accounts);
+    return Object.freeze({version:1,operation,outcome:'pass',reason:'ok',policyHash:locked.manifest.installation.policyHash,topologyFingerprint:locked.inventory.fingerprint,inventoryCoverage:locked.inventory.coverage,ipv6UpstreamDisabled:locked.inventory.ipv6UpstreamDisabled});
+  });
   try{io.lstatSync('/run/patrick-worker/install.lock');fail('service_state');}catch(error){if(error.code!=='ENOENT')throw error;}
+  state.drain();
   // Snapshot is a live kernel/process assertion, never a persisted ready flag.
   state.modules.assertReadiness(state.nft(),state.proxy(),state.policy,state.accounts);
   if(operation==='synthetic-network'){

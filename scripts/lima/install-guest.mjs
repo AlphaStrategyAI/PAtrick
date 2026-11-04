@@ -133,10 +133,10 @@ function command(deps,path,args,input,reason='dependency',allowMissing=false) {
   return result;
 }
 export function productionDependencies() {
-  return {io:fs,effectiveUid:()=>process.geteuid?.(),now:()=>Date.now(),run:(path,args,input)=>spawnSync(path,args,{input,encoding:'utf8',timeout:10000,maxBuffer:1048576,cwd:'/',env:ENV,stdio:[input===undefined?'ignore':'pipe','pipe','pipe']}),loadModules:async()=>({...await import('./policy.mjs'),...await import('./worker-enter.mjs')})};
+  return {io:fs,effectiveUid:()=>process.geteuid?.(),now:()=>Date.now(),run:(path,args,input)=>spawnSync(path,args,{input,encoding:'utf8',timeout:10000,maxBuffer:1048576,cwd:'/',env:ENV,stdio:[input===undefined?'ignore':'pipe','pipe','pipe']}),loadModules:async()=>({...await import('./policy.mjs'),...await import('./worker-enter.mjs'),...await import('./stage-lifetime.mjs')})};
 }
 function trustCode(deps) {
-  for(const name of ['install-guest.mjs','probe-guest.mjs','policy.mjs','worker-enter.mjs'])trustedPath(join(HERE,name),{},deps.io);
+  for(const name of ['install-guest.mjs','probe-guest.mjs','policy.mjs','worker-enter.mjs','stage-lifetime.mjs'])trustedPath(join(HERE,name),{},deps.io);
 }
 export async function loadModules(deps) {trustCode(deps);return deps.loadModules();}
 function dependencies(deps) {
@@ -172,9 +172,9 @@ export function observeGuest(deps) {
     const order=(a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b));return {addresses:addresses.sort(order),routes:routes.sort(order),resolvers:[...new Set(resolvers)].sort(),hostAliases:[...new Set(hostAliases)].sort()};
   } catch {fail('inventory_incomplete');}
 }
-function drain(deps,facts,names) {
+function drain(deps,facts,names,modules) {
   const registry='/run/patrick-worker/invocations';
-  if(exists(registry,deps.io)){trustedPath(registry,{kind:'directory',mode:0o700},deps.io);if(deps.io.readdirSync(registry).length)fail('active_worker');}
+  if(exists(registry,deps.io)){trustedPath(registry,{kind:'directory',mode:0o700},deps.io);try{if(!modules.registryQuiescent(deps.io))fail('active_worker');}catch{fail('active_worker');}}
   const units=command(deps,'/usr/bin/systemctl',['list-units','--all','--no-pager','--no-legend','--plain','patrick-worker-*.service'],undefined,'active_worker').stdout.trim().split('\n').filter(Boolean);
   if(units.length>256||units.some(line=>!['patrick-worker-firewall.service','patrick-worker-proxy.service'].includes(line.trim().split(/\s+/)[0])))fail('active_worker');
   const uids=new Set(names.flatMap(name=>facts[name]?[facts[name].uid]:[]));
@@ -317,7 +317,7 @@ async function inspect(input,deps,modules) {
   if(plan.missing.some(name=>accountData.groupNames.includes(name)))fail('account_conflict');
   inspectHomes(deps,accountData.facts,plan.names,plan.missing,artifacts.manifest.controlAdmin);
   auditSudo(deps,plan.names.filter(name=>!plan.missing.includes(name)));
-  drain(deps,accountData.facts,plan.names.filter(name=>name!==policy.proxyUser));
+  drain(deps,accountData.facts,plan.names.filter(name=>name!==policy.proxyUser),modules);
   const inventory=validateInventory(JSON.parse(artifacts.contents['route-inventory.json']),policy,observeGuest(deps),deps.now());
   auditSockets(deps,accountData.facts,plan.names,artifacts.manifest.controlAdmin,inventory);
   policy=modules.parsePolicy({...policy,deniedCidrs:inventory.deniedCidrs});
@@ -350,6 +350,7 @@ function deployment(state,modules,accounts=state.accounts) {
 async function assertInstalledLive(deps) {
   const state=await inspectInstalled(deps);if(state.fence.status!=='ready')fail('installed_mismatch');
   if(exists('/run/patrick-worker/install.lock',deps.io))fail('active_worker');
+  state.drain();
   try{state.modules.assertReadiness(state.nft(),state.proxy(),state.policy,state.accounts);}catch{fail('service_state');}
 }
 function fileDrift(deps,files) {let count=0;for(const [path,file] of files){if(!exists(path,deps.io)){count++;continue;}trustedPath(path,{mode:file.mode},deps.io);if(trustedRead(path,deps.io)!==file.text)count++;}return count;}
@@ -377,9 +378,10 @@ export async function installGuest(input,dependenciesOverride) {
     if(exists('/run/patrick-worker/install.lock',deps.io))fail('active_worker');
     if(state.plan.missing.length&&(state.previous||exists(`${CONFIG}/firewall.nft`,deps.io)))fail('installed_mismatch');
     const files=state.plan.missing.length?filesFor(state):deployment(state,modules).files;
-    summary={...summary,policyHash:sha(state.policyText),artifactHash:state.artifacts.artifactHash,accountsToCreate:state.plan.missing.length,filesToReplace:fileDrift(deps,files)+(state.plan.missing.length?2:0),ownedTableToReplace:!state.nft};
+    summary={...summary,policyHash:sha(state.policyText),artifactHash:state.artifacts.artifactHash,accountsToCreate:state.plan.missing.length,filesToReplace:fileDrift(deps,files)+(state.plan.missing.length?2:0),ownedTableToReplace:!state.nft||fileDrift(deps,files)>0||state.plan.missing.length>0};
     if(!input.apply){if(state.previous)await assertInstalledLive(deps);summary.outcome='pass';summary.reason='ok';deps.summary?.(Object.freeze(summary));return Object.freeze({applied:false,policyHash:summary.policyHash});}
     if(state.previous&&state.nft&&summary.filesToReplace===0){let ready=false;try{await assertInstalledLive(deps);ready=true;}catch{}if(ready){summary.outcome='pass';summary.reason='ok';deps.summary?.(Object.freeze(summary));return Object.freeze({applied:true,policyHash:summary.policyHash});}}
+    summary.ownedTableToReplace=true;
     // Initial inspection has established the existing unit's trusted ownership.
     // Remember it before lock-owner/fence writes and their durability failures.
     proxyUnitPresent=exists('/etc/systemd/system/patrick-worker-proxy.service',deps.io);
@@ -395,7 +397,7 @@ export async function installGuest(input,dependenciesOverride) {
     atomicWrite(deps,'/run/patrick-worker/install.lock/owner.json',JSON.stringify(owner)+'\n',0o600);
     atomicWrite(deps,`${CONFIG}/install-state.json`,JSON.stringify(fence)+'\n',0o600);
     if(proxyUnitPresent)stopProxy(deps);
-    const accounts=allocate(deps,state);modules.validateAccounts(state.policy,accounts);drain(deps,accounts,state.plan.names.filter(name=>name!==state.policy.proxyUser));
+    const accounts=allocate(deps,state);modules.validateAccounts(state.policy,accounts);drain(deps,accounts,state.plan.names.filter(name=>name!==state.policy.proxyUser),modules);
     if(!same(observeGuest(deps),JSON.parse(state.artifacts.contents['route-inventory.json']).guest))fail('inventory_incomplete');
     ensureDirectory(deps,'/usr/local/libexec');ensureDirectory(deps,CODE);ensureDirectory(deps,CONFIG);ensureDirectory(deps,'/run/patrick-worker/invocations',0o700);ensureDirectory(deps,'/var/lib/patrick-workspaces');
     const {nftText,manifest:installed,files:installedFiles}=deployment(state,modules,accounts);
@@ -444,6 +446,11 @@ function releaseInstallerLock(deps,owner) {
   deps.io.rmdirSync(directory);
 }
 
+export async function withInstallationMutex(deps,operation) {
+  if(deps.effectiveUid()!==0)fail('not_root');const modules=await loadModules(deps),witness=processWitness(deps);
+  try{return await modules.withInstallMutex({io:deps.io,boot:()=>witness.bootId,witness:()=>({pid:witness.pid,start:witness.startTime})},operation);}catch(error){if(REASONS.has(error?.reason))throw error;fail('service_state');}
+}
+
 export async function inspectInstalled(deps=productionDependencies()) {
   if(deps.effectiveUid()!==0)fail('not_root');
   const modules=await loadModules(deps);
@@ -474,7 +481,7 @@ function verifyInstalledGeneration(deps,modules,manifest,historical) {
   auditSockets(deps,facts,plan.names,manifest.controlAdmin,inventory);
   const nftText=trustedRead(`${CONFIG}/firewall.nft`,deps.io);if(sha(nftText)!==manifest.installation.nftHash||nftText!==modules.renderNft(policy,Object.fromEntries(plan.names.map(name=>[name,accounts[name].uid]))))fail('installed_mismatch');
   const contents={};for(const name of ['patrick-worker-firewall.service','patrick-worker-proxy.service']){contents[name]=trustedRead(`/etc/systemd/system/${name}`,deps.io);if(sha(contents[name])!==manifest.files[name])fail('installed_mismatch');}assertUnits(deps,contents);
-  return {modules,manifest,fence,policy,accounts,inventory,nftText,drain:()=>drain(deps,facts,plan.names.filter(name=>name!==policy.proxyUser)),nft:()=>currentNft(deps),proxy:()=>{checkLimits(deps);return proxyFacts(deps,modules);}};
+  return {modules,manifest,fence,policy,accounts,inventory,nftText,drain:()=>drain(deps,facts,plan.names.filter(name=>name!==policy.proxyUser),modules),nft:()=>currentNft(deps),proxy:()=>{checkLimits(deps);return proxyFacts(deps,modules);}};
 }
 const direct=process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
 if(direct){let emitted=false;const deps=productionDependencies();deps.summary=value=>{emitted=true;process.stdout.write(JSON.stringify(value)+'\n');};try{await installGuest(parseInstallArguments(process.argv.slice(2)),deps);}catch(error){const reason=REASONS.has(error?.reason)?error.reason:'arguments';if(!emitted)process.stdout.write(JSON.stringify({version:1,mode:process.argv.includes('--apply')?'apply':'check',outcome:'fail',reason,policyHash:'',artifactHash:'',accountsToCreate:0,filesToReplace:0,ownedTableToReplace:false})+'\n');process.stderr.write(reason+'\n');process.exitCode=78;}}

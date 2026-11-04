@@ -9,7 +9,8 @@ import { parseArguments, buildInvocation, assertReadiness, assertTrustedPath, tr
 const scope={runner:'grok',user:'patrick-grok',projectId:'fixture-project',domain:'私人领域'};
 const account={uid:1101,gid:1101,home:'/var/lib/patrick-grok',groups:[]};
 const rawPolicy={version:1,proxyUser:'patrick-proxy',workers:[{...scope,proxyPort:18081,hosts:['api.example.com']}],deniedCidrs:['127.0.0.0/8','::1/128']};
-const argv=['--runner',scope.runner,'--user',scope.user,'--project',scope.projectId,'--domain',scope.domain,'--','node','-e','$(touch /tmp/forbidden); echo literal'];
+const legacyArgv=['--runner',scope.runner,'--user',scope.user,'--project',scope.projectId,'--domain',scope.domain,'--','node','-e','$(touch /tmp/forbidden); echo literal'];
+const argv=[...legacyArgv.slice(0,8),'--invocation','a'.repeat(32),'--stage','cli','--operation','exec',...legacyArgv.slice(8)];
 const accounts={'patrick-grok':account,'patrick-proxy':{uid:1100,gid:1100,home:'/var/lib/patrick-proxy',groups:[]},admin:{uid:1000,gid:1000,home:'/home/admin',groups:[27]}};
 const match=(left:unknown,right:unknown)=>({match:{op:'==',left,right}});
 function nft() {return {nftables:[{metainfo:{version:'1.0.9',release_name:'Old Doc Yak #3',json_schema_version:1}},{table:{family:'inet',name:'patrick_worker',handle:1}},{chain:{family:'inet',table:'patrick_worker',name:'output',handle:2,type:'filter',hook:'output',prio:-50,policy:'accept'}},{chain:{family:'inet',table:'patrick_worker',name:'grok_out',handle:3}},{rule:{family:'inet',table:'patrick_worker',chain:'output',handle:4,expr:[match({meta:{key:'skuid'}},1101),{jump:{target:'grok_out'}}]}},{rule:{family:'inet',table:'patrick_worker',chain:'grok_out',handle:5,expr:[match({meta:{key:'oifname'}},'lo'),match({payload:{protocol:'ip',field:'daddr'}},'127.0.0.1'),match({payload:{protocol:'tcp',field:'dport'}},18081),{accept:null}]}},{rule:{family:'inet',table:'patrick_worker',chain:'grok_out',handle:6,expr:[{reject:{type:'icmpx',expr:'admin-prohibited'}}]}}]};}
@@ -54,7 +55,7 @@ describe('privileged executable resolution',()=>{
       expect(fixture.io.readlinkSync('/usr/bin/tool',{encoding:'buffer'})).toEqual(target);
       expect(fixture.io.readlinkSync('/usr/bin/tool')).toBe('/opt/\uFFFD/tool');
       expect(()=>fixture.io.statSync('/usr/bin/tool')).toThrow();
-      const deps={effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),exec};
+      const deps={effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),dispatch:exec};
       let error;try {enterWorker(argv,deps);} catch(caught) {error=caught;}
       expect(exec).not.toHaveBeenCalled();
       expect(error).toEqual(new Error('Worker entry denied.'));
@@ -70,7 +71,7 @@ describe('privileged executable resolution',()=>{
       fixture.link('/usr/bin/tool',target);
       expect(fixture.io.realpathSync('/usr/bin/tool')).toBe(`/usr/bin/${target}`);
       expect(fixture.io.readlinkSync('/usr/bin/tool',{encoding:'buffer'})).toEqual(Buffer.from(target));
-      enterWorker(argv,{effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),exec});
+      enterWorker(argv,{effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),dispatch:exec});
       expect(exec).toHaveBeenCalledTimes(1);
     } finally {fixture.close();}
   });
@@ -84,7 +85,7 @@ describe('privileged executable resolution',()=>{
       // Establish the actual attack shape: the original link resolves to a
       // trusted final binary. The real resolver must inspect the hidden hop.
       expect(fixture.io.realpathSync('/usr/bin/tool')).toBe('/opt/trusted/tool');
-      const deps={effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),exec};
+      const deps={effectiveUid:()=>0,trust:()=>trustExecutable('/usr/bin/tool',fixture.io),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),dispatch:exec};
       let error;try {enterWorker(argv,deps);} catch(caught) {error=caught;}
       expect(exec).not.toHaveBeenCalled();
       expect(error).toEqual(new Error('Worker entry denied.'));
@@ -167,7 +168,7 @@ describe('actual helper entry',()=>{
     }
   });
   it('parses one fixed tuple and preserves shell syntax only as command argv',()=>{
-    expect(parseArguments(argv)).toEqual({context:scope,command:argv.slice(9)});
+    expect(parseArguments(argv)).toEqual({context:scope,lifetime:{invocation:'a'.repeat(32),stage:'cli',profile:'authenticated-client',operation:'exec'},command:argv.slice(15)});
   });
   it.each([[],argv.slice(0,8),['--test',...argv],['--runner','grok',...argv],argv.slice(0,9),[...argv.slice(0,8),'--','']].map(args=>({args})))('rejects missing duplicate unknown or empty entry args %j',({args})=>expect(()=>parseArguments(args)).toThrow());
   it('builds a fixed privilege drop and clean environment that argv cannot replace',()=>{
@@ -231,10 +232,23 @@ describe('actual helper entry',()=>{
     expect(()=>assertReadiness(kernel,service,policy,mapped)).toThrow();
   });
   it('starts no child until every real dependency check has passed, and sanitizes rejection',()=>{
-    const deps={effectiveUid:()=>0,trust:vi.fn(),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),exec:vi.fn()};
-    enterWorker(argv,deps);expect(deps.exec).toHaveBeenCalledOnce();
+    const deps={effectiveUid:()=>0,trust:vi.fn(),readPolicy:()=>rawPolicy,accounts:()=>accounts,readiness:()=>({nft:nft(),proxy}),dispatch:vi.fn()};
+    enterWorker(argv,deps);expect(deps.dispatch).toHaveBeenCalledOnce();
     for(const failed of [{...deps,effectiveUid:()=>1000},{...deps,trust:()=>{throw Error('private raw path');}},{...deps,readPolicy:()=>({...rawPolicy,proxyUser:'root'})},{...deps,readiness:()=>({nft:{},proxy})}]) {
-      deps.exec.mockClear();expect(()=>enterWorker(argv,failed)).toThrow('Worker entry denied.');expect(deps.exec).not.toHaveBeenCalled();
+      deps.dispatch.mockClear();expect(()=>enterWorker(argv,failed)).toThrow('Worker entry denied.');expect(deps.dispatch).not.toHaveBeenCalled();
     }
+  });
+});
+
+
+describe('contained lifetime grammar',()=>{
+  it('rejects the retired uncontained entry grammar',()=>{
+    expect(()=>parseArguments(legacyArgv)).toThrow('Worker entry denied.');
+  });
+  it('accepts command-free stop with finite metadata and rejects target selectors',()=>{
+    const prefix=argv.slice(0,8),suffix=['--invocation','a'.repeat(32),'--stage','cli','--operation','stop'];
+    expect(parseArguments([...prefix,...suffix,'--'])).toMatchObject({context:scope,command:[],lifetime:{invocation:'a'.repeat(32),stage:'cli',profile:'authenticated-client',operation:'stop'}});
+    for(const extra of [['--unit','foreign.service'],['--profile','authenticated-client'],['--pid','123'],['--deadline','5']])expect(()=>parseArguments([...prefix,...suffix,...extra,'--'])).toThrow();
+    expect(()=>parseArguments([...prefix,...suffix,'--','node'])).toThrow();
   });
 });

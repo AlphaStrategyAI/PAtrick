@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 const deny=()=>{throw new Error('Worker entry denied.');};
 const policyPath='/etc/patrick-worker/policy.json';
 const modulePath=fileURLToPath(import.meta.url);
-let parsePolicy,validateContext,validateEntry,validateAccounts;
+let parsePolicy,validateContext,validateEntry,validateAccounts,lifecycle;
 export async function loadTrustedPolicy(deps) {
   try {
     if(deps.effectiveUid()!==0)deny();
@@ -17,21 +17,14 @@ export async function loadTrustedPolicy(deps) {
 }
 export function parseArguments(argv) {
   if(!Array.isArray(argv))deny();
-  const fields=new Map([['--runner','runner'],['--user','user'],['--project','projectId'],['--domain','domain']]);
-  const context={};let index=0;
-  while(index<argv.length&&argv[index]!=='--') {
-    const field=fields.get(argv[index]);if(!field||Object.hasOwn(context,field)||index+1>=argv.length)deny();
-    context[field]=argv[index+1];index+=2;
-  }
-  if(index>=argv.length||Object.keys(context).length!==4)deny();
-  validateContext(context);const command=argv.slice(index+1);
-  if(!command.length||!command[0]||command.some(arg=>typeof arg!=='string'||arg.includes('\0')))deny();
-  return {context:Object.freeze(context),command};
+  const fields=['--runner','--user','--project','--domain','--invocation','--stage','--operation'];
+  if(argv.length<15||fields.some((field,index)=>argv[index*2]!==field)||argv[14]!=='--')deny();
+  const context={runner:argv[1],user:argv[3],projectId:argv[5],domain:argv[7]};validateContext(context);
+  const lifetime={invocation:argv[9],stage:argv[11],profile:lifecycle.profileFor(argv[11]),operation:argv[13]},command=argv.slice(15);
+  if(!/^[a-f0-9]{32}$/.test(lifetime.invocation)||!['exec','stop','reconcile'].includes(lifetime.operation)||command.some(arg=>typeof arg!=='string'||arg.includes('\0'))||lifetime.operation==='exec'&&(!command.length||!command[0])||lifetime.operation!=='exec'&&command.length)deny();
+  return {context:Object.freeze(context),lifetime:Object.freeze(lifetime),command};
 }
-export function buildInvocation(entry) {
-  // This is the only privileged argv prefix. Every caller value follows the drop.
-  return {command:'/usr/bin/setpriv',args:[`--reuid=${entry.uid}`,`--regid=${entry.gid}`,'--clear-groups','--no-new-privs','--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--','/usr/bin/env','-i',`HOME=${entry.home}`,`USER=${entry.user}`,`LOGNAME=${entry.user}`,'PATH=/usr/local/bin:/usr/bin:/bin','TMPDIR=/tmp',`HTTP_PROXY=http://127.0.0.1:${entry.proxyPort}`,`HTTPS_PROXY=http://127.0.0.1:${entry.proxyPort}`,'NO_PROXY=','/usr/bin/dash','-c','cd -- "$HOME" && exec "$@"','patrick-worker',...entry.command]};
-}
+export function buildInvocation(entry) { return lifecycle.buildDropInvocation(entry); }
 export function assertTrustedPath(path,{kind,uid,gid,private:privateMode=false},io=fs) {
   if(typeof path!=='string'||!path.startsWith('/')||resolve(path)!==path)deny();
   const chain=[];for(let current=path;;current=dirname(current)){chain.unshift(current);if(current==='/')break;}
@@ -91,13 +84,13 @@ export function assertReadiness(nft,proxy,policy,accounts) {
 export function enterWorker(argv,deps) {
   try {
     if(deps.effectiveUid()!==0)deny();
-    const {context,command}=parseArguments(argv);
-    deps.trust();
-    const policy=parsePolicy(deps.readPolicy());const accounts=deps.accounts();validateAccounts(policy,accounts);
-    const entry=validateEntry(context,command,policy,accounts[context.user]);
-    deps.trust(entry);
-    const facts=deps.readiness(policy,accounts);assertReadiness(facts.nft,facts.proxy,policy,accounts);
-    const invocation=buildInvocation(entry);return deps.exec(invocation);
+    const request=parseArguments(argv);deps.trust();
+    if(request.lifetime.operation==='exec'&&request.lifetime.stage!=='cleanup'){
+      const policy=parsePolicy(deps.readPolicy()),accounts=deps.accounts();validateAccounts(policy,accounts);
+      const entry=validateEntry(request.context,request.command,policy,accounts[request.context.user]);deps.trust(entry);
+      const facts=deps.readiness(policy,accounts);assertReadiness(facts.nft,facts.proxy,policy,accounts);
+    }
+    const result=deps.dispatch(request);return result&&typeof result.then==='function'?result.catch(()=>deny()):result;
   } catch {deny();}
 }
 function probe(command,args) {
@@ -156,8 +149,8 @@ export function trustExecutable(path,io=fs) {
   } catch {deny();}
 }
 function trust(entry) {
-  for(const path of [modulePath,fileURLToPath(new URL('./policy.mjs',import.meta.url))])assertTrustedPath(path,{kind:'file',uid:0});
-  for(const path of [process.execPath,'/usr/local/bin/node','/usr/bin/setpriv','/usr/bin/env','/usr/bin/dash','/usr/sbin/nft','/usr/bin/systemctl'])trustExecutable(path);
+  for(const path of [modulePath,...['policy.mjs','stage-lifetime.mjs','install-guest.mjs','probe-guest.mjs'].map(name=>fileURLToPath(new URL('./'+name,import.meta.url)))])assertTrustedPath(path,{kind:'file',uid:0});
+  for(const path of [process.execPath,'/usr/local/bin/node','/usr/bin/setpriv','/usr/bin/env','/usr/bin/dash','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run'])trustExecutable(path);
   assertTrustedPath('/etc/patrick-worker',{kind:'directory',uid:0});
   if(entry)assertTrustedPath(entry.home,{kind:'directory',uid:entry.uid,gid:entry.gid,private:true});
 }
@@ -193,19 +186,29 @@ function serviceFacts() {
   const sockets=fs.readdirSync(`/proc/${pid}/fd`).flatMap(fd=>{try{const target=fs.readlinkSync(`/proc/${pid}/fd/${fd}`);return /^socket:\[\d+\]$/.test(target)?[target.slice(8,-1)]:[];}catch{return [];}});
   return parseProxyFacts(fields,status,fs.readFileSync(`/proc/${pid}/net/tcp`,'utf8'),fs.readFileSync(`/proc/${pid}/net/tcp6`,'utf8'),sockets);
 }
-function productionDependencies() {
-  return {effectiveUid:()=>process.geteuid?.(),trust,readPolicy:()=>JSON.parse(readTrustedFile(policyPath)),accounts:()=>parseAccounts(readTrustedFile('/etc/passwd'),readTrustedFile('/etc/group')),readiness:(policy,accounts)=>({nft:JSON.parse(probe('/usr/sbin/nft',['-j','list','table','inet','patrick_worker'])),proxy:serviceFacts(policy,accounts)}),exec:({command,args})=>{
-    if(typeof process.execve!=='function')deny();
-    process.execve(command,[command,...args],{PATH:'/usr/local/bin:/usr/bin:/bin'});deny();
-  }};
+export function productionDependencies() {
+  const identity=context=>{
+    const passwd=readTrustedFile('/etc/passwd'),all=parseAccounts(passwd,readTrustedFile('/etc/group')),account=all[context.user];
+    const rows=passwd.trim().split('\n').map(line=>line.split(':')).filter(fields=>fields[0]===context.user),shadow=readTrustedFile('/etc/shadow').trim().split('\n').map(line=>line.split(':')).filter(fields=>fields[0]===context.user);
+    if(rows.length!==1||rows[0][6]!=='/usr/sbin/nologin'||shadow.length!==1||!/^[!*]/.test(shadow[0][1]))deny();
+    if(!account||Object.entries(all).some(([name,facts])=>name!==context.user&&(facts.uid===account.uid||facts.gid===account.gid)))deny();
+    if(account.home!==`/var/lib/${context.user}`||account.groups.length)deny();trust({...context,...account});return account;
+  };
+  const admit=async(context,command)=>{
+    const installer=await import('./install-guest.mjs'),state=await installer.inspectInstalled();if(state.fence.status!=='ready')deny();
+    const entry=validateEntry(context,command,state.policy,state.accounts[context.user]);trust(entry);assertReadiness(state.nft(),state.proxy(),state.policy,state.accounts);
+    return {entry,policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash};
+  };
+  const deps={effectiveUid:()=>process.geteuid?.(),trust,readPolicy:()=>JSON.parse(readTrustedFile(policyPath)),accounts:()=>parseAccounts(readTrustedFile('/etc/passwd'),readTrustedFile('/etc/group')),readiness:(policy,accounts)=>({nft:JSON.parse(probe('/usr/sbin/nft',['-j','list','table','inet','patrick_worker'])),proxy:serviceFacts(policy,accounts)}),dispatch:request=>lifecycle.executeStage(request,lifecycle.productionLifetimeDependencies({trust,identity,admit}))};
+  return deps;
 }
 const directInvocation=(()=>{try{return Boolean(process.argv[1]&&fs.realpathSync(resolve(process.argv[1]))===modulePath);}catch{return false;}})();
 if(directInvocation) {
   try {
     // Do not evaluate a sibling module as root until the whole code path is trusted.
-    const loaded=await loadTrustedPolicy({effectiveUid:()=>process.geteuid?.(),trust:()=>{assertTrustedPath(resolve(process.argv[1]),{kind:'file',uid:0});trust();},load:()=>import('./policy.mjs')});
-    ({parsePolicy,validateContext,validateEntry,validateAccounts}=loaded);
-    enterWorker(process.argv.slice(2),productionDependencies());
+    const loaded=await loadTrustedPolicy({effectiveUid:()=>process.geteuid?.(),trust:()=>{assertTrustedPath(resolve(process.argv[1]),{kind:'file',uid:0});trust();},load:async()=>({policy:await import('./policy.mjs'),lifetime:await import('./stage-lifetime.mjs')})});
+    ({parsePolicy,validateContext,validateEntry,validateAccounts}=loaded.policy);lifecycle=loaded.lifetime;
+    const result=await enterWorker(process.argv.slice(2),productionDependencies());if(result?.version===1)process.stdout.write(JSON.stringify(result)+'\n');
   }
   catch {process.stderr.write('Worker entry denied.\n');process.exitCode=78;}
-} else ({parsePolicy,validateContext,validateEntry,validateAccounts}=await import('./policy.mjs'));
+} else {({parsePolicy,validateContext,validateEntry,validateAccounts}=await import('./policy.mjs'));lifecycle=await import('./stage-lifetime.mjs');}
