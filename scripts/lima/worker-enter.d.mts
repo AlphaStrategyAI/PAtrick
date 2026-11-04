@@ -1,0 +1,15 @@
+import type { Account, Entry, GuestContext, GuestPolicy } from './policy.mjs';
+export type Invocation={command:string;args:string[]};
+export type TrustedStat={uid:number;gid:number;mode:number;isFile():boolean;isDirectory():boolean;isSymbolicLink():boolean};
+export type Dependencies={effectiveUid():number|undefined;trust(entry?:Entry):void;readPolicy():unknown;accounts():Record<string,Account>;readiness(policy:GuestPolicy,accounts:Record<string,Account>):{nft:unknown;proxy:unknown};exec(invocation:Invocation):unknown};
+export function loadTrustedPolicy<T>(deps:{effectiveUid():number|undefined;trust():void;load():Promise<T>}):Promise<T>;
+export function parseArguments(argv:string[]):{context:GuestContext;command:string[]};
+export function buildInvocation(entry:Entry):Invocation;
+export function assertTrustedPath(path:string,options:{kind:'file'|'directory';uid:number;gid?:number;private?:boolean},io?:{lstatSync(path:string):TrustedStat}):void;
+export function trustExecutable(path:string,io?:{lstatSync(path:string):TrustedStat;readlinkSync(path:string,options:{encoding:'buffer'}):Buffer}):void;
+export function readTrustedFile(path:string,max?:number,io?:{lstatSync(path:string):TrustedStat;openSync(path:string,flags:number):number;fstatSync(fd:number):TrustedStat&{size?:number};readFileSync(fd:number,encoding:string):string;closeSync(fd:number):void}):string;
+export function parseAccounts(passwd:string,groups:string):Record<string,Account>;
+export function parseServiceProperties(text:string):Record<string,string>;
+export function parseProxyFacts(properties:Record<string,string>,status:string,tcp:string,tcp6:string,socketInodes:string[]):{user:string;uid:number;gid:number;groups:number[];mainPid:number;activeState:string;subState:string;listeners:{address:string;port:number;uid:number;pid:number}[]};
+export function assertReadiness(nft:unknown,proxy:unknown,policy:GuestPolicy,accounts:Record<string,Account>):void;
+export function enterWorker(argv:string[],deps:Dependencies):unknown;

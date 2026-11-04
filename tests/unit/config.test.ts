@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { readConfig, projectSchema } from '../../src/config.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('configuration', () => {
+  function withWorkers(workers: unknown) {
+    const dir=mkdtempSync(join(tmpdir(),'patrick-worker-config-'));
+    try { const file=join(dir,'config.json');writeFileSync(file,JSON.stringify({workers}));return readConfig({PATRICK_CONFIG:file}); }
+    finally { rmSync(dir,{recursive:true,force:true}); }
+  }
+  const worker={command:'fixture',args:[],isolation:'lima',instance:'fixture'};
+  it('resolves dedicated default guest identities and accepts an explicit dedicated identity',()=>{
+    expect(withWorkers({grok:worker,codex:{...worker,guestUser:'patrick-review'}}).workers).toMatchObject({grok:{guestUser:'patrick-grok'},codex:{guestUser:'patrick-review'}});
+  });
+  it.each(['root','admin','1000','--root','patrick-a b','patrick-a\nb','patrick-a\n','patrick-a\r','patrick-a;id','patrick-'+ 'a'.repeat(25),'patrick-1','patrick-'])('rejects unsafe guest identity %j',guestUser=>{
+    expect(()=>withWorkers({grok:{...worker,guestUser}})).toThrow();
+  });
+  it('rejects explicit and omitted-default identity collisions on one instance',()=>{
+    expect(()=>withWorkers({grok:worker,codex:{...worker,guestUser:'patrick-grok'}})).toThrow();
+    expect(()=>withWorkers({grok:{...worker,guestUser:'patrick-shared'},codex:{...worker,guestUser:'patrick-shared'}})).toThrow();
+    expect(()=>withWorkers({grok:worker,codex:{...worker,guestUser:'patrick-grok',instance:'other'}})).not.toThrow();
+  });
   const project = { id: 'p', projectId: 'p', domain: 'personal', name: 'Notes', repository: 'owner/repo', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], ownerId: 'owner' };
 
   it.each([0, .01, 5, 10000])('preserves a finite project budget of %s', budgetUsd => {

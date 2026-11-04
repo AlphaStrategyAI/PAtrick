@@ -28,12 +28,21 @@ const policySchema = z.object({
   provider: z.string().min(1), model: z.string().min(1), admitted: z.boolean(),
   costPerRunUsd: z.number().nonnegative(), independentReview: z.boolean().default(false),
 });
-const workerSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]), timeoutMs: z.number().int().min(1000).max(3600000).default(180000), isolation:z.literal('lima'), instance:z.string().regex(/^[a-zA-Z0-9_-]+$/) });
+const workerSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]), timeoutMs: z.number().int().min(1000).max(3600000).default(180000), isolation:z.literal('lima'), instance:z.string().regex(/^[a-zA-Z0-9_-]+$/), guestUser:z.string().regex(/^patrick-[a-z][a-z0-9-]{0,23}$/).optional() });
 const fileSchema = z.object({
   projects:z.array(projectSchema).default([]), runnerPolicies:z.array(policySchema).optional(),
   workers:z.object({grok:workerSchema.optional(),dsh:workerSchema.optional(),codex:workerSchema.optional()}).default({}),
   egressPolicies:z.array(z.object({domain:z.string().min(1),research:z.boolean(),feishu:z.boolean()})).default([{domain:'personal',research:true,feishu:true}]),
-}).strict();
+}).strict().superRefine((config,ctx)=>{
+  const identities=new Set<string>();
+  for(const [runner,worker] of Object.entries(config.workers)) {
+    if(!worker)continue;
+    worker.guestUser??=`patrick-${runner}`;
+    const identity=`${worker.instance}:${worker.guestUser}`;
+    if(identities.has(identity))ctx.addIssue({code:'custom',message:'Worker guest identities must be distinct on each instance.',path:['workers',runner,'guestUser']});
+    identities.add(identity);
+  }
+});
 
 export function defaultPolicies(): RunnerPolicy[] {
   return (['grok','dsh','codex'] as const).map(runner => ({runner,roles:[...roles],domains:['personal'],provider:runner==='grok'?'xai':runner==='dsh'?'deepseek':'openai',model:'unconfigured',admitted:false,costPerRunUsd:0,independentReview:false}));

@@ -148,7 +148,7 @@ export interface RunnerPolicy { runner: Runner; roles: Role[]; domains: string[]
 export interface AppConfig {
   mode: 'live' | 'demo' | 'test'; host: string; port: number; dataDir: string; vaultDir: string; ownerId: string;
   authToken: string; sessionSecret: string; projects: Project[]; runnerPolicies: RunnerPolicy[];
-  workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string }>>;
+  workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string; guestUser?: string }>>;
   githubToken?: string; gitlabToken?: string; gitlabUrl?: string;
   feishu?: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
   researchUrl?: string; researchToken?: string; scanIntervalMs: number;

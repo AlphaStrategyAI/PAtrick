@@ -1,0 +1,8 @@
+export type GuestContext={runner:string;user:string;projectId:string;domain:string};
+export type GuestPolicy={readonly version:1;readonly proxyUser:'patrick-proxy';readonly workers:ReadonlyArray<Readonly<GuestContext&{proxyPort:number;hosts:readonly string[]}>>;readonly deniedCidrs:readonly string[]};
+export type Account={uid:number;gid:number;home:string;groups:number[]};
+export type Entry=Readonly<GuestContext&{uid:number;gid:number;home:string;proxyPort:number;command:readonly string[]}>;
+export function validateContext(raw:unknown):GuestContext;
+export function parsePolicy(raw:unknown):GuestPolicy;
+export function validateEntry(context:GuestContext,command:string[],policy:GuestPolicy,account:Account):Entry;
+export function validateAccounts(policy:GuestPolicy,accounts:unknown):Record<string,Account>;
