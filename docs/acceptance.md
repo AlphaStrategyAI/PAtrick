@@ -4,7 +4,7 @@
 
 ## 当前口径与快速上下文
 
-2026-11-04 结果复核 v4 的完整 `npm run check` 退出 0：27 套件 299/299、类型检查、构建与 PRD 校验通过；Chromium 15/15、0 跳过（20.8 秒）。最终独立源码复核 spec/quality 均通过，19/19 文件摘要匹配、无未解决发现。R032 仅勾本地 `C`；历史记录、修复与限制见 [验证报告](test-report.md)。以下条目保留逐项验收口径；代码局部通过不能使含 `L/O/F` 的整项自动通过。`demo/test` 只能证明本地行为；真实仓库、飞书、模型隔离、后台额度、网络和异机恢复仍须另验。
+2026-11-04 飞书与 Lima home 修复后的当前源码完整 `npm run check` 退出 0：27 套件 313/313、类型检查、构建与 PRD 校验通过；当前界面 Chromium 15/15（19.2 秒），Lima 修复未改界面源码。飞书聚焦 30/30、6 文件独立源码复核与限定本人私聊传输见 `E-FEISHU-WS`；Lima home 的 RED/GREEN、独立复核及实际 guest/合成 runner 三种结果见 `E-LIMA-LOCAL`。最终文档审计、发布及精确 head CI 仍待完成；飞书阶段 311 和结果复核 v4 的 299/299、15/15（20.8 秒）保留为历史证据。R032 仅勾本地 `C`；代码/限定传输不完成决策卡或七层业务验收，不使含 `L/O/F` 的整项自动通过。原完整范围、生产 Mac mini、运维/未来要求保持活动；非特权模型执行、获准出口、真实后台额度与异机恢复仍须另验。详见 [验证报告](test-report.md)。
 
 **下一会话必读上下文（少于 500 字）**：第一目标仅是一个产品的 `productIdeas` 到 GitHub 正式 PRD。单 Node.js 24/TypeScript ESM；Hono SSR 与普通 JS/CSS；better-sqlite3/FTS5、Zod、Vitest、Playwright。`src/domain.ts` 为接口源，宿主写账本/卡片/外部对象，worker 只建议或隔离补丁。知识/案例/初判默认 Grok，执行默认 Grok、项目可选 dsh；规划/反馈默认 Codex，检查优先不同于实际执行者，最多两轮返修。任务、发件、尝试、答复、来源均稳定去重；撤回先失效，旧尝试/旧答复拒收。本人选择先中英文查证，再 A/B/C，等待无限期释放 worker。可信必需检查须非空且匹配当前 head/App，合并 SHA 读回和反馈回执才交付。外部前提未知就记录未就绪，不自动修改全局配置。
 
@@ -32,7 +32,7 @@
 - [ ] R002 `C` 未来 Python 解析器只交换带版本数据；首版不因可选组件增加第二套常驻业务栈。定位：详细设计模块边界、依赖清单。
 - [ ] R003 `C` 若移植 Super Agent 固定 `6337fc8` 的键/恢复样例，稳定键补授权域、仓库、来源对象和修订，保留 MIT 声明、固定来源及改动；未移植时明确写“未复制”。定位：`THIRD_PARTY_NOTICES.md`、稳定键回归。
 - [ ] R004 `C` 不依赖上游 `private` 包未公开的 `./core`；讨论新消息路由已订阅任务，长期任务与单次运行分离，等待本人释放 worker。定位：采集/调度/编排集成回放。
-- [ ] R005 `C+L` 发消息前持久化意图，重发前按目标线程、发送方和稳定标记查回执；同一任务账本承载收发。定位：`src/store.ts`、`src/integrations/feishu.ts`；故障：发送成功后本地写回前崩溃。
+- [ ] R005 `C+L` 发消息前持久化意图，重发前按目标线程、发送方和稳定标记查回执；同一任务账本承载收发。定位：`src/store.ts`、`src/integrations/feishu.ts`；故障：发送成功后本地写回前崩溃。部分实链证据：`E-FEISHU-WS` 已验配置通知和两条状态回复的远端精确回执、重启后零重复；崩溃窗口与业务卡片仍待验。
 - [ ] R006 `C+L` 入库前过滤权限、宿主受控写入、模型仅给建议/补丁；无关联 PR、零项 CI 或模型自述均不能交付。定位：知识/写入器/工作流反例回放。
 
 ## B. 七层与来源采集（技术方案 §3、§3「⑦的消息怎样进入①」）
@@ -44,7 +44,7 @@
 - [ ] R011 `C` A/B 保存冻结建议，C 保存本人原话及范围；项目事实保留来源和作者；工具推测待核。定位：`src/standards.ts`、问答回放。
 - [ ] R012 `C` 临时查询可留任务历史；切换通知、回执和机器人回流只留允许审计，不变本人原则、不触发采集循环。定位：采集用途过滤。
 - [ ] R013 `C` 身份未核/迟到答复不得成为已采纳本人原则；消息编辑/撤回使关联事实、规则和待办重新核实。定位：标准/撤回集成测试。
-- [ ] R014 `C+L` 当下权限控制正文、案例摘录和索引清理，仅保留获准版本/撤回标记；临时处理的正文与派生内容不进入长期 Vault。定位：ephemeral 与撤回测试，实际数据目录检查。
+- [ ] R014 `C+L` 当下权限控制正文、案例摘录和索引清理，仅保留获准版本/撤回标记；临时处理的正文与派生内容不进入长期 Vault。定位：ephemeral 与撤回测试，实际数据目录检查。部分实链证据：`E-FEISHU-WS` 仅验配置 nonce 重启后未见于 SQLite/WAL/SHM/Vault；不扩称所有临时业务内容已验。
 - [ ] R015 `C` 源修改、撤回和新消息不会静默覆盖冲突、遗失已接收修订或绕开任务版本。定位：修订竞争/旧任务重判回放。
 
 ## C. 事实、知识和检索（技术方案 §3「② 谁整理事实与知识」）
@@ -88,7 +88,7 @@
 ## F. 角色、版本、预算与恢复（技术方案 §3「首版 worker 分工」）
 
 - [ ] R045 `C+L` 知识提取/案例提取/初判/默认执行为 Grok，规划/检查/反馈为 Codex；显式执行可 dsh；实链记录每个角色实际 runner/model/provider/权限/费用。定位：`Attempt` 与角色轨迹。
-- [ ] R046 `C+L` dsh 经 ACP，Grok 非交互 CLI，Codex `codex exec`，统一任务/版本/角色/获准上下文/输出 Schema；同接口回放通过且域/提供方/权限/费用准入才可选。定位：worker 适配器/doctor。
+- [ ] R046 `C+L` dsh 经 ACP，Grok 非交互 CLI，Codex `codex exec`，统一任务/版本/角色/获准上下文/输出 Schema；同接口回放通过且域/提供方/权限/费用准入才可选。定位：worker 适配器/doctor。部分证据：`E-LIMA-LOCAL` 已走实际 Lima/SSH/guest Node 的编译适配器与合成 CLI runner；CLI/ACP 共用 home 选择边界，但未验真实 Grok/Codex/dsh、ACP 提供方、模型/权限/费用准入。
 - [ ] R047 `C` 方案含目标、基线、步骤、允许路径、测试、停止条件；宿主校验后才执行。检查和规划独立只读，测试代码在隔离区。定位：plan schema、执行准入反例。
 - [ ] R048 `C` 检查绑定同需求版本、方案摘要、实际产物摘要；返修自动回执行，方案/基线改变重规划/检查，最多两轮且总预算限制。定位：返修/旧 hash/预算测试。
 - [ ] R049 `C+L` 发布前检查、可信 CI、合并读回共同支持交付；真实回执交反馈角色，反馈失败保持未完成并自动重试，规则候选仍走标准校验。定位：回执/反馈故障回放。
@@ -113,22 +113,22 @@
 - [ ] R062 `C` 某语言缺证换词并留缺口；能支持两建议可明示不确定，否则待补证重试，不能编造第二建议。定位：研究不足测试。
 - [ ] R063 `C+L` 卡恰好 A 首选、B 第二建议、C 自由决定；A/B 具体做法、适合条件、取舍、依据齐全，C 原样绑定本题/范围。定位：Schema、HTML/飞书卡/实答。
 - [ ] R064 `C` 按本人、问题编号、卡片和任务版本接纳一次并续办；旧答复重判断不执行旧选项，未授权和重复答复不唤醒两次。定位：问答竞争/重放测试。
-- [ ] R065 `C+L` 飞书可查询/作答，源自文件主动私聊；MCP 供工具查资料/提问；关联原讨论，工具重连按编号取答、回送原发起方。定位：飞书/MCP 实际记录。
-- [ ] R066 `C+L` 等人释放 worker、离线按水位补读；本人同答同时续办/长期记忆时仅一次任务、一修订、一案例。定位：实时/补读同源回放。
+- [ ] R065 `C+L` 飞书可查询/作答，源自文件主动私聊；MCP 供工具查资料/提问；关联原讨论，工具重连按编号取答、回送原发起方。定位：飞书/MCP 实际记录。部分实链证据：`E-FEISHU-WS` 已验本人 `/status` 查询/回复；业务作答、原讨论/工具续办仍待验。
+- [ ] R066 `C+L` 等人释放 worker、离线按水位补读；本人同答同时续办/长期记忆时仅一次任务、一修订、一案例。定位：实时/补读同源回放。部分实链证据：`E-FEISHU-WS` 已验完整历史、重启和状态回复无重复；同一业务答案只续办/采集/建案一次仍待实答验收。
 
 ## I. 工作台与安全交互（技术方案 §3⑥ 与约定设计）
 
 - [ ] R067 `C+L` Hono SSR 三栏“正在处理/等我回答/建议与结果”，显示最后进展、理由、证据链接，技术故障在任务旁。定位：工作台与截图/浏览器断言。
 - [ ] R068 `C` UI 只读 `TaskView`，答复走第七层；关闭页面、IDE、Obsidian 不停止服务。定位：HTTP/编排分离测试和后台实测。
 - [ ] R069 `C` 暖象牙白/森林绿、左栏六视图、任务抽屉、A/B/C、键盘与小屏、空/故障/过期状态完整；无 JS 表单仍可回答。定位：`tests/e2e`。
-- [ ] R070 `C+L` 网页认证私网访问，答复验证会话/本人/任务版本，状态和日志不泄露凭据或越域正文。定位：认证/HTML 转义/跨域测试、网络记录。
+- [ ] R070 `C+L` 网页认证私网访问，答复验证会话/本人/任务版本，状态和日志不泄露凭据或越域正文。定位：认证/HTML 转义/跨域测试、网络记录。部分实链证据：`E-FEISHU-WS` 的 loopback `/api/state` 匿名 401/本人 Bearer 200 与无 token webhook 403；私网访问及实际业务答复仍待验。
 
 ## J. 首条 MVP 与正式交付（技术方案 §4）
 
 - [ ] R071 `C+L` 仅一个目录/产品/仓/允许路径/可信 CI/本人飞书/模型出口/费用上限；初始事实规则有已有 PRD 与明确决定，新点子待验证假设。定位：配置与真实试点记录。
 - [ ] R072 `C+L` 正常保存想法即可采集、找原句与竞品/用户证据、取有效标准、Grok 初判；按任务编号查询证据/标准，工作台自动反映进度。定位：零问任务轨迹。
 - [ ] R073 `C` 相互冲突保留范围差异，中文英文查实践/反例，A/B 与 C 均绑定当前来源；资料更新重判断，只唤醒原任务一次。定位：草稿恢复冲突样例。
-- [ ] R074 `C+L` Codex 方案→Grok/已准入 dsh 补丁/测试→Codex 对实际结果检查，失败自动返修。定位：实际尝试/方案与补丁摘要。
+- [ ] R074 `C+L` Codex 方案→Grok/已准入 dsh 补丁/测试→Codex 对实际结果检查，失败自动返修。定位：实际尝试/方案与补丁摘要。部分证据：`E-LIMA-LOCAL` 已验 guest 方案测试成功、失败覆盖伪报成功和 CLI 错误后的清理；未执行真实规划→模型补丁→独立模型检查/返修。
 - [ ] R075 `C+L` 写入器重验最新授权/来源/路径；可信必需检查列表和可信 App 列表非空，当前 PR head 每项逐一成功。缺项/跳过/未知 App/基线变化阻塞或重验。定位：写入器反例与一次预期失败真实 CI。
 - [ ] R076 `C+L` 合并后读回 `目标仓/PRD路径@合并SHA`，记录内容摘要；反馈基于该回执，宿主登记并回送原任务；模型输出不能充当 CI/merge 证明。定位：平台原回执及读回。
 - [ ] R077 `L` 真实允许自动合并仓各一例零问交付与只答一次交付；关闭 IDE/Obsidian/工作台，仍留七层、Grok 初判、Codex 方案、Grok/dsh 执行、Codex 检查/反馈和合并回执。
@@ -138,8 +138,8 @@
 
 ## K. 主机、隔离、同步与备份（技术方案 §5）
 
-- [ ] R081 `O` mini 24 GB/200 GB 空余运行 launchd 服务，一次一个 worker；Pro 16 GB/100 GB 空余用于开发/恢复，实际容量不足须记缺口。
-- [ ] R082 `C+O` 三 runner 统一 Lima，按角色只读材料/可写任务副本；移除默认挂载、禁 SSH agent 转发、只交任务材料、限出口/日志上传；仓写凭据只在 VM 外写入器。
+- [ ] R081 `O` mini 24 GB/200 GB 空余运行 launchd 服务，一次一个 worker；Pro 16 GB/100 GB 空余用于开发/恢复，实际容量不足须记缺口。部分证据：`E-LIMA-LOCAL` 为当前 Pro 的 2 CPU/4 GiB/30 GiB 局部 VM 试运行；未验生产 mini、launchd 或持续容量/压力。
+- [ ] R082 `C+O` 三 runner 统一 Lima，按角色只读材料/可写任务副本；移除默认挂载、禁 SSH agent 转发、只交任务材料、限出口/日志上传；仓写凭据只在 VM 外写入器。部分证据：`E-LIMA-LOCAL` 已验实际 guest 无主机目录挂载/agent、指定凭据变量缺失、SSH 限制、特殊主机回环拒绝及三例任务清理；guest 默认用户可 sudo，非特权执行、出口白名单/上传限制和三真实 runner 均未准入。
 - [ ] R083 `O` 公司材料/凭据留获准设备/网络，仅回允许字段；手机经飞书、网页经认证私网；不因个人账号可用就扩大域授权。
 - [ ] R084 `C+O` 业务文件按允许范围同步；Git 确定发布版本、各机独立副本；mini 原子发布卡，其他端编辑作为来源，冲突保留两侧，任务经 API 读。
 - [ ] R085 `C+O` 活动 DB/WAL/凭据在同步目录外；SQLite 在线一致备份与 restic 每日加密到获准异机，包含 Vault 版本和撤回记录。
@@ -157,7 +157,7 @@
 ## M. 分期、扩展与持续门禁（技术方案 §6）
 
 - [ ] R093 `L` 0–6 小时逐角色验 Grok 后台权限、Codex 规划/检查/反馈费用隔离、首选/备选实际提供方/权限/费用及 dsh ACP；至少一个备选准入才验自动切换。
-- [ ] R094 `L` 同期验 GitHub App/必需检查、飞书私聊/补读、Shadowrocket，真实预期失败 CI 能挡合并。
+- [ ] R094 `L` 同期验 GitHub App/必需检查、飞书私聊/补读、Shadowrocket，真实预期失败 CI 能挡合并。部分实链证据：`E-FEISHU-WS` 已验飞书本人私聊历史及状态往返；Shadowrocket 与真实预期失败 CI 阻断仍待验。
 - [ ] R095 `L` 首目标 36 小时同一产品七层；没过优先后段修此链，不提前声称通过；6–36 小时含一个 MCP、零问/三选一/通知/返修/恢复、按合并文件验。
 - [ ] R096 `C+L` 36–52 小时中移植上游最多 4 小时，其余验撤回/重复/副作用/备份/双 VPN；依赖拖慢则保留协议/故障样例。
 - [ ] R097 `F` 52–82 小时先收益最高一条；开发从合并 PRD 派发同规划→执行→检查→反馈，同提交测试，追 GitHub PR/内网 GitLab MR、发布错误率与必要回滚。
@@ -172,21 +172,25 @@
 
 ## 可复现验收记录
 
-证据记录应追加在本节并引用对应 R 编号；`E-CODE`、`E-RUNNER`、`E-JUDGMENT`、`E-OUTCOME`、`E-FEISHU-CONFIG` 和 `E-REMOTE-CI` 分别记录初始本地验证、角色选择、判断历史修复、结果复核本地验证、飞书有限配置探测及已发布提交 CI，其余实链记录仍待真实证据，不能用本地结果替代。
+证据记录应追加在本节并引用对应 R 编号；`E-CODE`、`E-RUNNER`、`E-JUDGMENT`、`E-OUTCOME`、`E-FEISHU-CONFIG`、`E-FEISHU-WS`、`E-LIMA-LOCAL` 和 `E-REMOTE-CI` 分别记录初始本地验证、角色选择、判断历史修复、结果复核本地验证、飞书历史配置探测、限定飞书传输、局部 Lima 试运行及已发布提交 CI，其余实链记录仍待真实证据，不能用本地结果替代。
 
 - `E-CODE`（初始候选历史记录）：Node 24.22.2；`npm run check` 退出 0，18 套件 135 测试全部通过；`npm run test:e2e` 退出 0，14 测试通过、0 跳过；语句覆盖 85.95%、分支 79.68%。角色选择阶段补验见 `E-RUNNER` 的 166 测试；当前判断历史补验见 `E-JUDGMENT` 的 186 测试，覆盖率均未重新采样。时间、测试范围、截图与未验收边界见 [验证报告](test-report.md)。自动测试使用替身远端和独立演示库，未进行真实外写。
 - `E-RUNNER`：2026-11-03 17:42（Asia/Shanghai），新增 30 项调度回放及 1 项 HTTP 持久化回归通过；完整 `npm run check` 19 套件 166/166、类型检查、构建与 PRD 校验通过；浏览器 14/14（18.9 秒），含显式 dsh 配置持久化。独立复核 54/54 相关测试通过，无 P1/P2 问题。
 - `E-JUDGMENT`：2026-11-03 18:31（Asia/Shanghai），`npm run check` 退出 0，21 套件 186/186、类型检查、构建与 PRD 校验通过；Chromium 14/14（20.1 秒），无跳过。新增 14 项真实 Store/编排回归及 6 项 HTTP 界面回归：A/B/C 与零问初判、当时规则内容/版本、预测未知、案例/问题绑定、回执结果幂等追加、旧记录兼容、临时证据边界、仅历史快照引用的来源撤回、重启及 HTML 转义。最初 7 项、临时证据 2 项和历史依赖 1 项分别先观察到预期失败，再修复通过；独立复核最终 20/20，无未解决 P1/P2。此记录仅证明 R030 及 R032 部分本地契约，未证明到期复核或业务效果。
-- `E-REMOTE-CI`：初始提交 `ac442a50634b22d1852551b47dd224cbaffc48ab` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41610890461)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41612244871) 两次检查成功；角色选择提交 `b4731af93d1a55b8aecd8953fe07436a11511560` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616272079)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616278964) 也成功。名称均为 `validate`、App ID `15368`，head SHA 与各自提交一致。判断历史提交 `a551e8b51c39c047deecc6c05fe3e59c9760fd22` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621656878)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621665508) 也成功，均为 `validate`、GitHub Actions App `15368`、匹配该完整 head。这些结果只绑定对应提交；本地结果复核提交尚未发布/核对 CI。这是代码 CI 证据，不是七层真实业务交付；默认分支合并授权仍待用户答复。
-- `E-OUTCOME`（2026-11-04，最终 v4 本地证据）：Node 24.22.2；`npm run check` 退出 0，27 套件 299/299、typecheck/build/PRD 校验通过；Chromium 退出 0，15/15、0 跳过、20.8 秒。修复覆盖 172/172（14 文件），含 19 项跨模块回归：部分引文/历史/嵌套/案例副本撤回、父来源更替、旧 SQLite/新 Vault 身份篡改、两种文件顺序下真实 `Workbench.answer` 接纳后的双来源恢复、本人 API 边界、已接纳失败检查历史/快照/版本及临时隐私。最终独立源码复核 spec/quality 通过，19/19 摘要匹配，0 未解决发现；先前跨模块阻塞均关闭。UI v2 实测 1440/375 px 文档等宽、无主内容溢出、清空后的本地 console 无错误，4 个复核对象和回执待复核文字可见；[桌面](screenshots/outcomes-desktop.png)/[手机](screenshots/outcomes-mobile.png)。UI v1 的 277、v2 中间候选 292 以及首轮浏览器 14 过/1 失败保留为历史，详见验证报告；覆盖率未重采样。仅证明 R032 本地契约，旧版已覆盖的失败历史无法重建，未证明业务效果或实链交付。新补丁尚未发布/核对当前 CI，独立文档审计随后进行。
-- `E-FEISHU-CONFIG`：私有应用凭据有限探测实际取得 tenant token（HTTP 200/code 0），bot info HTTP 200/code 0、名称 PAtrick、activationStatus 2；WebSocket discovery HTTP 200/code 0，endpointIssued true，但 connected false、messages 0。未公布 token/secret/私有凭据路径，未发消息或业务写入。用户已选一次性配对，实际本人 Open ID/私聊 Chat ID 绑定仍待完成，历史权限、事件收取及双向业务闭环未验收；应用认证/发现不完成实链门禁。
+- `E-REMOTE-CI`：初始提交 `ac442a50634b22d1852551b47dd224cbaffc48ab` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41610890461)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41612244871) 两次检查成功；角色选择提交 `b4731af93d1a55b8aecd8953fe07436a11511560` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616272079)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616278964) 也成功。名称均为 `validate`、App ID `15368`，head SHA 与各自提交一致。判断历史提交 `a551e8b51c39c047deecc6c05fe3e59c9760fd22` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621656878)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621665508) 也成功，均为 `validate`、GitHub Actions App `15368`、匹配该完整 head。结果复核基线 `426d92861835ecda196b78f212aedfc136591915` 随后通过 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41759409622)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41759414164) 精确 head 的 `validate`、GitHub Actions App `15368` 检查。这些历史结果只绑定各自提交；当前飞书与 Lima home 补丁尚待发布/核对精确 head CI。这是代码 CI 证据，不是七层真实业务交付；默认分支合并授权仍待用户答复。
+- `E-OUTCOME`（2026-11-04，最终 v4 本地证据）：Node 24.22.2；`npm run check` 退出 0，27 套件 299/299、typecheck/build/PRD 校验通过；Chromium 退出 0，15/15、0 跳过、20.8 秒。修复覆盖 172/172（14 文件），含 19 项跨模块回归：部分引文/历史/嵌套/案例副本撤回、父来源更替、旧 SQLite/新 Vault 身份篡改、两种文件顺序下真实 `Workbench.answer` 接纳后的双来源恢复、本人 API 边界、已接纳失败检查历史/快照/版本及临时隐私。最终独立源码复核 spec/quality 通过，19/19 摘要匹配，0 未解决发现；先前跨模块阻塞均关闭。UI v2 实测 1440/375 px 文档等宽、无主内容溢出、清空后的本地 console 无错误，4 个复核对象和回执待复核文字可见；[桌面](screenshots/outcomes-desktop.png)/[手机](screenshots/outcomes-mobile.png)。UI v1 的 277、v2 中间候选 292 以及首轮浏览器 14 过/1 失败保留为历史，详见验证报告；覆盖率未重采样。仅证明 R032 本地契约，旧版已覆盖的失败历史无法重建，未证明业务效果或实链交付。该结果复核基线后续发布及 CI 见 `E-REMOTE-CI`；当前飞书与 Lima home 补丁的发布/精确 head CI 与独立文档审计另待完成。
+- `E-FEISHU-CONFIG`：私有应用凭据有限探测实际取得 tenant token（HTTP 200/code 0），bot info HTTP 200/code 0、名称 PAtrick、activationStatus 2；WebSocket discovery HTTP 200/code 0，endpointIssued true，但 connected false、messages 0。未公布 token/secret/私有凭据路径，未发消息或业务写入。这是较早发现阶段的记录，当时本人绑定、历史与往返仍待验证；后续限定传输结果见 `E-FEISHU-WS`。应用认证/发现不完成实链门禁。
+- `E-FEISHU-WS`（2026-11-04，限定代码/实链）：完整 `npm run check` 退出 0，27 套件 311/311、typecheck/build/PRD 校验通过；聚焦配置/飞书 30/30（4/26），修复前观察到 7 项有效失败；6 文件冻结摘要匹配，独立源码复核无未解决发现。代码覆盖 WS 不依赖 HTTP token、历史与本人/私聊/域/出口门槛、无 token 的各类 HTTP 回调 403、有效加密/签名/时效/正文绑定及 `/pair` 配置输入的实时/历史/重启隐私。实链由获准一次性人类挑战完成私有绑定和回执，监听器随后关闭并移除命令；历史 HTTP 200/code 0。正常生产入口独立私有 live 目录、loopback、无 runner/worker、autoMerge false、研究关闭，未传 writer 凭据/模型 key。配置通知走持久 outbox 实际发送并按正文/标记/发送 app 远端核验；干净重启后完整历史有 2 条不同 `/status`、2 次接纳、2 次发送、2 次精确远端 get 核验、0 重复标记、0 worker 尝试。配置 nonce 仅进程内对比 SQLite/WAL/SHM/Vault 字节，重启后未持久化；未打印命令/nonce/私有正文/ID。HTTP 匿名 state 401、本人 Bearer 200、无 token webhook 403。私有配对工具不是交付的公共 CLI/API；后续当前界面 Chromium 15/15（19.2 秒）通过，Lima 修复未改界面源码；最终文档审计、发布、精确 head CI 待完成。未验交互卡作答续办、模型/计费、PRD 交付、launchd、异机恢复，不勾整项 C+L。合法输入仍保留并阻塞等待已准入隔离模型；没有指标 feed，业务效果继续观察。
+- `E-LIMA-LOCAL`（2026-11-04，当前 MacBook Pro 局部运维/传输证据）：固定官方 Lima 开发提交 `f1f3cec7265175a7c1ced22cfc228ce4eb73aa96`（完整 SHA 版本，非已发布 2.3），Go 1.27.3/SDK 27.2 构建、签名及两模板验证通过；稳定版 2.2.1 缺模板所需 hostLoopback，未降低最低版本/隔离项。单个官方 Ubuntu 镜像 616,522,752 字节，SHA-256 `50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e`；同件 HTTPS 恢复下载验摘要后仅 URL 换为私有本地路径，无未固定 fallback。独立 home 无全局 default/override/base；实际 Running 为 2 CPU/4 GiB/30 GiB、Ubuntu 24.04.5 ARM64、Node 24.22.2/npm 11.19.1。无主机目录挂载、/Users、agent 或指定凭据变量；SSH 禁 agent/X11、identitiesonly yes、控制监听仅回环；guest 到 Lima 网关别名的 4320 端口 与 192.168.5.2:4320 被拒，宿主 health 前后 200。实际编译适配器/SSH/guest Node/生产 prepare/tests/cleanup，仅合成 runner，3/3 预期结果（方案测试成功、真实测试失败覆盖伪报成功、CLI exit 17），3 工作区均移除，fixture/ledger 已移除。模型调用 0、费用 $0、私有 live 配置未改/worker 仍未准入。LIMA_HOME 显式可选白名单修复：RED 1 失败/4 通过，GREEN 5/5、typecheck 通过，独立 spec/quality 与两摘要通过；CLI/ACP 共用传输，无通配设置/代理/凭据继承。父任务最终 check 于 12:08:22（Asia/Shanghai）退出 0：313/313、27 套件及 typecheck/build/PRD 校验；11:35 当前界面 Chromium 15/15（19.2 秒），Lima 未改 UI，替代当前源码 311 口径。guest 管理员可 sudo，非特权执行、获准出口/日志上传、真实提供方安装/登录/权限/计费/换手、取消/离线清理、完整 worker 准入与生产 mini/launchd/异机恢复仍未验；不勾整项 C+L/C+O，不改原完整范围。无公共 VM/probe helper。固定官方链接、运行收据及限制见 [报告](test-report.md#bounded-local-lima-trial-and-home-selection)。
 - `E-DIRECT`：零问真实任务，源修订、七层事件、全角色 runner、PR、checks/App/head、merge SHA、PRD 读回摘要、反馈/飞书回执。当前：未验收。
 - `E-ANSWER-A/B/C`：三个独立问题或重放隔离场景，双语原文记录、冻结选项、本人/版本、接纳一次、续办一次、来源一次、案例一次及交付。当前：未验收。
 - `E-FAULTS`：七个角色逐一首选不可用，通知离线、全不可用、漏文件事件、重复答复、旧尝试、PR 后断网、CI 缺项/跳过/head 变化、两轮返修、超预算。每项记录触发点、状态与业务效果数。当前：未验收。
 - `E-MEMORY`：真实讨论精确引用、Grok 提取换手、同源实时/补读、模型观察与本人原则、撤回+重建、工具实际取得/使用标识及撤回后新会话。当前：未验收。
-- `E-OPS`：Lima 挂载/转发/网络/凭据边界，launchd 后台，独占写入资格，在线备份/restic/恢复，双 VPN 组合实测和路径修复日志。当前：未验收。
+- `E-OPS`：Lima 挂载/转发/网络/凭据边界，launchd 后台，独占写入资格，在线备份/restic/恢复，双 VPN 组合实测和路径修复日志。当前：仅 `E-LIMA-LOCAL` 的局部试运行已记录，完整运维门禁未验收。
 
-外部前提缺口登记：目标仓与允许路径、自动合并策略及人审政策；必需 checks 和可信 App IDs；GitHub App 短期凭据；飞书本人 ID/私聊/历史补读权限；Grok/dsh/Codex 逐角色真实后台费用和提供方域准入；Lima 与获准出口；Shadowrocket/Tunnelblick 本机可验证命令；备份异机位置与接管资格。以上配置必须来自获准环境，禁止用示例值冒充验证结果。
+本人费用政策：仅用 Grok/Codex 现有订阅所含额度，不追加计费；账户实际后台权益和付费溢出控制尚未核验，本地费用预留/预算不能代替支出授权，本次试运行不授权真实模型调用或提供方准入。
+
+外部前提缺口登记：目标仓与允许路径、自动合并策略及人审政策；必需 checks 和可信 App IDs；GitHub App 短期凭据；飞书当前版本交互卡答复/续办与业务故障恢复（本人 ID/私聊/历史和状态往返限定验证见 `E-FEISHU-WS`）；Grok/dsh/Codex 逐角色真实后台费用和提供方域准入；Lima 完整 worker 准入（局部证据见 `E-LIMA-LOCAL`）与获准出口；Shadowrocket/Tunnelblick 本机可验证命令；备份异机位置与接管资格。以上配置必须来自获准环境，禁止用示例值冒充验证结果。
 
 ## 实施后更新规则
 

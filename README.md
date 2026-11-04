@@ -18,7 +18,7 @@ In **Standards → 结果复核**, inspect the frozen judgment, its schedule, ve
 
 The host scans locally on startup and every 60 seconds. Approved integrations can import reference materials without creating tasks, attach exact quoted evidence to a judgment, and read or run scoped reviews; see the [operations how-to and HTTP contracts](docs/operations.md#outcome-review-sources-and-http-contracts) and [implementation plan](docs/plans/2026-11-03-outcome-reviews.md). There is **no live metrics feed configured**: missing results or attribution remain **待观察**. “已关联结果依据” associates source-reported material; it does not certify causality, prediction accuracy or business improvement, or promote a personal principle. A receipt awaiting review is not evidence of missing delivery.
 
-Local verification on **2026-11-04** passed **299 tests** and **15 Chromium tests**; [the report](docs/test-report.md#outcome-review-candidate) records scope, screenshots and remaining live prerequisites.
+Local verification on **2026-11-04** passed **313 tests in 27 suites**, typecheck, build and PRD validation after the Feishu and Lima-home repairs. The current UI passed **15/15 Chromium tests**; the Lima fix did not change UI source. Final documentation audit, publication and exact-head CI remain pending. [The report](docs/test-report.md) separates current checks, historical runs and remaining live prerequisites.
 
 ## Try the local demo
 
@@ -65,10 +65,18 @@ Store it in the private environment file. `PATRICK_SESSION_SECRET` can be set in
 
 - A repository and exact allowed paths, trustworthy nonempty required checks/App IDs, and merge permission compatible with repository policy. Do not bypass independent human review.
 - Grok Build, dsh ACP, and/or Codex noninteractive access admitted separately for each role, domain, model/provider, permissions, and cost. At least one admitted backup is needed to accept automatic fallback.
-- Lima on the execution host, with no default host mounts or SSH agent forwarding, restricted egress, and isolated task copies. **Lima was not installed on the inspected host**; install and validate it before admitting live workers.
-- A Feishu app, the owner's Open ID, private-chat delivery, verified callbacks, and permission to read history for offline catch-up.
+- A reviewed Lima build on the execution host, with no default host mounts or SSH agent forwarding, restricted egress, and isolated task copies. The template needs `hostLoopback` support introduced for 2.3; stable 2.2.1 is insufficient. For a private installation, expose its `limactl` on the service PATH and set the same optional `LIMA_HOME` used to create the instance; see [host setup](docs/deployment.md#lima-worker-isolation).
+- A Feishu app, the owner's verified Open ID and private Chat ID, and authorized history access for offline catch-up. App-authenticated WebSocket delivery does not require an HTTP callback token; HTTP callbacks require their own verification credentials.
 - An approved bilingual search gateway. PAtrick queries Chinese and English and independently opens public HTTPS original sources; see the [exact gateway contract](docs/operations.md#search-gateway-contract).
 - Authorized network paths, backup destination, and a recovery procedure that reconciles remote effects before retrying.
+
+On **2026-11-04**, an authorized trial on the current MacBook Pro booted a pinned official Lima development build and Ubuntu ARM64 guest, checked mount/agent and host-loopback boundaries, and exercised the compiled adapter’s guest tests and cleanup with a **synthetic Node runner**. All three expected outcomes and workspace removals were observed, with **0 model calls / $0**. This is bounded local transport evidence; approved egress, unprivileged execution, provider admission and the production Mac mini remain unqualified. [Trial evidence and limits](docs/test-report.md#bounded-local-lima-trial-and-home-selection).
+
+Configure `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_OWNER_OPEN_ID` and `FEISHU_CHAT_ID` privately; successful authorized history access still gates the channel. `FEISHU_VERIFICATION_TOKEN` is optional for WebSocket/send/history, but absent, empty or whitespace-only values make `/webhooks/feishu` reject callbacks with **403**, including signed/encrypted requests after WebSocket readiness. Set `FEISHU_ENCRYPT_KEY` for encrypted HTTP callbacks. Manual private-environment owner/chat setup remains supported. `/pair` is reserved configuration input and is ignored by normal business routing, including history replay; it is not a shipped public pairing command or API. See [Feishu setup and qualification](docs/operations.md#feishu-settings-and-catch-up).
+
+On **2026-11-04**, the production entrypoint completed a bounded own-chat transport check: a durable configuration notice was sent and remotely verified; after a clean restart, **2** distinct owner `/status` commands were accepted, replied to and remotely verified with **0** duplicate markers. This did not run a model or verify decision-card answer/resume, PRD delivery, billing, launchd or recovery on another machine. Connection settings and `doctor` report configuration, not acceptance of that full workflow.
+
+The operator permits **existing included Grok/Codex subscription allowance only, with no additional billing**. Actual account entitlement and paid-overflow controls are still unverified; a local budget or cost reservation does not authorize extra spending. No real model call or provider admission follows from this trial.
 
 The default role sequence is Grok knowledge extraction / case extraction / decision, Codex planning, Grok execution, then Codex checking and feedback. Each role has admitted fallback candidates. A question has exactly A (recommended), B (alternative), and C (your own answer). Waiting releases the worker indefinitely. Two repair rounds are allowed; version or baseline changes require new planning/checking.
 

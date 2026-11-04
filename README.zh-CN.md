@@ -18,7 +18,7 @@ PAtrick 把项目证据、你的明确决定和可核交付连起来。第一条
 
 宿主启动时及每 60 秒在本地扫描。获准集成可导入不启动任务的引用材料，把精确引文关联到初判，并按项目/域查询或触发复核；详见 [运行方法与 HTTP 契约](docs/operations.md#outcome-review-sources-and-http-contracts) 和 [结果复核实施计划](docs/plans/2026-11-03-outcome-reviews.md)。目前**没有配置真实指标来源**，缺结果或归因材料继续**待观察**。“已关联结果依据”仅关联来源报告，不证明因果、预测准确或业务改善，也不提升本人原则。回执待复核不表示没有交付。
 
-**2026-11-04** 本地验证通过 **299 项测试**及 **15 项 Chromium 测试**；范围、截图和仍缺的实链前提见 [验证报告](docs/test-report.md#outcome-review-candidate)。
+**2026-11-04** 飞书与 Lima home 修复后的本地验证通过 **27 套件 313 项测试**、类型检查、构建与 PRD 校验。当前界面 **15/15 Chromium 测试**通过，Lima 修复未改界面源码；最终文档审计、发布及精确 head CI 仍待完成。当前与历史运行、实链前提见 [验证报告](docs/test-report.md)。
 
 ## 本地体验
 
@@ -63,10 +63,18 @@ node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('h
 
 - 已授权仓库、准确允许路径、非空必需检查与可信 App 列表，以及允许相应合并方式的仓库政策。
 - 按角色、数据域、模型/提供方、工具权限和费用逐一准入的后台 runner；自动切换至少需要一个已准入备选。
-- 执行主机上的 Lima，移除默认主机挂载、禁 SSH agent 转发、限制出口及会话上传，仅交付任务材料。本次检查的主机尚未安装 Lima，真实 worker 仍需安装及准入。
-- 飞书应用、本人 Open ID、私聊 Chat ID、可信回调与历史补读权限。
+- 执行主机上的已审 Lima 构建，移除默认主机挂载、禁 SSH agent 转发、限制出口及会话上传，仅交付任务材料。模板要求 2.3 引入的 `hostLoopback` 支持，稳定版 2.2.1 不足。私有安装须把对应 `limactl` 放进服务 PATH，并设置与创建实例时相同的可选 `LIMA_HOME`；见 [主机部署](docs/deployment.md#lima-worker-isolation)。
+- 飞书应用、已核本人 Open ID、私聊 Chat ID 与历史补读权限。应用认证的 WebSocket 不要求 HTTP 回调 token；HTTP 回调单独要求验证凭据。
 - 获准双语检索网关；宿主实际查询中英文，并独立打开公开 HTTPS 原文。完整请求格式见 [运行手册](docs/operations.md#search-gateway-contract)。
 - 已授权网络路径、异机备份及恢复接管流程；不确定的远端副作用先对账再重试。
+
+**2026-11-04** 已在当前 MacBook Pro 完成获准局部试运行：固定官方 Lima 开发提交与 Ubuntu ARM64 guest 启动，检查挂载/agent 与主机回环边界，并用**合成 Node runner**走实际编译适配器的 guest 测试和清理。三种预期结果及工作区移除均已观察，**模型调用 0、费用 $0**。这仅证明局部传输；获准出口、非特权执行、提供方准入及生产 Mac mini 仍未验收。见 [试运行证据与限制](docs/test-report.md#bounded-local-lima-trial-and-home-selection)。
+
+在私有环境设置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_OWNER_OPEN_ID`、`FEISHU_CHAT_ID`，通道仍须实际获得已授权历史。`FEISHU_VERIFICATION_TOKEN` 对 WebSocket/发送/历史可省略，但缺失、空串或纯空白时，`/webhooks/feishu` 对回调一律返回 **403**，已就绪 WebSocket 或签名/加密请求也不例外。加密 HTTP 回调另设 `FEISHU_ENCRYPT_KEY`。仍支持手动配置已核本人/私聊的私有环境；正常业务路由保留 `/pair` 为配置输入并忽略历史重放，它不是已交付的公共配对命令或 API。详见 [飞书设置与验证](docs/operations.md#feishu-settings-and-catch-up)。
+
+**2026-11-04** 已用生产入口完成限定本人私聊传输验证：持久发件箱中的配置通知实际发送并远端核验；干净重启后，**2** 条不同的本人 `/status` 均接纳、回复并远端核验，重复标记 **0**。此次没有调用模型，未验收决策卡作答续办、PRD 交付、计费、launchd 或异机恢复。设置和 `doctor` 只报告连接配置，不能代替完整工作链验收。
+
+本人仅允许使用 **Grok/Codex 现有订阅所含额度，不追加计费**。账户实际权益及付费溢出控制仍未核验；本地预算或费用预留不构成额外支出授权。本次试运行不授权真实模型调用或提供方准入。
 
 默认分工是 Grok 整理知识、提取案例及初判，Codex 规划，Grok 执行，Codex 检查和反馈，各角色按准入名单自动换手。问题恰好 A 首选、B 第二建议、C 自己决定；等待本人时释放 worker，不自动代选。最多两轮返修，需求或基线变化重新规划/检查。
 
