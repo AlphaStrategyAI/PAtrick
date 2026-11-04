@@ -9,3 +9,6 @@ export const cliWrapper:string;
 export const gateWrapper:string;
 export const releaseLine:string;
 export function profileFor(stage:Stage):StageProfile;
+
+export const execGateProgram:string;
+export const payloadReleaseLine:string;

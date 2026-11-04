@@ -8,6 +8,13 @@ import { z } from 'zod';
 import { assertBillingAuthorityConfig, type BillingAuthority, type HostDispatchPermit } from '../billing.js';
 import { DomainError, WorkerUnavailable, roleSchemas, safeRelativePath, type AppConfig, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerInput, type WorkerResult } from '../domain.js';
 
+// Evidence is issued only at the ordinary adapter failure site. Error properties
+// supplied by a caller cannot mint or alter it; no payload or control secrets escape.
+type FailureKind='process-exit'|'malformed-output'|'stdout-overflow'|'stderr-overflow'|'acp-permission-cancelled'|'acp-max-tokens'|'acp-early-exit';
+const failures=new WeakMap<object,Readonly<{stage:Stage;kind:FailureKind}>>();
+export function limaFailureEvidence(error:unknown):Readonly<{stage:Stage;kind:FailureKind}>|undefined{return typeof error==='object'&&error!==null?failures.get(error):undefined;}
+function failure(error:Error,stage:Stage,kind:FailureKind){failures.set(error,Object.freeze({stage,kind}));return error;}
+
 export function parseWorkerOutput(text:string):unknown {
   const clean=text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
   try {
@@ -31,11 +38,11 @@ export function runStage(context:GuestContext,lifetime:LifetimeContext,args:read
 }
 async function collect(context:GuestContext,lifetime:LifetimeContext,args:readonly string[],input:string,signal?:AbortSignal):Promise<string> {
   return new Promise((resolve,reject)=>{
-    const child=runStage(context,lifetime,args,signal);let output='',errorBytes=0,overflow=false;
-    child.stdout.on('data',chunk=>{output+=chunk.toString();if(Buffer.byteLength(output)>2_000_000){overflow=true;child.kill('SIGKILL');}});
-    child.stderr.on('data',chunk=>{errorBytes+=chunk.length;if(errorBytes>2_000_000){overflow=true;child.kill('SIGKILL');}});
+    const child=runStage(context,lifetime,args,signal);let output='',errorBytes=0,overflow: 'stdout-overflow'|'stderr-overflow'|undefined;
+    child.stdout.on('data',chunk=>{output+=chunk.toString();if(Buffer.byteLength(output)>2_000_000){overflow??='stdout-overflow';child.kill('SIGKILL');}});
+    child.stderr.on('data',chunk=>{errorBytes+=chunk.length;if(errorBytes>2_000_000){overflow??='stderr-overflow';child.kill('SIGKILL');}});
     child.on('error',()=>reject(new WorkerUnavailable('Isolated worker could not start. Check Lima and runner authentication.')));
-    child.on('close',code=>code===0&&!overflow?resolve(output):reject(new WorkerUnavailable(`Isolated worker exited (${code??'interrupted'}).`)));
+    child.on('close',(code,closedSignal)=>{if(code===0&&!overflow&&!closedSignal)return resolve(output);const error=new WorkerUnavailable(`Isolated worker exited (${code??'interrupted'}).`);reject(overflow?failure(error,lifetime.stage,overflow):code!==null&&code!==0&&!closedSignal?failure(error,lifetime.stage,'process-exit'):error);});
     child.stdin.on('error',()=>{});child.stdin.end(input);
   });
 }
@@ -76,7 +83,8 @@ export class LimaWorker implements WorkerAdapter {
         text=await collect(context,lifetime('cli'),['sh','-c',cliWrapper,'patrick',dir,worker.command||cli.command,...worker.args,...cli.args],runner==='codex'?prompt:'',combined);
         if (runner==='codex') text=await collect(context,lifetime('read'),['node','-e',readScript,dir],'',combined);
       }
-      let output:any=roleSchemas[input.role].parse(parseWorkerOutput(text));
+      let parsed:unknown;try{parsed=parseWorkerOutput(text);}catch(error){if(error instanceof DomainError&&error.code==='worker_output')failure(error,runner==='codex'?'read':runner==='dsh'?'acp':'cli','malformed-output');throw error;}
+      let output:any=roleSchemas[input.role].parse(parsed);
       if (input.role==='execute'||input.role==='check') {
         const plan=input.plan??input.task.plan;
         if (!plan) throw new DomainError('Test execution requires a bound plan.','plan_required');
@@ -104,49 +112,56 @@ export class LimaWorker implements WorkerAdapter {
   }
   private async acpRun(context:GuestContext,lifetime:LifetimeContext,command:string,args:string[],dir:string,prompt:string,signal:AbortSignal):Promise<string> {
     const child=runStage(context,lifetime,[command,...args],signal);
-    let text='',outputBytes=0,errorBytes=0,overflow=false,endTurn=false,confirmed=false,permissionCancelled=false;
-    let completionTimer:ReturnType<typeof setTimeout>|undefined,rejectStopped!:(error:unknown)=>void;
+    let text='',outputBytes=0,errorBytes=0,overflow=false,endTurn=false,rejectedTermination=false,confirmed=false,permissionCancelled=false;
+    let completionTimer:ReturnType<typeof setTimeout>|undefined,rejectStopped!:(error:unknown)=>void,resolveClosed!:(outcome:{code:number|null;signal:NodeJS.Signals|null})=>void;
+    const closed=new Promise<{code:number|null;signal:NodeJS.Signals|null}>(resolve=>{resolveClosed=resolve;});
     const unavailable=()=>new WorkerUnavailable('ACP runtime unavailable or unauthorized.');
     const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=reject;});
     const completed=new Promise<void>(resolve=>{
       child.once('error',()=>rejectStopped(unavailable()));
       child.once('close',(code,closedSignal)=>{
-        if(code===0&&!closedSignal&&endTurn&&!overflow)resolve();
-        else rejectStopped(unavailable());
+        resolveClosed({code,signal:closedSignal});
+        if(code===0&&!closedSignal&&(endTurn||rejectedTermination)&&!overflow)resolve();
+        else rejectStopped(code===0&&!closedSignal&&!overflow&&outputBytes===0&&errorBytes===0?failure(unavailable(),'acp','acp-early-exit'):unavailable());
       });
     });
-    const overflowed=()=>{overflow=true;rejectStopped(unavailable());child.kill('SIGKILL');};
+    const overflowed=(kind:'stdout-overflow'|'stderr-overflow')=>{overflow=true;rejectStopped(failure(unavailable(),'acp',kind));child.kill('SIGKILL');};
     // Close the SDK input on stream errors as well as EOF. Its receive loop
     // treats errors as rejected background reads; the failure race owns errors.
     const input=new ReadableStream<Uint8Array>({start(controller){
       let closed=false;
       const close=()=>{if(!closed){closed=true;controller.close();}};
-      child.stdout.on('data',chunk=>{outputBytes+=chunk.length;if(outputBytes>2_000_000){overflowed();close();}else if(!closed)controller.enqueue(chunk);});
+      child.stdout.on('data',chunk=>{outputBytes+=chunk.length;if(outputBytes>2_000_000){overflowed('stdout-overflow');close();}else if(!closed)controller.enqueue(chunk);});
       child.stdout.once('end',close);child.stdout.once('close',close);
       child.stdout.once('error',()=>{rejectStopped(unavailable());close();});
     }});
     child.stdin.on('error',()=>rejectStopped(unavailable()));
-    child.stderr.on('data',chunk=>{errorBytes+=chunk.length;if(errorBytes>2_000_000)overflowed();});
+    child.stderr.on('data',chunk=>{errorBytes+=chunk.length;if(errorBytes>2_000_000)overflowed('stderr-overflow');});
     const stream=acp.ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,input);
     const connection=new acp.ClientSideConnection(()=>({
       requestPermission:async()=>{permissionCancelled=true;return {outcome:{outcome:'cancelled' as const}};},
-      sessionUpdate:async(params)=>{if(params.update.sessionUpdate==='agent_message_chunk'&&params.update.content.type==='text'){text+=params.update.content.text;if(Buffer.byteLength(text)>2_000_000)overflowed();}},
+      sessionUpdate:async(params)=>{if(params.update.sessionUpdate==='agent_message_chunk'&&params.update.content.type==='text'){text+=params.update.content.text;if(Buffer.byteLength(text)>2_000_000)overflowed('stdout-overflow');}},
     }),stream);
     try {
       return await Promise.race([stopped,(async()=>{
         await connection.initialize({protocolVersion:acp.PROTOCOL_VERSION,clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}});
         const session=await connection.newSession({cwd:dir,mcpServers:[]});
         const result=await connection.prompt({sessionId:session.sessionId,prompt:[{type:'text',text:prompt}]});
-        if(overflow||permissionCancelled||result.stopReason!=='end_turn')throw new WorkerUnavailable('ACP session did not finish normally.');
-        endTurn=true;
+        if(overflow)throw unavailable();
+        const rejected=permissionCancelled&&result.stopReason==='end_turn'?'acp-permission-cancelled':!permissionCancelled&&result.stopReason==='max_tokens'?'acp-max-tokens':undefined;
+        if(result.stopReason!=='end_turn'&&!rejected)throw new WorkerUnavailable('ACP session did not finish normally.');
+        endTurn=result.stopReason==='end_turn';rejectedTermination=rejected==='acp-max-tokens';
         // ACP has no shutdown RPC. End the supported stdio input, then require
         // the actual root helper's successful completion (including drain).
         completionTimer=setTimeout(()=>rejectStopped(new WorkerUnavailable('ACP runtime did not confirm completion.')),3000);
         child.stdin.end();
         await completed;
-        confirmed=true;return text;
+        confirmed=true;if(rejected)throw failure(new WorkerUnavailable('ACP session did not finish normally.'),'acp',rejected);return text;
       })()]);
-    } catch(error) {if(error instanceof DomainError||error instanceof WorkerUnavailable)throw error;throw unavailable();}
+    } catch(error) {if(error instanceof DomainError||error instanceof WorkerUnavailable)throw error;
+      // SDK EOF rejection can precede the process close event. Only an actual
+      // normal close, never a timeout or SDK error alone, attests early exit.
+      if(child.stdout.readableEnded){const outcome=await Promise.race([closed,new Promise<undefined>(resolve=>{completionTimer=setTimeout(()=>resolve(undefined),3000);})]);if(outcome?.code===0&&!outcome.signal&&!endTurn&&!overflow&&outputBytes===0&&errorBytes===0)throw failure(unavailable(),'acp','acp-early-exit');}throw unavailable();}
     finally {clearTimeout(completionTimer);if(!confirmed){child.stdin.destroy();child.kill();}}
   }
 

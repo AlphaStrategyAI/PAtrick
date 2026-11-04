@@ -14,7 +14,7 @@ const HERE=dirname(fileURLToPath(import.meta.url));
 export const CODE='/usr/local/libexec/patrick-worker';
 export const CONFIG='/etc/patrick-worker';
 export const NODE='/opt/patrick/node-v24.22.2-linux-arm64/bin/node';
-export const ARTIFACTS=Object.freeze(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','patrick-worker-firewall.service','patrick-worker-proxy.service','patrick-worker-sudoers','patrick-worker-probe','route-inventory.json']);
+export const ARTIFACTS=Object.freeze(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','synthetic-network.mjs','patrick-worker-firewall.service','patrick-worker-proxy.service','patrick-worker-sudoers','patrick-worker-probe','route-inventory.json']);
 const SOURCES={identity:'5c3f5188e41f04eff3a2564cd38208a7e3768019',proxy:'43659a3d6dc7a22e914ef654163842b158de428c'};
 const REASONS=new Set(['arguments','not_root','untrusted_artifact','dependency','account_conflict','inventory_incomplete','policy_invalid','active_worker','nft_check','nft_apply','service_state','installed_mismatch']);
 const ENV=Object.freeze({PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C'});
@@ -297,7 +297,7 @@ export function liveInstaller(deps,state,manifest) {
     return artifacts.artifactHash===state.artifactHash&&sha(trustedRead(input.policyPath,deps.io))===artifacts.manifest.policyHash;
   }catch{return false;}
 }
-function renderSudo(template,admin) {if(template.split('@CONTROL_ADMIN@').length!==5)fail('untrusted_artifact');return template.replaceAll('@CONTROL_ADMIN@',admin);}
+function renderSudo(template,admin) {if(template.split('@CONTROL_ADMIN@').length!==8)fail('untrusted_artifact');return template.replaceAll('@CONTROL_ADMIN@',admin);}
 function stopProxy(deps) {
   command(deps,'/usr/bin/systemctl',['stop','patrick-worker-proxy.service'],undefined,'service_state');
   const text=command(deps,'/usr/bin/systemctl',['show','patrick-worker-proxy.service','--no-pager','--property=ActiveState,SubState,MainPID']).stdout;

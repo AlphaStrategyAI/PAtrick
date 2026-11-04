@@ -33,8 +33,8 @@ describe('fixed installer and probe arguments',()=>{
     expect(install.parseInstallArguments(['--policy','/stage/policy.json','--artifacts','/stage','--check'])).toEqual({policyPath:'/stage/policy.json',artifactDir:'/stage',apply:false});
   });
   it.each([[],['--policy','relative','--artifacts','/stage','--check'],['--policy','/a/../policy','--artifacts','/stage','--check'],['--policy','/p','--policy','/p','--artifacts','/stage','--check'],['--policy','/p','--artifacts','/stage','--check','--apply'],['--policy','/p','--artifacts','/stage','--unknown'],['--policy','/p','--artifacts','/stage']].map(args=>({args})))('rejects ambiguous installer argv %j',({args})=>expect(()=>install.parseInstallArguments(args)).toThrow('arguments'));
-  it('accepts exactly three finite probe operations without command/path overrides',()=>{
-    for(const operation of ['snapshot','firewall-load','synthetic-network'])expect(probe.parseProbeArguments(['--operation',operation])).toBe(operation);
+  it('accepts six finite probe operations without command/path overrides',()=>{
+    for(const operation of ['snapshot','firewall-load','synthetic-network','qualification','qualification-start','qualification-finish'])expect(probe.parseProbeArguments(['--operation',operation])).toBe(operation);
     for(const args of [[],['--operation','stop'],['--operation','snapshot','--path','/tmp/a'],['--operation','snapshot','--operation','snapshot']])expect(()=>probe.parseProbeArguments(args)).toThrow('arguments');
   });
 });
@@ -153,7 +153,6 @@ async function prepared() {
   const contents:Record<string,string>={};
   for(const name of install.ARTIFACTS){
     if(name==='route-inventory.json')contents[name]=JSON.stringify(inventory());
-    else if(name==='synthetic-worker.mjs')contents[name]='// Hermetic future-unit artifact fixture; never executed.\n';
     else if(name.startsWith('patrick-worker'))contents[name]=fs.readFileSync(new URL('../../examples/lima/'+name,import.meta.url),'utf8');
     else contents[name]=fs.readFileSync(new URL(name,directory),'utf8');
     fixture.file('/stage/'+name,contents[name]!,name==='route-inventory.json'?0o600:0o644);
@@ -473,4 +472,38 @@ describe('concrete lifetime installation handoff',()=>{
    if(kind.startsWith('closed')){await expect(install.installGuest(f.input,f.deps)).resolves.toMatchObject({applied:false});await expect(probe.probeGuest('snapshot',f.deps)).resolves.toMatchObject({outcome:'pass'});}else{await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('active_worker');await expect(probe.probeGuest('snapshot',f.deps)).rejects.toThrow('active_worker');}expect(f.mutations.filter((event:string)=>!event.includes('/run/patrick-worker/install.lock')&&!/^write:\d+$/.test(event))).toEqual([]);
   }finally{f.close();}
  });
+});
+
+describe('finite root synthetic qualification session',()=>{
+ it('binds verified installed identities and exclusive synthetic markers, then removes only owned state',async()=>{
+  const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);
+   const control=await probe.probeGuest('qualification',f.deps);expect(control).toMatchObject({operation:'qualification',outcome:'pass',synthetic:true,sessionActive:false});expect(control.bindings.map((b:any)=>b.runner)).toEqual(['grok','codex','dsh']);
+   const started=await probe.probeGuest('qualification-start',f.deps);expect(started.sessionActive).toBe(true);
+   for(const name of ['.patrick-synthetic-auth','.patrick-synthetic-config'])expect(f.io.lstatSync('/var/lib/patrick-grok/'+name)).toMatchObject({uid:0});
+   await expect(probe.probeGuest('qualification-start',f.deps)).rejects.toThrow();
+   const finished=await probe.probeGuest('qualification-finish',f.deps);expect(finished).toMatchObject({outcome:'pass',sessionActive:false});expect(fs.existsSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'))).toBe(false);
+  }finally{f.close();}
+ });
+ it('does not clobber a preexisting synthetic basename or remove a substituted marker',async()=>{
+  const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);f.file('/var/lib/patrick-grok/.patrick-synthetic-auth','unrelated');await expect(probe.probeGuest('qualification-start',f.deps)).rejects.toThrow();expect(f.io.readFileSync('/var/lib/patrick-grok/.patrick-synthetic-auth','utf8')).toBe('unrelated');fs.unlinkSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'));
+   await probe.probeGuest('qualification-start',f.deps);fs.unlinkSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'));f.file('/var/lib/patrick-grok/.patrick-synthetic-auth','substituted',0o444);await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();expect(f.io.readFileSync('/var/lib/patrick-grok/.patrick-synthetic-auth','utf8')).toBe('substituted');
+  }finally{f.close();}
+ });
+});
+
+it('recovers only exact durable synthetic markers through proxy and inventory admission drift',async()=>{
+ const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);f.setActive('inactive');(f.deps as any).now=()=>Date.parse('2030-01-01T00:00:00Z');
+  await expect(probe.probeGuest('qualification',f.deps)).rejects.toThrow();await expect(probe.probeGuest('qualification-finish',f.deps)).resolves.toMatchObject({outcome:'pass',sessionActive:false});expect(fs.existsSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'))).toBe(false);
+ }finally{f.close();}
+});
+
+it('retains durable marker ownership across a missing runtime registry',async()=>{
+ const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);
+  fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true,force:true});await expect(probe.probeGuest('qualification-finish',f.deps)).resolves.toMatchObject({outcome:'pass'});
+ }finally{f.close();}
+});
+
+it('resumes only a durably intended exact synthetic-marker removal after an interruption',async()=>{
+ const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);const unlink=f.io.unlinkSync;let injected=false;f.io.unlinkSync=(path:string)=>{if(!injected&&path==='/var/lib/patrick-grok/.patrick-synthetic-config'){injected=true;throw Error('synthetic interrupted unlink');}return unlink(path);};await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();f.io.unlinkSync=unlink;expect(fs.existsSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'))).toBe(false);await expect(probe.probeGuest('qualification-finish',f.deps)).resolves.toMatchObject({outcome:'pass'});
+ }finally{f.close();}
 });

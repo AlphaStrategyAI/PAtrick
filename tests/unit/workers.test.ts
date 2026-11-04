@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fixture as lifetimeFixture } from '../fixtures/lima-lifetime.mjs';
 import { describe, expect, it, vi } from 'vitest';
 import { DomainError, SubscriptionAccessError, type AppConfig, type WorkerInput, type WorkerResult } from '../../src/domain.js';
-import { LimaWorker, parseWorkerOutput, commandFor, guestScripts } from '../../src/integrations/workers.js';
+import { LimaWorker, limaFailureEvidence, parseWorkerOutput, commandFor, guestScripts } from '../../src/integrations/workers.js';
 import { bindSyntheticLimaBilling } from '../fixtures/billing.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { BillingAuthority, type HostDispatchPermit } from '../../src/billing.js';
@@ -107,7 +107,37 @@ process.stdin.on('end', () => {
   });
 });
 
-type FixtureOptions={runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
+// Live polling may see a writer's incomplete final append. Confirmed terminal
+// reads require LF framing; complete malformed records always remain failures.
+function readProtocolEvents(path:string,complete=true):any[]{
+ if(!existsSync(path))return [];const text=readFileSync(path,'utf8');if(complete&&text&&!text.endsWith('\n'))throw Error('Incomplete terminal fixture event');const end=text.lastIndexOf('\n');return end<0?[]:text.slice(0,end).split('\n').map(line=>JSON.parse(line));
+}
+function isServerEvent(value:any,event:string){return value!==null&&typeof value==='object'&&Object.keys(value).length===1&&value.event===event;}
+function protocolDiagnostic(events:any[],outcome:unknown){
+ return JSON.stringify({events,outcome},(_key,value)=>value instanceof Error?{name:value.name,message:value.message,...('code' in value?{code:value.code}:{})}:value);
+}
+// Observe only this fixture's LF-complete events. Startup is bounded by the
+// worker and Vitest signals, independently of ACP's fixed completion grace.
+function waitForAcpInputEof(f:{events:(complete?:boolean)=>any[]},run:Promise<unknown>,signal:AbortSignal):Promise<void>{
+ return new Promise((resolve,reject)=>{
+  let done=false,events:any[]=[];
+  const finish=(error?:Error)=>{if(done)return;done=true;clearInterval(interval);signal.removeEventListener('abort',aborted);error?reject(error):resolve();};
+  const aborted=()=>finish(new Error('ACP readiness cancelled: '+protocolDiagnostic(events,signal.reason),{cause:signal.reason}));
+  const inspect=()=>{if(done)return;try{
+   events=f.events(false);const eof=events.findIndex(e=>isServerEvent(e,'input-eof'));
+   if(eof<0)return;
+   if(!events.slice(0,eof).some(e=>isServerEvent(e,'end_turn')))throw Error('ACP input EOF without preceding end_turn');
+   finish();
+  }catch(error){finish(new Error('Invalid ACP readiness: '+protocolDiagnostic(events,error),{cause:error}));}};
+  const interval=setInterval(inspect,5);
+  // Settlement never flushes events into success: the held worker must still
+  // be running when readiness is observed, including an already-settled run.
+  run.then(value=>finish(new Error('Worker settled before ACP input EOF: '+protocolDiagnostic(events,value))),error=>finish(new Error('Worker failed before ACP input EOF: '+protocolDiagnostic(events,error),{cause:error})));
+  signal.addEventListener('abort',aborted,{once:true});
+  if(signal.aborted)aborted();else queueMicrotask(inspect);
+ });
+}
+type FixtureOptions={runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'unrelated-early'|'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
 function protocolFixture(options:FixtureOptions={}) {
   const root=mkdtempSync(join(tmpdir(),'patrick-identity-protocol-')),bin=join(root,'bin'),eventsPath=join(root,'events');mkdirSync(bin);
   const runner=options.runner??'grok',role=options.role??'feedback',createdAt='2026-01-01T00:00:00.000Z';
@@ -132,6 +162,7 @@ if(stage==='stop'||stage==='reconcile'){process.stdout.write(JSON.stringify({ver
 else if(stage==='cli'&&options.holdCli){setInterval(()=>{},1000);process.stdin.resume();}
 else if(stage==='acp') {
  if(options.acpBehavior==='early')process.exit(0);
+ if(options.acpBehavior==='unrelated-early'){process.stdout.write('{}\\n');process.exit(0);}
  if(options.acpBehavior==='stdout-overflow')process.stdout.write('x'.repeat(2000001));
  if(options.acpBehavior==='stderr-overflow')process.stderr.write('x'.repeat(2000001));
  let promptId;
@@ -157,12 +188,12 @@ else if(stage==='acp') {
 `,{mode:0o700});
   vi.stubEnv('PATH',bin);
   const bound=bindSyntheticLimaBilling(config,input);
-  return {root,bin,output,input,config,...bound,events:()=>existsSync(eventsPath)?readFileSync(eventsPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[],close:()=>{bound.dispose();vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});}};
+  return {root,bin,output,input,config,...bound,events:(complete=true)=>readProtocolEvents(eventsPath,complete),close:()=>{bound.dispose();vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});}};
 }
 
 // Host-protocol fixture: real root lifecycle records/locks/ACK gate with a
 // local NDJSON server. No Linux service/profile/guest qualification is claimed.
-function lifecycleProtocolFixture(role:'execute'|'check',unconfirmed=false) {
+function lifecycleProtocolFixture(role:'execute'|'check',unconfirmed=false,probe:{bootstrapDelayMs?:number;exitCode?:number;holdInputOpen?:boolean;releaseOnEarlyTests?:boolean}={}) {
  const f=protocolFixture({runner:'dsh',role}),root=join(f.root,'lifecycle');mkdirSync(root);
  const context={runner:'dsh',user:'patrick-dedicated',projectId:f.input.project.projectId,domain:f.input.project.domain};
  const options={root,scope:context,account:{uid:1101,gid:1101,home:'/var/lib/patrick-dedicated',groups:[]}};
@@ -182,11 +213,12 @@ lines.on('line',line=>{const m=JSON.parse(line);let result;
  }else process.exit(78);
  send({jsonrpc:'2.0',id:m.id,result});
 });
-lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.existsSync(release)){clearInterval(interval);log('server-exit');process.exit(0);}},5);});
+lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.existsSync(release)){clearInterval(interval);log('server-exit');process.exit(${probe.exitCode??0});}},5);});
 `;
  writeFileSync(join(f.bin,'limactl'),`#!${process.execPath}
 (async()=>{
  const fs=require('node:fs'),{spawn}=require('node:child_process');
+ if(process.argv[20]==='acp'&&${probe.bootstrapDelayMs??0})await new Promise(resolve=>setTimeout(resolve,${probe.bootstrapDelayMs??0}));
  const {fixture}=await import(${JSON.stringify(fixtureModule)}),lifetime=await import(${JSON.stringify(lifetimeModule)});
  const f=fixture(${JSON.stringify(options)}),argv=process.argv.slice(2),stage=argv[18],operation=argv[20],invocation=argv[16],command=argv.slice(22);
  const request={context:${JSON.stringify(context)},lifetime:{invocation,stage,operation,profile:lifetime.profileFor(stage)},command};
@@ -194,7 +226,7 @@ lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.exi
  log('request');
  if(stage==='tests'&&operation==='exec'){
   const r=f.record(invocation),prior=r.stages.at(-1);
-  if(prior.stage!=='acp'||prior.phase!=='complete'||r.payloadSealed){log('tests-before-confirmation');}
+  if(prior.stage!=='acp'||prior.phase!=='complete'||r.payloadSealed){log('tests-before-confirmation');${probe.releaseOnEarlyTests?"fs.writeFileSync("+JSON.stringify(release)+",'early tests observed');":''}}
  }
  f.deps.observe=()=>({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:!fs.existsSync(${JSON.stringify(join(root,'uncertain'))})});
  const submit=f.deps.manager.submit;let server;
@@ -207,7 +239,7 @@ lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.exi
     server=spawn('/bin/sh',['-c',lifetime.gateWrapper,'patrick-worker',${JSON.stringify(process.execPath)},'-e',${JSON.stringify(server)},events,${JSON.stringify(release)},${JSON.stringify(JSON.stringify(f.output))}],{cwd:f.root,env:{HOME:f.root},stdio:['pipe','pipe','pipe']});
     server.stdout.pipe(process.stdout,{end:false});server.stderr.resume();server.stdin.on('error',()=>{});
     server.on('close',(code,signal)=>{${unconfirmed?"fs.writeFileSync("+JSON.stringify(join(root,'uncertain'))+",'unconfirmed drain');":''}done.resolve({code:signal?null:code});});
-    server.stdin.write(lifetime.releaseLine);process.stdin.pipe(server.stdin);
+    server.stdin.write(lifetime.releaseLine);process.stdin.pipe(server.stdin,{end:${!probe.holdInputOpen}});
    }else{
     let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{
      if(spec.stage==='prepare'){const p=JSON.parse(input);if(!p.prompt.includes('FROZEN INPUT:'))throw Error('lost prompt');process.stdout.write(JSON.stringify({dir:spec.workspace}));}
@@ -221,25 +253,69 @@ lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.exi
  catch{log('helper-unconfirmed');process.exitCode=78;}
 })().catch(()=>{process.exitCode=78;});
 `,{mode:0o700});
- return {...f,controller,release:()=>writeFileSync(release,'complete'),events:()=>existsSync(events)?readFileSync(events,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[]};
+ return {...f,controller,release:()=>writeFileSync(release,'complete'),events:(complete=true)=>readProtocolEvents(events,complete)};
+}
+
+function assertAcpTerminal(f:ReturnType<typeof lifecycleProtocolFixture>,result:unknown){
+ const events=f.events(),endTurn=events.findIndex(e=>isServerEvent(e,'end_turn')),eof=events.findIndex(e=>isServerEvent(e,'input-eof')),exit=events.findIndex(e=>isServerEvent(e,'server-exit'));
+ const confirmed=events.findIndex(e=>e.stage==='acp'&&e.event==='helper-confirmed'),tests=events.findIndex(e=>e.stage==='tests'&&e.event==='request');
+ expect(events.some(e=>e.event==='tests-before-confirmation'),'Tests started before ACP helper confirmation').toBe(false);
+ expect(endTurn).toBeGreaterThan(-1);expect(eof).toBeGreaterThan(endTurn);expect(exit).toBeGreaterThan(eof);expect(confirmed).toBeGreaterThan(exit);expect(tests).toBeGreaterThan(confirmed);
+ expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:'actual synthetic test'}]}});
+ const token=readdirSync(f.controller.physical('/run/patrick-worker/invocations'))[0]!.slice(0,32);
+ expect(f.controller.record(token)).toMatchObject({state:'closed',payloadSealed:true});
+}
+async function assertHeldAcpHandoff(f:ReturnType<typeof lifecycleProtocolFixture>,signal:AbortSignal){
+ let outcome:unknown='pending';const run=new LimaWorker('dsh',f.config,f.billing).run(f.input,signal).catch(error=>error).then(value=>{outcome=value;return value;});
+ try{
+  await waitForAcpInputEof(f,run,signal);
+  expect(f.events(false).filter(e=>e.stage==='tests')).toEqual([]);
+  const token=readdirSync(f.controller.physical('/run/patrick-worker/invocations'))[0]!.slice(0,32);
+  expect(f.controller.record(token)).toMatchObject({state:'active',payloadSealed:false,sequence:2,stages:[{stage:'prepare',phase:'complete'},{stage:'acp',phase:'acknowledged'}]});
+  expect(f.events(false).filter(e=>e.stage==='acp'&&e.event==='helper-confirmed')).toEqual([]);
+  f.release();assertAcpTerminal(f,await run);
+ }catch(error){
+  let events:any[]=[],eventReadFailure:unknown;try{events=f.events(false);}catch(readError){eventReadFailure=readError;}
+  // Retain the prefix at failure and the eventual real outcome before finally
+  // disposes this fixture, including failures during startup observation.
+  f.release();await run;
+  throw new Error('ACP handoff failed: '+protocolDiagnostic(events,{worker:outcome,eventReadFailure}),{cause:error});
+ }finally{f.release();await run;f.close();}
 }
 
 describe('ACP actual lifecycle stage handoff',()=>{
- it.each(['execute','check'] as const)('waits for successful ACP helper completion before %s tests',async role=>{
-  const f=lifecycleProtocolFixture(role);let run:Promise<any>|undefined;
+ it('accepts delayed ACP bootstrap before observing the held completion',async({signal})=>{
+  await assertHeldAcpHandoff(lifecycleProtocolFixture('execute',false,{bootstrapDelayMs:1250}),signal);
+ });
+ it.for(['execute','check'] as const)('waits for successful ACP helper completion before %s tests',async(role,{signal})=>{
+  await assertHeldAcpHandoff(lifecycleProtocolFixture(role),signal);
+ });
+ it('retains the terminal guard against deterministic tests before helper confirmation',async({signal})=>{
+  const f=lifecycleProtocolFixture('execute',false,{releaseOnEarlyTests:true}),worker=new LimaWorker('dsh',f.config,f.billing);
+  const adapter=worker as unknown as {acpRun:(...args:any[])=>Promise<string>},original=adapter.acpRun.bind(worker);
+  let run:Promise<any>,background:Promise<unknown>|undefined;
+  adapter.acpRun=async(...args)=>{background=original(...args).catch(error=>error);await waitForAcpInputEof(f,run,signal);return JSON.stringify(f.output);};
+  run=worker.run(f.input,signal).catch(error=>error);
   try{
-   run=new LimaWorker('dsh',f.config,f.billing).run(f.input).catch(error=>error);
-   for(let i=0;i<200&&!f.events().some(e=>e.event==='end_turn');i++)await new Promise(r=>setTimeout(r,5));
-   expect(f.events().some(e=>e.event==='end_turn')).toBe(true);
-   await new Promise(r=>setTimeout(r,75));
-   expect(f.events().filter(e=>e.stage==='tests')).toEqual([]);
-   const token=readdirSync(f.controller.physical('/run/patrick-worker/invocations'))[0]!.slice(0,32);
-   expect(f.controller.record(token)).toMatchObject({state:'active',payloadSealed:false,sequence:2,stages:[{stage:'prepare',phase:'complete'},{stage:'acp',phase:'acknowledged'}]});
-   expect(f.events().filter(e=>e.stage==='acp'&&e.event==='helper-confirmed')).toEqual([]);
-   f.release();const result=await run;expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:'actual synthetic test'}]}});
-   const events=f.events(),confirmed=events.findIndex(e=>e.stage==='acp'&&e.event==='helper-confirmed'),tests=events.findIndex(e=>e.stage==='tests'&&e.event==='request');
-   expect(confirmed).toBeGreaterThan(-1);expect(tests).toBeGreaterThan(confirmed);expect(events.some(e=>e.event==='tests-before-confirmation')).toBe(false);
-   expect(events.some(e=>e.event==='input-eof')).toBe(true);expect(f.controller.record(token)).toMatchObject({state:'closed',payloadSealed:true});
+   const result=await run;await background;
+   expect(f.events().some(e=>e.event==='tests-before-confirmation')).toBe(true);
+   expect(()=>assertAcpTerminal(f,result)).toThrow('Tests started before ACP helper confirmation');
+  }finally{f.release();await run;await background;f.close();}
+ });
+ it('rejects abnormal ACP server exit without starting tests',async({signal})=>{
+  const f=lifecycleProtocolFixture('execute',false,{exitCode:23});
+  try{
+   f.release();const result=await new LimaWorker('dsh',f.config,f.billing).run(f.input,signal).catch(error=>error);
+   expect(result).toMatchObject({name:'WorkerUnavailable'});expect(f.events().filter(e=>e.stage==='tests')).toEqual([]);
+   expect(f.events().some(e=>e.stage==='acp'&&e.event==='helper-unconfirmed')).toBe(true);
+  }finally{f.release();f.close();}
+ });
+ it('rejects readiness when ACP input EOF never arrives',async({signal})=>{
+  const f=lifecycleProtocolFixture('execute',false,{holdInputOpen:true}),run=new LimaWorker('dsh',f.config,f.billing).run(f.input,signal).catch(error=>error);
+  try{
+   await expect(waitForAcpInputEof(f,run,signal)).rejects.toThrow('Worker settled before ACP input EOF');
+   expect(await run).toMatchObject({name:'WorkerUnavailable',message:'ACP runtime did not confirm completion.'});
+   expect(f.events().some(e=>e.event==='input-eof')).toBe(false);expect(f.events().filter(e=>e.stage==='tests')).toEqual([]);
   }finally{f.release();await run;f.close();}
  });
  it('fails a lingering ACP server after the fixed completion grace without starting tests',async()=>{
@@ -252,11 +328,14 @@ describe('ACP actual lifecycle stage handoff',()=>{
    expect(f.events().some(e=>e.operation==='stop')).toBe(true);expect(f.events().some(e=>e.operation==='reconcile')).toBe(true);
   }finally{f.release();f.close();}
  },7000);
+ it('does not brand an unrelated protocol failure followed by normal exit as the no-output early-exit scenario',async()=>{
+  const f=protocolFixture({runner:'dsh',role:'execute',acpBehavior:'unrelated-early'}),diagnostic=vi.spyOn(console,'error').mockImplementation(()=>{});try{const error=await new LimaWorker('dsh',f.config,f.billing).run(f.input).catch(e=>e);expect(error).toMatchObject({name:'WorkerUnavailable'});expect(limaFailureEvidence(error)).toBeUndefined();expect(limaFailureEvidence(Object.assign(new Error(),{stage:'acp',kind:'acp-early-exit'}))).toBeUndefined();expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Invalid message',{message:{}});}finally{diagnostic.mockRestore();f.close();}
+ });
  it.each(['early','non-end-turn','permission','stdout-overflow','stderr-overflow','abort'] as const)('fails closed for ACP %s with terminal controls',async acpBehavior=>{
   const f=protocolFixture({runner:'dsh',role:'execute',acpBehavior}),abort=new AbortController();
   try{
    const run=new LimaWorker('dsh',f.config,f.billing).run(f.input,abort.signal).catch(error=>error);
-   if(acpBehavior==='abort'){for(let i=0;i<100&&!f.events().some(e=>e.stage==='acp');i++)await new Promise(r=>setTimeout(r,5));abort.abort();}
+   if(acpBehavior==='abort'){for(let i=0;i<100&&!f.events(false).some(e=>e.stage==='acp');i++)await new Promise(r=>setTimeout(r,5));abort.abort();}
    expect(await run).toMatchObject({name:'WorkerUnavailable'});expect(f.events().filter(e=>e.stage==='tests')).toEqual([]);
    expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);
    if(acpBehavior==='permission')expect(f.events().some(e=>e.stage==='permission-cancelled')).toBe(true);
@@ -308,8 +387,8 @@ describe('enforced guest identity across adapter stages',()=>{
     const fixture=protocolFixture({holdCli:true}),controller=new AbortController();
     try {
       const run=new LimaWorker('grok',fixture.config,fixture.billing).run(fixture.input,controller.signal).catch(error=>error);
-      for(let attempt=0;attempt<100&&fixture.events().at(-1)?.stage!=='cli';attempt++)await new Promise(resolve=>setTimeout(resolve,10));
-      expect(fixture.events().at(-1)?.stage).toBe('cli');
+      for(let attempt=0;attempt<100&&fixture.events(false).at(-1)?.stage!=='cli';attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+      expect(fixture.events(false).at(-1)?.stage).toBe('cli');
       fixture.input.project.domain='mutated';fixture.input.project.projectId='mutated';fixture.config.workers.grok!.guestUser='patrick-mutated';
       controller.abort();
       expect(await run).toMatchObject({name:'WorkerUnavailable'});
@@ -396,5 +475,45 @@ describe('Scheduler lifetime nonfallback contract',()=>{
    const scheduler=new Scheduler(f.store,f.config,[{name:'grok',async run(){throw error;}},{name:'codex',run:backup}],f.billing);
    await expect(scheduler.run(f.input.task,f.input.project,f.input)).rejects.toBe(error);expect(error.cause).toBe(primary?cause:undefined);expect(backup).not.toHaveBeenCalled();expect(f.store.list('attempts')).toHaveLength(1);expect(f.store.list('attempts')[0]).toMatchObject({runner:'grok',error:'worker_cleanup_unconfirmed'});expect(f.store.list('events').filter(e=>e.type==='worker.switched')).toEqual([]);
   }finally{f.close();}
+ });
+});
+
+it('polls only complete fixture records and rejects truncated terminal or malformed complete records',()=>{
+ const f=protocolFixture();try{const path=join(f.root,'events');writeFileSync(path,'{"stage":"prepare"}\n{"stage":');expect(f.events(false)).toEqual([{stage:'prepare'}]);expect(()=>f.events()).toThrow('Incomplete terminal fixture event');writeFileSync(path,'{"stage":"prepare"}\n{"stage":"cli"}\n');expect(f.events()).toEqual([{stage:'prepare'},{stage:'cli'}]);writeFileSync(path,'{malformed}\n');expect(()=>f.events(false)).toThrow(SyntaxError);expect(()=>f.events()).toThrow(SyntaxError);}finally{f.close();}
+});
+
+describe('ACP readiness observation',()=>{
+ it('requires an exact LF-complete input EOF after end_turn and disposes the poll',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'patrick-acp-observer-')),path=join(root,'events'),controller=new AbortController();
+  vi.useFakeTimers();let wait:Promise<unknown>|undefined;
+  try{
+   writeFileSync(path,'{"event":"end_turn"}\n{"event":"input-eof"}');
+   let ready=false;wait=waitForAcpInputEof({events:complete=>readProtocolEvents(path,complete)},new Promise(()=>{}),controller.signal).then(()=>{ready=true;},error=>error);
+   await vi.advanceTimersByTimeAsync(5);expect(ready).toBe(false);
+   writeFileSync(path,'{"event":"end_turn"}\n{"event":"input-eof","extra":true}\n');
+   await vi.advanceTimersByTimeAsync(5);expect(ready).toBe(false);
+   writeFileSync(path,'{"event":"end_turn"}\n{"event":"input-eof"}\n');
+   await vi.advanceTimersByTimeAsync(5);await wait;expect(ready).toBe(true);expect(vi.getTimerCount()).toBe(0);
+  }finally{controller.abort();await wait;vi.useRealTimers();rmSync(root,{recursive:true,force:true});}
+ });
+ it.each(['fulfilled','rejected','already-settled','cancelled','invalid-order','malformed'] as const)('rejects %s readiness and disposes the poll',async kind=>{
+  const root=mkdtempSync(join(tmpdir(),'patrick-acp-observer-')),path=join(root,'events'),controller=new AbortController();
+  let fulfill!:(value:unknown)=>void,reject!:(error:unknown)=>void;
+  const pending=new Promise((resolve,fail)=>{fulfill=resolve;reject=fail;});
+  vi.useFakeTimers();let wait:Promise<unknown>|undefined;
+  try{
+   writeFileSync(path,'{"event":"end_turn"}\n');
+   if(kind==='already-settled')writeFileSync(path,'{"event":"end_turn"}\n{"event":"input-eof"}\n');
+   if(kind==='invalid-order')writeFileSync(path,'{"event":"input-eof"}\n{"event":"end_turn"}\n');
+   if(kind==='malformed')writeFileSync(path,'{malformed}\n');
+   wait=waitForAcpInputEof({events:complete=>readProtocolEvents(path,complete)},kind==='already-settled'?Promise.resolve('unexpected success'):pending,controller.signal).catch(error=>error);
+   if(kind==='fulfilled')fulfill('unexpected success');
+   if(kind==='rejected')reject(Error('actual worker failure'));
+   if(kind==='cancelled')controller.abort(Error('framework deadline'));
+   await vi.advanceTimersByTimeAsync(5);
+   const error=await wait;expect(error).toBeInstanceOf(Error);
+   expect(String(error)).toContain(kind==='cancelled'?'ACP readiness cancelled':kind==='rejected'?'Worker failed':kind==='invalid-order'||kind==='malformed'?'Invalid ACP readiness':'Worker settled');
+   expect(vi.getTimerCount()).toBe(0);
+  }finally{controller.abort();await wait;vi.useRealTimers();rmSync(root,{recursive:true,force:true});}
  });
 });

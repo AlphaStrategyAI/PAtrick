@@ -5,3 +5,6 @@ Defaults!/usr/local/libexec/patrick-worker-probe env_reset, !setenv, secure_path
 @CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation snapshot
 @CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation firewall-load
 @CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation synthetic-network
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification-start
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification-finish

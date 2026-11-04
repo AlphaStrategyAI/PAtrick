@@ -180,8 +180,77 @@ describe('fixed post-drop gate protocol',()=>{
  });
  it('checks actual namespace facts before a fixed read, including the masked-HOME overlap failure',()=>{
   function evaluate(type=0x01021994,alias=false){let output='',exit=0;const status=['CapInh: 0000000000000000','CapPrm: 0000000000000000','CapEff: 0000000000000000','CapBnd: 0000000000000000','CapAmb: 0000000000000000','NoNewPrivs: 1'].join('\n');
-   const kernel={lstatSync:()=>({isDirectory:()=>true,isSymbolicLink:()=>false,uid:1101,gid:1101,mode:0o40700}),statfsSync:()=>({type,bsize:4096,blocks:4096,files:1024}),readFileSync:(p:string)=>p==='/proc/self/mountinfo'?'1 0 0:1 / /var/lib/patrick-grok rw - tmpfs tmpfs rw\n':p==='/proc/self/status'?status:p==='/proc/net/route'?'Iface Destination\n':'{"summary":"actual fixed read"}',readdirSync:()=>alias?['9']:[],readlinkSync:()=>'/var/lib/patrick-grok/secret'};
-   try{runInNewContext(lifetime.guestScripts.read,{require:(name:string)=>{expect(name).toBe('node:fs');return kernel;},process:{env:{HOME:account.home},getuid:()=>1101,geteuid:()=>1101,getgid:()=>1101,getegid:()=>1101,getgroups:()=>[],argv:['node','/var/lib/patrick-workspaces/'+token+'/work'],stdout:{write:(v:string)=>output+=v},exit:(code:number)=>{exit=code;throw Error('fixture exit');}}});}catch{}return {output,exit};}
+   const kernel={lstatSync:()=>({isDirectory:()=>true,isSymbolicLink:()=>false,uid:1101,gid:1101,mode:0o40700}),statfsSync:()=>({type,bsize:4096,blocks:4096,files:1024}),writeFileSync:()=>{},unlinkSync:()=>{},existsSync:()=>false,readFileSync:(p:string)=>{if(p.includes('.patrick-synthetic-'))throw Object.assign(Error('absent'),{code:'ENOENT'});return p==='/proc/self/mountinfo'?'1 0 0:1 / /var/lib/patrick-grok rw - tmpfs tmpfs rw\n':p==='/proc/self/status'?status:p==='/proc/net/route'?'Iface Destination\n':'{"summary":"actual fixed read"}';},readdirSync:()=>alias?['9']:[],readlinkSync:()=>'/var/lib/patrick-grok/secret'};
+   try{runInNewContext(lifetime.guestScripts.read,{require:(name:string)=>{if(name==='node:child_process')return {spawnSync:()=>({status:0})};expect(name).toBe('node:fs');return kernel;},process:{env:{HOME:account.home},getuid:()=>1101,geteuid:()=>1101,getgid:()=>1101,getegid:()=>1101,getgroups:()=>[],argv:['node','/var/lib/patrick-workspaces/'+token+'/work'],stdout:{write:(v:string)=>output+=v},stderr:{write:()=>{}},exit:(code:number)=>{exit=code;throw Error('fixture exit');}}});}catch{}return {output,exit};}
   expect(evaluate()).toEqual({output:'{"summary":"actual fixed read"}',exit:0});expect(evaluate(0xef53)).toEqual({output:'',exit:78});expect(evaluate(0x01021994,true)).toEqual({output:'',exit:78});
  });
 });
+
+describe('trusted finite stage observation',()=>{
+ it('persists independent observations after exact manager ACK and before payload release',()=>using(async f=>{
+  const postDrop={uid:1101,gid:1101,groups:[],noNewPrivileges:true,capEffective:'0',capPermitted:'0',capInheritable:'0',capAmbient:'0',capBounding:'0',homeMatches:true,fixedEnvironmentMatches:true,extraEnvironmentKeys:[],unknownEnvironmentKeyPresent:false,derivedPwdMatchesHome:true,derivedOldPwdMatchesTrustedCwd:true};
+  const profileFacts={persistentMarkerReadable:false,persistentMarkerUnchanged:true,persistentConfigUnchanged:true,privateHomeWritable:true,privateScratchRemoved:true,workspaceMatchesRecord:true,closedNetworkObserved:true};
+  const observe=vi.fn(async({stage,record}:any)=>{expect(stage.invocationId).toBe('e'.repeat(32));expect(stage.controlGroup).toBe('/system.slice/'+stage.unit);expect(record.identity.uid).toBe(1101);return {pid:7777,start:'13',directEnvironmentClean:true,postDrop,profileFacts};});
+  (f.deps.manager as any).observeStage=observe;const submit=f.deps.manager.submit;let released=false;f.deps.manager.submit=spec=>{const launched=submit(spec);return {...launched,completion:launched.completion.then((v:any)=>({...v,assertion:{version:1,stage:spec.stage,persistentMarkerReadable:false,privateHomeWritable:true,privateScratchRemoved:true,initialHomeEmpty:true,closedNetworkDenied:true}})),release:()=>{expect(f.record().stages[0].observation).toMatchObject({directEnvironmentClean:true,postDrop});released=true;}};};
+  await f.run();expect(observe).toHaveBeenCalledOnce();expect(released).toBe(true);expect(f.record().stages[0].observation.postDrop.uid).toBe(1101);
+  const projected=lifetime.qualificationObservations({records:[token],artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64)},f.io);expect(projected).toEqual([{stage:'prepare',profile:'task-only',role:'grok',postDrop,profileFacts,outcome:{phase:'complete',code:0,submitterExited:true,invocationClosed:false}}]);expect(JSON.stringify(projected)).not.toMatch(/pid|start|unit|controlGroup/);
+  const completed=f.hold(),failed=f.run('cli');completed.resolve({code:23});await expect(failed).rejects.toThrow();expect(lifetime.qualificationObservations({records:[token],artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64)},f.io).at(-1).outcome).toEqual({phase:'complete',code:23,submitterExited:true,invocationClosed:false});
+ }));
+ it('does not release payload for invalid trusted evidence',()=>using(async f=>{
+  (f.deps.manager as any).observeStage=async()=>({pid:-1,postDrop:{uid:0}});const submit=f.deps.manager.submit;let released=false;f.deps.manager.submit=spec=>({...submit(spec),release:()=>{released=true;}});
+  await expect(f.run()).rejects.toThrow();expect(released).toBe(false);expect(f.record().state).toBe('quarantined');
+ }));
+ it('fixed exec gate consumes only its one line and forwards exact argv/environment via execve',()=>{
+  const bytes=Buffer.from('patrick-payload-release\noriginal\nstdin'),calls:any[]=[];let offset=0,executed:any;
+  const io={readSync:(_fd:number,b:Buffer,_off:number,length:number)=>{expect(length).toBe(1);if(offset===bytes.length)return 0;b[0]=bytes[offset++]!;return 1;},accessSync:(path:string)=>{calls.push(path);if(path!=='/usr/bin/synthetic-command')throw Error('missing');},constants:{X_OK:1}};
+  runInNewContext(lifetime.execGateProgram,{require:(name:string)=>{if(name!=='node:fs')throw Error('unexpected');return io;},Buffer,process:{argv:['node','synthetic-command','literal;$(id)'],env:{HOME:'/synthetic',PATH:'/usr/local/bin:/usr/bin:/bin'},execve:(path:string,args:string[],env:any)=>{executed={path,args,env};},exit:()=>{throw Error('exit');}}});
+  expect(executed).toEqual({path:'/usr/bin/synthetic-command',args:['synthetic-command','literal;$(id)'],env:{HOME:'/synthetic',PATH:'/usr/local/bin:/usr/bin:/bin'}});expect(bytes.subarray(offset).toString()).toBe('original\nstdin');
+ });
+});
+
+describe('supplementary assertions and exec gate failure protocol',()=>{
+ it('requires one strict fixed-stage frame and never parses client stderr as authority',()=>{
+  const value={version:1,stage:'prepare',persistentMarkerReadable:false,privateHomeWritable:true,privateScratchRemoved:true,initialHomeEmpty:true,closedNetworkDenied:true},frame='patrick-synthetic-observation:'+JSON.stringify(value)+'\n';
+  for(const bytes of ['',frame+frame,frame.replace('prepare','tests'),'patrick-synthetic-observation:{"raw":"secret"}\n']){const collector=lifetime.assertionCollector('prepare',()=>{});collector.write(Buffer.from(bytes));expect(collector.finish().invalid).toBe(true);}
+  const forwarded:Buffer[]=[],collector=lifetime.assertionCollector('prepare',(b:Buffer)=>forwarded.push(b));collector.write(Buffer.from(frame.slice(0,9)));collector.write(Buffer.from(frame.slice(9)+'ordinary error\n'));expect(collector.finish()).toEqual({assertion:value,invalid:false});expect(Buffer.concat(forwarded).toString()).toBe('ordinary error\n');
+  const client:Buffer[]=[],cli=lifetime.assertionCollector('cli',(b:Buffer)=>client.push(b));cli.write(Buffer.from(frame));expect(cli.finish()).toEqual({assertion:null,invalid:false});expect(Buffer.concat(client).toString()).toBe(frame);
+ });
+ it.each(['','wrong\n','patrick-payload-release\n'])('never execs on EOF, invalid line or unsupported execve %j',bytes=>{
+  let offset=0,exits=0,execs=0;const b=Buffer.from(bytes);const processFixture={argv:['node','command'],env:{PATH:'/bin'},execve:bytes==='patrick-payload-release\n'?undefined:()=>execs++,exit:()=>{exits++;throw Error('exit');}};
+  expect(()=>runInNewContext(lifetime.execGateProgram,{Buffer,require:()=>({readSync:(_fd:number,out:Buffer)=>{if(offset===b.length)return 0;out[0]=b[offset++]!;return 1;}}),process:processFixture})).toThrow();expect(exits).toBe(1);expect(execs).toBe(0);
+ });
+});
+
+describe('root kernel boundary parser (synthetic kernel facts only)',()=>{
+ function kernelFixture(phase:'direct'|'post'){
+  const home='/var/lib/patrick-grok',workspace='/var/lib/patrick-workspaces/'+token+'/work',unit='patrick-worker-'+token+'-1.service',stage={stage:'prepare',profile:'task-only',unit,description:'patrick-worker:'+token+':'+token+':1',invocationId:'e'.repeat(32),controlGroup:'/system.slice/'+unit};
+  const record={context:scope,identity:account,admission:{proxyPort:18743,policyHash:'c'.repeat(64),artifactHash:'d'.repeat(64)},layout:{path:workspace,workIno:42}};
+  const command=['node','-e',lifetime.guestScripts.prepare,workspace],original=['/usr/local/bin/node',...command.slice(1)],node=['/usr/local/bin/node','--no-addons','--disable-warning=ExperimentalWarning','-e',lifetime.execGateProgram,'--',...original],argv=phase==='direct'?['/usr/bin/dash','-c',lifetime.gateWrapper,'patrick-worker',...node]:node;
+  const environment:Record<string,string>={HOME:home,USER:'patrick-grok',LOGNAME:'patrick-grok',PATH:'/usr/local/bin:/usr/bin:/bin',TMPDIR:'/tmp',HTTP_PROXY:'http://127.0.0.1:18743',HTTPS_PROXY:'http://127.0.0.1:18743',NO_PROXY:'',...(phase==='post'?{PWD:home,OLDPWD:'/'}:{})};
+  const text:Record<string,string>={'/proc/99/stat':'99 (node) '+['S',...Array(18).fill('0'),'13'].join(' '),'/proc/99/status':['Uid: 1101 1101 1101 1101','Gid: 1101 1101 1101 1101','Groups:','NoNewPrivs: 1',...['CapEff','CapPrm','CapInh','CapAmb','CapBnd'].map(k=>k+': 0000000000000000')].join('\n'),'/proc/99/cgroup':'0::'+stage.controlGroup+'\n','/proc/99/mountinfo':'1 0 0:1 / '+home+' rw - tmpfs tmpfs rw\n','/proc/99/net/route':'Iface Destination\n'};
+  const io={readFileSync:(path:string,encoding?:string)=>{let value=path==='/proc/99/cmdline'?argv.join('\0')+'\0':path==='/proc/99/environ'?Object.entries(environment).map(([k,v])=>k+'='+v).join('\0')+'\0':text[path];if(value===undefined)throw Error('unexpected kernel read');return encoding?value:Buffer.from(value);},lstatSync:(path:string)=>{if(path==='/proc/99/root'+home||path==='/proc/99/root'+workspace)return {isDirectory:()=>true,isSymbolicLink:()=>false,uid:1101,gid:1101,mode:0o40700,ino:path.endsWith('/work')?42:43};throw Object.assign(Error('missing'),{code:'ENOENT'});},realpathSync:(path:string)=>path==='/proc/99/exe'?(phase==='direct'?'/usr/bin/dash':'/usr/local/bin/node'):path,readlinkSync:(path:string)=>path==='/proc/99/cwd'?(phase==='direct'?'/':home):path==='/proc/99/ns/net'?'net:[2]':path==='/proc/self/ns/net'?'net:[1]':(()=>{throw Error('unexpected link');})(),readdirSync:()=>[],statfsSync:()=>({type:0x01021994,bsize:4096,blocks:4096,files:1024})};
+  const facts={...stage,active:true,empty:false,mainPid:99};return {request:{stage,record,command,phase,witness:phase==='post'?{pid:99,start:'13'}:undefined},deps:{io,unitFacts:()=>facts},environment,text,facts};
+ }
+ it.each(['direct','post'] as const)('requires actual %s exec-time environment, UID/caps/cgroup and masked HOME namespace facts',phase=>{
+  const f=kernelFixture(phase),observed=lifetime.inspectTrustedStage(f.request,f.deps);expect(observed.postDrop).toMatchObject({uid:1101,gid:1101,groups:[],noNewPrivileges:true,homeMatches:true,fixedEnvironmentMatches:true,unknownEnvironmentKeyPresent:false});expect(observed.profileFacts).toMatchObject({persistentMarkerReadable:false,workspaceMatchesRecord:true,closedNetworkObserved:true});
+  f.environment.NODE_OPTIONS='raw-secret-never-report';expect(()=>lifetime.inspectTrustedStage(f.request,f.deps)).toThrow();delete f.environment.NODE_OPTIONS;
+  f.facts.mainPid=100;expect(()=>lifetime.inspectTrustedStage(f.request,f.deps)).toThrow();
+ });
+});
+
+it('requires the fixed closed-socket supplementary boolean alongside root namespace evidence',()=>{
+ const value={version:1,stage:'tests',persistentMarkerReadable:false,privateHomeWritable:true,privateScratchRemoved:true,initialHomeEmpty:true,closedNetworkDenied:true};const c=lifetime.assertionCollector('tests',()=>{});c.write(Buffer.from('patrick-synthetic-observation:'+JSON.stringify(value)+'\n'));expect(c.finish()).toEqual({assertion:value,invalid:false});expect(lifetime.guestScripts.tests).toContain('closedNetworkDenied');expect(lifetime.guestScripts.tests).toContain('EAFNOSUPPORT');
+});
+
+it.skipIf(typeof process.execve!=='function')('uses the real host Node execve to preserve stdin after the fixed second gate (actualGuest=false)',async()=>{
+ const payload='original prompt\n{"jsonrpc":"2.0"}\n';const child=spawn(process.execPath,['--no-addons','--disable-warning=ExperimentalWarning','-e',lifetime.execGateProgram,'--',process.execPath,'-e','process.stdin.pipe(process.stdout)'],{env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);const closed=new Promise(resolve=>child.once('close',code=>resolve(code)));child.stdin.end(lifetime.payloadReleaseLine+payload);expect(await closed).toBe(0);expect(stdout).toBe(payload);expect(stderr).toBe('');
+});
+
+it('preserves ordinary fixed-script stderr bytes across large and split UTF-8 chunks while bounding control frames',()=>{
+ const value={version:1,stage:'read',persistentMarkerReadable:false,privateHomeWritable:true,privateScratchRemoved:true,initialHomeEmpty:true,closedNetworkDenied:true},frame=Buffer.from('patrick-synthetic-observation:'+JSON.stringify(value)+'\n'),ordinary=Buffer.from('错误'.repeat(10000)+'\nunterminated'),out:Buffer[]=[];const c=lifetime.assertionCollector('read',(b:Buffer)=>out.push(b));c.write(frame.subarray(0,4));c.write(Buffer.concat([frame.subarray(4),ordinary.subarray(0,1)]));c.write(ordinary.subarray(1));expect(c.finish()).toEqual({assertion:value,invalid:false});expect(Buffer.concat(out)).toEqual(ordinary);
+});
+
+it('allows exact recorded cleanup through synthetic-session drift but keeps closure and UID reuse quarantined',()=>using(async f=>{
+ await f.run();await f.run('cli');await f.run('cli','stop');fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o755});fs.writeFileSync(f.physical('/etc/patrick-worker/qualification.json'),'{}',{mode:0o600});
+ await expect(f.run('cleanup')).resolves.toMatchObject({code:0});expect(f.record().cleanupConfirmed).toBe(true);expect(fs.existsSync(f.physical(f.record().layout.path))).toBe(false);expect(await f.run('cleanup','reconcile')).toMatchObject({state:'quarantined',invocationClosed:false});await expect(f.run('prepare','exec','b'.repeat(32))).rejects.toThrow();
+}));
