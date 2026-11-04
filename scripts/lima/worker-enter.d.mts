@@ -1,4 +1,4 @@
-import type { LifetimeContext } from './stage-lifetime.mjs';
+import type { Admission, LifetimeContext, RegistryAuthority, RecoveryBinding } from './stage-lifetime.mjs';
 import type { Account, Entry, GuestContext, GuestPolicy } from './policy.mjs';
 export type Invocation={command:string;args:string[]};
 export type TrustedStat={uid:number;gid:number;mode:number;isFile():boolean;isDirectory():boolean;isSymbolicLink():boolean};
@@ -16,3 +16,9 @@ export function assertReadiness(nft:unknown,proxy:unknown,policy:GuestPolicy,acc
 export function enterWorker(argv:string[],deps:Dependencies):unknown;
 
 export function productionDependencies():Dependencies;
+
+export type InstalledManifest=Readonly<{version:1;controlAdmin:string;reviewedSources:Readonly<{identity:string;proxy:string}>;policyHash:string;files:Readonly<Record<string,string>>;installation:Readonly<{artifactHash:string;policyHash:string;accounts:Record<string,Account>;nftHash:string;registry:import('./stage-lifetime.mjs').RegistryReference}>}>;
+export type TrustedModules=typeof import('./policy.mjs') & typeof import('./worker-enter.mjs') & typeof import('./stage-lifetime.mjs');
+export type RecordAuthorityState=Readonly<{modules:TrustedModules;manifest:InstalledManifest;policy:GuestPolicy;accounts:Record<string,Account>;registry:RegistryAuthority}>;
+export function recoveryBinding(context:GuestContext,state:RecordAuthorityState):RecoveryBinding;
+export function installedAdmission(context:GuestContext,command:string[],state:{fence:{status:string};policy:GuestPolicy;accounts:Record<string,Account>;manifest:{installation:{artifactHash:string;policyHash:string}};nft:()=>unknown;proxy:()=>unknown}):Admission;

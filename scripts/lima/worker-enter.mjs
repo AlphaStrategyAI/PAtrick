@@ -195,6 +195,13 @@ export function installedAdmission(context,command,state){
   const entry=Object.freeze({...canonical,groups:Object.freeze([...state.accounts[context.user].groups])});
   return {entry,policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash};
 }
+export function recoveryBinding(context,state){
+  validateContext(context);validateAccounts(state.policy,state.accounts);const identity=state.accounts[context.user];
+  if(!identity||identity.home!=='/var/lib/'+context.user||identity.groups.length)deny();
+  const binding=state.policy.workers.find(worker=>['runner','user','projectId','domain'].every(key=>worker[key]===context[key]));
+  const {version,authorityId,witnessHash}=state.registry;
+  return {registry:{version,authorityId,witnessHash},identity,cancellationBinding:binding?{policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash}:null};
+}
 export function productionDependencies() {
   const identity=context=>{
     const passwd=readTrustedFile('/etc/passwd'),all=parseAccounts(passwd,readTrustedFile('/etc/group')),account=all[context.user];
@@ -207,7 +214,8 @@ export function productionDependencies() {
     const installer=await import('./install-guest.mjs'),state=await installer.inspectInstalled();if(state.fence.status!=='ready')deny();
     const admission=installedAdmission(context,command,state);trust(admission.entry);return admission;
   };
-  const deps={effectiveUid:()=>process.geteuid?.(),trust,readPolicy:()=>JSON.parse(readTrustedFile(policyPath)),accounts:()=>parseAccounts(readTrustedFile('/etc/passwd'),readTrustedFile('/etc/group')),readiness:(policy,accounts)=>({nft:JSON.parse(probe('/usr/sbin/nft',['-j','list','table','inet','patrick_worker'])),proxy:serviceFacts(policy,accounts)}),dispatch:request=>lifecycle.executeStage(request,lifecycle.productionLifetimeDependencies({trust,identity,admit}))};
+  const recover=async context=>{const installer=await import('./install-guest.mjs');return recoveryBinding(context,await installer.inspectRecordAuthority());};
+  const deps={effectiveUid:()=>process.geteuid?.(),trust,readPolicy:()=>JSON.parse(readTrustedFile(policyPath)),accounts:()=>parseAccounts(readTrustedFile('/etc/passwd'),readTrustedFile('/etc/group')),readiness:(policy,accounts)=>({nft:JSON.parse(probe('/usr/sbin/nft',['-j','list','table','inet','patrick_worker'])),proxy:serviceFacts(policy,accounts)}),dispatch:request=>lifecycle.executeStage(request,lifecycle.productionLifetimeDependencies({trust,identity,admit,recover}))};
   return deps;
 }
 const directInvocation=(()=>{try{return Boolean(process.argv[1]&&fs.realpathSync(resolve(process.argv[1]))===modulePath);}catch{return false;}})();

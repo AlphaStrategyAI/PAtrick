@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { addCompletedQualificationNetworkOperation, corruptQualificationSession, malformedQualificationSessionCases } from '../fixtures/lima-qualification-session-cases.js';
 const spawned=vi.hoisted(()=>vi.fn());
 vi.mock('node:child_process',()=>({spawnSync:spawned}));
 
@@ -96,13 +97,13 @@ describe('account and route inventory preconditions',()=>{
 function filesystemFixture() {
   const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'patrick-install-')));
   const owners=new Map<string,{uid:number;gid:number}>(),descriptors=new Map<number,{path:string;owner:{uid:number;gid:number}}>();const mutations:string[]=[];
-  const physical=(path:string)=>{if(typeof path!=='string'||!path.startsWith('/')||path.split('/').includes('..')||path.includes('\0'))throw Error('outside fixture');return join(root,path);};
+  const physical=(path:string)=>{if(typeof path!=='string'||!path.startsWith('/')||path.split('/').includes('..')||path.includes('\0'))throw Error('outside fixture');return path.includes('//')||path.includes('/./')||path.endsWith('/.')?join(root,path):root+path;};
   const descriptor=(fd:number)=>{const value=descriptors.get(fd);if(!value)throw Error('foreign fd');return value;};
   const io:any={readSync:(fd:number,...args:any[])=>{descriptor(fd);return fs.readSync(fd,...args as [any,any,any,any]);},closeSync:(fd:number)=>{descriptor(fd);fs.closeSync(fd);descriptors.delete(fd);},fsyncSync:(fd:number)=>{descriptor(fd);fs.fsyncSync(fd);},fchmodSync:(fd:number,mode:number)=>{descriptor(fd);fs.fchmodSync(fd,mode);},
-    lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(Object.create(stat),{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
+    lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(stat,{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
     readFileSync:(path:string|number,...args:any[])=>{if(typeof path==='number')descriptor(path);return fs.readFileSync(typeof path==='number'?path:physical(path),...args as [any]);},
     openSync:(path:string,flags:number,mode?:number)=>{if(flags&fs.constants.O_CREAT)mutations.push(`open:${path}`);const fd=fs.openSync(physical(path),flags,mode);descriptors.set(fd,{path,owner:owners.get(path)??{uid:0,gid:0}});return fd;},
-    fstatSync:(fd:number)=>{const value=descriptor(fd),stat=fs.fstatSync(fd);return Object.assign(Object.create(stat),value.owner);},
+    fstatSync:(fd:number)=>{const value=descriptor(fd),stat=fs.fstatSync(fd);return Object.assign(stat,value.owner);},
     readdirSync:(path:string)=>fs.readdirSync(physical(path)),opendirSync:(path:string,options:any)=>fs.opendirSync(physical(path),options),readlinkSync:(path:string,options:any)=>{const raw=fs.readlinkSync(physical(path),{encoding:'buffer'});const prefix=Buffer.from(root+'/');const bytes=raw.subarray(0,prefix.length).equals(prefix)?Buffer.concat([Buffer.from('/'),raw.subarray(prefix.length)]):raw;return options?.encoding==='buffer'?bytes:bytes.toString('utf8');},
     realpathSync:(path:string)=>fs.realpathSync(physical(path)).slice(root.length)||'/',
     mkdirSync:(path:string,options:any)=>{mutations.push(`mkdir:${path}`);return fs.mkdirSync(physical(path),options);},
@@ -177,6 +178,7 @@ async function prepared() {
   fixture.file('/etc/resolv.conf','nameserver 192.0.2.53\n');fixture.file('/etc/hosts','127.0.0.1 localhost\n::1 localhost\n192.0.2.2 host.lima.internal\n');fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n');
   fixture.file('/proc/4321/status','Name:\tnode\nUid:\t1100\t1100\t1100\t1100\nGid:\t1100\t1100\t1100\t1100\nGroups:\t\n');
   fixture.file('/proc/sys/kernel/random/boot_id','01234567-89ab-4cde-8fab-0123456789ab\n');fixture.file('/proc/5678/stat','5678 (node) '+['S',...Array(18).fill('0'),'12345'].join(' ')+'\n');fixture.file('/proc/5678/status','Uid:\t0\t0\t0\t0\n');fixture.file('/proc/5678/cmdline',Buffer.from(['/usr/local/bin/node','--no-addons',decodeURI(new URL('install-guest.mjs',directory).pathname),'--policy','/policy-input','--artifacts','/stage','--apply',''].join('\0')).toString());fs.symlinkSync(fixture.physical(install.NODE),fixture.physical('/proc/5678/exe'));
+  fixture.file('/proc/self/mountinfo','1 0 0:1 / / rw - ext4 /dev/root rw\n');
   fixture.file('/proc/sys/kernel/hostname','fixture-host\n');
   fixture.file('/proc/4321/net/tcp','header\n'+[18743,18744,18745].map((port,index)=>`0: 0100007F:${port.toString(16)} 00000000:0000 0A 0:0 0:0 0 1100 0 ${9000+index} 1`).join('\n')+'\n');fixture.file('/proc/4321/net/tcp6','header\n');
   for(let index=0;index<3;index++)fs.symlinkSync(`socket:[${9000+index}]`,fixture.physical(`/proc/4321/fd/${index}`));
@@ -237,6 +239,7 @@ describe('hermetic check/apply control plane',()=>{
     const fixture=await prepared();try{
       await install.installGuest({...fixture.input,apply:true},fixture.deps);
       const identities=install.readAccounts(fixture.deps),oldManifest=fixture.io.readFileSync('/etc/patrick-worker/manifest.json','utf8');
+      const registryBefore=JSON.parse(oldManifest).installation.registry;
       stageGeneration(fixture,kind);
       fixture.mutations.length=0;fixture.calls.length=0;
       await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('inventory_incomplete');
@@ -255,6 +258,7 @@ describe('hermetic check/apply control plane',()=>{
       fixture.mutations.length=0;fixture.calls.length=0;
       await install.installGuest(fixture.input,fixture.deps);
       await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      expect(JSON.parse(fixture.io.readFileSync('/etc/patrick-worker/manifest.json','utf8')).installation.registry).toEqual(registryBefore);
       expect(fixture.mutations).toEqual([]);
       expect(fixture.calls.filter(call=>['start','stop','enable','daemon-reload','-f'].includes(call.args[0]!))).toEqual([]);
     }finally{fixture.close();}
@@ -312,7 +316,7 @@ describe('hermetic check/apply control plane',()=>{
       expect(injected).toBe(true);
       expect(fixture.calls.slice(-2).map(call=>call.args)).toEqual([['stop','patrick-worker-proxy.service'],['show','patrick-worker-proxy.service','--no-pager','--property=ActiveState,SubState,MainPID']]);
       expect(JSON.parse(fixture.io.readFileSync(path,'utf8')).status).toBe('failed');
-      expect(fs.existsSync(fixture.physical('/run/patrick-worker/install.lock'))).toBe(fault==='owner-write');
+      expect(fs.existsSync(fixture.physical('/run/patrick-worker/install.lock'))).toBe(fault.startsWith('owner-'));
     }finally{fixture.close();}
   });
   it.each(['stop-failed','stop-unknown'])('retains the mutex when an early fence failure leaves proxy state %s',async kind=>{
@@ -469,11 +473,11 @@ describe('concrete lifetime installation handoff',()=>{
   const f=await prepared();try{
    await install.installGuest({...f.input,apply:true},f.deps);const invocation='a'.repeat(32),generation='b'.repeat(32),context={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'};
    const stage=(purpose:string,sequence:number)=>({stage:purpose,profile:'task-only',sequence,unit:`patrick-worker-${generation}-${sequence}.service`,description:`patrick-worker:${generation}:${invocation}:${sequence}`,phase:'complete',invocationId:'c'.repeat(32),controlGroup:`/system.slice/patrick-worker-${generation}-${sequence}.service`,submission:null,submitterExited:true,code:0});
-   const record={version:1,invocation,context,identity:{uid:1101,gid:1101,home:'/var/lib/patrick-grok'},admission:{policyHash:'d'.repeat(64),artifactHash:'e'.repeat(64),proxyPort:18743},boot:'01234567-89ab-4cde-8fab-0123456789ab',generation,state:kind==='active'?'active':'closed',payloadSealed:kind!=='active',cleanupConsumed:true,sequence:2,stages:[stage('prepare',1),stage('cleanup',2)],layout:{root:'/var/lib/patrick-workspaces/'+invocation,path:'/var/lib/patrick-workspaces/'+invocation+'/work',rootIno:1,workIno:2,status:'removed'},baseline:{workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true},drain:{generation,sequence:1},cleanupConfirmed:true};
-   f.file('/run/patrick-worker/invocations/'+invocation+'.json',kind==='corrupt'?'{}':JSON.stringify(record),0o600);if(kind==='closed4096'||kind==='closed4097')for(let n=1;n<(kind==='closed4096'?4096:4097);n++){
+   const record={version:2,kind:'registered',authorityId:JSON.parse(f.io.readFileSync('/etc/patrick-worker/manifest.json','utf8')).installation.registry.authorityId,bootRevocation:null,invocation,context,identity:{uid:1101,gid:1101,home:'/var/lib/patrick-grok'},admission:{policyHash:'d'.repeat(64),artifactHash:'e'.repeat(64),proxyPort:18743},boot:'01234567-89ab-4cde-8fab-0123456789ab',generation,state:kind==='active'?'active':'closed',payloadSealed:kind!=='active',cleanupConsumed:true,sequence:2,stages:[stage('prepare',1),stage('cleanup',2)],layout:{root:'/var/lib/patrick-workspaces/'+invocation,path:'/var/lib/patrick-workspaces/'+invocation+'/work',rootIno:1,workIno:2,status:'removed'},baseline:{workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true},drain:{generation,sequence:1},cleanupConfirmed:true};
+   f.file('/var/lib/patrick-worker/invocations/'+invocation+'.json',kind==='corrupt'?'{}':JSON.stringify(record),0o600);if(kind==='closed4096'||kind==='closed4097')for(let n=1;n<(kind==='closed4096'?4096:4097);n++){
     const r=structuredClone(record);r.invocation=n.toString(16).padStart(32,'0');r.generation=r.invocation;r.drain.generation=r.generation;r.layout.root='/var/lib/patrick-workspaces/'+r.invocation;r.layout.path=r.layout.root+'/work';
     for(const s of r.stages){s.unit=`patrick-worker-${r.generation}-${s.sequence}.service`;s.description=`patrick-worker:${r.generation}:${r.invocation}:${s.sequence}`;s.controlGroup='/system.slice/'+s.unit;}
-    f.file('/run/patrick-worker/invocations/'+r.invocation+'.json',JSON.stringify(r),0o600);
+    f.file('/var/lib/patrick-worker/invocations/'+r.invocation+'.json',JSON.stringify(r),0o600);
    }f.mutations.length=0;
    if(kind.startsWith('closed')){await expect(install.installGuest(f.input,f.deps)).resolves.toMatchObject({applied:false});await expect(probe.probeGuest('snapshot',f.deps)).resolves.toMatchObject({outcome:'pass'});}else{await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('active_worker');await expect(probe.probeGuest('snapshot',f.deps)).rejects.toThrow('active_worker');}expect(f.mutations.filter((event:string)=>!event.includes('/run/patrick-worker/install.lock')&&!/^write:\d+$/.test(event))).toEqual([]);
   }finally{f.close();}
@@ -481,6 +485,17 @@ describe('concrete lifetime installation handoff',()=>{
 });
 
 describe('finite root synthetic qualification session',()=>{
+ it.each(['valid',...malformedQualificationSessionCases] as const)('reads %s private session through the actual probe without malformed-session mutation',async kind=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);
+   const path='/etc/patrick-worker/qualification.json',session=JSON.parse(f.io.readFileSync(path,'utf8'));
+   addCompletedQualificationNetworkOperation(session);
+   if(kind!=='valid')corruptQualificationSession(session,kind);
+   const bytes=JSON.stringify(session)+'\n';f.file(path,bytes,0o600);f.mutations.length=0;
+   if(kind==='valid'){await expect(probe.probeGuest('qualification-finish',f.deps)).resolves.toMatchObject({outcome:'pass',sessionActive:false});expect(fs.existsSync(f.physical(path))).toBe(false);}
+   else {await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow('installed_mismatch');expect(f.io.readFileSync(path,'utf8')).toBe(bytes);expect(f.mutations.filter(change=>change.includes('qualification.json')||change.includes('.patrick-synthetic-'))).toEqual([]);for(const b of session.bindings)for(const name of ['.patrick-synthetic-auth','.patrick-synthetic-config'])expect(f.io.readFileSync(b.home+'/'+name,'utf8')).toBe(`patrick-synthetic:${name}\n`);}
+  }finally{f.close();}
+ });
  it('binds verified installed identities and exclusive synthetic markers, then removes only owned state',async()=>{
   const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);
    const control=await probe.probeGuest('qualification',f.deps);expect(control).toMatchObject({operation:'qualification',outcome:'pass',synthetic:true,sessionActive:false});expect(control.bindings.map((b:any)=>b.runner)).toEqual(['grok','codex','dsh']);
@@ -511,5 +526,153 @@ it('retains durable marker ownership across a missing runtime registry',async()=
 
 it('resumes only a durably intended exact synthetic-marker removal after an interruption',async()=>{
  const f=await prepared();try{await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);const unlink=f.io.unlinkSync;let injected=false;f.io.unlinkSync=(path:string)=>{if(!injected&&path==='/var/lib/patrick-grok/.patrick-synthetic-config'){injected=true;throw Error('synthetic interrupted unlink');}return unlink(path);};await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();f.io.unlinkSync=unlink;expect(fs.existsSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'))).toBe(false);await expect(probe.probeGuest('qualification-finish',f.deps)).resolves.toMatchObject({outcome:'pass'});
+ }finally{f.close();}
+});
+
+
+describe('durable first-install identity and recovery',()=>{
+ it('binds a first installation and refuses lost identity before mutation',async()=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);
+   const before=f.io.readFileSync('/etc/patrick-worker/manifest.json','utf8'),reference=JSON.parse(before).installation.registry;
+   const lifetime=await import(new URL('../../scripts/lima/stage-lifetime.mjs',import.meta.url).href);
+   expect(reference).toBeDefined();expect(lifetime.readRegistryAuthority(f.io,reference).authorityId).toBe(reference.authorityId);
+   f.io.unlinkSync('/etc/patrick-worker/registry-identity.json');f.mutations.length=0;
+   await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('installed_mismatch');
+   expect(f.mutations).toEqual([]);expect(f.io.readFileSync('/etc/patrick-worker/manifest.json','utf8')).toBe(before);
+  }finally{f.close();}
+ });
+ it('recovers record authority without inventory, readiness or runtime',async()=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);const before=f.io.readFileSync('/etc/patrick-worker/manifest.json','utf8');
+   fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true});f.deps.now=()=>Date.parse('2030-01-01T00:00:00Z');f.setFailure('nft');f.calls.length=0;f.mutations.length=0;
+   const state=await install.inspectRecordAuthority(f.deps);expect(state.registry.authorityId).toBe(JSON.parse(before).installation.registry.authorityId);
+   expect(f.calls.every(c=>!['/usr/sbin/ip','/usr/sbin/nft','/usr/bin/journalctl','/usr/bin/systemctl'].includes(c.path))).toBe(true);expect(f.mutations).toEqual([]);
+  }finally{f.close();}
+ });
+ it.each(['/usr/sbin/visudo','/usr/bin/sudo'].flatMap(path=>['writable','owner','symlink-owner','target-ancestor'].map(kind=>({path,kind}))))('refuses recovery audit $path with $kind trust before execution',async({path,kind})=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);
+   if(kind==='writable')fs.chmodSync(f.physical(path),0o777);
+   if(kind==='owner')f.owners.set(path,{uid:1101,gid:1101});
+   if(kind==='symlink-owner'||kind==='target-ancestor'){
+    const target='/opt/audit-fixture/'+path.split('/').at(-1);f.file(target,'fixture executable',0o755);fs.unlinkSync(f.physical(path));fs.symlinkSync(f.physical(target),f.physical(path));
+    if(kind==='symlink-owner')f.owners.set(path,{uid:1101,gid:1101});else fs.chmodSync(f.physical('/opt/audit-fixture'),0o777);
+   }
+   f.calls.length=0;f.mutations.length=0;
+   const refusal=await install.inspectRecordAuthority(f.deps).then(()=>null,(error:unknown)=>error);
+   expect(f.calls.filter(call=>call.path===path)).toEqual([]);expect(refusal).toMatchObject({reason:'dependency'});expect(f.mutations).toEqual([]);
+  }finally{f.close();}
+ });
+ it('does not erase session markers when its canonical record is missing',async()=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);
+   const path='/etc/patrick-worker/qualification.json',session=JSON.parse(f.io.readFileSync(path,'utf8'));session.records=['a'.repeat(32)];f.file(path,JSON.stringify(session),0o600);
+   await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();expect(fs.existsSync(f.physical('/var/lib/patrick-grok/.patrick-synthetic-auth'))).toBe(true);
+  }finally{f.close();}
+ });
+});
+
+
+describe('first-bootstrap finite crash dispositions',()=>{
+ it.each(['fence','witness-link','initializing','durable-mkdir','registry-mkdir','marker-link','ready','published-file','manifest','ready-fence'])('preserves %s interruption without resetting identity',async window=>{
+  const f=await prepared();try{
+   const open=f.io.openSync,rename=f.io.renameSync,link=f.io.linkSync,mkdir=f.io.mkdirSync;let tripped=false;
+   const trip=()=>{tripped=true;throw Error('crash '+window);};
+   f.io.openSync=(path:string,...args:any[])=>{if(!tripped&&window==='fence'&&path.startsWith('/etc/patrick-worker/install-state.json.tmp-'))trip();return open(path,...args);};
+   f.io.linkSync=(from:string,to:string)=>{link(from,to);if(!tripped&&(window==='witness-link'&&to.endsWith('/registry-identity.json')||window==='marker-link'&&to.endsWith('/.authority.json')))trip();};
+   f.io.mkdirSync=(path:string,...args:any[])=>{const result=mkdir(path,...args);if(!tripped&&(window==='durable-mkdir'&&path==='/var/lib/patrick-worker'||window==='registry-mkdir'&&path==='/var/lib/patrick-worker/invocations'))trip();return result;};
+   f.io.renameSync=(from:string,to:string)=>{rename(from,to);if(!tripped&&(window==='initializing'&&to.endsWith('/install-state.json')||window==='ready'&&to.endsWith('/registry-identity.json')||window==='published-file'&&to==='/usr/local/libexec/patrick-worker/worker-enter.mjs'||window==='manifest'&&to.endsWith('/manifest.json')||window==='ready-fence'&&to.endsWith('/install-state.json')&&JSON.parse(f.io.readFileSync(to,'utf8')).status==='ready'))trip();};
+   await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow();expect(tripped).toBe(true);
+   f.io.openSync=open;f.io.renameSync=rename;f.io.linkSync=link;f.io.mkdirSync=mkdir;
+   const witnessPath='/etc/patrick-worker/registry-identity.json',before=fs.existsSync(f.physical(witnessPath))?f.io.readFileSync(witnessPath):undefined;
+   f.mutations.length=0;
+   if(['ready','manifest','ready-fence'].includes(window)){
+    // A ready-only identity retries before installed code/firewall publication;
+    // a complete manifest resumes the ordinary matching-generation path.
+    await expect(install.installGuest({...f.input,apply:true},f.deps)).resolves.toMatchObject({applied:true});
+   }else{await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('installed_mismatch');expect(f.mutations).toEqual([]);}
+   if(before)expect(f.io.readFileSync(witnessPath)).toEqual(before);
+  }finally{f.close();}
+ });
+ it.each(['witness','marker','root','records','reference','legacy-manifest','initializing','substituted-records','substituted-marker','coexisting-legacy'])('refuses lost or substituted %s before mutation',async kind=>{
+  const f=await prepared();try{
+   await install.installGuest({...f.input,apply:true},f.deps);const witnessPath='/etc/patrick-worker/registry-identity.json',root='/var/lib/patrick-worker',records=root+'/invocations',marker=records+'/.authority.json';
+   if(kind==='witness')f.io.unlinkSync(witnessPath);if(kind==='marker')f.io.unlinkSync(marker);if(kind==='root')fs.renameSync(f.physical(root),f.physical(root+'.saved'));if(kind==='records')fs.renameSync(f.physical(records),f.physical(records+'.saved'));
+   if(kind==='reference'||kind==='legacy-manifest'){const m=JSON.parse(f.io.readFileSync('/etc/patrick-worker/manifest.json','utf8'));if(kind==='reference')m.installation.registry.witnessHash='0'.repeat(64);else delete m.installation.registry;f.file('/etc/patrick-worker/manifest.json',JSON.stringify(m));}
+   if(kind==='initializing'){const lifetime=await import(new URL('../../scripts/lima/stage-lifetime.mjs',import.meta.url).href),w=JSON.parse(f.io.readFileSync(witnessPath,'utf8'));f.file(witnessPath,lifetime.encodeRegistryMetadata({...w,phase:'initializing',root:null,records:null,marker:null}).toString(),0o600);}
+   if(kind==='substituted-records'){fs.renameSync(f.physical(records),f.physical(records+'.saved'));fs.mkdirSync(f.physical(records),{mode:0o700});fs.copyFileSync(f.physical(records+'.saved/.authority.json'),f.physical(marker));}
+   if(kind==='substituted-marker'){fs.renameSync(f.physical(marker),f.physical(marker+'.saved'));fs.copyFileSync(f.physical(marker+'.saved'),f.physical(marker));}
+   if(kind==='coexisting-legacy'){fs.mkdirSync(f.physical('/run/patrick-worker/invocations'),{mode:0o700});f.file('/run/patrick-worker/invocations/'+ 'a'.repeat(32)+'.json','{"version":1,"state":"closed"}',0o600);}
+   f.mutations.length=0;for(const apply of [false,true])await expect(install.installGuest({...f.input,apply},f.deps)).rejects.toThrow('installed_mismatch');expect(f.mutations).toEqual([]);
+  }finally{f.close();}
+ });
+ it.each(['active','closed'])('preserves nonempty legacy %s bytes in check and apply',async state=>{
+  const f=await prepared();try{const path='/run/patrick-worker/invocations/'+ 'a'.repeat(32)+'.json',bytes=JSON.stringify({version:1,state});f.file(path,bytes,0o600);fs.chmodSync(f.physical('/run/patrick-worker'),0o700);fs.chmodSync(f.physical('/run/patrick-worker/invocations'),0o700);f.mutations.length=0;for(const apply of [false,true])await expect(install.installGuest({...f.input,apply},f.deps)).rejects.toThrow('installed_mismatch');expect(f.io.readFileSync(path,'utf8')).toBe(bytes);expect(f.mutations).toEqual([]);}finally{f.close();}
+ });
+ it('retains the install mutex if its durable owner publication fails',async()=>{
+  const f=await prepared();try{const open=f.io.openSync;f.io.openSync=(path:string,...args:any[])=>{if(path.startsWith('/run/patrick-worker/install.lock/owner.json.tmp-'))throw Error('owner unavailable');return open(path,...args);};await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('service_state');expect(fs.existsSync(f.physical('/run/patrick-worker/install.lock'))).toBe(true);expect(fs.existsSync(f.physical('/etc/patrick-worker/registry-identity.json'))).toBe(false);}finally{f.close();}
+ });
+ it.each(['workspace','mount','home-alias'])('refuses pristine residual %s before any mutation',async kind=>{
+  const f=await prepared();try{if(kind==='workspace')f.file('/var/lib/patrick-workspaces/foreign','residual');else if(kind==='mount')f.file('/proc/self/mountinfo','1 0 0:1 / /var/lib/patrick-grok rw - ext4 /dev/root rw\n');else f.file('/proc/self/mountinfo','1 0 0:1 / / rw - ext4 /dev/root rw\n2 1 0:1 /var/lib/patrick-grok /mnt/home-alias rw - ext4 /dev/root rw\n');f.mutations.length=0;await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow();expect(f.mutations).toEqual([]);}finally{f.close();}
+ });
+});
+
+
+it.each(['target-artifact','target-policy','missing-fence','empty-code','owned-nft','unknown-config'])('refuses ready-first-apply retry with %s before mutation',async kind=>{
+ const f=await prepared();try{
+  const rename=f.io.renameSync;let interrupted=false;f.io.renameSync=(from:string,to:string)=>{rename(from,to);if(!interrupted&&to==='/etc/patrick-worker/registry-identity.json'){interrupted=true;throw Error('ready-only crash');}};
+  await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow();f.io.renameSync=rename;expect(interrupted).toBe(true);
+  if(kind==='target-artifact'){const name='synthetic-worker.mjs',text=f.contents[name]+'\n// next reviewed target\n';f.file('/stage/'+name,text);f.manifest.files[name]=hash(text);f.file('/stage/manifest.json',JSON.stringify(f.manifest));}
+  if(kind==='target-policy'){const text=JSON.stringify({...policy,workers:policy.workers.map(w=>({...w,domain:'changed'}))});f.file('/policy-input',text);f.manifest.policyHash=hash(text);f.file('/stage/manifest.json',JSON.stringify(f.manifest));}
+  if(kind==='missing-fence')f.io.unlinkSync('/etc/patrick-worker/install-state.json');
+  if(kind==='empty-code')fs.mkdirSync(f.physical(install.CODE),{mode:0o755});
+  if(kind==='owned-nft')f.setNft(f.kernelNft());if(kind==='unknown-config')f.file('/etc/patrick-worker/unowned','preserve');
+  const before=f.io.readFileSync('/etc/patrick-worker/registry-identity.json');f.mutations.length=0;
+  for(const apply of [false,true])await expect(install.installGuest({...f.input,apply},f.deps)).rejects.toThrow('installed_mismatch');expect(f.mutations).toEqual([]);expect(f.io.readFileSync('/etc/patrick-worker/registry-identity.json')).toEqual(before);
+ }finally{f.close();}
+});
+
+
+it('uses real installed record authority for current and withdrawn recovery tuples',async()=>{
+ const f=await prepared();try{
+  await install.installGuest({...f.input,apply:true},f.deps);const state=await install.inspectRecordAuthority(f.deps),context={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'};
+  const binding=state.modules.recoveryBinding(context,state);expect(binding).toEqual({registry:state.manifest.installation.registry,identity:state.accounts[context.user],cancellationBinding:{policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash}});
+  expect(state.modules.recoveryBinding({...context,domain:'withdrawn'},state)).toMatchObject({registry:binding.registry,identity:binding.identity,cancellationBinding:null});
+  const recover=async()=>binding,production=state.modules.productionLifetimeDependencies({trust:()=>{},identity:()=>binding.identity,admit:async()=>{throw Error('payload unavailable');},recover});expect(production.recover).toBe(recover);
+  fs.unlinkSync(f.physical('/etc/patrick-worker/install-state.json'));f.setActive('inactive');await expect(install.inspectRecordAuthority(f.deps)).resolves.toMatchObject({registry:state.registry});
+ }finally{f.close();}
+});
+
+
+it('passes the exact current-process runtime dependency seam to existing apply recovery',async()=>{
+ const f=await prepared();try{
+  await install.installGuest({...f.input,apply:true},f.deps);const path='/etc/patrick-worker/install-state.json',state=JSON.parse(f.io.readFileSync(path,'utf8'));f.file(path,JSON.stringify({...state,status:'failed'}),0o600);
+  const load=f.deps.loadModules;let keys:string[]=[];f.deps.loadModules=async()=>{const modules=await load();return {...modules,ensureRuntimeBase:(runtime:any,reference:any)=>{keys=Object.keys(runtime).sort();expect(runtime.boot()).toBe('01234567-89ab-4cde-8fab-0123456789ab');expect(runtime.witness()).toEqual({pid:5678,start:'12345'});return modules.ensureRuntimeBase(runtime,reference);}};};
+  await expect(install.installGuest({...f.input,apply:true},f.deps)).resolves.toMatchObject({applied:true});expect(keys).toEqual(['boot','io','witness']);
+ }finally{f.close();}
+});
+
+
+it('preserves confined path mapping, fresh stat identity and descriptor ownership without metadata caching',()=>{
+ const f=filesystemFixture();try{
+  for(const path of ['/','/safe','/safe/','//safe','/safe//leaf','/safe/./leaf','/safe/.','/safe/....','/safe/..literal','/目标/😀/file','/safe/\uFEFFfile'])expect(f.physical(path)).toBe(join(f.physical('/'),path));
+  for(const path of ['', 'relative','/safe/../outside','/../outside','/safe/\0leaf'])expect(()=>f.physical(path)).toThrow('outside fixture');
+  f.file('/safe/file','first',0o600);f.io.chownSync('/safe/file',1101,1102);const first=f.io.lstatSync('/safe/file'),second=f.io.lstatSync('/safe/file');expect(first).not.toBe(second);expect(first).toMatchObject({uid:1101,gid:1102,nlink:1,size:5});expect(first.ino).toBe(second.ino);
+  const fd=f.io.openSync('/safe/file',fs.constants.O_RDONLY);try{f.io.chownSync('/safe/file',1201,1202);expect(f.io.fstatSync(fd)).toMatchObject({uid:1101,gid:1102});expect(f.io.lstatSync('/safe/file')).toMatchObject({uid:1201,gid:1202});f.file('/safe/file','changed',0o600);expect(f.io.fstatSync(fd).size).toBe(7);expect(first.size).toBe(5);}finally{f.io.closeSync(fd);}
+  fs.symlinkSync('file',f.physical('/safe/link'));expect(f.io.lstatSync('/safe/link').isSymbolicLink()).toBe(true);expect(()=>install.trustedPath('/safe/link',{},f.io)).toThrow('untrusted_artifact');
+ }finally{f.close();}
+});
+
+
+it.each(['authority','target'])('refuses an under-mutex %s change without stopping the proxy or publishing a fence',async kind=>{
+ const f=await prepared();try{
+  if(kind==='authority'){await install.installGuest({...f.input,apply:true},f.deps);const path='/etc/patrick-worker/install-state.json',state=JSON.parse(f.io.readFileSync(path,'utf8'));f.file(path,JSON.stringify({...state,status:'failed'}),0o600);}
+  const before=kind==='authority'?f.io.readFileSync('/etc/patrick-worker/install-state.json'):undefined,rename=f.io.renameSync,lstat=f.io.lstatSync;let changed=false;
+  f.io.renameSync=(from:string,to:string)=>{rename(from,to);if(!changed&&to==='/run/patrick-worker/install.lock/owner.json'){changed=true;if(kind==='target'){const name='synthetic-worker.mjs',text=f.contents[name]+'\n// changed target under lock\n';f.file('/stage/'+name,text);f.manifest.files[name]=hash(text);f.file('/stage/manifest.json',JSON.stringify(f.manifest));}}};
+  f.io.lstatSync=(path:string)=>{const value=lstat(path);return changed&&kind==='authority'&&path==='/var/lib/patrick-worker'?Object.assign(Object.create(value),{ino:value.ino+1}):value;};
+  f.calls.length=0;f.mutations.length=0;await expect(install.installGuest({...f.input,apply:true},f.deps)).rejects.toThrow('installed_mismatch');expect(changed).toBe(true);
+  expect(f.calls.filter(c=>c.path==='/usr/bin/systemctl'&&c.args[0]==='stop'||c.path==='/usr/sbin/nft'&&c.args[0]==='-f')).toEqual([]);expect(fs.existsSync(f.physical('/run/patrick-worker/install.lock'))).toBe(false);
+  if(before)expect(f.io.readFileSync('/etc/patrick-worker/install-state.json')).toEqual(before);else expect(fs.existsSync(f.physical('/etc/patrick-worker/install-state.json'))).toBe(false);
  }finally{f.close();}
 });

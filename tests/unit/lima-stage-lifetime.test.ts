@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
+import { addCompletedQualificationNetworkOperation, corruptQualificationSession, malformedQualificationSessionCases, type QualificationSessionFault } from '../fixtures/lima-qualification-session-cases.js';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
@@ -10,11 +11,17 @@ const lifetime=await import(new URL('../../scripts/lima/stage-lifetime.mjs',impo
 const token='a'.repeat(32),scope={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'};
 const account={uid:1101,gid:1101,home:'/var/lib/patrick-grok',groups:[]};
 const using=async(fn:(f:ReturnType<typeof fixture>)=>Promise<void>)=>{const f=fixture();try{await fn(f);}finally{f.close();}};
-const durable='/var/lib/patrick-worker',records=durable+'/invocations',marker=records+'/.authority.json',witness='/etc/patrick-worker/registry-identity.json',legacy='/run/patrick-worker/invocations',recordPath=legacy+'/'+token+'.json';
+const durable='/var/lib/patrick-worker',records=durable+'/invocations',marker=records+'/.authority.json',witness='/etc/patrick-worker/registry-identity.json',legacy=records,recordPath=records+'/'+token+'.json';
 const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 const canonical=(value:any):any=>value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const metadataBytes=(value:any)=>Buffer.from(JSON.stringify(canonical(value))+'\n');
 const metadata=(f:ReturnType<typeof fixture>,path=witness)=>JSON.parse(f.io.readFileSync(path,'utf8'));
+function privateSessionFixture(f:ReturnType<typeof fixture>,network=false):any {
+ const names=['.patrick-synthetic-auth','.patrick-synthetic-config'];for(const name of names)f.io.writeFileSync(account.home+'/'+name,'synthetic',{mode:0o444});fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o700});
+ const session:any={version:2,registry:f.seedAuthority(),phase:'active',generation:'9'.repeat(32),artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64),inventoryHash:'e'.repeat(64),records:[],codeHashes:Object.fromEntries(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','synthetic-network.mjs','installed-network.mjs','entry','probe'].map(name=>[name,'f'.repeat(64)])),bindings:['grok','codex','dsh'].map((runner,index)=>({...scope,runner,user:'patrick-'+runner,uid:1101+index,gid:1101+index,home:'/var/lib/patrick-'+runner,proxyPort:18743+index,baseline:'0'.repeat(64),homeIno:f.io.lstatSync(account.home).ino,markers:names.map(name=>({name,ino:f.io.lstatSync(account.home+'/'+name).ino,hash:hash(Buffer.from('synthetic')),removeIntended:false,removed:false}))}))};
+ if(network)addCompletedQualificationNetworkOperation(session);
+ return session;
+}
 describe('fixed durable registry authority codec and reader',()=>{
  it('encodes exact schemas independently of insertion order with exactly one LF',()=>{
   const first={version:1,authorityId:'a'.repeat(32),root:{dev:0,ino:1},records:{dev:2,ino:3}},second={records:{ino:3,dev:2},root:{ino:1,dev:0},authorityId:first.authorityId,version:1};
@@ -80,20 +87,30 @@ describe('fixed durable registry authority codec and reader',()=>{
 });
 describe('bounded no-replace record publication through controller saves',()=>{
  it('fsyncs the file and both publication directory states before submission',()=>using(async f=>{
-  const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const trace=f.events.filter(event=>event.includes(legacy)),temp=trace.find(event=>event.startsWith('open:'+legacy+'/.write-'))?.slice(5);expect(temp).toMatch(new RegExp('^'+legacy+'/\\.write-'+token+'-[a-f0-9]{32}\\.tmp$'));expect(trace.slice(0,6)).toEqual(['open:'+temp,'fsync:'+temp,'link:'+temp+'->'+recordPath,'open:'+legacy,'fsync:'+legacy,'unlink:'+temp]);expect(trace.slice(6,8)).toEqual(['open:'+legacy,'fsync:'+legacy]);expect(f.io.lstatSync(recordPath)).toMatchObject({uid:0,gid:0,nlink:1});return submit(spec);};await f.run();
+  const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const all=f.events.filter(event=>event.includes(legacy)),first=all.findIndex(event=>event.startsWith('open:'+legacy+'/.write-')),trace=all.slice(first),temp=trace.find(event=>event.startsWith('open:'+legacy+'/.write-'))?.slice(5);expect(temp).toMatch(new RegExp('^'+legacy+'/\\.write-'+token+'-[a-f0-9]{32}\\.tmp$'));expect(trace.slice(0,6)).toEqual(['open:'+temp,'fsync:'+temp,'link:'+temp+'->'+recordPath,'open:'+legacy,'fsync:'+legacy,'unlink:'+temp]);expect(trace.slice(6,8)).toEqual(['open:'+legacy,'fsync:'+legacy]);expect(f.io.lstatSync(recordPath)).toMatchObject({uid:0,gid:0,nlink:1});return submit(spec);};await f.run();
  }));
  it('rejects oversized serialized records before opening a registry temporary file and retains the UID lock',()=>using(async f=>{
   await expect(f.run('prepare','exec',token,{...scope,projectId:'x'.repeat(131072)})).rejects.toMatchObject({retainUidLock:true});expect(f.events.some(event=>event.startsWith('open:'+legacy+'/.write-'))).toBe(false);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(true);expect(f.submissions).toEqual([]);
  }));
- it('preserves fixed qualification-session enrollment through the bounded writer',()=>using(async f=>{
-  const names=['.patrick-synthetic-auth','.patrick-synthetic-config'];for(const name of names)f.io.writeFileSync(account.home+'/'+name,'synthetic',{mode:0o444});fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o700});
-  const session={version:1,phase:'active',generation:'9'.repeat(32),artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64),records:[],bindings:[{...scope,...account,homeIno:f.io.lstatSync(account.home).ino,markers:names.map(name=>({name,ino:f.io.lstatSync(account.home+'/'+name).ino,hash:hash(Buffer.from('synthetic'))}))}]};
+ it.each([false,true])('preserves fixed qualification-session enrollment through the bounded writer with network=%s',network=>using(async f=>{
+  const session=privateSessionFixture(f,network);
   f.io.writeFileSync('/etc/patrick-worker/qualification.json',JSON.stringify(session)+'\n',{mode:0o600});await expect(f.run()).resolves.toMatchObject({code:0});expect(metadata(f,'/etc/patrick-worker/qualification.json')).toEqual({...session,records:[token]});
+ }));
+ it('exports the fixed pure qualification-session predicate without mutating parsed input',()=>using(async f=>{
+  const session=privateSessionFixture(f,true),before=JSON.stringify(session),freeze=(value:any):any=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
+  expect(typeof lifetime.validQualificationSession).toBe('function');expect(lifetime.validQualificationSession(freeze(session))).toBe(true);expect(JSON.stringify(session)).toBe(before);
+  for(const malformed of [null,[],{}, {...session,records:null},{...session,bindings:[null,...session.bindings.slice(1)]},{...session,bindings:[{...session.bindings[0],markers:[null,null]},...session.bindings.slice(1)]}])expect(lifetime.validQualificationSession(malformed)).toBe(false);
+ }));
+ it.each([...malformedQualificationSessionCases] as string[])('refuses %s private session through the controller before enrollment or submission',kind=>using(async f=>{
+  const session=privateSessionFixture(f,true);
+  corruptQualificationSession(session,kind as QualificationSessionFault);
+  const path='/etc/patrick-worker/qualification.json',bytes=JSON.stringify(session)+'\n';f.io.writeFileSync(path,bytes,{mode:0o600});
+  await expect(f.run()).rejects.toThrow('Worker entry denied.');expect(f.submissions).toEqual([]);expect(f.io.readFileSync(path,'utf8')).toBe(bytes);for(const name of ['.patrick-synthetic-auth','.patrick-synthetic-config'])expect(f.io.readFileSync(account.home+'/'+name,'utf8')).toBe('synthetic');
  }));
  it('loses a two-publisher first-link race with EEXIST and preserves the winner bytes',()=>using(async f=>{
   const link=f.io.linkSync,other=legacy+'/.write-'+token+'-'+'f'.repeat(32)+'.tmp';let winning:Buffer|undefined,loserCode:string|undefined;
   f.io.linkSync=(from,to)=>{if(to===recordPath&&!winning){winning=Buffer.from(f.io.readFileSync(from));const value=JSON.parse(winning.toString());value.context.domain='winner';winning=Buffer.from(JSON.stringify(value)+'\n');f.io.writeFileSync(other,winning,{mode:0o600});link(other,to);f.io.unlinkSync(other);}try{link(from,to);}catch(error){loserCode=(error as NodeJS.ErrnoException).code;throw error;}};
-  await expect(f.run()).rejects.toMatchObject({retainUidLock:true});expect(loserCode).toBe('EEXIST');expect(f.io.readFileSync(recordPath)).toEqual(winning);expect(fs.readdirSync(f.physical(legacy))).toEqual([token+'.json']);expect(f.submissions).toEqual([]);
+  await expect(f.run()).rejects.toMatchObject({retainUidLock:true});expect(loserCode).toBe('EEXIST');expect(f.io.readFileSync(recordPath)).toEqual(winning);expect(fs.readdirSync(f.physical(legacy))).toEqual(['.authority.json',token+'.json']);expect(f.submissions).toEqual([]);
  }));
  it.each(['write','file-fsync','link','directory-fsync','after-link','after-unlink-fsync','rename','after-rename'])('does not acknowledge %s failure and preserves uncertain published state',fault=>using(async f=>{
   const replacing=['rename','after-rename'].includes(fault);if(replacing)await f.run();const prior=replacing?f.io.readFileSync(recordPath):undefined;f.events.length=0;f.submissions.length=0;
@@ -106,7 +123,7 @@ describe('bounded no-replace record publication through controller saves',()=>{
   f.io.renameSync=(from,to)=>{if(to===recordPath&&!tripped&&fault==='rename')trip();rename(from,to);if(to===recordPath&&!tripped&&fault==='after-rename')trip();};
   await expect(f.run(replacing?'cli':'prepare')).rejects.toMatchObject({retainUidLock:true});expect(tripped).toBe(true);expect(f.submissions).toEqual([]);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(true);
   const names=fs.readdirSync(f.physical(legacy));if(['directory-fsync','after-link'].includes(fault)){expect(names.filter(name=>name.startsWith('.write-'))).toHaveLength(1);expect(names).toContain(token+'.json');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();}else expect(names.filter(name=>name.startsWith('.write-'))).toHaveLength(0);
-  if(fault==='rename')expect(f.io.readFileSync(recordPath)).toEqual(prior);if(fault==='after-rename')expect(f.io.readFileSync(recordPath)).not.toEqual(prior);if(['write','file-fsync','link'].includes(fault))expect(names).toEqual([]);
+  if(fault==='rename')expect(f.io.readFileSync(recordPath)).toEqual(prior);if(fault==='after-rename')expect(f.io.readFileSync(recordPath)).not.toEqual(prior);if(['write','file-fsync','link'].includes(fault))expect(names).toEqual(['.authority.json']);
   f.setObserved({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true});expect(await f.run('cli','stop')).toMatchObject({invocationClosed:false,reason:'control_unavailable'});
  }));
  it('never cleans up a substituted or unowned temporary inode',()=>using(async f=>{
@@ -120,7 +137,7 @@ describe('bounded no-replace record publication through controller saves',()=>{
 });
 describe('serialized trusted stage lifetime',()=>{
  it('records root-owned empty allocation and pending root-generated unit before submission',()=>using(async f=>{
-  const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const record=f.record();expect(record.stages[0]).toMatchObject({phase:'pending',stage:'prepare',profile:'task-only'});expect(record.layout.path).toBe('/var/lib/patrick-workspaces/'+token+'/work');expect(fs.readdirSync(f.physical(record.layout.path))).toEqual([]);expect(f.io.lstatSync(record.layout.path)).toMatchObject({uid:1101,gid:1101});expect(fs.statSync(f.physical('/run/patrick-worker/invocations/'+token+'.json')).mode&0o777).toBe(0o600);return submit(spec);};
+  const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const record=f.record();expect(record.stages[0]).toMatchObject({phase:'pending',stage:'prepare',profile:'task-only'});expect(record.layout.path).toBe('/var/lib/patrick-workspaces/'+token+'/work');expect(fs.readdirSync(f.physical(record.layout.path))).toEqual([]);expect(f.io.lstatSync(record.layout.path)).toMatchObject({uid:1101,gid:1101});expect(fs.statSync(f.physical('/var/lib/patrick-worker/invocations/'+token+'.json')).mode&0o777).toBe(0o600);return submit(spec);};
   await f.run();expect(f.submissions[0].unit).toMatch(/^patrick-worker-[a-f0-9]{32}-1.service$/);expect(f.record().stages[0]).toMatchObject({phase:'complete',invocationId:'e'.repeat(32)});
  }));
  it('closes normal success only after seal, drained cleanup and final reconciliation, retaining replay tombstone',()=>using(async f=>{
@@ -189,12 +206,12 @@ describe('serialized trusted stage lifetime',()=>{
   await f.run();await f.run('cli','stop');const r=f.record();fs.rmdirSync(f.physical(r.layout.path));fs.mkdirSync(f.physical(r.layout.path));f.io.chownSync(r.layout.path,1101,1101);await expect(f.run('cleanup')).rejects.toThrow();expect(f.record().cleanupConsumed).toBe(false);
  }));
  it('quarantines changed boot, malformed record and missing registry while blocking subsequent admission',()=>using(async f=>{
-  await f.run();const file=f.physical('/run/patrick-worker/invocations/'+token+'.json'),r=f.record();r.boot='22222222-2222-4222-8222-222222222222';fs.writeFileSync(file,JSON.stringify(r));expect(await f.run('cli','stop')).toMatchObject({invocationClosed:false});expect(f.stops).toEqual([]);
+  await f.run();const file=f.physical('/var/lib/patrick-worker/invocations/'+token+'.json'),r=f.record();r.boot='22222222-2222-4222-8222-222222222222';fs.writeFileSync(file,JSON.stringify(r));expect(await f.run('cli','stop')).toMatchObject({invocationClosed:false});expect(f.stops).toEqual([]);
   fs.writeFileSync(file,'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();await expect(f.run('prepare','exec','b'.repeat(32))).rejects.toThrow();
   fs.unlinkSync(file);await expect(f.run('prepare','exec','b'.repeat(32))).rejects.toThrow();
  }));
  it('rejects corrupt closure receipts instead of trusting a closed label',()=>using(async f=>{
-  await f.run();await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');const original=f.record(),file=f.physical('/run/patrick-worker/invocations/'+token+'.json');
+  await f.run();await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');const original=f.record(),file=f.physical('/var/lib/patrick-worker/invocations/'+token+'.json');
   for(const change of [(r:any)=>r.drain={generation:'f'.repeat(32),sequence:999},(r:any)=>r.layout.rootIno='caller-inode',(r:any)=>r.stages[0].invocationId=null]){const r=structuredClone(original);change(r);fs.writeFileSync(file,JSON.stringify(r));expect(()=>lifetime.registryQuiescent(f.io)).toThrow();}
  }));
  it('never converts a missing cleanup effect or residual parent file into successful closure',()=>using(async f=>{
@@ -235,16 +252,16 @@ describe('serialized trusted stage lifetime',()=>{
    const r=structuredClone(closed);r.invocation=n.toString(16).padStart(32,'0');r.generation=r.invocation;
    r.layout.root='/var/lib/patrick-workspaces/'+r.invocation;r.layout.path=r.layout.root+'/work';r.drain.generation=r.generation;
    for(const stage of r.stages){stage.unit=`patrick-worker-${r.generation}-${stage.sequence}.service`;stage.description=`patrick-worker:${r.generation}:${r.invocation}:${stage.sequence}`;stage.controlGroup='/system.slice/'+stage.unit;}
-   fs.writeFileSync(f.physical('/run/patrick-worker/invocations/'+r.invocation+'.json'),JSON.stringify(r),{mode:0o600});
+   fs.writeFileSync(f.physical('/var/lib/patrick-worker/invocations/'+r.invocation+'.json'),JSON.stringify(r),{mode:0o600});
   }
   for(const fresh of ['b'.repeat(32),'c'.repeat(32)]){
    expect(lifetime.registryQuiescent(f.io)).toBe(true);await expect(f.run()).rejects.toThrow();
    await f.run('prepare','exec',fresh);await f.run('cleanup','stop',fresh);await f.run('cleanup','exec',fresh);await f.run('cleanup','reconcile',fresh);
   }
   expect(lifetime.registryQuiescent(f.io)).toBe(true);
-  const file=f.physical('/run/patrick-worker/invocations/'+token+'.json');
+  const file=f.physical('/var/lib/patrick-worker/invocations/'+token+'.json');
   fs.writeFileSync(file,'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();fs.writeFileSync(file,JSON.stringify(closed));
-  const unknown=f.physical('/run/patrick-worker/invocations/unrecognized');fs.writeFileSync(unknown,'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();fs.unlinkSync(unknown);
+  const unknown=f.physical('/var/lib/patrick-worker/invocations/unrecognized');fs.writeFileSync(unknown,'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();fs.unlinkSync(unknown);
   await f.run('prepare','exec','d'.repeat(32));expect(lifetime.registryQuiescent(f.io)).toBe(false);
  }),20000);
  it('closes each streamed history handle exactly once on success, active return and corrupt denial',()=>using(async f=>{
@@ -252,7 +269,7 @@ describe('serialized trusted stage lifetime',()=>{
   f.io.opendirSync=(path,options)=>{const directory=open(path,options),close=directory.closeSync.bind(directory);opened++;directory.closeSync=()=>{closed++;close();};return directory;};
   expect(lifetime.registryQuiescent(f.io)).toBe(true);expect({opened,closed}).toEqual({opened:1,closed:1});
   await f.run();expect(lifetime.registryQuiescent(f.io)).toBe(false);expect(opened).toBe(closed);
-  fs.writeFileSync(f.physical('/run/patrick-worker/invocations/'+token+'.json'),'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();expect(opened).toBe(closed);
+  fs.writeFileSync(f.physical('/var/lib/patrick-worker/invocations/'+token+'.json'),'{}');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();expect(opened).toBe(closed);
  }));
  it('never touches the real filesystem through omitted fixture path methods',()=>using(async f=>{
   delete (f.io as any).openSync;await expect(f.run()).rejects.toThrow();expect(f.submissions).toEqual([]);
@@ -363,3 +380,68 @@ it('allows exact recorded cleanup through synthetic-session drift but keeps clos
  await f.run();await f.run('cli');await f.run('cli','stop');fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o755});fs.writeFileSync(f.physical('/etc/patrick-worker/qualification.json'),'{}',{mode:0o600});
  await expect(f.run('cleanup')).resolves.toMatchObject({code:0});expect(f.record().cleanupConfirmed).toBe(true);expect(fs.existsSync(f.physical(f.record().layout.path))).toBe(false);expect(await f.run('cleanup','reconcile')).toMatchObject({state:'quarantined',invocationClosed:false});await expect(f.run('prepare','exec','b'.repeat(32))).rejects.toThrow();
 }));
+
+
+describe('durable registered ownership across boot boundaries',()=>{
+ it('writes registered2 only at the witnessed durable path',()=>using(async f=>{
+  const reference=f.seedAuthority();await f.run();
+  const r=JSON.parse(f.io.readFileSync(records+'/'+token+'.json','utf8'));expect(r).toMatchObject({version:2,kind:'registered',authorityId:reference.authorityId,bootRevocation:null});
+  expect(f.io.readdirSync('/run/patrick-worker/invocations')).toEqual([]);
+ }));
+ it('revokes old active ownership without touching a reused manager unit',()=>using(async f=>{
+  f.seedAuthority();await f.run();const old=f.record(),inspect=vi.fn(),stop=vi.fn();
+  f.setBoot('22222222-2222-4222-8222-222222222222');f.deps.manager.inspect=inspect;f.deps.manager.stop=stop;
+  expect(await f.run('cli','stop')).toMatchObject({state:'quarantined',invocationClosed:false});
+  expect(f.record()).toMatchObject({boot:old.boot,payloadSealed:true,state:'quarantined',bootRevocation:'22222222-2222-4222-8222-222222222222',cleanupConsumed:false});
+  expect(inspect).not.toHaveBeenCalled();expect(stop).not.toHaveBeenCalled();await expect(f.run('cleanup')).rejects.toThrow();
+  const bytes=f.io.readFileSync(records+'/'+token+'.json');f.setBoot('33333333-3333-4333-8333-333333333333');await f.run('cli','reconcile');expect(f.io.readFileSync(records+'/'+token+'.json')).toEqual(bytes);
+ }));
+ it('returns old closed history without manager callbacks or record rewrites',()=>using(async f=>{
+  f.seedAuthority();await f.run();await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');
+  const path=records+'/'+token+'.json',bytes=f.io.readFileSync(path);f.setBoot('22222222-2222-4222-8222-222222222222');
+  f.deps.manager.inspect=vi.fn(()=>{throw Error('reused unit');});f.deps.manager.stop=vi.fn(()=>{throw Error('reused unit');});
+  for(const op of ['stop','reconcile'])expect(await f.run('cli',op)).toMatchObject({state:'closed',invocationClosed:true,workspacesAbsent:true});
+  expect(f.io.readFileSync(path)).toEqual(bytes);expect(f.deps.manager.inspect).not.toHaveBeenCalled();
+ }));
+});
+
+
+it('reinstantiates after runtime loss with retained records and no authority recreation',async()=>{
+ const f=fixture();try{
+  await f.run();const reference=f.seedAuthority(),old=f.record(),markerBytes=f.io.readFileSync(marker),witnessBytes=f.io.readFileSync(witness);
+  fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true});const next=fixture({root:f.root,boot:'22222222-2222-4222-8222-222222222222'});
+  expect(fs.existsSync(next.physical('/run/patrick-worker'))).toBe(false);next.deps.manager.inspect=vi.fn(()=>{throw Error('old manager');});next.deps.manager.stop=vi.fn(()=>{throw Error('old manager');});
+  expect(await next.run('cli','stop')).toMatchObject({state:'quarantined',reason:'unknown',invocationClosed:false});
+  expect(next.record()).toMatchObject({authorityId:reference.authorityId,boot:old.boot,bootRevocation:'22222222-2222-4222-8222-222222222222'});
+  expect(next.io.readFileSync(marker)).toEqual(markerBytes);expect(next.io.readFileSync(witness)).toEqual(witnessBytes);expect(next.io.readdirSync('/run/patrick-worker')).toEqual([]);
+  await expect(next.run('cli')).rejects.toThrow();await expect(next.run('cleanup')).rejects.toThrow();expect(next.deps.manager.inspect).not.toHaveBeenCalled();
+ }finally{f.close();}
+});
+
+
+describe('recovery binding and terminal preservation',()=>{
+ it('keeps historical closure and bytes when current observation fails',()=>using(async f=>{
+  await f.run();await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');const bytes=f.io.readFileSync(recordPath);
+  f.deps.observe=()=>{throw Error('current facts unavailable');};
+  expect(await f.run('cli','stop')).toMatchObject({state:'closed',invocationClosed:true,reason:'unknown',cgroupsEmpty:false,workerProcessesAbsent:false,privateMountsAbsent:false,workspacesAbsent:false});expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+ }));
+ it('observes historical closure with no old units and a fresh token-root absence check',()=>using(async f=>{
+  await f.run();await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');const before=f.io.readFileSync(recordPath),observe=f.deps.observe;
+  f.deps.observe=r=>{expect(r?.stages).toEqual([]);return observe(r);};fs.mkdirSync(f.physical(f.record().layout.root),{mode:0o700});
+  expect(await f.run('cli','reconcile')).toMatchObject({state:'closed',invocationClosed:true,reason:'unknown',workspacesAbsent:false});expect(f.io.readFileSync(recordPath)).toEqual(before);
+ }));
+ it.each(['identity','authority'])('rechecks %s under the selected UID mutex before admission',kind=>using(async f=>{
+  const recover=f.deps.recover;let reads=0;f.deps.recover=async c=>{const value=await recover(c);if(++reads===2){if(kind==='identity')value.identity={...value.identity,uid:1201,gid:1201};else value.registry={...value.registry,authorityId:'f'.repeat(32)};}return value;};
+  await expect(f.run()).rejects.toThrow();expect(reads).toBe(2);expect(f.submissions).toEqual([]);expect(f.events).not.toContain('admit');expect(f.io.readdirSync(records)).toEqual(['.authority.json']);
+ }));
+ it('never recreates runtime after durable identity loss',()=>using(async f=>{
+  const reference=f.seedAuthority();fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true});f.io.unlinkSync(witness);
+  expect(()=>lifetime.ensureRuntimeBase(f.deps,reference)).toThrow();expect(fs.existsSync(f.physical('/run/patrick-worker'))).toBe(false);expect(await f.run('cli','stop')).toMatchObject({reason:'control_unavailable',invocationClosed:false});
+ }));
+ it('checks referenced terminal records without treating missing history or arbitrary token sets as closure',()=>using(async f=>{
+  const reference=f.seedAuthority();expect(lifetime.registryRecordsClosed(f.io,reference,[])).toBe(true);expect(lifetime.registryRecordsClosed(f.io,reference,[token])).toBe(false);
+  await f.run();expect(lifetime.registryRecordsClosed(f.io,reference,[token])).toBe(false);await f.run('cli','stop');await f.run('cleanup');await f.run('cleanup','reconcile');expect(lifetime.registryRecordsClosed(f.io,reference,[token])).toBe(true);
+  for(const values of [[token,token],['invalid'],Array.from({length:65},(_,n)=>n.toString(16).padStart(32,'0'))])expect(()=>lifetime.registryRecordsClosed(f.io,reference,values)).toThrow();
+  const r=f.record();r.authorityId='f'.repeat(32);f.io.writeFileSync(recordPath,JSON.stringify(r));expect(lifetime.registryRecordsClosed(f.io,reference,[token])).toBe(false);
+ }));
+});

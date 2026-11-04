@@ -3,7 +3,7 @@ import type {RegistryReference} from '../../scripts/lima/stage-lifetime.mjs';
 type Deferred={promise:Promise<any>;resolve:(value:any)=>void};
 type Scope={runner:string;user:string;projectId:string;domain:string};
 type Observation={workerProcessesAbsent:boolean;privateMountsAbsent:boolean;cgroupsEmpty:boolean};
-export function fixture(options?:{root?:string;scope?:Scope;account?:{uid:number;gid:number;home:string;groups:number[]}}):{
+export function fixture(options?:{root?:string;boot?:string;scope?:Scope;account?:{uid:number;gid:number;home:string;groups:number[]}}):{
  root:string;physical:(path:string)=>string;record:(invocation?:string)=>any;
  request:(stage?:string,operation?:string,invocation?:string,context?:Scope)=>any;
  run:(stage?:string,operation?:string,invocation?:string,context?:Scope)=>Promise<any>;
@@ -13,7 +13,7 @@ export function fixture(options?:{root?:string;scope?:Scope;account?:{uid:number
  mkdirSync:(path:string,options:any)=>any;chmodSync:(path:string,mode:number)=>void;chownSync:(path:string,uid:number,gid:number)=>any;
  linkSync:(from:string,to:string)=>void;renameSync:(from:string,to:string)=>void;unlinkSync:(path:string)=>void;rmdirSync:(path:string)=>void};
  deps:{io:any;effectiveUid:()=>number;trust:()=>void;boot:()=>string;witness:()=>{pid:number;start:string};lockTimeoutMs:number;
- identity:()=>any;admit:(context:any,command:any)=>Promise<any>;observe:(record?:any)=>Observation;
+ identity:()=>any;recover:(context:any)=>Promise<any>;admit:(context:any,command:any)=>Promise<any>;observe:(record?:any)=>Observation;
  manager:{submit:(spec:any)=>any;acknowledge:(unit:string)=>Promise<any>;inspect:(unit:string)=>Promise<any>;settled:(stage:any)=>Promise<boolean>;stop:(unit:string)=>Promise<void>;pending:(unit?:string)=>Promise<boolean>}};
  submissions:any[];stops:string[];events:string[];units:Map<string,any>;
  seedAuthority:()=>RegistryReference;setBoot:(id:string)=>void;

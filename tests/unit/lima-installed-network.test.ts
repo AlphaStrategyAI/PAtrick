@@ -25,13 +25,13 @@ function accounts() {return Object.fromEntries(['patrick-proxy','patrick-grok','
 function filesystemFixture() {
   const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'patrick-install-')));
   const owners=new Map<string,{uid:number;gid:number}>(),descriptors=new Map<number,{path:string;owner:{uid:number;gid:number}}>();const mutations:string[]=[];
-  const physical=(path:string)=>{if(typeof path!=='string'||!path.startsWith('/')||path.split('/').includes('..')||path.includes('\0'))throw Error('outside fixture');return join(root,path);};
+  const physical=(path:string)=>{if(typeof path!=='string'||!path.startsWith('/')||path.split('/').includes('..')||path.includes('\0'))throw Error('outside fixture');return path.includes('//')||path.includes('/./')||path.endsWith('/.')?join(root,path):root+path;};
   const descriptor=(fd:number)=>{const value=descriptors.get(fd);if(!value)throw Error('foreign fd');return value;};
   const io:any={readSync:(fd:number,...args:any[])=>{descriptor(fd);return fs.readSync(fd,...args as [any,any,any,any]);},closeSync:(fd:number)=>{descriptor(fd);fs.closeSync(fd);descriptors.delete(fd);},fsyncSync:(fd:number)=>{descriptor(fd);fs.fsyncSync(fd);},fchmodSync:(fd:number,mode:number)=>{descriptor(fd);fs.fchmodSync(fd,mode);},
-    lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(Object.create(stat),{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
+    lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(stat,{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
     readFileSync:(path:string|number,...args:any[])=>{if(typeof path==='number')descriptor(path);return fs.readFileSync(typeof path==='number'?path:physical(path),...args as [any]);},
     openSync:(path:string,flags:number,mode?:number)=>{if(flags&fs.constants.O_CREAT)mutations.push(`open:${path}`);const fd=fs.openSync(physical(path),flags,mode);descriptors.set(fd,{path,owner:owners.get(path)??{uid:0,gid:0}});return fd;},
-    fstatSync:(fd:number)=>{const value=descriptor(fd),stat=fs.fstatSync(fd);return Object.assign(Object.create(stat),value.owner);},
+    fstatSync:(fd:number)=>{const value=descriptor(fd),stat=fs.fstatSync(fd);return Object.assign(stat,value.owner);},
     readdirSync:(path:string)=>fs.readdirSync(physical(path)),opendirSync:(path:string,options:any)=>fs.opendirSync(physical(path),options),readlinkSync:(path:string,options:any)=>{const raw=fs.readlinkSync(physical(path),{encoding:'buffer'});const prefix=Buffer.from(root+'/');const bytes=raw.subarray(0,prefix.length).equals(prefix)?Buffer.concat([Buffer.from('/'),raw.subarray(prefix.length)]):raw;return options?.encoding==='buffer'?bytes:bytes.toString('utf8');},
     realpathSync:(path:string)=>fs.realpathSync(physical(path)).slice(root.length)||'/',
     mkdirSync:(path:string,options:any)=>{mutations.push(`mkdir:${path}`);return fs.mkdirSync(physical(path),options);},
@@ -72,6 +72,7 @@ async function prepared() {
   fixture.file('/etc/resolv.conf','nameserver 192.0.2.53\n');fixture.file('/etc/hosts','127.0.0.1 localhost\n::1 localhost\n192.0.2.2 host.lima.internal\n');fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n');
   fixture.file('/proc/4321/status','Name:\tnode\nUid:\t1100\t1100\t1100\t1100\nGid:\t1100\t1100\t1100\t1100\nGroups:\t\n');
   fixture.file('/proc/sys/kernel/random/boot_id','01234567-89ab-4cde-8fab-0123456789ab\n');fixture.file('/proc/5678/stat','5678 (node) '+['S',...Array(18).fill('0'),'12345'].join(' ')+'\n');fixture.file('/proc/5678/status','Uid:\t0\t0\t0\t0\n');fixture.file('/proc/5678/cmdline',Buffer.from(['/usr/local/bin/node','--no-addons',decodeURI(new URL('install-guest.mjs',directory).pathname),'--policy','/policy-input','--artifacts','/stage','--apply',''].join('\0')).toString());fs.symlinkSync(fixture.physical(install.NODE),fixture.physical('/proc/5678/exe'));
+  fixture.file('/proc/self/mountinfo','1 0 0:1 / / rw - ext4 /dev/root rw\n');
   fixture.file('/proc/sys/kernel/hostname','fixture-host\n');
   fixture.file('/proc/4321/net/tcp','header\n'+[18743,18744,18745].map((port,index)=>`0: 0100007F:${port.toString(16)} 00000000:0000 0A 0:0 0:0 0 1100 0 ${9000+index} 1`).join('\n')+'\n');fixture.file('/proc/4321/net/tcp6','header\n');
   for(let index=0;index<3;index++)fs.symlinkSync(`socket:[${9000+index}]`,fixture.physical(`/proc/4321/fd/${index}`));
@@ -200,7 +201,7 @@ async function networkFixture(options:any={}) {
     }};
    },acknowledge:async(unit:string)=>units.get(unit),inspect:async(unit:string)=>units.get(unit),pending:async()=>false,stop:async(unit:string)=>{if(options.stopFail)throw Error('virtual owned stop failure');const facts=units.get(unit);if(facts){facts.active=false;facts.empty=true;}},observeStage:async({stage}:any)=>observation(stage,context)
   };
-  const ld={io:f.io,effectiveUid:()=>0,trust:()=>{},identity:()=>state.accounts[context.user],admit:async(c:any,command:any)=>state.modules.installedAdmission(c,command,state),manager,observe:()=>({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true}),boot:()=> '01234567-89ab-4cde-8fab-0123456789ab',witness:()=>({pid:5678,start:'12345'})};
+  const ld={io:f.io,effectiveUid:()=>0,trust:()=>{},identity:()=>state.accounts[context.user],recover:async(c:any)=>state.modules.recoveryBinding(c,await install.inspectRecordAuthority(f.deps)),admit:async(c:any,command:any)=>state.modules.installedAdmission(c,command,state),manager,observe:()=>({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true}),boot:()=> '01234567-89ab-4cde-8fab-0123456789ab',witness:()=>({pid:5678,start:'12345'})};
   queueMicrotask(()=>lifetime.executeStage(parsed,ld).then((result:any)=>{if(result?.version===1)child.stdout.write(JSON.stringify(result)+'\n');child.stdout.end();child.stderr.end();child.emit('close',0,null);},(error:any)=>{child.stderr.write('Worker entry denied.\n');child.stdout.end();child.stderr.end();child.emit('close',78,null);}));return child;
  };
  const privateSession=()=>JSON.parse(f.io.readFileSync('/etc/patrick-worker/qualification.json','utf8'));

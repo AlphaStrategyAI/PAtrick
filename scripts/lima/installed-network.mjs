@@ -20,7 +20,9 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
 const finite=n=>Number.isSafeInteger(n)&&n>=0&&n<=1024;
 const copy=v=>JSON.parse(JSON.stringify(v));
-const privateSession=v=>{const {records,networkOperation,...fixed}=v;return fixed;};
+// Immutable projection, not a second schema reader. The registry reference is
+// part of the pinned private v2 session across every operation update.
+const privateSession=v=>{const {records,networkOperation,...fixed}=v;return {...fixed,registry:v.registry};};
 function persist(value,io){
  const tmp=sessionPath+'.'+randomBytes(16).toString('hex')+'.tmp';let fd;
  try{fd=io.openSync(tmp,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);io.writeFileSync(fd,JSON.stringify(value)+'\n');io.chmodSync(tmp,0o600);io.fsyncSync(fd);io.closeSync(fd);fd=undefined;io.renameSync(tmp,sessionPath);const directory=io.openSync('/etc/patrick-worker',fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{io.fsyncSync(directory);}finally{io.closeSync(directory);}}
@@ -152,10 +154,10 @@ function observed(rows,binding,expected,closed){
 }
 export async function runInstalledNetwork(state,session,deps){
  if(!deps?.io||typeof deps.effectiveUid!=='function'||typeof deps.run!=='function'||typeof deps.loadModules!=='function'||deps.io!==fs&&typeof deps.spawn!=='function')fail('dependency');
- if(deps.effectiveUid()!==0||!session||session.phase!=='active'||session.networkOperation)fail('trust');
+ if(deps.effectiveUid()!==0||!session||session.version!==2||session.phase!=='active'||session.networkOperation)fail('trust');
  const installer=await import('./install-guest.mjs'),io=deps.io;let owned,originalNft,originalProxy,identity,current=copy(session),operation,activeToken=null;
  const load=()=>{installer.trustedPath(sessionPath,{mode:0o600},io);let v;try{v=JSON.parse(installer.trustedRead(sessionPath,io,131072));}catch{fail('trust');}if(!same(privateSession(v),privateSession(session))||v.phase!=='active'||!Array.isArray(v.records)||new Set(v.records).size!==v.records.length)fail('trust');return v;};
- const boundState=async()=>{const fresh=await installer.inspectInstalled(deps);if(fresh.fence.status!=='ready'||!same(fresh.manifest,state.manifest)||!same(fresh.accounts,state.accounts)||!same(fresh.inventory,state.inventory)||!same(fresh.policy,state.policy))fail('trust');return fresh;};
+ const boundState=async()=>{const fresh=await installer.inspectInstalled(deps);if(fresh.fence.status!=='ready'||!same(session.registry,fresh.manifest.installation.registry)||!same(fresh.manifest,state.manifest)||!same(fresh.accounts,state.accounts)||!same(fresh.inventory,state.inventory)||!same(fresh.policy,state.policy))fail('trust');return fresh;};
  const revalidate=async(ready=false)=>{const v=load();if(!same(v.networkOperation,operation)||v.records.some(t=>!session.records.includes(t)&&!operation.roles.some(r=>r.token===t&&r.phase!=='reserved'&&r.phase!=='never-submitted'))||!same(v.records.slice(0,session.records.length),session.records)||!same(v.records.filter(t=>session.records.includes(t)),session.records)||!same(witness(deps),owned))fail('trust');const enrolled=operation.roles.filter(r=>v.records.includes(r.token));if(!same(v.records,[...session.records,...enrolled.map(r=>r.token)])||operation.roles.some(r=>['prepared','client','closing','closed'].includes(r.phase)&&!v.records.includes(r.token)))fail('trust');verifyMarkers(session,io);current=v;const fresh=await boundState();fresh.modules.assertReadiness(fresh.nft(),fresh.proxy(),fresh.policy,fresh.accounts);if(!same(fresh.nft(),originalNft)||!same(fresh.proxy(),originalProxy)||!same(lineage(deps,originalProxy,owned),identity))fail('trust');if(ready)fresh.drain();return fresh;};
  const update=async(change,ready=false)=>installer.withInstallationMutex(deps,async()=>{const fresh=await revalidate(ready);if(!same(load(),current))fail('trust');change(operation);current.networkOperation=copy(operation);persist(current,io);return fresh;});
  const initial=await installer.withInstallationMutex(deps,async()=>{

@@ -262,7 +262,7 @@ function assertAcpTerminal(f:ReturnType<typeof lifecycleProtocolFixture>,result:
  expect(events.some(e=>e.event==='tests-before-confirmation'),'Tests started before ACP helper confirmation').toBe(false);
  expect(endTurn).toBeGreaterThan(-1);expect(eof).toBeGreaterThan(endTurn);expect(exit).toBeGreaterThan(eof);expect(confirmed).toBeGreaterThan(exit);expect(tests).toBeGreaterThan(confirmed);
  expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:'actual synthetic test'}]}});
- const token=readdirSync(f.controller.physical('/run/patrick-worker/invocations'))[0]!.slice(0,32);
+ const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name))!.slice(0,32);
  expect(f.controller.record(token)).toMatchObject({state:'closed',payloadSealed:true});
 }
 async function assertHeldAcpHandoff(f:ReturnType<typeof lifecycleProtocolFixture>,signal:AbortSignal){
@@ -270,7 +270,7 @@ async function assertHeldAcpHandoff(f:ReturnType<typeof lifecycleProtocolFixture
  try{
   await waitForAcpInputEof(f,run,signal);
   expect(f.events(false).filter(e=>e.stage==='tests')).toEqual([]);
-  const token=readdirSync(f.controller.physical('/run/patrick-worker/invocations'))[0]!.slice(0,32);
+  const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name))!.slice(0,32);
   expect(f.controller.record(token)).toMatchObject({state:'active',payloadSealed:false,sequence:2,stages:[{stage:'prepare',phase:'complete'},{stage:'acp',phase:'acknowledged'}]});
   expect(f.events(false).filter(e=>e.stage==='acp'&&e.event==='helper-confirmed')).toEqual([]);
   f.release();assertAcpTerminal(f,await run);
