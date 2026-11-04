@@ -12,6 +12,14 @@ This is one Node.js 24 / TypeScript ESM project: Hono server-rendered HTML, plai
 
 - **Judgment history:** The host freezes each successful decision's goal, original judgment, used rule contents/versions, citations, and prediction (`null` when unknown). Owner decision cases retain that snapshot and append receipt-linked feedback; missing historical snapshots remain unknown. Predictions and delivery feedback have separate evidence requirements; business impact still requires independent measurement.
 
+## Review judgment outcomes
+
+In **Standards → 结果复核**, inspect the frozen judgment, its schedule, verified delivery, later owner choices, source-reported corrections/measurements/failures/abandonment, and failed engineering checks separately. Set `reviewIntervalDays` to an integer **1–365** in project configuration or the add-project form (default **7**); settings shows the saved value. Each new snapshot freezes its own cadence; legacy snapshots keep seven days even if project settings change.
+
+The host scans locally on startup and every 60 seconds. Approved integrations can import reference materials without creating tasks, attach exact quoted evidence to a judgment, and read or run scoped reviews; see the [operations how-to and HTTP contracts](docs/operations.md#outcome-review-sources-and-http-contracts) and [implementation plan](docs/plans/2026-11-03-outcome-reviews.md). There is **no live metrics feed configured**: missing results or attribution remain **待观察**. “已关联结果依据” associates source-reported material; it does not certify causality, prediction accuracy or business improvement, or promote a personal principle. A receipt awaiting review is not evidence of missing delivery.
+
+Local verification on **2026-11-04** passed **299 tests** and **15 Chromium tests**; [the report](docs/test-report.md#outcome-review-candidate) records scope, screenshots and remaining live prerequisites.
+
 ## Try the local demo
 
 Use Node **24**, including the Node binary used by background services:
@@ -102,11 +110,11 @@ The stdio MCP entry connects to the running HTTP service. Configure `PATRICK_URL
 ## Project map
 
 - `src/domain.ts`: shared contracts and role output schemas.
-- `src/store.ts`, `intake.ts`, `knowledge.ts`, `standards.ts`: durable records, source revisions, scoped retrieval, and explicit decisions.
+- `src/store.ts`, `intake.ts`, `knowledge.ts`, `standards.ts`, `reviews.ts`: durable records, source revisions, scoped retrieval, and explicit decisions.
 - `src/scheduler.ts`, `orchestrator.ts`, `integrations/`: admitted workers, durable workflow, research, platform writers, Feishu, MCP, and network boundaries.
 - `src/app.ts`, `src/web/`, `public/`: authenticated Hono pages and progressive interactions.
 - `scripts/`, `examples/`: local diagnostics, backup/recovery, and [launchd templates](examples/launchd/README.md).
-- [Technical scheme](docs/designs/PAtrick技术方案.md), [implementation plan](docs/plans/2026-11-03-patrick-implementation.md), [judgment-history repair plan](docs/plans/2026-11-03-decision-snapshots.md), and [formal PRD](docs/product/PRD.md): source requirements, planned work, local repair evidence, and the pilot output document.
+- [Technical scheme](docs/designs/PAtrick技术方案.md), [implementation plan](docs/plans/2026-11-03-patrick-implementation.md), [judgment-history repair plan](docs/plans/2026-11-03-decision-snapshots.md), [outcome-review plan](docs/plans/2026-11-03-outcome-reviews.md), and [formal PRD](docs/product/PRD.md): source requirements, planned work, local repair evidence, and the pilot output document.
 
 This repository provides local and launchd operation guidance. No public hosting deployment is requested or implied. Development/operations and learning roles can extend the same contracts, but their sources, actions, and domains need separate real acceptance.
 

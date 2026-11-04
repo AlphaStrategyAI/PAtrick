@@ -109,7 +109,73 @@ The host records a successful `decide` snapshot in the existing `actions` ledger
 
 For compatibility, CLI decision output may omit `expectedOutcome` or set it to `null`; the current prompt asks for an explicit prediction with uncertainty, or `null` when unknown. The host normalizes an omitted prediction to `null`. Older cases without a snapshot remain explicitly unknown; do not reconstruct their original judgment from current rules or later feedback. A legacy `outcome` without receipt linkage is displayed with an explicit unverified-result notice. Source withdrawal removes readable snapshots and related case/question/task derivatives while retaining only permitted receipt audit; dependency cleanup also follows older `decision.snapshot` actions when the current judgment no longer cites their sources. `ephemeral` content and its readable derivatives stay in the current process rather than persistent records; a permanent task must reject temporary-source citations or rules that would preserve such evidence.
 
+## Outcome review sources and HTTP contracts
+
+Open **Standards → 结果复核** for the selected project. Each subject preserves its original judgment, goal, rule versions and prediction, with separate delivery, source-reported correction, measurement, engineering failure and abandonment sections. A missing current report shows **交付回执待复核**; only a current report can state which receipts passed review. A connection block, owner cancellation, archival or failed planned test does not establish a measured business failure.
+
+Configure `reviewIntervalDays` in project JSON or the add-project form: integer **1–365**, default **7**. Settings shows the saved value. JSON requires a number; an omitted field or blank form input uses seven, while zero, fractions and out-of-range values are rejected. Each successful judgment snapshot freezes `reviewAt` and `reviewIntervalDays`. Legacy snapshots lacking these fields use `recordedAt + 7 days` and seven-day recurrence, independently of today's project setting.
+
+Accepted failed planned tests are retained before a repair replaces the task buffers. The host records only validated execute/check results, bound to the accepted attempt, snapshot and task version; later repair success does not erase them. Transport faults remain separate. Older failed outputs already overwritten before this feature cannot be reconstructed; the legacy fallback uses only a matching current version/context.
+
+The runtime scans the current owner's projects after startup setup and every **60 seconds**, using the host clock. Before due it appends no report. Scans append local `decision.review` actions; unchanged inputs in the same scheduled round do not duplicate records across retries or restarts. Changed admissible evidence may append a new immutable report in that round; missed rounds are not backfilled with later knowledge. A scheduled storage failure logs a fixed message and retries next minute; an explicit scan failure is returned to its caller. No scan calls a model or remote service or changes tasks, original judgments, rules or preferences.
+
+All four routes below use the running host's authentication. In live mode, send `Authorization: Bearer <private host token>` or use the owner session; cookie-authenticated mutations require a matching `Origin` and reject cross-site requests. Keep credentials in the private environment described above. Bodies shown here are **synthetic offline contract examples**, not live measurements, credentials or a configured feed. Use `Content-Type: application/json`. POST bodies are strict: do not add actor/author identity, `recordedAt`, `at` or a scan clock. The server supplies recorder identity and recording time. Project/domain must match a stored project owned by the configured owner.
+
+1. **`POST /api/reference-sources`** imports approved reference text without an execution task. Required fields: `projectId`, `domain`, `externalId`, `revision`, `title`, exact nonblank `content`, and explicit `retention` (`permanent` or `ephemeral`); `locator` is optional. Content is preserved exactly (maximum 1,000,000 characters, within the 1,100,000-byte HTTP body limit). Returns HTTP 200 `{ "source": ... }` with metadata, including its actual `id`/`revision`/`locator`, and no content. The host sets kind `reading`, purpose `reference` and source author to its configured owner; it does not infer an upstream author. Use the returned metadata in the next request.
+
+```json
+{
+  "projectId": "offline-example",
+  "domain": "personal",
+  "externalId": "synthetic-report-1",
+  "revision": "r1",
+  "title": "Synthetic offline outcome report",
+  "content": "{\"schemaVersion\":1,\"name\":\"completion_rate\",\"value\":0.75,\"baseline\":0.6,\"unit\":\"ratio\",\"sampleSize\":40,\"periodStart\":\"2026-10-20T00:00:00.000Z\",\"periodEnd\":\"2026-10-27T00:00:00.000Z\"}\nSynthetic report: direct measurement in the declared cohort.",
+  "retention": "permanent",
+  "locator": "offline:synthetic-report-1"
+}
+```
+
+A retry of the same revision returns the same source; changed text under that revision or reuse with a conflicting task/reference purpose is rejected (409). New revisions supersede old evidence. Reference purpose remains authoritative through Vault edits, scans and recovery: editable frontmatter cannot turn a reference into executable work. Recovery uses stored source purpose or a matching pre-existing task/source/scope/revision relation for execution provenance. Valid ordinary intake sources recover before special owner-answer sources, so a genuinely accepted answer can bind its recovered primary independently of filename order. Accepted-answer authority must come from the trusted SQLite question, not projection metadata.
+
+Vault edit copies carry host-recorded parent source revisions, including case/answer dependencies. A superseded or withdrawn parent invalidates its historical and nested copies and their readable evidence/review derivatives. An absent SQLite row with unverifiable intake identity, or a Vault-only copy lacking trusted ancestry, recovers as a **content-free withdrawn reference tombstone**; it does not become executable or retain its readable projection. Editable kind, external ID, revision or ancestry cannot supply the missing authority. Keep the consistent database/Vault backup together; manual frontmatter edits cannot repair missing provenance.
+
+2. **`POST /api/judgments/:id/evidence`** attaches evidence to the host's actual snapshot ID, obtained from a scoped review view. Required fields: `projectId`, `domain`, `kind` (`correction`, `metric`, `failure`, `abandonment`), `sourceId`, `sourceRevision`, exact substantive `quote`, and ISO `observedAt`. Optional `attribution` defaults to `{ "method": "none", "citations": [] }`. Non-`none` methods (`controlled_comparison`, `direct_measurement`) require nonblank, current, same-scope exact citations with `sourceId`, `revision`, `quote`, `locator`. Returns HTTP 200 `{ "evidence": ... }`, preserving source `authorId` separately from owner recorder `actorId`. Identical retries return the original record; conflicting metadata for that evidence identity returns 409.
+
+```json
+{
+  "projectId": "offline-example",
+  "domain": "personal",
+  "kind": "metric",
+  "sourceId": "REPLACE_WITH_RETURNED_SOURCE_ID",
+  "sourceRevision": "r1",
+  "quote": "{\"schemaVersion\":1,\"name\":\"completion_rate\",\"value\":0.75,\"baseline\":0.6,\"unit\":\"ratio\",\"sampleSize\":40,\"periodStart\":\"2026-10-20T00:00:00.000Z\",\"periodEnd\":\"2026-10-27T00:00:00.000Z\"}",
+  "observedAt": "2026-10-27T00:00:00.000Z",
+  "attribution": {
+    "method": "direct_measurement",
+    "citations": [{
+      "sourceId": "REPLACE_WITH_RETURNED_SOURCE_ID",
+      "revision": "r1",
+      "quote": "Synthetic report: direct measurement in the declared cohort.",
+      "locator": "offline:synthetic-report-1"
+    }]
+  }
+}
+```
+
+Replace the project and snapshot/source IDs with authorized records. The example dates are usable only for a synthetic judgment before October 20 and an actual verified delivery no later than that measurement start; importing this JSON does not create such a judgment or receipt. Metric evidence has **no free-standing numeric input**: the whole exact quoted JSON is parsed with `schemaVersion: 1`, nonempty `name`/`unit`, finite numeric `value`, optional finite `baseline`, optional positive integer `sampleSize`, and ordered ISO `periodStart`/`periodEnd`. Numeric strings, extra fields and nonfinite values are invalid. `periodEnd` must equal `observedAt` by instant. Observations cannot predate the judgment or lie in the future; measurement start must be on or after the judgment. All quotations and locators are rechecked against the current active source revision.
+
+A result stays **待观察 / `observing`** without a currently verified delivery, known positive sample, post-delivery measurement period and quoted attribution material. **已关联结果依据 / `evidence_linked`** means those materials were associated. Attribution is source-reported; it never certifies causality, prediction accuracy or business improvement. No real metrics feed is configured. Corrections/failure/abandonment reports are source claims, and failed checks are separate host engineering records.
+
+3. **`GET /api/reviews?project=offline-example&domain=personal`** returns HTTP 200 `{ "reviews": [...] }` using server time. Each view includes the frozen `snapshot`, `snapshotId`, `taskId`, scheduled date, cadence, current admissible evidence and optional `latestReview`. Listing does not create a review. A historical report whose inputs no longer match current permitted evidence is not reused as current.
+
+4. **`POST /api/reviews/run`** accepts exactly `{ "projectId": "offline-example", "domain": "personal" }`, scans only that scope with the host clock and returns HTTP 200 `{ "reviews": [...] }`. It cannot force a future due date or invent delivery evidence.
+
+Unknown/mismatched project/domain returns 404 for reference/list/run routes; omitted list query fields also return 404, while missing required POST fields fail Schema validation with 400. A foreign owner returns 403. Explicit state/source-withdraw and generic task/question APIs also enforce the current project owner; aggregate state/readiness omit foreign scopes. Evidence additionally requires a valid original successful host snapshot and same-scope current source revisions. Other Schema failures return 400, and obsolete/retention/conflicting-record conditions can return 409; unauthenticated live API access returns 401. Permanent judgments cannot retain temporary evidence. `ephemeral` evidence and readable reviews remain process-local; withdrawal removes readable derivatives, excludes obsolete citations and prevents their return after restart or index rebuilding. These guards apply again at read/scan time, not only at import.
+
 ## Feishu settings and catch-up
+
+Current bounded checks authenticated the app and obtained a WebSocket endpoint from discovery (HTTP 200/code 0), but no WebSocket connection or message was recorded. The user selected one-time pairing; owner Open ID/private Chat ID binding and the owner round trip remain pending. Follow the verified pairing result before treating either identity as configured; discovery is not live channel acceptance.
 
 Required environment names are:
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Use the existing subagent-driven review workflow. Root owns the domain, storage, standards, orchestration and regression tests; the UI worker may own the standards view after the contract is fixed. Workers share this checkout and must preserve other edits.
 
-**Goal:** Implement the frozen-case contract in technical proposal §3③/R030 and the judgment-history portion of R032: retain the judgment that existed before the owner answered, its actual rule versions, explicit expectation and receipt-backed outcome history. R032's automatic due review and later correction/product-metric linkage remain required and incomplete.
+**Goal:** Implement the frozen-case contract in technical proposal §3③/R030 and the judgment-history portion of R032: retain the judgment that existed before the owner answered, its actual rule versions, explicit expectation and receipt-backed outcome history. R032's automatic due review and later correction/product-metric linkage were outside this repair; their local contract was subsequently verified on 2026-11-04 in the [outcome-review follow-up](2026-11-03-outcome-reviews.md). Live acceptance and measured business effects remain separate.
 
 **Architecture:** Save a versioned, host-owned snapshot in the existing action ledger after a successful deciding attempt. The snapshot contains the exact admitted attempt/input hash, goal, decision, only the rules it used, source revision references and available research. Questions bind the snapshot ID; authenticated cases copy that snapshot. Feedback appends a stable receipt-linked result. Retraction removes readable snapshot/result derivatives, and ephemeral snapshots remain in process memory.
 

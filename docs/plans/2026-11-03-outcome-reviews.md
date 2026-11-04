@@ -83,15 +83,25 @@ Views are scoped, omit withdrawn subjects or readable payloads with withdrawn/ob
 
 ## Task 3: Readable review UI and documentation
 
-**Owner:** one UI implementer, exclusively `src/web/pages.tsx`, `src/web/components.tsx` and new `tests/integration/outcome-reviews-ui.test.ts`. Existing CSS may be changed only if current layout fails a measured check. Root owns documentation and overall verification.
+**Owner:** one UI implementer, exclusively `src/web/pages.tsx`, `src/web/components.tsx`, `tests/e2e/workbench.spec.ts` and new `tests/integration/outcome-reviews-ui.test.ts`. Existing CSS may be changed only if current layout fails a measured check. Root owns documentation and overall verification.
 
 - Add a project review-interval input (default 7, range 1–365), persist it through project creation and show the saved interval in settings.
 - The standards page shows due/scheduled reviews, original judgment title, date, current review state, evidence gaps and separately labeled delivery, reported correction, measurement, failed checks and abandonment information. Use existing surface/layout styles. Hide withdrawn evidence and escape all text.
 - Reference source rows are labeled as result evidence, so their purpose is clear without implying an execution task was started.
 - Use `outcomeReviewViews` rather than reading raw actions. `evidence_linked` is labeled “已关联结果依据”, with an explicit explanation that it does not prove prediction accuracy or business improvement. Unknown/unattributed outcomes remain “待观察”. No required manual tagging form.
-- [ ] Write rendering/request regressions before UI implementation for missing evidence, linked metric, legacy schedule, project isolation, withdrawal and escaping. Add an end-to-end assertion for project interval persistence and review visibility if the existing demo path supplies a real review subject.
-- [ ] Run focused tests/typecheck and obtain task review. Root runs full check and Chromium, inspects desktop/mobile and updates English/Chinese README, detailed design, operations, acceptance and test records with observed evidence only.
+- Only the configured owner's projects may supply these UI views; a foreign project selection or switcher must not expose its judgments or evidence.
+- [x] Write rendering/request regressions before UI implementation for missing evidence, linked metric, legacy schedule, project isolation, withdrawal and escaping. UI v2 passed 19 focused tests and typecheck after pending-delivery and selector repairs. Chromium passed 15/15, including interval persistence and distinct same-title snapshots.
+- [x] Run focused tests/typecheck and obtain task review. Root verified the final 299-test check and 15-test Chromium run; desktop/mobile artifacts retain the unchanged UI source hashes. English/Chinese README, detailed design, operations, acceptance and test records describe the implemented contracts and measured limits. The independent documentation audit and publication gate follow.
 - [ ] Independently review final source and documents, publish an ordinary commit to the existing product branch and retain exact-head CI evidence in PR #1. Main merge authorization remains pending.
+
+## Final integration review repairs
+
+The final source review reproduced three crossings that the task-scoped tests missed. One implementer owns the combined repair wave; documentation authoring is independent, and root owns final verification/publication.
+
+- [x] Persist trusted parent-source/revision provenance for Vault derivatives, recover legacy relationships conservatively, and recursively remove withdrawn readable descendants and review/audit payloads. Obsolete parent revisions cannot supply current evidence through copied fragments. Missing-row recovery validates ordinary source identity before independently bound accepted-answer sources; unverified copies become content-free tombstones.
+- [x] Enforce current project ownership in explicit and aggregate state responses and generic source withdrawal; reject foreign mutations without changing their records.
+- [x] Retain validated failed planned-test observations by original snapshot, task version and attempt/stage before repairs replace the current task buffers. Keep engineering history distinct from business impact and preserve withdrawal/temporary-data boundaries. Previously overwritten failure history remains unrecoverable.
+- [x] Observe the cross-module failures before repair, pass covering regressions/typecheck, obtain independent re-review, then run the final candidate-wide checks. Final v4 review passed both gates without findings; 172 covering tests passed. Parent full check passed 299 tests in 27 suites, typecheck, build and PRD validation; Chromium passed 15/15 in 20.8 seconds. The verification record retains the earlier failed browser assertion and repaired result.
 
 ## Source constraints and self-review
 

@@ -1,6 +1,6 @@
-# Verification report · 2026-11-03
+# Verification report · 2026-11-04
 
-The current [judgment-history repair](#judgment-history-repair) passed 186 local tests and 14 browser tests. Earlier initial-candidate and runner-selection checks remain historical evidence below. This report does not establish live acceptance of external accounts, model identity, billing, VM isolation, VPN routing, or off-machine recovery.
+The final [outcome-review v4 candidate](#outcome-review-candidate) passed **299 local tests in 27 suites** and **15/15 Chromium tests**. Typecheck, build and PRD validation passed; the final independent source review found no unresolved issues. Earlier checks remain historical evidence below. This report does not establish live acceptance of external accounts, model identity, billing, VM isolation, VPN routing, or off-machine recovery.
 
 ## Initial-candidate checks
 
@@ -25,10 +25,12 @@ Browser tests exercise task creation, exact quotations, task drawers and seven-l
 - [Desktop workbench](screenshots/workbench-desktop.png)
 - [Mobile workbench](screenshots/workbench-mobile.png)
 - [Knowledge search](screenshots/knowledge-desktop.png)
+- [Outcome reviews — desktop](screenshots/outcomes-desktop.png)
+- [Outcome reviews — mobile](screenshots/outcomes-mobile.png)
 
 ## Live acceptance still required
 
-The user authorized `AlphaStrategyAI/PAtrick` as the pilot repository. `docs/product/PRD.md` is the formal target, and the included workflow exposes a `validate` job. The trusted application identity and head-bound check results must be read from an actual workflow run before enabling automatic delivery.
+The user authorized `AlphaStrategyAI/PAtrick` as the pilot repository. `docs/product/PRD.md` is the formal target, and the included workflow exposes a `validate` job. Published heads have the exact-head `validate`/GitHub Actions App `15368` evidence recorded below. Automatic delivery still requires the actual current PR head, compatible authorization and the remaining live prerequisites.
 
 No Grok/Codex/dsh Lima run, Feishu owner round trip, bilingual online research round trip, dual-VPN qualification, launchd installation, restic upload, or isolated-machine takeover has been claimed. See [the requirement checklist](acceptance.md), [deployment guide](deployment.md), and [operations guide](operations.md).
 
@@ -48,4 +50,24 @@ The repair adds **14 workflow/storage regressions** and **6 Hono request/renderi
 
 Regression proof: the first seven history tests failed before implementation; two permanent-task temporary-evidence paths initially delivered instead of blocking; a further historical-action-only withdrawal test retained an artifact/feedback sentinel. Each was observed failing before its fix and passing afterwards. The dependency closure now follows earlier judgment snapshots even when the current judgment no longer cites that source. The related 47-test workflow/store/UI lane passed, and independent final review passed the focused 20-test lane with no unresolved P1/P2 findings. A separate in-memory fallback probe bound the snapshot to the actual successful dsh attempt; raw SQLite serialization of the temporary flow contained no body sentinel. These are isolated adapter tests and do not verify an actual model provider.
 
-The published judgment-history head needs its own exact-head CI check. R030's local frozen-case contract is verified; R032 still lacks automatic due review and later correction/product-metric linkage. Live pilot, operational and future-phase acceptance remain pending.
+The published judgment-history commit `a551e8b51c39c047deecc6c05fe3e59c9760fd22` passed [push CI](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621656878) and [PR CI](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621665508): check `validate`, GitHub Actions App `15368`, exact matching head. The local outcome-review commits have not yet been published/CI-verified. R030's local frozen-case contract remains verified. R032's locally verified outcome-review contract is recorded below; live pilot, operational and future-phase acceptance remain pending.
+
+## Outcome-review candidate
+
+On **2026-11-04**, with Node **24.22.2**, the parent ran `npm run check` on frozen **v4**: **exit 0, 299/299 tests in 27 suites**, plus typecheck, production build and PRD validation. The final complete Chromium run exited **0**, **15/15 passed**, **0 skips**, **20.8 seconds**. It includes interval **30** persistence/navigation/reload and distinct judgment snapshots of the same task/title. These are local isolated-data/synthetic-adapter checks.
+
+The final repair covering lane passed **172/172 tests in 14 files**, including **19/19 cross-module regressions**, and typecheck. The final independent source review passed specification and code quality, independently matched **19/19 source/test hashes**, and reported **0 Critical, 0 Important, 0 Minor** findings. The original blockers and the later recovery-order finding are closed. The available fallback reviewer supplied that verdict; a provider-limited attempt supplied no verdict and is not counted as a pass.
+
+The regressions cover partial quoted text and historical/nested/case-copy withdrawal, superseded parents, older SQLite/newer Vault identity tampering, current owner API isolation, and accepted failed planned-check history bound to snapshot/attempt/version, including temporary privacy. Actual `Workbench.answer` cases remove both source rows and preserve primary text, accepted answer/question/case and no extra task through rescans/restarts in both filename orders. Recovery processes valid ordinary identities before special accepted-answer bindings. A missing source with unverifiable identity or an orphan copy without trusted ancestry becomes a content-free withdrawn reference tombstone. Successful repair retains previously accepted engineering failures; transport faults stay separate. Failed outputs already overwritten by older versions cannot be reconstructed, and no historical result is invented.
+
+Earlier stages remain historical: core **33/33** plus snapshot **14/14**; integration covering **138/138**; UI v2 focused **19/19**; UI v1 complete check **277/277 in 26 suites**; intermediate UI v2 candidate complete check **292/292**. The first Chromium run had **14 passed / 1 failed** because a goal title matched multiple snapshots. Public snapshot anchors and a scoped schedule row fixed that selector; the subsequent UI v2 run passed **15/15 in 19.9 seconds**, before the final v4 run above. Coverage was not resampled; the initial percentages remain historical.
+
+The parent inspected the unchanged UI v2 at **1440 px** and **375 px**: document width equalled viewport, no overflowing main content, and no current-page console errors after clearing. Four review subjects and the pending-receipt wording were verified. The visual receipt binds the page/component hashes to the [desktop](screenshots/outcomes-desktop.png) and [mobile](screenshots/outcomes-mobile.png) captures; later repairs changed core recovery/API/ledger behavior, not those UI files.
+
+This completes **R032's local C contract**. Independent documentation audit, publication and CI for the new patch remain separate pending gates. There is no real metrics feed, Lima installation, restic installation or admitted paid worker. Missing results remain observing; linked quotations do not prove causal impact, prediction accuracy or principle quality. No real merge or seven-layer live product acceptance occurred. Default-branch merge authorization remains pending.
+
+## Bounded authenticated Feishu configuration evidence
+
+A private credential probe returned tenant-token **HTTP 200 / code 0** with a token, and bot-info **HTTP 200 / code 0**, bot name **PAtrick**, `activationStatus: 2`. WebSocket discovery also returned **HTTP 200 / code 0**, `endpointIssued: true`, with `connected: false` and **0 messages**. No token/secret or private credential path is published; no business write or message was sent. This establishes application authentication and endpoint discovery only.
+
+The user selected one-time pairing; the actual owner Open ID/private Chat ID binding is still pending. History access, event receipt and the owner round trip remain unverified. This does not complete the live Feishu gates above.

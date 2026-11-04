@@ -186,13 +186,19 @@ test('project creation accepts repository service, trusted CI identities and opt
   await form.getByLabel('可信必需检查').fill('validate-prd');
   await form.getByLabel('可信 CI 身份 ID').fill('101, 202\n303');
   await form.getByLabel('同步目录（可选）').fill(sourceDir);
+  await expect(form.getByLabel('结果复核间隔（天）')).toHaveValue('7');
+  await form.getByLabel('结果复核间隔（天）').fill('30');
   await expect(form.getByLabel('允许在全部门禁通过后自动合并')).not.toBeChecked();
   await form.getByRole('button', { name: '创建项目', exact: true }).click();
   await expect(page.getByRole('heading', { name: '工作台', exact: true })).toBeVisible();
   await expect(page.locator('.project-switcher summary')).toContainText(name);
   const updated = await (await request.get('/api/state')).json();
   const created = updated.projects.find((project: { name: string }) => project.name === name);
-  expect(created).toMatchObject({ repositoryProvider: 'gitlab', repository: 'team/subgroup/notes', executionRunner: 'dsh', trustedAppIds: [101, 202, 303], sourceDir, autoMerge: false });
+  expect(created).toMatchObject({ repositoryProvider: 'gitlab', repository: 'team/subgroup/notes', executionRunner: 'dsh', trustedAppIds: [101, 202, 303], sourceDir, autoMerge: false, reviewIntervalDays: 30 });
+  await page.goto(`/settings?project=${created.id}`);
+  await expect(page.locator('.key-value > div').filter({ has: page.getByText('结果复核间隔', { exact: true }) })).toHaveText('结果复核间隔30 天');
+  await page.reload();
+  await expect(page.locator('.key-value > div').filter({ has: page.getByText('结果复核间隔', { exact: true }) })).toHaveText('结果复核间隔30 天');
   await page.locator('.project-switcher summary').click();
   await page.locator('.project-menu a').filter({ hasText: originalProject.name }).click();
   await expect(page.locator('.project-switcher summary')).toContainText(originalProject.name);
@@ -216,4 +222,30 @@ test('weekly reflection uses the scoped owner decision and keeps budget and conn
   await page.goto(`/tasks/${delivered.id}`);
   await expect(page.getByText('预算记账（保守预估）', { exact: false })).toBeVisible();
   await expect(page.getByText('实际尝试与费用', { exact: false })).toHaveCount(0);
+});
+
+
+test('standards show real demo judgments as scheduled reviews with business results observing', async ({ page, request }) => {
+  const state = await (await request.get('/api/state')).json();
+  const project = state.projects[0];
+  const response = await request.get(`/api/reviews?project=${project.id}&domain=${project.domain}`);
+  expect(response.ok()).toBe(true);
+  const { reviews } = await response.json();
+  expect(reviews.length).toBeGreaterThan(0);
+  await page.goto(`/standards?project=${project.id}`);
+  const section = page.getByRole('region', { name: '结果复核', exact: true });
+  await expect(section).toBeVisible();
+  await expect(section).toContainText('不代表预测准确，也不证明业务改善');
+  for (const review of reviews) {
+    const taskHref = `/tasks/${review.taskId}?${new URLSearchParams({ project: project.id })}`;
+    const subject = section.locator(`article[id="outcome-review-${review.snapshotId}"]`).filter({ has: page.getByRole('link', { name: '查看原始任务', exact: true }).and(page.locator(`a[href="${taskHref}"]`)) });
+    await expect(subject).toHaveCount(1);
+    await expect(subject.getByRole('link', { name: '查看原始任务', exact: true })).toHaveAttribute('href', taskHref);
+    await expect(subject.getByRole('heading', { name: review.snapshot.goal.title, exact: true })).toBeVisible();
+    await expect(subject.getByText('待观察', { exact: true })).toBeVisible();
+    const scheduleRow = subject.locator('p.metadata').filter({ hasText: /^初判记录于/ });
+    await expect(scheduleRow.locator(`time[datetime="${review.scheduledAt}"]`)).toBeVisible();
+    await expect(subject).toContainText(`每 ${review.reviewIntervalDays} 天`);
+    await expect(subject.getByText('已关联结果依据', { exact: true })).toHaveCount(0);
+  }
 });

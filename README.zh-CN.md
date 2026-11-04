@@ -12,6 +12,14 @@ PAtrick 把项目证据、你的明确决定和可核交付连起来。第一条
 
 - **判断历史**：宿主冻结每次成功初判的目标、原判、实际采用规则的内容与版本、引文和预测（未知为 `null`）。本人决策案例保留当时快照，再追加绑定交付回执的反馈；历史记录缺少快照时明确未知。预测和交付反馈各有证据要求，业务效果仍需独立观测。
 
+## 复核判断结果
+
+在 **判断标准 → 结果复核** 查看冻结初判、到期安排、可核交付、后续本人选择，以及来源报告的更正、测量、失败和放弃材料；工程检查失败单独展示。在项目配置或新增项目表单把 `reviewIntervalDays` 设为 **1–365** 的整数，默认 **7**，设置页显示已保存值。新快照冻结各自周期；旧快照独立沿用七天，不随今天的项目设置改写。
+
+宿主启动时及每 60 秒在本地扫描。获准集成可导入不启动任务的引用材料，把精确引文关联到初判，并按项目/域查询或触发复核；详见 [运行方法与 HTTP 契约](docs/operations.md#outcome-review-sources-and-http-contracts) 和 [结果复核实施计划](docs/plans/2026-11-03-outcome-reviews.md)。目前**没有配置真实指标来源**，缺结果或归因材料继续**待观察**。“已关联结果依据”仅关联来源报告，不证明因果、预测准确或业务改善，也不提升本人原则。回执待复核不表示没有交付。
+
+**2026-11-04** 本地验证通过 **299 项测试**及 **15 项 Chromium 测试**；范围、截图和仍缺的实链前提见 [验证报告](docs/test-report.md#outcome-review-candidate)。
+
 ## 本地体验
 
 ```bash
@@ -99,9 +107,9 @@ stdio MCP 连接已经运行的 HTTP 服务，在私有客户端环境设置 `PA
 
 ## 代码与文档
 
-`src/domain.ts` 定义共享契约；`store/intake/knowledge/standards` 管理账本、修订、检索和本人标准；`scheduler/orchestrator/integrations` 负责角色与外部边界；`src/app.ts`、`src/web/`、`public/` 提供认证 SSR 与交互；`scripts/`、`examples/` 提供本地运维与 [launchd 模板](examples/launchd/README.md)。
+`src/domain.ts` 定义共享契约；`store/intake/knowledge/standards/reviews` 管理账本、修订、检索和本人标准；`scheduler/orchestrator/integrations` 负责角色与外部边界；`src/app.ts`、`src/web/`、`public/` 提供认证 SSR 与交互；`scripts/`、`examples/` 提供本地运维与 [launchd 模板](examples/launchd/README.md)。
 
-[技术方案](docs/designs/PAtrick技术方案.md)、[实施计划](docs/plans/2026-11-03-patrick-implementation.md)、[判断历史修复计划](docs/plans/2026-11-03-decision-snapshots.md)、[正式 PRD](docs/product/PRD.md) 分别保存来源要求、计划、本地修复证据和试点产出；105 条要求及分层证据见验收清单。
+[技术方案](docs/designs/PAtrick技术方案.md)、[实施计划](docs/plans/2026-11-03-patrick-implementation.md)、[判断历史修复计划](docs/plans/2026-11-03-decision-snapshots.md)、[结果复核实施计划](docs/plans/2026-11-03-outcome-reviews.md)、[正式 PRD](docs/product/PRD.md) 分别保存来源要求、计划、本地修复证据和试点产出；105 条要求及分层证据见验收清单。
 
 当前交接范围是本地运行和 launchd 运维，没有要求公共托管部署。开发运维、学习及更多来源可沿同一契约扩展，但需分别真实验收。无自动入口的来源应显示未覆盖。
 

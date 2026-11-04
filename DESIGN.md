@@ -47,6 +47,8 @@ Every question presents exactly A, B and C. A/B include specific action, reason,
 
 Knowledge cards reveal precise original quotations, source locators and revisions. Standards distinguish explicit owner principles, observations and external references, with scope and version. Source pages distinguish covered, unconfigured and unsupported inputs. Settings show admission and connection information, never credential values.
 
+Standards includes a labelled **结果复核** region with a stable anchor per frozen judgment snapshot, including multiple snapshots of one task with the same title. Show the original goal/judgment, schedule and frozen cadence first, then distinct delivery, source-reported correction, measurement, engineering-failure and abandonment sections. Show **交付回执待复核** when no current report exists; only a current report supports a negative receipt statement. **待观察** keeps evidence gaps visible. **已关联结果依据** must retain the explanation that association proves neither prediction accuracy nor business improvement. No mandatory tagging workflow is added. Reference sources carry **结果依据** and explain that no execution task starts. The add-project interval input is labelled, integer, default 7, bounded 1–365; settings displays its saved value. Review views and project choices use current owner scope, and quoted material remains escaped and inspectable.
+
 ## Responsive behavior and accessibility
 
 At narrow widths, navigation becomes an explicit menu, task groups stack, and the drawer uses the available width. Test 375, 768 and 1440 px without horizontal overflow. Retain group names and evidence links; do not compress the complete desktop grid into unreadable columns.

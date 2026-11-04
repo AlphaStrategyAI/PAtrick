@@ -4,7 +4,7 @@
 
 ## 当前口径与快速上下文
 
-2026-11-03 发布候选已完成本地实现与验证：`npm run check` 186/186、Chromium 14/14、生产构建通过，完整命令与限制见 [验证报告](test-report.md)。以下条目保留逐项验收口径；代码局部通过不能使含 `L/O/F` 的整项自动通过。`demo/test` 只能证明本地行为；真实仓库、飞书、模型隔离、后台额度、网络和异机恢复仍须另验。
+2026-11-04 结果复核 v4 的完整 `npm run check` 退出 0：27 套件 299/299、类型检查、构建与 PRD 校验通过；Chromium 15/15、0 跳过（20.8 秒）。最终独立源码复核 spec/quality 均通过，19/19 文件摘要匹配、无未解决发现。R032 仅勾本地 `C`；历史记录、修复与限制见 [验证报告](test-report.md)。以下条目保留逐项验收口径；代码局部通过不能使含 `L/O/F` 的整项自动通过。`demo/test` 只能证明本地行为；真实仓库、飞书、模型隔离、后台额度、网络和异机恢复仍须另验。
 
 **下一会话必读上下文（少于 500 字）**：第一目标仅是一个产品的 `productIdeas` 到 GitHub 正式 PRD。单 Node.js 24/TypeScript ESM；Hono SSR 与普通 JS/CSS；better-sqlite3/FTS5、Zod、Vitest、Playwright。`src/domain.ts` 为接口源，宿主写账本/卡片/外部对象，worker 只建议或隔离补丁。知识/案例/初判默认 Grok，执行默认 Grok、项目可选 dsh；规划/反馈默认 Codex，检查优先不同于实际执行者，最多两轮返修。任务、发件、尝试、答复、来源均稳定去重；撤回先失效，旧尝试/旧答复拒收。本人选择先中英文查证，再 A/B/C，等待无限期释放 worker。可信必需检查须非空且匹配当前 head/App，合并 SHA 读回和反馈回执才交付。外部前提未知就记录未就绪，不自动修改全局配置。
 
@@ -68,7 +68,7 @@
 - [ ] R029 `C` 模型概括只能为观察；仅已核本人明确决定可在其覆盖范围用于初判。行业方法/模型模式分别标观察/外部参考，反复猜中不升级原则。定位：原则提升禁止测试。
 - [x] R030 `C` 每个真实选择冻结目标、当时证据、候选、初判、本人选择/原话和领域；未明说理由写未知，后果只追加。定位：`tests/integration/decision-snapshots.test.ts`、`tests/integration/decision-snapshots-ui.test.ts`；证据：`E-JUDGMENT`。此勾选证明本地契约，不代表真实试点通过。
 - [ ] R031 `C` 规则保留条件、优先项、例外、支持/反例、版本、出处；一次选择只覆盖该事项，扩域需本人可核原话。定位：范围与规则引用测试。
-- [ ] R032 `C` 初判保存所用规则版本、推荐、依据和预期；到期复核关联实际交付、后续更正、产品指标、失败/放弃方案，缺结果或不可归因继续观察。定位：预测/结果记录。`E-JUDGMENT` 已证明冻结初判及规则版本、显式或未知预测、绑定交付回执的结果追加；自动到期复核、后续更正和产品指标关联尚未实现，整项保持未通过。
+- [x] R032 `C` 初判保存所用规则版本、推荐、依据和预期；到期复核关联实际交付、后续更正、产品指标、失败/放弃方案，缺结果或不可归因继续观察。定位：`src/reviews.ts`、结果复核/HTTP/runtime/Vault/UI/跨模块回归；证据：`E-JUDGMENT`、`E-OUTCOME`。冻结周期、精确结果引用、自动扫描、交付/工程失败/业务结果分开与撤回恢复已通过本地验证和最终独立复核。没有真实指标来源，业务效果继续观察；不代表 `L/O/F` 或真实试点通过。
 - [ ] R033 `C+F` 偏好一致度与业务效果分开；选择分歧区分漏事实/误读偏好/例外，不用事后结果污染当时输入。定位：评测报告与冻结题集。
 - [ ] R034 `C+F` 每周反例复盘、每月同域留出案例比较；隐藏原选择/事后结果，旧版/候选用相同当时资料，与有出处行业方法比较。定位：禁写回放。
 - [ ] R035 `C+F` 报告关键约束漏判、本人纠正、漏问/误问、可观测业务结果、样本数；改善错题且关键题不退化才试用，仅证据覆盖项目试用。定位：候选准入断言。
@@ -172,12 +172,14 @@
 
 ## 可复现验收记录
 
-证据记录应追加在本节并引用对应 R 编号；`E-CODE`、`E-RUNNER`、`E-JUDGMENT` 和 `E-REMOTE-CI` 分别记录初始本地验证、角色选择、判断历史修复及已发布提交 CI，其余实链记录仍待真实证据，不能用本地结果替代。
+证据记录应追加在本节并引用对应 R 编号；`E-CODE`、`E-RUNNER`、`E-JUDGMENT`、`E-OUTCOME`、`E-FEISHU-CONFIG` 和 `E-REMOTE-CI` 分别记录初始本地验证、角色选择、判断历史修复、结果复核本地验证、飞书有限配置探测及已发布提交 CI，其余实链记录仍待真实证据，不能用本地结果替代。
 
 - `E-CODE`（初始候选历史记录）：Node 24.22.2；`npm run check` 退出 0，18 套件 135 测试全部通过；`npm run test:e2e` 退出 0，14 测试通过、0 跳过；语句覆盖 85.95%、分支 79.68%。角色选择阶段补验见 `E-RUNNER` 的 166 测试；当前判断历史补验见 `E-JUDGMENT` 的 186 测试，覆盖率均未重新采样。时间、测试范围、截图与未验收边界见 [验证报告](test-report.md)。自动测试使用替身远端和独立演示库，未进行真实外写。
 - `E-RUNNER`：2026-11-03 17:42（Asia/Shanghai），新增 30 项调度回放及 1 项 HTTP 持久化回归通过；完整 `npm run check` 19 套件 166/166、类型检查、构建与 PRD 校验通过；浏览器 14/14（18.9 秒），含显式 dsh 配置持久化。独立复核 54/54 相关测试通过，无 P1/P2 问题。
 - `E-JUDGMENT`：2026-11-03 18:31（Asia/Shanghai），`npm run check` 退出 0，21 套件 186/186、类型检查、构建与 PRD 校验通过；Chromium 14/14（20.1 秒），无跳过。新增 14 项真实 Store/编排回归及 6 项 HTTP 界面回归：A/B/C 与零问初判、当时规则内容/版本、预测未知、案例/问题绑定、回执结果幂等追加、旧记录兼容、临时证据边界、仅历史快照引用的来源撤回、重启及 HTML 转义。最初 7 项、临时证据 2 项和历史依赖 1 项分别先观察到预期失败，再修复通过；独立复核最终 20/20，无未解决 P1/P2。此记录仅证明 R030 及 R032 部分本地契约，未证明到期复核或业务效果。
-- `E-REMOTE-CI`：初始提交 `ac442a50634b22d1852551b47dd224cbaffc48ab` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41610890461)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41612244871) 两次检查成功；角色选择提交 `b4731af93d1a55b8aecd8953fe07436a11511560` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616272079)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616278964) 也成功。名称均为 `validate`、App ID `15368`，head SHA 与各自提交一致。这些结果分别绑定对应提交；判断历史修复发布后的新 head 须重新核对 CI。这是代码 CI 证据，不是七层真实业务交付；默认分支合并授权仍待用户答复。
+- `E-REMOTE-CI`：初始提交 `ac442a50634b22d1852551b47dd224cbaffc48ab` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41610890461)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41612244871) 两次检查成功；角色选择提交 `b4731af93d1a55b8aecd8953fe07436a11511560` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616272079)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41616278964) 也成功。名称均为 `validate`、App ID `15368`，head SHA 与各自提交一致。判断历史提交 `a551e8b51c39c047deecc6c05fe3e59c9760fd22` 的 [push](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621656878)、[PR](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/41621665508) 也成功，均为 `validate`、GitHub Actions App `15368`、匹配该完整 head。这些结果只绑定对应提交；本地结果复核提交尚未发布/核对 CI。这是代码 CI 证据，不是七层真实业务交付；默认分支合并授权仍待用户答复。
+- `E-OUTCOME`（2026-11-04，最终 v4 本地证据）：Node 24.22.2；`npm run check` 退出 0，27 套件 299/299、typecheck/build/PRD 校验通过；Chromium 退出 0，15/15、0 跳过、20.8 秒。修复覆盖 172/172（14 文件），含 19 项跨模块回归：部分引文/历史/嵌套/案例副本撤回、父来源更替、旧 SQLite/新 Vault 身份篡改、两种文件顺序下真实 `Workbench.answer` 接纳后的双来源恢复、本人 API 边界、已接纳失败检查历史/快照/版本及临时隐私。最终独立源码复核 spec/quality 通过，19/19 摘要匹配，0 未解决发现；先前跨模块阻塞均关闭。UI v2 实测 1440/375 px 文档等宽、无主内容溢出、清空后的本地 console 无错误，4 个复核对象和回执待复核文字可见；[桌面](screenshots/outcomes-desktop.png)/[手机](screenshots/outcomes-mobile.png)。UI v1 的 277、v2 中间候选 292 以及首轮浏览器 14 过/1 失败保留为历史，详见验证报告；覆盖率未重采样。仅证明 R032 本地契约，旧版已覆盖的失败历史无法重建，未证明业务效果或实链交付。新补丁尚未发布/核对当前 CI，独立文档审计随后进行。
+- `E-FEISHU-CONFIG`：私有应用凭据有限探测实际取得 tenant token（HTTP 200/code 0），bot info HTTP 200/code 0、名称 PAtrick、activationStatus 2；WebSocket discovery HTTP 200/code 0，endpointIssued true，但 connected false、messages 0。未公布 token/secret/私有凭据路径，未发消息或业务写入。用户已选一次性配对，实际本人 Open ID/私聊 Chat ID 绑定仍待完成，历史权限、事件收取及双向业务闭环未验收；应用认证/发现不完成实链门禁。
 - `E-DIRECT`：零问真实任务，源修订、七层事件、全角色 runner、PR、checks/App/head、merge SHA、PRD 读回摘要、反馈/飞书回执。当前：未验收。
 - `E-ANSWER-A/B/C`：三个独立问题或重放隔离场景，双语原文记录、冻结选项、本人/版本、接纳一次、续办一次、来源一次、案例一次及交付。当前：未验收。
 - `E-FAULTS`：七个角色逐一首选不可用，通知离线、全不可用、漏文件事件、重复答复、旧尝试、PR 后断网、CI 缺项/跳过/head 变化、两轮返修、超预算。每项记录触发点、状态与业务效果数。当前：未验收。
