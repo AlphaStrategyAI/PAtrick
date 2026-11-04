@@ -57,6 +57,9 @@ export const payloadReleaseLine='patrick-payload-release\n';
 export const execGateProgram=String.raw`const fs=require('node:fs');try{if(typeof process.execve!=='function')throw 0;const b=Buffer.alloc(1);let line='';for(;;){if(fs.readSync(0,b,0,1,null)!==1)throw 0;line+=b.toString();if(line.length>64)throw 0;if(b[0]===10)break;}if(line!=='patrick-payload-release\n')throw 0;const args=process.argv.slice(1);if(!args.length||!args[0])throw 0;let executable=args[0];if(!executable.includes('/')){executable=process.env.PATH.split(':').map(d=>d+'/'+args[0]).find(p=>{try{fs.accessSync(p,fs.constants.X_OK);return true;}catch{return false;}});if(!executable)throw 0;}process.execve(executable,args,process.env);}catch{process.exit(78);}`;
 export const gateWrapper='IFS= read -r patrick_gate && [ "$patrick_gate" = "patrick-stage-release" ] && cd -- "$HOME" && exec "$@"';
 const BASE='/run/patrick-worker',REGISTRY=BASE+'/invocations',ROOT='/var/lib/patrick-workspaces';
+// Fixed durable identity is read-only here. Production records remain at REGISTRY
+// until the separately reviewed installer/controller transition.
+const DURABLE='/var/lib/patrick-worker',DURABLE_REGISTRY='/var/lib/patrick-worker/invocations',MARKER=DURABLE_REGISTRY+'/.authority.json',WITNESS='/etc/patrick-worker/registry-identity.json';
 const stages=['prepare','cli','read','tests','cleanup','acp'],states=['active','stopping','drained','cleaning','closed','quarantined'];
 const token=value=>typeof value==='string'&&/^[a-f0-9]{32}$/.test(value),digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -70,12 +73,71 @@ function identityValid(context,a){return a&&numeric(a.uid)&&numeric(a.gid)&&a.ho
 function requestValid(r){if(!exact(r,['context','lifetime','command'])||!contextValid(r.context)||!exact(r.lifetime,['invocation','stage','profile','operation'])||!token(r.lifetime.invocation)||!stages.includes(r.lifetime.stage)||r.lifetime.profile!==profileFor(r.lifetime.stage)||!['exec','stop','reconcile'].includes(r.lifetime.operation)||!Array.isArray(r.command))fail();if(r.lifetime.operation!=='exec'&&r.command.length)fail();}
 function trustPath(path,io,{uid=0,gid,mode,kind='directory'}={}){
  if(typeof path!=='string'||!path.startsWith('/')||path.includes('\0')||path.split('/').includes('..'))fail();
- for(let p=path;;p=dirname(p)){const s=io.lstatSync(p),leaf=p===path;if(s.isSymbolicLink()||s.uid!==(leaf?uid:0)||(leaf?kind==='directory'?!s.isDirectory():!s.isFile():!s.isDirectory())||(leaf&&gid!==undefined&&s.gid!==gid)||(leaf&&mode!==undefined&&(s.mode&0o777)!==mode)||(!leaf&&(s.mode&0o022)))fail();if(p==='/')break;}
+ let entry;for(let p=path;;p=dirname(p)){const s=io.lstatSync(p),leaf=p===path;if(s.isSymbolicLink()||s.uid!==(leaf?uid:0)||(leaf?kind==='directory'?!s.isDirectory():!s.isFile():!s.isDirectory())||(leaf&&gid!==undefined&&s.gid!==gid)||(leaf&&mode!==undefined&&(s.mode&0o7777)!==mode)||(!leaf&&(s.mode&0o022)))fail();if(leaf)entry=s;if(p==='/')break;}return entry;
 }
-function read(path,io){trustPath(path,io,{kind:'file',mode:0o600});const fd=io.openSync(path,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const s=io.fstatSync(fd);if(!s.isFile()||s.uid!==0||(s.mode&0o777)!==0o600||s.size>131072)fail();const bytes=io.readFileSync(fd);if(!Buffer.isBuffer(bytes)||bytes.length>131072||!isUtf8(bytes))fail();return JSON.parse(bytes.toString('utf8'));}finally{io.closeSync(fd);}}
+const nodeIdentity=s=>({dev:s.dev,ino:s.ino});
+const nodeValid=v=>exact(v,['dev','ino'])&&Number.isSafeInteger(v.dev)&&v.dev>=0&&!Object.is(v.dev,-0)&&Number.isSafeInteger(v.ino)&&v.ino>0;
+const nodeSame=(a,b)=>a.dev===b.dev&&a.ino===b.ino;
+function fileValid(s,limit){if(!s.isFile()||s.isSymbolicLink()||s.uid!==0||s.gid!==0||(s.mode&0o7777)!==0o600||s.nlink!==1||!nodeValid(nodeIdentity(s))||!Number.isSafeInteger(s.size)||s.size<0||s.size>limit)fail();}
+function readBounded(path,io,limit){
+ const before=trustPath(path,io,{kind:'file',gid:0,mode:0o600});fileValid(before,limit);
+ const fd=io.openSync(path,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+ try{const opened=io.fstatSync(fd);fileValid(opened,limit);if(!nodeSame(before,opened))fail();
+  // Read at most limit+1 even if the opened file grows after fstat.
+  const buffer=Buffer.alloc(limit+1);let length=0;while(length<buffer.length){const count=io.readSync(fd,buffer,length,buffer.length-length,null);if(!Number.isSafeInteger(count)||count<0||count>buffer.length-length)fail();if(count===0)break;length+=count;}if(length>limit)fail();
+  const after=io.fstatSync(fd);fileValid(after,limit);const current=io.lstatSync(path);fileValid(current,limit);if(!nodeSame(opened,after)||!nodeSame(opened,current))fail();
+  const bytes=buffer.subarray(0,length);if(!isUtf8(bytes))fail();return {value:JSON.parse(bytes.toString('utf8')),bytes,stat:after};
+ }finally{io.closeSync(fd);}
+}
+function read(path,io){return readBounded(path,io,131072).value;}
+function metadataExact(value,keys){return exact(value,keys)&&Reflect.ownKeys(value).length===keys.length&&keys.every(key=>{const descriptor=Object.getOwnPropertyDescriptor(value,key);return descriptor.enumerable&&Object.hasOwn(descriptor,'value');});}
+function metadataNodeValid(value){return metadataExact(value,['dev','ino'])&&nodeValid(value);}
+function markerIdentityValid(value){return metadataExact(value,['dev','ino','hash'])&&metadataNodeValid({dev:value.dev,ino:value.ino})&&digest(value.hash);}
+function markerValid(value){return metadataExact(value,['version','authorityId','root','records'])&&value.version===1&&token(value.authorityId)&&metadataNodeValid(value.root)&&metadataNodeValid(value.records);}
+function witnessValid(value){return metadataExact(value,['version','phase','authorityId','initializedBy','root','records','marker'])&&value.version===1&&token(value.authorityId)&&metadataExact(value.initializedBy,['artifactHash','policyHash','boot'])&&digest(value.initializedBy.artifactHash)&&digest(value.initializedBy.policyHash)&&typeof value.initializedBy.boot==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value.initializedBy.boot)&&(value.phase==='initializing'?value.root===null&&value.records===null&&value.marker===null:value.phase==='ready'&&metadataNodeValid(value.root)&&metadataNodeValid(value.records)&&markerIdentityValid(value.marker));}
+function referenceValid(value){return metadataExact(value,['version','authorityId','witnessHash'])&&value.version===1&&token(value.authorityId)&&digest(value.witnessHash);}
+function metadataCanonical(value){if(value===null||typeof value!=='object')return value;if(Array.isArray(value))return value.map(metadataCanonical);return Object.fromEntries(Object.keys(value).sort().map(key=>[key,metadataCanonical(value[key])]));}
+function metadataJsonBytes(value){return Buffer.from(JSON.stringify(metadataCanonical(value)),'utf8');}
+function metadataFileBytes(value){return Buffer.concat([metadataJsonBytes(value),Buffer.from([0x0a])]);}
+function metadataDigest(bytes){return createHash('sha256').update(bytes).digest('hex');}
+export function encodeRegistryMetadata(value){if(!witnessValid(value)&&!markerValid(value))fail();const bytes=metadataFileBytes(value);if(bytes.length>4096)fail();return bytes;}
+export function readRegistryAuthority(io,expected){
+ if(expected!==undefined&&!referenceValid(expected))fail();
+ const runtime=trustPath(BASE,io,{gid:0,mode:0o700}),root=trustPath(DURABLE,io,{gid:0,mode:0o700}),records=trustPath(DURABLE_REGISTRY,io,{gid:0,mode:0o700});
+ if(!nodeValid(nodeIdentity(runtime))||!nodeValid(nodeIdentity(root))||!nodeValid(nodeIdentity(records)))fail();
+ const witness=readBounded(WITNESS,io,4096),ready=witness.value;if(!witnessValid(ready)||ready.phase!=='ready'||!witness.bytes.equals(encodeRegistryMetadata(ready)))fail();
+ if(!nodeSame(root,ready.root)||!nodeSame(records,ready.records))fail();
+ const marker=readBounded(MARKER,io,4096);if(!nodeSame(marker.stat,ready.marker)||metadataDigest(marker.bytes)!==ready.marker.hash)fail();
+ if(!markerValid(marker.value)||!marker.bytes.equals(encodeRegistryMetadata(marker.value))||marker.value.authorityId!==ready.authorityId||!nodeSame(marker.value.root,ready.root)||!nodeSame(marker.value.records,ready.records))fail();
+ for(const [path,identity]of [[BASE,runtime],[DURABLE,root],[DURABLE_REGISTRY,records]])if(!nodeSame(trustPath(path,io,{gid:0,mode:0o700}),identity))fail();
+ const reference={version:1,authorityId:ready.authorityId,witnessHash:metadataDigest(metadataJsonBytes(ready))};if(expected!==undefined&&(reference.authorityId!==expected.authorityId||reference.witnessHash!==expected.witnessHash))fail();
+ return {...reference,root:nodeIdentity(root),records:nodeIdentity(records),marker:{dev:marker.stat.dev,ino:marker.stat.ino,hash:ready.marker.hash}};
+}
 function syncDir(path,io){const fd=io.openSync(path,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{io.fsyncSync(fd);}finally{io.closeSync(fd);}}
-function write(path,value,io,exclusive=false){const temp=exclusive?path:`${path}.${randomBytes(16).toString('hex')}.tmp`;let fd;
- try{fd=io.openSync(temp,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);io.writeFileSync(fd,JSON.stringify(value)+'\n');io.fsyncSync(fd);io.closeSync(fd);fd=undefined;if(!exclusive)io.renameSync(temp,path);syncDir(dirname(path),io);}catch(e){if(fd!==undefined)io.closeSync(fd);throw e;}}
+function ownedTemporary(path,identity,io,links=1){const stat=io.lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.uid!==0||stat.gid!==0||(stat.mode&0o7777)!==0o600||stat.nlink!==links||!nodeSame(stat,identity))fail();}
+function publishBytes(path,bytes,limit,tokenId,io,exclusive,validateExisting){
+ if(!Buffer.isBuffer(bytes)||bytes.length>limit||!token(tokenId))fail();
+ const previous=exclusive?undefined:validateExisting(),parent=dirname(path),temp=parent+'/.write-'+tokenId+'-'+randomBytes(16).toString('hex')+'.tmp';let fd,owned,published=false;
+ try{
+  fd=io.openSync(temp,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
+  const created=io.fstatSync(fd);if(!created.isFile()||created.uid!==0||created.gid!==0||created.nlink!==1||!nodeValid(nodeIdentity(created)))fail();owned=nodeIdentity(created);io.fchmodSync(fd,0o600);fileValid(io.fstatSync(fd),limit);ownedTemporary(temp,owned,io);
+  io.writeFileSync(fd,bytes);io.fsyncSync(fd);const closing=fd;fd=undefined;io.closeSync(closing);ownedTemporary(temp,owned,io);
+  if(exclusive){io.linkSync(temp,path);published=true;syncDir(parent,io);ownedTemporary(temp,owned,io,2);if(!nodeSame(io.lstatSync(path),owned))fail();io.unlinkSync(temp);syncDir(parent,io);}
+  else{if(!nodeSame(previous,validateExisting()))fail();io.renameSync(temp,path);published=true;syncDir(parent,io);}
+ }catch(error){
+  if(fd!==undefined){try{io.closeSync(fd);}catch{}}
+  if(owned&&!published){try{published=nodeSame(io.lstatSync(path),owned);}catch{}}
+  if(owned&&!published){try{ownedTemporary(temp,owned,io);io.unlinkSync(temp);}catch{}}
+  throw error;
+ }
+}
+function write(path,value,io,exclusive=false){
+ const bytes=Buffer.from(JSON.stringify(value)+'\n','utf8');
+ const validateExisting=()=>{const existing=readBounded(path,io,131072);
+  if(path===QUALIFICATION){const {records:before,...fixed}=existing.value,{records:after,...next}=value;if(!same(fixed,next)||!Array.isArray(before)||!Array.isArray(after)||after.length!==before.length+1||!same(before,after.slice(0,-1))||!token(after.at(-1)))fail();}
+  else{const record=recordValid(existing.value);for(const key of ['version','invocation','generation','boot','context','identity','admission'])if(!same(record[key],value[key]))fail();}return existing.stat;};
+ publishBytes(path,bytes,131072,value.invocation??value.nonce??value.generation,io,exclusive,validateExisting);
+}
 const profileFactKeys=['persistentMarkerReadable','persistentMarkerUnchanged','persistentConfigUnchanged','privateHomeWritable','privateScratchRemoved','workspaceMatchesRecord','closedNetworkObserved'];
 const postDropKeys=['uid','gid','groups','noNewPrivileges','capEffective','capPermitted','capInheritable','capAmbient','capBounding','homeMatches','fixedEnvironmentMatches','extraEnvironmentKeys','unknownEnvironmentKeyPresent','derivedPwdMatchesHome','derivedOldPwdMatchesTrustedCwd'];
 function observationValid(o){return exact(o,['pid','start','directEnvironmentClean','postDrop','profileFacts'])&&Number.isSafeInteger(o.pid)&&o.pid>1&&/^[1-9]\d{0,19}$/.test(o.start)&&o.directEnvironmentClean===true&&exact(o.postDrop,postDropKeys)&&numeric(o.postDrop.uid)&&numeric(o.postDrop.gid)&&Array.isArray(o.postDrop.groups)&&o.postDrop.groups.length===0&&o.postDrop.noNewPrivileges===true&&['capEffective','capPermitted','capInheritable','capAmbient','capBounding'].every(k=>typeof o.postDrop[k]==='string'&&/^0{1,16}$/.test(o.postDrop[k]))&&['homeMatches','fixedEnvironmentMatches','derivedPwdMatchesHome','derivedOldPwdMatchesTrustedCwd'].every(k=>o.postDrop[k]===true)&&o.postDrop.unknownEnvironmentKeyPresent===false&&Array.isArray(o.postDrop.extraEnvironmentKeys)&&new Set(o.postDrop.extraEnvironmentKeys).size===o.postDrop.extraEnvironmentKeys.length&&o.postDrop.extraEnvironmentKeys.every(k=>['PWD','OLDPWD'].includes(k))&&exact(o.profileFacts,profileFactKeys)&&Object.values(o.profileFacts).every(v=>typeof v==='boolean');}

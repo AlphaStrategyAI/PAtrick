@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { fixture } from '../fixtures/lima-lifetime.mjs';
@@ -9,6 +10,114 @@ const lifetime=await import(new URL('../../scripts/lima/stage-lifetime.mjs',impo
 const token='a'.repeat(32),scope={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'};
 const account={uid:1101,gid:1101,home:'/var/lib/patrick-grok',groups:[]};
 const using=async(fn:(f:ReturnType<typeof fixture>)=>Promise<void>)=>{const f=fixture();try{await fn(f);}finally{f.close();}};
+const durable='/var/lib/patrick-worker',records=durable+'/invocations',marker=records+'/.authority.json',witness='/etc/patrick-worker/registry-identity.json',legacy='/run/patrick-worker/invocations',recordPath=legacy+'/'+token+'.json';
+const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
+const canonical=(value:any):any=>value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
+const metadataBytes=(value:any)=>Buffer.from(JSON.stringify(canonical(value))+'\n');
+const metadata=(f:ReturnType<typeof fixture>,path=witness)=>JSON.parse(f.io.readFileSync(path,'utf8'));
+describe('fixed durable registry authority codec and reader',()=>{
+ it('encodes exact schemas independently of insertion order with exactly one LF',()=>{
+  const first={version:1,authorityId:'a'.repeat(32),root:{dev:0,ino:1},records:{dev:2,ino:3}},second={records:{ino:3,dev:2},root:{ino:1,dev:0},authorityId:first.authorityId,version:1};
+  const bytes=lifetime.encodeRegistryMetadata(first);expect(bytes).toEqual(lifetime.encodeRegistryMetadata(second));
+  expect(bytes.toString()).toBe('{"authorityId":"'+first.authorityId+'","records":{"dev":2,"ino":3},"root":{"dev":0,"ino":1},"version":1}\n');
+ });
+ it.each(['extra','negative-zero','unsafe-integer','zero-inode','coercion','wrong-version','uppercase-id','initializing-identities','ready-null','wrong-boot','unknown-initializer','nonfinite'])('rejects %s before metadata encoding',kind=>using(async f=>{
+  f.seedAuthority();const value=metadata(f);
+  if(kind==='extra')value.extra=true;if(kind==='negative-zero')value.root.dev=-0;if(kind==='unsafe-integer')value.root.ino=Number.MAX_SAFE_INTEGER+1;if(kind==='zero-inode')value.root.ino=0;if(kind==='coercion')value.root.dev='0';if(kind==='wrong-version')value.version=2;if(kind==='uppercase-id')value.authorityId='A'.repeat(32);if(kind==='initializing-identities')value.phase='initializing';if(kind==='ready-null')value.marker=null;if(kind==='wrong-boot')value.initializedBy.boot='boot';if(kind==='unknown-initializer')value.initializedBy.extra=true;if(kind==='nonfinite')value.root.dev=Infinity;
+  expect(()=>lifetime.encodeRegistryMetadata(value)).toThrow();
+ }));
+ it('binds fixed directory and marker identities, with witness digest excluding LF and marker digest including LF',()=>using(async f=>{
+  const reference=f.seedAuthority(),authority=lifetime.readRegistryAuthority(f.io,reference),ready=metadata(f),bytes=f.io.readFileSync(witness);
+  expect(authority).toEqual({...reference,root:ready.root,records:ready.records,marker:ready.marker});expect(reference.witnessHash).toBe(hash(bytes.subarray(0,-1)));expect(reference.witnessHash).not.toBe(hash(bytes));expect(ready.marker.hash).toBe(hash(f.io.readFileSync(marker)));
+  f.setBoot('22222222-2222-4222-8222-222222222222');expect(lifetime.readRegistryAuthority(f.io,reference)).toEqual(authority);
+ }));
+ it.each(['missing','initializing','oversized','invalid-utf8','owner','group','mode','nlink','duplicate-key','unknown-key','missing-lf','extra-lf','space','crlf','bom','reordered','marker-hash','marker-inode','reference','reference-extra','root-missing','root-substituted','symlink-ancestor','runtime-mode','runtime-special-mode'])('refuses %s without creating authority state',kind=>using(async f=>{
+  const reference={...f.seedAuthority()},ready=metadata(f),bytes=f.io.readFileSync(witness);
+  if(kind==='missing')f.io.unlinkSync(witness);
+  if(kind==='initializing')f.io.writeFileSync(witness,lifetime.encodeRegistryMetadata({...ready,phase:'initializing',root:null,records:null,marker:null}));
+  if(kind==='oversized')f.io.writeFileSync(witness,Buffer.alloc(4097,0x20));if(kind==='invalid-utf8')f.io.writeFileSync(witness,Buffer.from([0xff,10]));
+  if(kind==='owner')f.io.chownSync(witness,1,0);if(kind==='group')f.io.chownSync(witness,0,1);if(kind==='mode')f.io.chmodSync(witness,0o640);if(kind==='nlink')f.io.linkSync(witness,'/etc/patrick-worker/witness-link');
+  if(kind==='duplicate-key')f.io.writeFileSync(witness,'{"version":1,'+bytes.toString().slice(1));if(kind==='unknown-key')f.io.writeFileSync(witness,metadataBytes({...ready,unknown:true}));
+  if(kind==='missing-lf')f.io.writeFileSync(witness,bytes.subarray(0,-1));if(kind==='extra-lf')f.io.writeFileSync(witness,Buffer.concat([bytes,Buffer.from('\n')]));if(kind==='space')f.io.writeFileSync(witness,Buffer.concat([bytes.subarray(0,-1),Buffer.from(' \n')]));if(kind==='crlf')f.io.writeFileSync(witness,Buffer.concat([bytes.subarray(0,-1),Buffer.from('\r\n')]));if(kind==='bom')f.io.writeFileSync(witness,Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),bytes]));if(kind==='reordered')f.io.writeFileSync(witness,JSON.stringify({...ready,version:undefined}).replace('"authorityId"','"version":1,"authorityId"')+'\n');
+  if(kind==='marker-hash')f.io.writeFileSync(marker,Buffer.concat([f.io.readFileSync(marker),Buffer.from('\n')]));
+  if(kind==='marker-inode'){fs.renameSync(f.physical(marker),f.physical(records+'/.saved'));f.io.writeFileSync(marker,lifetime.encodeRegistryMetadata(metadata(f,records+'/.saved')),{mode:0o600});}
+  if(kind==='reference')reference.witnessHash='0'.repeat(64);if(kind==='reference-extra')(reference as any).extra=true;
+  if(kind==='root-missing')fs.renameSync(f.physical(durable),f.physical(durable+'.saved'));
+  if(kind==='root-substituted'){fs.renameSync(f.physical(durable),f.physical(durable+'.saved'));fs.mkdirSync(f.physical(records),{recursive:true,mode:0o700});fs.copyFileSync(f.physical(durable+'.saved/invocations/.authority.json'),f.physical(marker));}
+  if(kind==='symlink-ancestor'){fs.renameSync(f.physical('/etc/patrick-worker'),f.physical('/etc/worker-saved'));fs.symlinkSync(f.physical('/etc/worker-saved'),f.physical('/etc/patrick-worker'));}
+  if(kind==='runtime-mode')f.io.chmodSync('/run/patrick-worker',0o755);
+  if(kind==='runtime-special-mode')f.io.chmodSync('/run/patrick-worker',0o1700);
+  const before=f.events.length;expect(()=>lifetime.readRegistryAuthority(f.io,reference)).toThrow();expect(f.events.slice(before).every(event=>event.startsWith('open:'))).toBe(true);
+ }));
+ it('rejects a recreated directory even with a copied marker',()=>using(async f=>{
+  const reference=f.seedAuthority(),bytes=f.io.readFileSync(marker);fs.renameSync(f.physical(records),f.physical(records+'.saved'));fs.mkdirSync(f.physical(records),{mode:0o700});f.io.writeFileSync(marker,bytes,{mode:0o600});expect(()=>lifetime.readRegistryAuthority(f.io,reference)).toThrow();
+ }));
+ it.each(['marker','witness'])('rejects noncanonical %s bytes even with a recomputed expected digest',kind=>using(async f=>{
+  const reference={...f.seedAuthority()},path=kind==='marker'?marker:witness,bytes=f.io.readFileSync(path);f.io.writeFileSync(path,bytes.subarray(0,-1));
+  if(kind==='marker'){const ready=metadata(f);ready.marker.hash=hash(bytes.subarray(0,-1));f.io.writeFileSync(witness,lifetime.encodeRegistryMetadata(ready));reference.witnessHash=hash(f.io.readFileSync(witness).subarray(0,-1));}else reference.witnessHash=hash(bytes.subarray(0,-1));
+  expect(()=>lifetime.readRegistryAuthority(f.io,reference)).toThrow();
+ }));
+ it.each(['witness','marker','record'])('rejects %s substitution between lstat and open',kind=>using(async f=>{
+  const reference=f.seedAuthority();if(kind==='record')await f.run();const path=kind==='record'?recordPath:kind==='witness'?witness:marker,open=f.io.openSync;let replaced=false;
+  f.io.openSync=(p,...args)=>{if(p===path&&!replaced){replaced=true;fs.renameSync(f.physical(p),f.physical(p+'.saved'));fs.copyFileSync(f.physical(p+'.saved'),f.physical(p));}return open(p,...args);};
+  expect(()=>kind==='record'?lifetime.registryQuiescent(f.io):lifetime.readRegistryAuthority(f.io,reference)).toThrow();expect(replaced).toBe(true);
+ }));
+ it.each(['witness','marker'])('bounds %s fstat and reads when lstat understates size',kind=>using(async f=>{
+  f.seedAuthority();const path=kind==='witness'?witness:marker,lstat=f.io.lstatSync;f.io.writeFileSync(path,Buffer.alloc(4097));f.io.lstatSync=p=>{const stat=lstat(p);return p===path?Object.assign(Object.create(stat),{size:0}):stat;};expect(()=>lifetime.readRegistryAuthority(f.io)).toThrow();
+ }));
+ it.each(['witness','marker','record'])('reads at most the fixed bound plus one byte when %s grows after fstat',kind=>using(async f=>{
+  f.seedAuthority();if(kind==='record')await f.run();const path=kind==='witness'?witness:kind==='marker'?marker:recordPath,limit=kind==='record'?131072:4096,open=f.io.openSync,stat=f.io.fstatSync,read=f.io.readSync;let target:number|undefined,grown=false,total=0;
+  f.io.openSync=(p,...args)=>{const fd=open(p,...args);if(p===path)target=fd;return fd;};f.io.fstatSync=fd=>{const value=stat(fd);if(fd===target&&!grown){grown=true;fs.appendFileSync(f.physical(path),Buffer.alloc(limit));}return value;};f.io.readSync=(fd,...args)=>{const count=read(fd,...args);if(fd===target)total+=count;return count;};
+  expect(()=>kind==='record'?lifetime.registryQuiescent(f.io):lifetime.readRegistryAuthority(f.io)).toThrow();expect(grown).toBe(true);expect(total).toBe(limit+1);
+ }));
+ it('copies, moves and deletes only successful synthetic ownership aliases and keeps descriptors bound',()=>using(async f=>{
+  const source='/run/patrick-worker/source',target='/run/patrick-worker/target',moved=target+'-moved';f.io.writeFileSync(source,'fixture',{mode:0o600});f.io.chownSync(source,1101,1102);const fd=f.io.openSync(source,fs.constants.O_RDONLY);
+  try{f.io.linkSync(source,target);expect(f.io.lstatSync(source)).toMatchObject({uid:1101,gid:1102});expect(f.io.lstatSync(target)).toMatchObject({uid:1101,gid:1102});expect(()=>f.io.linkSync(source,target)).toThrow();f.io.renameSync(target,moved);expect(f.io.lstatSync(moved)).toMatchObject({uid:1101,gid:1102});f.io.unlinkSync(source);expect(f.io.fstatSync(fd)).toMatchObject({uid:1101,gid:1102});f.io.writeFileSync(source,'new',{mode:0o600});expect(f.io.lstatSync(source)).toMatchObject({uid:0,gid:0});expect(f.io.lstatSync(moved)).toMatchObject({uid:1101,gid:1102});expect(()=>f.io.unlinkSync(target)).toThrow();expect(f.io.lstatSync(moved)).toMatchObject({uid:1101,gid:1102});}finally{f.io.closeSync(fd);}
+ }));
+ it('has no real filesystem fallback when a bounded fixture reader is absent',()=>using(async f=>{
+  f.seedAuthority();delete (f.io as any).readSync;expect(()=>lifetime.readRegistryAuthority(f.io)).toThrow();expect(()=>f.physical('/../etc')).toThrow();expect(()=>f.io.readFileSync(999999)).toThrow('foreign fd');
+ }));
+});
+describe('bounded no-replace record publication through controller saves',()=>{
+ it('fsyncs the file and both publication directory states before submission',()=>using(async f=>{
+  const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const trace=f.events.filter(event=>event.includes(legacy)),temp=trace.find(event=>event.startsWith('open:'+legacy+'/.write-'))?.slice(5);expect(temp).toMatch(new RegExp('^'+legacy+'/\\.write-'+token+'-[a-f0-9]{32}\\.tmp$'));expect(trace.slice(0,6)).toEqual(['open:'+temp,'fsync:'+temp,'link:'+temp+'->'+recordPath,'open:'+legacy,'fsync:'+legacy,'unlink:'+temp]);expect(trace.slice(6,8)).toEqual(['open:'+legacy,'fsync:'+legacy]);expect(f.io.lstatSync(recordPath)).toMatchObject({uid:0,gid:0,nlink:1});return submit(spec);};await f.run();
+ }));
+ it('rejects oversized serialized records before opening a registry temporary file and retains the UID lock',()=>using(async f=>{
+  await expect(f.run('prepare','exec',token,{...scope,projectId:'x'.repeat(131072)})).rejects.toMatchObject({retainUidLock:true});expect(f.events.some(event=>event.startsWith('open:'+legacy+'/.write-'))).toBe(false);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(true);expect(f.submissions).toEqual([]);
+ }));
+ it('preserves fixed qualification-session enrollment through the bounded writer',()=>using(async f=>{
+  const names=['.patrick-synthetic-auth','.patrick-synthetic-config'];for(const name of names)f.io.writeFileSync(account.home+'/'+name,'synthetic',{mode:0o444});fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o700});
+  const session={version:1,phase:'active',generation:'9'.repeat(32),artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64),records:[],bindings:[{...scope,...account,homeIno:f.io.lstatSync(account.home).ino,markers:names.map(name=>({name,ino:f.io.lstatSync(account.home+'/'+name).ino,hash:hash(Buffer.from('synthetic'))}))}]};
+  f.io.writeFileSync('/etc/patrick-worker/qualification.json',JSON.stringify(session)+'\n',{mode:0o600});await expect(f.run()).resolves.toMatchObject({code:0});expect(metadata(f,'/etc/patrick-worker/qualification.json')).toEqual({...session,records:[token]});
+ }));
+ it('loses a two-publisher first-link race with EEXIST and preserves the winner bytes',()=>using(async f=>{
+  const link=f.io.linkSync,other=legacy+'/.write-'+token+'-'+'f'.repeat(32)+'.tmp';let winning:Buffer|undefined,loserCode:string|undefined;
+  f.io.linkSync=(from,to)=>{if(to===recordPath&&!winning){winning=Buffer.from(f.io.readFileSync(from));const value=JSON.parse(winning.toString());value.context.domain='winner';winning=Buffer.from(JSON.stringify(value)+'\n');f.io.writeFileSync(other,winning,{mode:0o600});link(other,to);f.io.unlinkSync(other);}try{link(from,to);}catch(error){loserCode=(error as NodeJS.ErrnoException).code;throw error;}};
+  await expect(f.run()).rejects.toMatchObject({retainUidLock:true});expect(loserCode).toBe('EEXIST');expect(f.io.readFileSync(recordPath)).toEqual(winning);expect(fs.readdirSync(f.physical(legacy))).toEqual([token+'.json']);expect(f.submissions).toEqual([]);
+ }));
+ it.each(['write','file-fsync','link','directory-fsync','after-link','after-unlink-fsync','rename','after-rename'])('does not acknowledge %s failure and preserves uncertain published state',fault=>using(async f=>{
+  const replacing=['rename','after-rename'].includes(fault);if(replacing)await f.run();const prior=replacing?f.io.readFileSync(recordPath):undefined;f.events.length=0;f.submissions.length=0;
+  const open=f.io.openSync,write=f.io.writeFileSync,sync=f.io.fsyncSync,link=f.io.linkSync,rename=f.io.renameSync,paths=new Map<number,string>();let tripped=false,directorySyncs=0;
+  const trip=()=>{tripped=true;throw Error('injected '+fault);};
+  f.io.openSync=(p,...args)=>{const fd=open(p,...args);paths.set(fd,p);return fd;};
+  f.io.writeFileSync=(p,...args)=>{if(!tripped&&fault==='write'&&typeof p==='number'&&paths.get(p)?.startsWith(legacy+'/.write-'))trip();return write(p,...args);};
+  f.io.fsyncSync=fd=>{const p=paths.get(fd);if(!tripped&&p?.startsWith(legacy+'/.write-')&&fault==='file-fsync')trip();if(p===legacy){directorySyncs++;if(!tripped&&(fault==='directory-fsync'||fault==='after-unlink-fsync'&&directorySyncs===2))trip();}sync(fd);};
+  f.io.linkSync=(from,to)=>{if(to===recordPath&&!tripped&&fault==='link')trip();link(from,to);if(to===recordPath&&!tripped&&fault==='after-link')trip();};
+  f.io.renameSync=(from,to)=>{if(to===recordPath&&!tripped&&fault==='rename')trip();rename(from,to);if(to===recordPath&&!tripped&&fault==='after-rename')trip();};
+  await expect(f.run(replacing?'cli':'prepare')).rejects.toMatchObject({retainUidLock:true});expect(tripped).toBe(true);expect(f.submissions).toEqual([]);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(true);
+  const names=fs.readdirSync(f.physical(legacy));if(['directory-fsync','after-link'].includes(fault)){expect(names.filter(name=>name.startsWith('.write-'))).toHaveLength(1);expect(names).toContain(token+'.json');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();}else expect(names.filter(name=>name.startsWith('.write-'))).toHaveLength(0);
+  if(fault==='rename')expect(f.io.readFileSync(recordPath)).toEqual(prior);if(fault==='after-rename')expect(f.io.readFileSync(recordPath)).not.toEqual(prior);if(['write','file-fsync','link'].includes(fault))expect(names).toEqual([]);
+  f.setObserved({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true});expect(await f.run('cli','stop')).toMatchObject({invocationClosed:false,reason:'control_unavailable'});
+ }));
+ it('never cleans up a substituted or unowned temporary inode',()=>using(async f=>{
+  const open=f.io.openSync,write=f.io.writeFileSync,paths=new Map<number,string>();let replaced:string|undefined;
+  f.io.openSync=(p,...args)=>{const fd=open(p,...args);paths.set(fd,p);return fd;};f.io.writeFileSync=(p,...args)=>{const path=typeof p==='number'?paths.get(p):undefined;if(!replaced&&path?.startsWith(legacy+'/.write-')){replaced=path;fs.renameSync(f.physical(path),f.physical(path+'.held'));fs.writeFileSync(f.physical(path),'foreign',{mode:0o600});throw Error('substituted temp');}return write(p,...args);};
+  await expect(f.run()).rejects.toMatchObject({retainUidLock:true});expect(replaced).toBeDefined();expect(f.io.readFileSync(replaced!,'utf8')).toBe('foreign');expect(f.events).not.toContain('unlink:'+replaced);
+ }));
+ it('refuses replacement if an existing record changes authority or inode before rename',()=>using(async f=>{
+  await f.run();const open=f.io.openSync;let changed=false;f.io.openSync=(p,...args)=>{const fd=open(p,...args);if(!changed&&p.startsWith(legacy+'/.write-')){changed=true;fs.renameSync(f.physical(recordPath),f.physical(recordPath+'.saved'));const raw=JSON.parse(f.io.readFileSync(recordPath+'.saved','utf8'));raw.generation='f'.repeat(32);raw.stages[0].unit='patrick-worker-'+raw.generation+'-1.service';raw.stages[0].description='patrick-worker:'+raw.generation+':'+token+':1';f.io.writeFileSync(recordPath,JSON.stringify(raw)+'\n',{mode:0o600});}return fd;};await expect(f.run('cli')).rejects.toMatchObject({retainUidLock:true});expect(f.record().generation).toBe('f'.repeat(32));
+ }));
+});
 describe('serialized trusted stage lifetime',()=>{
  it('records root-owned empty allocation and pending root-generated unit before submission',()=>using(async f=>{
   const submit=f.deps.manager.submit;f.deps.manager.submit=spec=>{const record=f.record();expect(record.stages[0]).toMatchObject({phase:'pending',stage:'prepare',profile:'task-only'});expect(record.layout.path).toBe('/var/lib/patrick-workspaces/'+token+'/work');expect(fs.readdirSync(f.physical(record.layout.path))).toEqual([]);expect(f.io.lstatSync(record.layout.path)).toMatchObject({uid:1101,gid:1101});expect(fs.statSync(f.physical('/run/patrick-worker/invocations/'+token+'.json')).mode&0o777).toBe(0o600);return submit(spec);};

@@ -95,20 +95,22 @@ describe('account and route inventory preconditions',()=>{
 // Linux metadata; no real chown, user creation, nft, sudo or systemd is executed.
 function filesystemFixture() {
   const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'patrick-install-')));
-  const owners=new Map<string,{uid:number;gid:number}>();const mutations:string[]=[];
-  const physical=(path:string)=>join(root,path);
-  const io:any={closeSync:fs.closeSync,fsyncSync:fs.fsyncSync,
+  const owners=new Map<string,{uid:number;gid:number}>(),descriptors=new Map<number,{path:string;owner:{uid:number;gid:number}}>();const mutations:string[]=[];
+  const physical=(path:string)=>{if(typeof path!=='string'||!path.startsWith('/')||path.split('/').includes('..')||path.includes('\0'))throw Error('outside fixture');return join(root,path);};
+  const descriptor=(fd:number)=>{const value=descriptors.get(fd);if(!value)throw Error('foreign fd');return value;};
+  const io:any={readSync:(fd:number,...args:any[])=>{descriptor(fd);return fs.readSync(fd,...args as [any,any,any,any]);},closeSync:(fd:number)=>{descriptor(fd);fs.closeSync(fd);descriptors.delete(fd);},fsyncSync:(fd:number)=>{descriptor(fd);fs.fsyncSync(fd);},fchmodSync:(fd:number,mode:number)=>{descriptor(fd);fs.fchmodSync(fd,mode);},
     lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(Object.create(stat),{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
-    readFileSync:(path:string|number,...args:any[])=>fs.readFileSync(typeof path==='number'?path:physical(path),...args as [any]),
-    openSync:(path:string,flags:number,mode?:number)=>{if(flags&fs.constants.O_CREAT)mutations.push(`open:${path}`);return fs.openSync(physical(path),flags,mode);},
-    fstatSync:(fd:number)=>{const stat=fs.fstatSync(fd);return Object.assign(Object.create(stat),{uid:0,gid:0});},
+    readFileSync:(path:string|number,...args:any[])=>{if(typeof path==='number')descriptor(path);return fs.readFileSync(typeof path==='number'?path:physical(path),...args as [any]);},
+    openSync:(path:string,flags:number,mode?:number)=>{if(flags&fs.constants.O_CREAT)mutations.push(`open:${path}`);const fd=fs.openSync(physical(path),flags,mode);descriptors.set(fd,{path,owner:owners.get(path)??{uid:0,gid:0}});return fd;},
+    fstatSync:(fd:number)=>{const value=descriptor(fd),stat=fs.fstatSync(fd);return Object.assign(Object.create(stat),value.owner);},
     readdirSync:(path:string)=>fs.readdirSync(physical(path)),opendirSync:(path:string,options:any)=>fs.opendirSync(physical(path),options),readlinkSync:(path:string,options:any)=>{const raw=fs.readlinkSync(physical(path),{encoding:'buffer'});const prefix=Buffer.from(root+'/');const bytes=raw.subarray(0,prefix.length).equals(prefix)?Buffer.concat([Buffer.from('/'),raw.subarray(prefix.length)]):raw;return options?.encoding==='buffer'?bytes:bytes.toString('utf8');},
     realpathSync:(path:string)=>fs.realpathSync(physical(path)).slice(root.length)||'/',
     mkdirSync:(path:string,options:any)=>{mutations.push(`mkdir:${path}`);return fs.mkdirSync(physical(path),options);},
     rmdirSync:(path:string)=>{mutations.push(`rmdir:${path}`);return fs.rmdirSync(physical(path));},
-    writeFileSync:(path:string|number,data:any,options:any)=>{mutations.push(`write:${path}`);return fs.writeFileSync(typeof path==='number'?path:physical(path),data,options);},
-    renameSync:(from:string,to:string)=>{mutations.push(`rename:${to}`);return fs.renameSync(physical(from),physical(to));},
-    unlinkSync:(path:string)=>{mutations.push(`unlink:${path}`);return fs.unlinkSync(physical(path));},
+    writeFileSync:(path:string|number,data:any,options:any)=>{mutations.push(`write:${path}`);if(typeof path==='number')descriptor(path);return fs.writeFileSync(typeof path==='number'?path:physical(path),data,options);},
+    linkSync:(from:string,to:string)=>{mutations.push(`link:${to}`);fs.linkSync(physical(from),physical(to));const owner=owners.get(from)??{uid:0,gid:0};owners.set(to,{uid:owner.uid,gid:owner.gid});},
+    renameSync:(from:string,to:string)=>{mutations.push(`rename:${to}`);fs.renameSync(physical(from),physical(to));owners.set(to,owners.get(from)??{uid:0,gid:0});owners.delete(from);},
+    unlinkSync:(path:string)=>{mutations.push(`unlink:${path}`);fs.unlinkSync(physical(path));owners.delete(path);},
     chmodSync:(path:string,mode:number)=>{mutations.push(`chmod:${path}`);return fs.chmodSync(physical(path),mode);},
     chownSync:(path:string,uid:number,gid:number)=>{mutations.push(`chown:${path}`);owners.set(path,{uid,gid});},
   };

@@ -55,15 +55,33 @@ describe('private sanitized qualification report',()=>{
 });
 
 type ProtocolCase='stdout-overflow'|'stderr-overflow'|'pass'|'failed-test'|'exit-nonzero'|'malformed'|'wait'|'codex-missing-result'|'acp-permission'|'acp-non-end-turn'|'acp-early-exit';
-function ordinaryFixture(runner:'grok'|'codex'|'dsh',behavior:ProtocolCase='pass',cleanupFailure=false,wrongPermission=false,helperCompletion:'normal'|'nonzero'|'lingering'='normal'){
- const root=mkdtempSync(join(realpathSync(tmpdir()),'patrick-synthetic-adapter-')),bin=join(root,'bin'),workspace=join(root,'work'),eventsPath=join(root,'events'),outcomesPath=join(root,'outcomes');mkdirSync(bin);mkdirSync(workspace);
- const node=process.execPath;
+function waitForFixture(ready:()=>boolean,signal:AbortSignal,worker?:Promise<unknown>){
+ return new Promise<void>((resolve,reject)=>{
+  let settled=false,timer:ReturnType<typeof setTimeout>|undefined;
+  const finish=(error?:unknown)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',aborted);if(error)reject(error);else resolve();};
+  const aborted=()=>finish(signal.reason??Error('Test aborted while waiting for fixture'));
+  const check=()=>{try{signal.throwIfAborted();if(ready())finish();else timer=setTimeout(check,5);}catch(error){finish(error);}};
+  signal.addEventListener('abort',aborted,{once:true});
+  worker?.then(()=>finish(Error('Worker settled before fixture readiness')),()=>finish(Error('Worker settled before fixture readiness')));
+  check();
+ });
+}
+function ordinaryFixture(signal:AbortSignal,runner:'grok'|'codex'|'dsh',behavior:ProtocolCase='pass',cleanupFailure=false,wrongPermission=false,helperCompletion:'normal'|'nonzero'|'lingering'='normal'){
+ const root=mkdtempSync(join(realpathSync(tmpdir()),'patrick-synthetic-adapter-')),bin=join(root,'bin'),workspace=join(root,'work'),eventsPath=join(root,'events'),outcomesPath=join(root,'outcomes'),actorsPath=join(root,'actors'),openPath=join(root,'open'),cliReadyPath=join(root,'cli-ready');mkdirSync(bin);mkdirSync(workspace);writeFileSync(actorsPath,'');writeFileSync(openPath,'');
+ const node=process.execPath,waitObserver=join(bin,'observe-wait.cjs');
+ // Observe the fixed fixture entering its real wait, without editing the
+ // reviewed asset or its CLI flags. Only the wait scenario loads this observer.
+ // Rename only after closing the complete PID record; the temporary is pending.
+ writeFileSync(waitObserver,`const fs=require('node:fs'),interval=setInterval;global.setInterval=(...args)=>{const value=interval(...args),temporary=${JSON.stringify(cliReadyPath+'.pending')},fd=fs.openSync(temporary,'wx');try{fs.writeFileSync(fd,String(process.pid)+'\\n');}finally{fs.closeSync(fd);}fs.renameSync(temporary,${JSON.stringify(cliReadyPath)});global.setInterval=interval;return value;};`);
  writeFileSync(join(bin,'limactl'),`#!${node}
 (async()=>{
  const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
  const argv=process.argv.slice(2),stage=argv[18],operation=argv[20],args=argv.slice(22),invocation=argv[16],dir='/var/lib/patrick-workspaces/'+invocation+'/work';
  const prefix=['shell','synthetic-instance','--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-enter','--runner',${JSON.stringify(runner)},'--user','patrick-synthetic','--project','synthetic','--domain','synthetic'];
  if(JSON.stringify(argv.slice(0,15))!==JSON.stringify(prefix)||argv[15]!=='--invocation'||!/^[a-f0-9]{32}$/.test(invocation)||argv[17]!=='--stage'||argv[19]!=='--operation'||argv[21]!=='--')process.exit(78);
+ // Register before the first fixture write. No O_CREAT: a late starter cannot
+ // recreate actors after disposal. The gate is checked after registration.
+ const actors=fs.openSync(${JSON.stringify(actorsPath)},fs.constants.O_WRONLY|fs.constants.O_APPEND),own=pid=>fs.writeSync(actors,String(pid)+'\\n');own(process.pid);if(!fs.existsSync(${JSON.stringify(openPath)}))return;
  const scripts=${JSON.stringify(guestScripts)},work=${JSON.stringify(workspace)},log=v=>fs.appendFileSync(${JSON.stringify(eventsPath)},JSON.stringify(v)+'\\n');
  log({stage:operation==='exec'?stage:operation,prefix,invocation});
  let recorded=false;const outcome=code=>{if(recorded)return;recorded=true;fs.appendFileSync(${JSON.stringify(outcomesPath)},JSON.stringify({stage,outcome:{phase:'complete',code,submitterExited:true,invocationClosed:true}})+'\\n');};
@@ -73,7 +91,8 @@ function ordinaryFixture(runner:'grok'|'codex'|'dsh',behavior:ProtocolCase='pass
  if(stage==='cli'||stage==='acp'){
   const extra=stage==='cli'?args.slice(6):args.slice(1);
   if(stage==='cli'&&(args[0]!=='sh'||args[3]!=='patrick'||args[4]!==dir||args[5]!=='/usr/local/libexec/patrick-worker/synthetic-worker.mjs')||stage==='acp'&&args[0]!=='/usr/local/libexec/patrick-worker/synthetic-worker.mjs')process.exit(78);
-  const child=cp.spawn(${JSON.stringify(node)},[${JSON.stringify(fixturePath)},...extra],{cwd:work,env:{HOME:work,PATH:${JSON.stringify(process.env.PATH)}},stdio:['pipe','pipe','pipe']});
+  const child=cp.spawn(${JSON.stringify(node)},[...(stage==='cli'&&${JSON.stringify(behavior)}==='wait'?['--require',${JSON.stringify(waitObserver)}]:[]),${JSON.stringify(fixturePath)},...extra],{cwd:work,env:{HOME:work,PATH:${JSON.stringify(process.env.PATH)}},stdio:['pipe','pipe','pipe']});
+  own(child.pid);
   if(${JSON.stringify(wrongPermission)}){let pending='';process.stdin.on('data',chunk=>{pending+=chunk;let index;while((index=pending.indexOf('\\n'))>=0){const line=pending.slice(0,index);pending=pending.slice(index+1);const value=JSON.parse(line);if(value.id===9001)value.result={outcome:{outcome:'selected',optionId:'allow'}};child.stdin.write(JSON.stringify(value)+'\\n');}});process.stdin.on('end',()=>child.stdin.end());}else process.stdin.pipe(child.stdin);child.stdin.on('error',()=>{});let outBytes=0,errBytes=0;child.stdout.on('data',c=>{outBytes+=c.length;if(outBytes>2000000)outcome(null);});child.stderr.on('data',c=>{errBytes+=c.length;if(errBytes>2000000)outcome(null);});child.stdout.pipe(process.stdout);child.stderr.pipe(process.stderr);process.on('SIGTERM',()=>{child.kill('SIGKILL');process.exit(143);});child.once('close',(code,signal)=>{if(stage==='acp'&&${JSON.stringify(helperCompletion)}==='lingering'){setInterval(()=>{},1000);return;}const actual=stage==='acp'&&${JSON.stringify(helperCompletion)}==='nonzero'?78:signal?null:code;outcome(actual);process.exit(actual??78);});return;
  }
  if(args[0]!=='node'||args[1]!=='-e'||args[2]!==scripts[stage]||args[3]!==dir)process.exit(78);
@@ -86,18 +105,96 @@ function ordinaryFixture(runner:'grok'|'codex'|'dsh',behavior:ProtocolCase='pass
 })().catch(()=>process.exit(78));
 `,{mode:0o700});
  vi.stubEnv('PATH',bin);const bound=createSyntheticBinding({instance:'synthetic-instance',binding:{runner,user:'patrick-synthetic',projectId:'synthetic',domain:'synthetic',uid:1101,gid:1101,home:'/var/lib/patrick-synthetic',proxyPort:runner==='grok'?18743:runner==='codex'?18744:18745},fixtureCase:behavior,policyHash:'a'.repeat(64),artifactHash:'b'.repeat(64),inventoryHash:'c'.repeat(64),fixtureHash:createHash('sha256').update(readFileSync(fixturePath)).digest('hex')});
- return {root,...bound,outcomes:()=>existsSync(outcomesPath)?readFileSync(outcomesPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[],events:()=>existsSync(eventsPath)?readFileSync(eventsPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[],close(){bound.dispose();vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});}};
+ const terminated=(pid:number)=>{if(!Number.isSafeInteger(pid)||pid<=0)throw Error('Invalid owned fixture PID');try{process.kill(pid,0);return false;}catch(error){if((error as NodeJS.ErrnoException).code==='ESRCH')return true;return false;}};
+ let draining:Promise<void>|undefined,closing:Promise<void>|undefined;
+ const drain=()=>draining??=(async()=>{
+  // Closing admission before reading actors captures every helper that could
+  // pass the gate. Re-read after terminal evidence: an admitted helper can
+  // register its child while the first snapshot is being checked.
+  rmSync(openPath);await waitForFixture(()=>{const snapshot=readFileSync(actorsPath,'utf8');return snapshot.split('\n').slice(0,-1).map(Number).every(terminated)&&readFileSync(actorsPath,'utf8')===snapshot;},signal);
+ })();
+ const cliReady=()=>{
+  if(!existsSync(cliReadyPath))return false;
+  const bytes=readFileSync(cliReadyPath,'utf8'),pid=Number(bytes);
+  if(bytes!==String(pid)+'\n')throw Error('Invalid owned fixture PID');
+  return !terminated(pid);
+ };
+ return {root,...bound,drain,outcomes:()=>existsSync(outcomesPath)?readFileSync(outcomesPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[],events:()=>existsSync(eventsPath)?readFileSync(eventsPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)):[],waitForCli:(worker:Promise<unknown>)=>waitForFixture(cliReady,signal,worker),close(){return closing??=(async()=>{
+  await drain();
+  bound.dispose();vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});
+ })();}};
 }
 describe('ordinary adapters with finite process fixture (host-protocol; actualGuest=false)',()=>{
- it.each(['grok','codex','dsh'] as const)('runs real %s flags/protocol, immutable prefix and finalization',async runner=>{
-  const f=ordinaryFixture(runner);try{const result=await f.worker.run(f.input);expect(result).toMatchObject({costUsd:0,model:'synthetic-model',provider:'synthetic-provider',output:{tests:[{passed:true,output:'exit 0'}]}});
+ it.for(['grok','codex','dsh'] as const)('runs real %s flags/protocol, immutable prefix and finalization',async(runner,{signal})=>{
+  const f=ordinaryFixture(signal,runner);try{const result=await f.worker.run(f.input);await f.drain();expect(result).toMatchObject({costUsd:0,model:'synthetic-model',provider:'synthetic-provider',output:{tests:[{passed:true,output:'exit 0'}]}});
    const events=f.events();expect(events.map(e=>e.stage)).toEqual(['prepare',runner==='dsh'?'acp':'cli',...(runner==='codex'?['read']:[]),'tests','stop','cleanup','reconcile']);expect(new Set(events.map(e=>JSON.stringify(e.prefix))).size).toBe(1);expect(new Set(events.map(e=>e.invocation)).size).toBe(1);
-  }finally{f.close();}
+  }finally{await f.close();}
  });
- it('actual failed planned command overrides fabricated passing model tests',async()=>{const f=ordinaryFixture('grok','failed-test');try{const result=await f.worker.run(f.input);expect(result.output).toMatchObject({tests:[{command:"node -e 'process.exit(23)'",passed:false,output:'exit 23'}]});}finally{f.close();}});
- it.each([['grok','exit-nonzero'],['grok','malformed'],['codex','codex-missing-result'],['dsh','acp-permission'],['dsh','acp-non-end-turn'],['dsh','acp-early-exit']] as const)('rejects %s %s before planned tests and always finalizes',async(runner,behavior)=>{const f=ordinaryFixture(runner,behavior);try{await expect(f.worker.run(f.input)).rejects.toBeDefined();expect(f.events().map(e=>e.stage)).not.toContain('tests');expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);}finally{f.close();}});
- it('cleanup failure overrides CLI failure and preserves the primary cause',async()=>{const f=ordinaryFixture('grok','exit-nonzero',true);try{const error=await f.worker.run(f.input).catch(e=>e);expect(error).toMatchObject({code:'worker_cleanup_unconfirmed',cause:{name:'WorkerUnavailable'}});}finally{f.close();}});
- it('abort during real finite wait still performs fresh stop/cleanup/reconcile',async()=>{const f=ordinaryFixture('grok','wait'),controller=new AbortController();try{const pending=f.worker.run(f.input,controller.signal),rejected=expect(pending).rejects.toBeDefined();for(let i=0;i<100&&!f.events().some(e=>e.stage==='cli');i++)await new Promise(r=>setTimeout(r,5));controller.abort();await rejected;expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);}finally{f.close();}});
+ it('actual failed planned command overrides fabricated passing model tests',async({signal})=>{const f=ordinaryFixture(signal,'grok','failed-test');try{const result=await f.worker.run(f.input);await f.drain();expect(result.output).toMatchObject({tests:[{command:"node -e 'process.exit(23)'",passed:false,output:'exit 23'}]});}finally{await f.close();}});
+ it.for([['grok','exit-nonzero'],['grok','malformed'],['codex','codex-missing-result'],['dsh','acp-permission'],['dsh','acp-non-end-turn'],['dsh','acp-early-exit']] as const)('rejects %s %s before planned tests and always finalizes',async([runner,behavior],{signal})=>{const f=ordinaryFixture(signal,runner,behavior);try{await expect(f.worker.run(f.input)).rejects.toBeDefined();await f.drain();expect(f.events().map(e=>e.stage)).not.toContain('tests');expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);}finally{await f.close();}});
+ it('cleanup failure overrides CLI failure and preserves the primary cause',async({signal})=>{const f=ordinaryFixture(signal,'grok','exit-nonzero',true);try{const error=await f.worker.run(f.input).catch(e=>e);await f.drain();expect(error).toMatchObject({code:'worker_cleanup_unconfirmed',cause:{name:'WorkerUnavailable'}});}finally{await f.close();}});
+ it('keeps the fixture writable until a delayed prepare helper terminates',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok','wait'),barrier=mkdtempSync(join(tmpdir(),'patrick-helper-barrier-')),ready=join(barrier,'ready'),release=join(barrier,'release'),written=join(barrier,'written'),controller=new AbortController();
+  const helper=join(f.root,'bin','limactl'),source=readFileSync(helper,'utf8');
+  writeFileSync(helper,source.replace('const outcome=code=>{if(recorded)return;recorded=true;',`const outcome=code=>{if(recorded)return;recorded=true;if(stage==='prepare'){process.on('SIGTERM',()=>{});fs.writeFileSync(${JSON.stringify(ready+'.pending')},String(process.pid),{flag:'wx'});fs.renameSync(${JSON.stringify(ready+'.pending')},${JSON.stringify(ready)});while(!fs.existsSync(${JSON.stringify(release)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1);}`)
+   .replace('outcome(0);',`outcome(0);if(stage==='prepare')fs.writeFileSync(${JSON.stringify(written)},'complete');`));
+  const pending=f.worker.run(f.input,controller.signal),rejected=expect(pending).rejects.toBeDefined();let closing:Promise<unknown>|undefined;
+  try{
+   await waitForFixture(()=>existsSync(ready),signal,pending);const notReady=expect(f.waitForCli(pending)).rejects.toThrow('Worker settled before fixture readiness');controller.abort();await rejected;await notReady;
+   expect(f.events().map(e=>e.stage)).toEqual(['prepare','stop','cleanup','reconcile']);
+   let closed=false;closing=Promise.resolve().then(()=>f.close()).then(()=>{closed=true;});
+   await new Promise(resolve=>setImmediate(resolve));
+   expect(existsSync(f.root),'close must retain the root while its prepare writer is blocked').toBe(true);expect(closed).toBe(false);
+   writeFileSync(release,'go');await closing;expect(existsSync(written)).toBe(true);expect(existsSync(f.root)).toBe(false);
+  }finally{
+   writeFileSync(release,'go');controller.abort();await rejected;
+   const pid=existsSync(ready)?Number(readFileSync(ready,'utf8')):undefined;
+   if(pid)await waitForFixture(()=>{try{process.kill(pid,0);return false;}catch(error){if((error as NodeJS.ErrnoException).code==='ESRCH')return true;throw error;}},signal);
+   await closing;await f.close();rmSync(barrier,{recursive:true,force:true});
+  }
+ });
+ it('rejects CLI readiness when the actual worker settles before transport',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok');f.input.task.projectId='mismatched-synthetic-project';const pending=f.worker.run(f.input),rejected=expect(pending).rejects.toMatchObject({code:'subscription_scope'});
+  try{await expect(f.waitForCli(pending)).rejects.toThrow('Worker settled before fixture readiness');await rejected;expect(f.events()).toEqual([]);}finally{await f.close();}
+ });
+ it('bounds fixture readiness with the test-context abort signal',async({signal})=>{
+  const controller=new AbortController(),reason=Error('readiness cancelled'),waiting=waitForFixture(()=>false,AbortSignal.any([signal,controller.signal]));controller.abort(reason);await expect(waiting).rejects.toBe(reason);
+ });
+ it('waits for the finite CLI wait after its process has spawned',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok','wait'),barrier=mkdtempSync(join(tmpdir(),'patrick-cli-barrier-')),ready=join(barrier,'ready'),release=join(barrier,'release'),preload=join(barrier,'before-fixture.cjs'),controller=new AbortController();
+  writeFileSync(preload,`const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(ready+'.pending')},'spawned',{flag:'wx'});fs.renameSync(${JSON.stringify(ready+'.pending')},${JSON.stringify(ready)});while(!fs.existsSync(${JSON.stringify(release)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1);`);
+  const helper=join(f.root,'bin','limactl');writeFileSync(helper,readFileSync(helper,'utf8').replace('const child=cp.spawn(',`const start=cp.spawn;cp.spawn=(command,args,options)=>start(command,['--require',${JSON.stringify(preload)},...args],options);const child=cp.spawn(`));
+  const pending=f.worker.run(f.input,controller.signal),rejected=expect(pending).rejects.toBeDefined();
+  try{
+   await waitForFixture(()=>existsSync(ready),signal,pending);let cliReady=false;const waiting=f.waitForCli(pending).then(()=>{cliReady=true;});
+   await new Promise(resolve=>setImmediate(resolve));expect(cliReady,'spawn alone must not certify the actual finite wait').toBe(false);
+   writeFileSync(release,'go');await waiting;controller.abort();await rejected;await f.drain();expect(f.events().map(e=>e.stage)).toEqual(['prepare','cli','stop','cleanup','reconcile']);
+  }finally{writeFileSync(release,'go');controller.abort();await rejected;await f.close();rmSync(barrier,{recursive:true,force:true});}
+ });
+ it('keeps CLI readiness pending across the observer open-to-write publication window',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok','wait'),barrier=mkdtempSync(join(tmpdir(),'patrick-publication-barrier-')),opened=join(barrier,'opened'),release=join(barrier,'release'),ready=join(f.root,'cli-ready'),temporary=ready+'.pending',observer=join(f.root,'bin','observe-wait.cjs'),controller=new AbortController();
+  // Expand the old path-based write into open/write calls as well, so reverting
+  // the publisher forces its exact empty-final-file window, not a lucky poll.
+  writeFileSync(observer,`(()=>{const fs=require('node:fs'),open=fs.openSync,write=fs.writeFileSync;fs.openSync=(file,...args)=>{const fd=open(file,...args);if(file===${JSON.stringify(ready)}||file===${JSON.stringify(temporary)}){write(${JSON.stringify(opened)},'opened');while(!fs.existsSync(${JSON.stringify(release)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1);}return fd;};fs.writeFileSync=(file,...args)=>{if(file!==${JSON.stringify(ready)})return write(file,...args);const fd=fs.openSync(file,'w');try{return write(fd,...args);}finally{fs.closeSync(fd);}};})();\n`+readFileSync(observer,'utf8'));
+  const pending=f.worker.run(f.input,controller.signal),rejected=expect(pending).rejects.toBeDefined(),readiness:{state:'pending'|'ready'|'failed';error?:unknown}={state:'pending'};let waiting:Promise<unknown>|undefined;
+  try{
+   await waitForFixture(()=>existsSync(opened),signal,pending);expect(f.events().map(e=>e.stage)).toEqual(['prepare','cli']);
+   expect(readFileSync(existsSync(ready)?ready:temporary,'utf8')).toBe('');
+   waiting=f.waitForCli(pending).then(()=>{readiness.state='ready';},error=>{readiness.state='failed';readiness.error=error;});
+   await new Promise(resolve=>setImmediate(resolve));
+   expect(readiness.error,'incomplete PID publication must not reject readiness').toBeUndefined();expect(readiness.state,'incomplete PID publication must leave readiness pending').toBe('pending');expect(existsSync(ready),'the final marker must expose only complete PID bytes').toBe(false);
+   writeFileSync(release,'go');await waiting;expect(readiness).toEqual({state:'ready'});
+   const pid=readFileSync(ready,'utf8');expect(pid).toMatch(/^[1-9][0-9]*\n$/);expect(readFileSync(join(f.root,'actors'),'utf8').split('\n')).toContain(pid.trim());expect(existsSync(temporary)).toBe(false);
+   // A final marker is a completed record: malformed/partial bytes are errors,
+   // whereas an unpublished temporary must remain pending above.
+   for(const malformed of ['',pid.trim(),pid+'\n','0\n','NaN\n','9007199254740992\n']){writeFileSync(ready,malformed);await expect(f.waitForCli(pending)).rejects.toThrow('Invalid owned fixture PID');}
+   controller.abort();await rejected;await f.drain();expect(f.events().map(e=>e.stage)).toEqual(['prepare','cli','stop','cleanup','reconcile']);
+  }finally{writeFileSync(release,'go');controller.abort();await rejected;await waiting;await f.close();rmSync(barrier,{recursive:true,force:true});}
+ });
+ it('abort during real finite wait still performs fresh stop/cleanup/reconcile',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok','wait'),controller=new AbortController(),pending=f.worker.run(f.input,controller.signal),rejected=expect(pending).rejects.toBeDefined();
+  try{await f.waitForCli(pending);expect(f.events().map(e=>e.stage)).toEqual(['prepare','cli']);controller.abort();await rejected;await f.drain();expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);}finally{controller.abort();await rejected;await f.close();}
+ });
 });
 
 it('fixture source has only finite built-in dependencies and the sole same-file detached child case',()=>{
@@ -111,22 +208,22 @@ it('exposes the genuine fixed synthetic Store/proof factory without a transport 
  const synthetic=module.createSyntheticBinding(declaration);try{expect(Object.keys(synthetic).sort()).toEqual(['dispose','input','worker']);expect(synthetic.input.project.id).toBe('synthetic');}finally{synthetic.dispose();}
 });
 
-it('rejects mismatched caller task scope from the genuine factory before any transport',async()=>{
- const f=ordinaryFixture('grok');try{f.input.task.projectId='mismatched-synthetic-project';await expect(f.worker.run(f.input)).rejects.toMatchObject({code:'subscription_scope'});expect(f.events()).toEqual([]);}finally{f.close();}
+it('rejects mismatched caller task scope from the genuine factory before any transport',async({signal})=>{
+ const f=ordinaryFixture(signal,'grok');try{f.input.task.projectId='mismatched-synthetic-project';await expect(f.worker.run(f.input)).rejects.toMatchObject({code:'subscription_scope'});await f.drain();expect(f.events()).toEqual([]);}finally{await f.close();}
 });
 
 
 describe('scenario-specific qualification decisions through ordinary adapters (host protocol only)',()=>{
- it.each([['cli-nonzero','grok','exit-nonzero'],['malformed-output','grok','malformed'],['codex-missing-result','codex','codex-missing-result'],['acp-permission','dsh','acp-permission'],['acp-non-end-turn','dsh','acp-non-end-turn'],['acp-early-exit','dsh','acp-early-exit'],['stdout-overflow','grok','stdout-overflow'],['stderr-overflow','grok','stderr-overflow']] as const)('requires the actual %s failure and trusted outcomes',async(id,runner,behavior)=>{
-  const f=ordinaryFixture(runner,behavior);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');expect(module.negativeScenarioMatches(id,error,f.outcomes())).toBe(true);const workers=await import('../../src/integrations/workers.js');expect(Object.isFrozen(workers.limaFailureEvidence(error))).toBe(true);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,pid:777}})))).toBe(false);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,phase:'unknown'}})))).toBe(false);expect(module.negativeScenarioMatches(id,new Error('unrelated transport failure'),f.outcomes())).toBe(false);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,invocationClosed:false}})))).toBe(false);expect(f.events().map(e=>e.stage)).not.toContain('tests');}finally{f.close();}
+ it.for([['cli-nonzero','grok','exit-nonzero'],['malformed-output','grok','malformed'],['codex-missing-result','codex','codex-missing-result'],['acp-permission','dsh','acp-permission'],['acp-non-end-turn','dsh','acp-non-end-turn'],['acp-early-exit','dsh','acp-early-exit'],['stdout-overflow','grok','stdout-overflow'],['stderr-overflow','grok','stderr-overflow']] as const)('requires the actual %s failure and trusted outcomes',async([id,runner,behavior],{signal})=>{
+  const f=ordinaryFixture(signal,runner,behavior);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');await f.drain();expect(module.negativeScenarioMatches(id,error,f.outcomes())).toBe(true);const workers=await import('../../src/integrations/workers.js');expect(Object.isFrozen(workers.limaFailureEvidence(error))).toBe(true);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,pid:777}})))).toBe(false);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,phase:'unknown'}})))).toBe(false);expect(module.negativeScenarioMatches(id,new Error('unrelated transport failure'),f.outcomes())).toBe(false);expect(module.negativeScenarioMatches(id,error,f.outcomes().map(o=>({...o,outcome:{...o.outcome,invocationClosed:false}})))).toBe(false);expect(f.events().map(e=>e.stage)).not.toContain('tests');}finally{await f.close();}
  });
- it('rejects the wrong ACP permission response even though the adapter requested cancellation',async()=>{
-  const f=ordinaryFixture('dsh','acp-permission',false,true);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');expect(f.outcomes().find(o=>o.stage==='acp')?.outcome.code).toBe(78);expect(module.negativeScenarioMatches('acp-permission',error,f.outcomes())).toBe(false);}finally{f.close();}
+ it('rejects the wrong ACP permission response even though the adapter requested cancellation',async({signal})=>{
+  const f=ordinaryFixture(signal,'dsh','acp-permission',false,true);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');await f.drain();expect(f.outcomes().find(o=>o.stage==='acp')?.outcome.code).toBe(78);expect(module.negativeScenarioMatches('acp-permission',error,f.outcomes())).toBe(false);}finally{await f.close();}
  });
- it.each(['nonzero','lingering'] as const)('does not certify cancellation when helper completion is %s',async completion=>{
-  const f=ordinaryFixture('dsh','acp-permission',false,false,completion);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js'),workers=await import('../../src/integrations/workers.js');expect(workers.limaFailureEvidence(error)).toBeUndefined();expect(module.negativeScenarioMatches('acp-permission',error,f.outcomes())).toBe(false);expect(f.events().map(e=>e.stage)).not.toContain('tests');}finally{f.close();}
- },7000);
- it('cannot certify malformed output from an unrelated CLI nonzero exit or fabricated error properties',async()=>{
-  const f=ordinaryFixture('grok','exit-nonzero');try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');expect(module.negativeScenarioMatches('malformed-output',error,f.outcomes())).toBe(false);expect(module.negativeScenarioMatches('stdout-overflow',Object.assign(new Error(),{name:'WorkerUnavailable',kind:'stdout-overflow'}),f.outcomes())).toBe(false);}finally{f.close();}
+ it.for(['nonzero','lingering'] as const)('does not certify cancellation when helper completion is %s',{timeout:7000},async(completion,{signal})=>{
+  const f=ordinaryFixture(signal,'dsh','acp-permission',false,false,completion);try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js'),workers=await import('../../src/integrations/workers.js');await f.drain();expect(workers.limaFailureEvidence(error)).toBeUndefined();expect(module.negativeScenarioMatches('acp-permission',error,f.outcomes())).toBe(false);expect(f.events().map(e=>e.stage)).not.toContain('tests');}finally{await f.close();}
+ });
+ it('cannot certify malformed output from an unrelated CLI nonzero exit or fabricated error properties',async({signal})=>{
+  const f=ordinaryFixture(signal,'grok','exit-nonzero');try{const error=await f.worker.run(f.input).catch(e=>e),module=await import('../../scripts/lima/qualify.js');await f.drain();expect(module.negativeScenarioMatches('malformed-output',error,f.outcomes())).toBe(false);expect(module.negativeScenarioMatches('stdout-overflow',Object.assign(new Error(),{name:'WorkerUnavailable',kind:'stdout-overflow'}),f.outcomes())).toBe(false);}finally{await f.close();}
  });
 });
