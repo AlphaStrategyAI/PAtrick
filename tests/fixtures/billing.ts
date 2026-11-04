@@ -8,14 +8,15 @@ import { Store } from '../../src/store.js';
 import { digest, type AppConfig, type RunnerPolicy, type WorkerInput } from '../../src/domain.js';
 import { BillingAuthority, type CurrentBillingContext, type IncludedAdmission } from '../../src/billing.js';
 
-export function makeBillingFixture(options: { maxAttemptsPerTask?: number } = {}) {
+export function makeBillingFixture(options: { maxAttemptsPerTask?: number; persistent?: boolean; retention?: 'permanent' | 'ephemeral' } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-SYNTHETIC-billing-')); chmodSync(root, 0o700);
-  const store = new Store(':memory:');
+  const databasePath = options.persistent ? join(root, 'billing.sqlite') : ':memory:';
+  let store = new Store(databasePath);
   const project = projectSchema.parse({ id: 'synthetic', projectId: 'synthetic', domain: 'synthetic', name: 'Synthetic', repository: 'fixture/repo', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], ownerId: 'synthetic-owner', budgetUsd: 0 });
   const included: RunnerPolicy = { runner: 'codex', roles: ['knowledge_extract'], domains: ['synthetic'], provider: 'synthetic-provider', model: 'synthetic-model', admitted: true, costPerRunUsd: 0, independentReview: false, billing: { mode: 'included-subscription', admissionId: 'synthetic-proof' } };
   const config: AppConfig = { ...readConfig({ PATRICK_MODE: 'test' }), billingBoundary: 'included-only' as const, maxAttemptsPerTask: options.maxAttemptsPerTask ?? 32, projects: [project], runnerPolicies: [included] };
   store.save('projects', project);
-  const task = ingestSource(store, config, { projectId: project.id, externalId: 'synthetic-source', title: 'Synthetic', content: 'Synthetic fixture only.' })!;
+  const task = ingestSource(store, config, { projectId: project.id, externalId: 'synthetic-source', title: 'Synthetic', content: 'Synthetic fixture only.', retention: options.retention })!;
   task.attemptLimit = config.maxAttemptsPerTask; store.save('tasks', task);
   const source = store.get('sources', task.sourceId)!;
   let at = new Date();
@@ -27,7 +28,7 @@ export function makeBillingFixture(options: { maxAttemptsPerTask?: number } = {}
   const writeProof = (value: unknown = proof) => writeFileSync(proofPath, JSON.stringify(value), { mode: 0o600 });
   writeProof();
   const input: WorkerInput = { task, project, source, role: 'knowledge_extract', cards: [], rules: [] };
-  return { root, proofRoot: root, proofPath, store, config, project, source, task, input, included, proof, current, get at() { return at; }, now: () => at, setTime: (value: Date) => { at = value; }, currentProvider: { async read() { return structuredClone(current); } }, writeProof, dispose() { store.close(); rmSync(root, { recursive: true, force: true }); } };
+  return { root, proofRoot: root, proofPath, get store() { return store; }, reopen() { if (!options.persistent) throw Error('Persistent fixture required'); store.close(); store = new Store(databasePath); return store; }, config, project, source, task, input, included, proof, current, get at() { return at; }, now: () => at, setTime: (value: Date) => { at = value; }, currentProvider: { async read() { return structuredClone(current); } }, writeProof, dispose() { store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
 /** Bind a harmless Lima protocol stub to real authoritative records and synthetic proof.

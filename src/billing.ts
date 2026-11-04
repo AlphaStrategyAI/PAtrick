@@ -338,15 +338,29 @@ export class BillingAuthority {
     } }, signal);
   }
 
+  /** Persist a reached cap without creating an attempt. Hard stops never expire on retry. */
+  taskStop(task: Task): string | undefined {
+    return this.store.transaction(() => {
+      const current = this.store.get('tasks', task.id);
+      if (!current) throw error('stale_attempt');
+      if (current.billingStop) return current.billingStop.code;
+      if (current.attempts >= this.limit(current)) {
+        this.stopAtLimit(current); return 'subscription_attempt_limit';
+      }
+      return undefined;
+    });
+  }
+
   async status(project: Project, policy: RunnerPolicy): Promise<BillingStatus> {
     let attemptsLimit = 32;
     try {
       attemptsLimit = configuredLimit(this.config); this.assertOperational();
       const currentProject = this.store.get('projects', project.id);
       if (!currentProject || currentProject.domain !== project.domain || !policySchema.safeParse(policy).success || !policy.admitted) throw error('billing_policy_invalid');
-      if (digest(this.config.runnerPolicies.find(p => p.runner === policy.runner && p.admitted && p.domains.includes(project.domain)) ?? {}) !== digest(policy)) throw error('billing_policy_invalid');
+      const role = policy.roles.find(candidate => digest(this.config.runnerPolicies.find(p => p.runner === policy.runner && p.admitted && p.domains.includes(project.domain) && p.roles.includes(candidate)) ?? {}) === digest(policy));
+      if (!role) throw error('billing_policy_invalid');
       const evidence = await this.evidence(policy, currentProject);
-      const task = { projectId: project.id, domain: project.domain, stage: policy.roles[0], billingBoundary: boundary(this.config), attempts: 0, attemptLimit: attemptsLimit, budgetUsd: currentProject.budgetUsd, spentUsd: 0, status: 'queued' } as Task;
+      const task = { projectId: project.id, domain: project.domain, stage: role, billingBoundary: boundary(this.config), attempts: 0, attemptLimit: attemptsLimit, budgetUsd: currentProject.budgetUsd, spentUsd: 0, status: 'queued' } as Task;
       const decision = evaluateBilling(policy, task, currentProject, evidence.admission, evidence.current, this.clock());
       if (!decision.allowed) return { state: decision.code.startsWith('subscription_') ? 'pending-proof' : 'blocked', reason: decision.code, attemptsLimit };
       this.checkHolds(currentProject, policy, evidence, false);

@@ -5,7 +5,8 @@ import { publishKnowledge } from './knowledge.js';
 import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
-import type { BillingAuthority } from './billing.js';
+import { BillingAuthority } from './billing.js';
+import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
 export interface WorkbenchOptions {
   store: Store; config: AppConfig; workers: WorkerAdapter[] | Partial<Record<Runner, WorkerAdapter>>;
@@ -24,6 +25,7 @@ export class Workbench {
   private readonly research: ResearchAdapter;
   private readonly notifier?: NotificationAdapter;
   private readonly scheduler: Scheduler;
+  private readonly billing: BillingAuthority;
   private readonly canRun?: (project: Project) => boolean;
   private busy = false;
   private stopping = false;
@@ -33,7 +35,8 @@ export class Workbench {
   constructor(options: WorkbenchOptions) {
     this.store = options.store; this.config = options.config; this.writer = options.writer; this.research = options.research; this.notifier = options.notifier;
     this.canRun = options.canRun;
-    this.scheduler = new Scheduler(this.store, this.config, options.workers, options.billing);
+    this.billing = options.billing ?? new BillingAuthority(this.store, this.config, { async read() { return undefined; } });
+    this.scheduler = new Scheduler(this.store, this.config, options.workers, this.billing);
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
     this.store.rebuildIndex();
     // Only leased runtime initialization may reconcile a previous authority's attempts.
@@ -75,10 +78,29 @@ export class Workbench {
     });
   }
 
+  /** Read-only current host status: never reserve, restore availability or mint a permit. */
+  async billingStatuses(projects: Project[]): Promise<BillingStatuses> {
+    const statuses: BillingStatuses = {};
+    for (const project of projects) {
+      statuses[project.id] = {};
+      const seen = new Set<(typeof this.config.runnerPolicies)[number]>();
+      for (const policy of this.config.runnerPolicies) {
+        if (seen.has(policy) || !policy.admitted || !policy.domains.includes(project.domain) || !policy.roles.some(role => this.config.runnerPolicies.find(p => p.admitted && p.runner === policy.runner && p.domains.includes(project.domain) && p.roles.includes(role)) === policy)) continue;
+        seen.add(policy);
+        recordPolicyStatus(statuses, project.id, policy, await this.billing.status(project, policy));
+      }
+    }
+    return statuses;
+  }
+
   retry(taskId: string): Task {
+    const task = this.task(taskId);
+    if (!task.billingStop && !['blocked', 'retrying'].includes(task.status)) throw new DomainError('Only a blocked or retrying task can be retried.', 'invalid_transition', 409);
+    // Commit an exhausted cap before returning the 409; throwing inside the
+    // retry transaction would roll the durable stop and owner notice back.
+    const stop = this.billing.taskStop(task);
+    if (stop) throw new DomainError(billingMessage({ state: 'blocked', reason: stop, attemptsLimit: Math.min(task.attemptLimit ?? 32, this.config.maxAttemptsPerTask ?? 32), attempts: task.attempts }), stop, 409);
     return this.store.transaction(() => {
-      const task = this.task(taskId);
-      if (!['blocked', 'retrying'].includes(task.status)) throw new DomainError('Only a blocked or retrying task can be retried.', 'invalid_transition', 409);
       this.current(task);
       const project = this.project(task);
       const next: Task = { ...task, budgetUsd: project.budgetUsd, status: stageStatus[task.stage], error: undefined, runAfter: now(), updatedAt: now() };
@@ -119,7 +141,7 @@ export class Workbench {
           const latest = this.store.get('tasks', task.id);
           // Cancellation/revocation and a newer attempt own their own transition.
           if (latest && latest.version === task.version && latest.stage === task.stage && !stopped.has(latest.status)) {
-            if (error instanceof DomainError && error.code === 'baseline_changed') this.replan(task, error.message);
+            if (error instanceof DomainError && error.code === 'baseline_changed') this.replan(task);
             else if (!(error instanceof DomainError && error.code === 'stale_attempt')) this.fail(task, error);
           }
         }
@@ -313,12 +335,12 @@ export class Workbench {
     this.advance(task, 'execute', { review, repairCount: task.repairCount + 1, error: 'Independent tests or review requested repair.' });
   }
 
-  private replan(task: Task, reason: string): void {
+  private replan(task: Task): void {
     this.store.transaction(() => {
       const current = this.current(task);
       this.completeAction(task);
-      this.store.save('tasks', { ...current, version: current.version + 1, stage: 'plan', status: 'planning', plan: undefined, artifact: undefined, review: undefined, baselineFiles: undefined, repairCount: 0, receiptId: undefined, updatedAt: now(), runAfter: now(), error: reason });
-      this.event(task, 'baseline.changed', reason);
+      this.store.save('tasks', { ...current, version: current.version + 1, stage: 'plan', status: 'planning', plan: undefined, artifact: undefined, review: undefined, baselineFiles: undefined, repairCount: 0, receiptId: undefined, updatedAt: now(), runAfter: now(), error: 'baseline_changed' });
+      this.event(task, 'baseline.changed', publicError('baseline_changed')!);
     });
   }
 
@@ -329,11 +351,16 @@ export class Workbench {
     this.event(task, 'stage.completed', `${task.stage} completed.`, { next: stage, status: values.status ?? stageStatus[stage] });
   }
   private fail(task: Task, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof DomainError ? error.code : 'technical_failure';
+    const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
+    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation']);
+    const safe = publicError(rawCode)!;
+    const code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
+    const message = publicError(code)!;
     const retrying = task.stage === 'delivery' && ['pending_ci', 'remote_unavailable', 'technical_failure'].includes(code);
     this.store.transaction(() => {
-      const current = this.current(task); const runAfter = new Date(Date.now() + 30_000).toISOString();
+      const current = this.current(task);
+      if (current.billingStop) return;
+      const runAfter = new Date(Date.now() + 30_000).toISOString();
       this.store.save('tasks', { ...current, status: retrying ? 'retrying' : 'blocked', blockedFrom: stageStatus[task.stage], updatedAt: now(), runAfter, error: message });
       this.event(task, code, message, { stage: task.stage, runAfter });
       this.enqueue(task, stableId('error', task.id, task.version, task.stage, code, current.attempts), `${task.title} · ${task.stage} 暂停：${message}\n保留原任务，下次重试 ${runAfter}。无需回答。`);
@@ -343,7 +370,7 @@ export class Workbench {
   private readyTask(): Task | undefined {
     if (this.stopping) return undefined;
     return this.store.list('tasks').filter(task => {
-      if (stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if (task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
       const project = this.store.get('projects', task.projectId);
       return !!project && project.domain === task.domain && (!this.canRun || this.canRun(project));
     }).sort((a, b) => a.runAfter.localeCompare(b.runAfter) || a.createdAt.localeCompare(b.createdAt))[0];

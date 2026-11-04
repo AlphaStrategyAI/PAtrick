@@ -8,7 +8,7 @@ import { z, ZodError } from 'zod';
 import { DomainError, now, stableId, type AppConfig, type QuestionAnswer } from './domain.js';
 import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
-import { readiness } from './readiness.js';
+import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
 import { weeklyReport } from './reports.js';
 import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
 import type { Store } from './store.js';
@@ -79,14 +79,15 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     runOutcomeReviews(store,new Date(),project);
     return c.json({reviews:outcomeReviewViews(store,project)});
   });
-  app.get('/api/state',c=>{
+  app.get('/api/state',async c=>{
     const requested=c.req.query('project'),project=requested?ownedProject(requested):undefined;
     const projects=project?[project]:store.list('projects').filter(p=>p.ownerId===config.ownerId);
+    const billing=await engine.billingStatuses(projects);
     const scopes=new Map(projects.map(p=>[p.id,p.domain]));
     const scope=(v:{projectId:string;domain:string})=>scopes.get(v.projectId)===v.domain;
-    return c.json({mode:config.mode,projects,tasks:store.list('tasks').filter(scope),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active'),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100),readiness:readiness({...config,projects})});
+    return c.json({mode:config.mode,projects,tasks:store.list('tasks').filter(scope).map(publicTask),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active'),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100).map(publicEvent),billing,readiness:readiness({...config,projects},billing)});
   });
-  app.get('/api/tasks/:id',c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);ownedProject(task.projectId,task.domain);return c.json({task,question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id),attempts:store.list('attempts').filter(a=>a.taskId===task.id),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
+  app.get('/api/tasks/:id',async c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);const project=ownedProject(task.projectId,task.domain),billing=await engine.billingStatuses([project]);return c.json({task:publicTask(task),billing:taskBillingStatus(task,config,billing),question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id).map(publicEvent),attempts:store.list('attempts').filter(a=>a.taskId===task.id).map(publicAttempt),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
   app.get('/api/lookup',c=>{
     const project=store.get('projects',c.req.query('project')??'');
     if(!project||project.domain!==c.req.query('domain'))return c.json({cards:[]});
@@ -138,10 +139,10 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     store.save('projects',project);config.projects.push(project);return respond(c,{project,message:'项目已创建。外部连接可在连接设置中核对。'},`/?project=${id}`);
   });
   const pages:Record<string,string>={'/':'workbench','/knowledge':'knowledge','/standards':'standards','/sources':'sources','/activity':'activity','/settings':'settings'};
-  for(const [path,page] of Object.entries(pages))app.get(path,c=>c.html(renderPage({page,store,config,url:new URL(c.req.url),projectId:c.req.query('project'),readiness:readiness({...config,projects:store.list('projects')})})));
-  app.get('/tasks/:id',c=>{if(!store.get('tasks',c.req.param('id')))return c.notFound();return c.html(renderPage({page:'task',store,config,url:new URL(c.req.url),projectId:store.get('tasks',c.req.param('id'))?.projectId}));});
+  for(const [path,page] of Object.entries(pages))app.get(path,async c=>{const projects=store.list('projects').filter(p=>p.ownerId===config.ownerId),billing=await engine.billingStatuses(projects);return c.html(renderPage({page,store,config,url:new URL(c.req.url),projectId:c.req.query('project'),billing,readiness:readiness({...config,projects},billing)}));});
+  app.get('/tasks/:id',async c=>{if(!store.get('tasks',c.req.param('id')))return c.notFound();return c.html(renderPage({page:'task',store,config,url:new URL(c.req.url),projectId:store.get('tasks',c.req.param('id'))?.projectId,billing:await engine.billingStatuses(store.list('projects').filter(p=>p.ownerId===config.ownerId))}));});
   app.notFound(c=>c.req.path.startsWith('/api/')?c.json({error:'没有找到这个资源。'},404):c.html('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PAtrick · 404</title><body><h1>没有找到这个页面</h1><a href="/">返回工作台</a></body></html>',404));
-  app.onError((error,c)=>{
+  app.onError(async(error,c)=>{
     const status=error instanceof DomainError?error.status:error instanceof ZodError?400:500;
     const message=error instanceof DomainError?error.message:error instanceof ZodError?error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；'):'处理暂时失败，请稍后重试。';
     if(status!==403&&c.req.header('Accept')?.includes('text/html')) {
@@ -149,7 +150,7 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
       const taskId=question?.taskId??c.req.path.match(/^\/api\/tasks\/([^/]+)\//)?.[1];
       const task=taskId?store.get('tasks',taskId):undefined;
       const target=task?`/tasks/${task.id}`:c.req.path.includes('/projects')?'/settings':c.req.path.includes('/sources')?'/sources':'/';
-      return c.html(renderPage({page:task?'task':target==='/settings'?'settings':target==='/sources'?'sources':'workbench',store,config,url:new URL(target,c.req.url),projectId:task?.projectId,notice:message}),status as 400);
+      return c.html(renderPage({page:task?'task':target==='/settings'?'settings':target==='/sources'?'sources':'workbench',store,config,url:new URL(target,c.req.url),projectId:task?.projectId,notice:message,billing:await engine.billingStatuses(store.list('projects').filter(p=>p.ownerId===config.ownerId))}),status as 400);
     }
     return c.json({error:message,code:error instanceof DomainError?error.code:'invalid_request'},status as 400);
   });

@@ -86,3 +86,200 @@ describe('authenticated workbench HTTP',()=>{
     expect(response.status).toBe(200);const data=await response.json();expect(data.project.executionRunner).toBe('dsh');expect(store.get('projects',data.project.id)?.executionRunner).toBe('dsh');
   });
 });
+
+// Current synthetic host evidence is injected through Workbench's canonical authority.
+import { BillingAuthority } from '../../src/billing.js';
+import { readiness } from '../../src/readiness.js';
+import { makeBillingFixture } from '../fixtures/billing.js';
+import { DomainError, SubscriptionAccessError, type WorkerAdapter } from '../../src/domain.js';
+const billingFixtures: ReturnType<typeof makeBillingFixture>[] = [];
+afterEach(() => billingFixtures.splice(0).forEach(f => f.dispose()));
+function billingHttp(current = true, workers: WorkerAdapter[] = []) {
+  const f = makeBillingFixture(); billingFixtures.push(f); f.config.ownerId = f.project.ownerId; f.config.mode = 'live'; f.config.authToken = 'synthetic-http-owner-at-least-32-characters';
+  f.config.workers.codex = { instance: 'synthetic', command: 'synthetic', args: [], timeoutMs: 1000, isolation: 'lima' };
+  const billing = new BillingAuthority(f.store, f.config, current ? f.currentProvider : { async read() { return undefined; } }, { proofRoot: f.proofRoot, now: f.now });
+  const engine = new Workbench({ store: f.store, config: f.config, workers, billing, writer: { async baseline() { return ''; }, async deliver() { throw Error('Synthetic only'); } }, research: { async research() { throw Error('Synthetic only'); } } });
+  const app = createApp({ store: f.store, config: f.config, engine });
+  return { ...f, billing, engine, app, headers: { Authorization: `Bearer ${f.config.authToken}` } };
+}
+const pendingCopy = '订阅费用边界待核验；0 美元不会自动准入。';
+const includedCopy = '已核验订阅内额度；额外计费路径禁用，调度前仍需复核。';
+const incidentCopy = '已暂停：发现订阅费用边界异常，保留任务与账本，等待本人核查。';
+
+it('synchronous readiness fails closed with admitted zero policy and no current statuses', () => {
+  const f = billingHttp();
+  expect(readiness(f.config).find(v => v.name === '隔离 worker')?.ready).toBe(false);
+});
+it.each([true, false])('HTTP settings/state uses current authority evidence (%s) without allocating', async current => {
+  const f = billingHttp(current);
+  const state = await (await f.app.request('/api/state', { headers: f.headers })).json();
+  expect(state.billing[f.project.id].codex).toMatchObject({ state: current ? 'included-admitted' : 'pending-proof', attemptsLimit: 32 });
+  expect(state.readiness.find((v: { name: string }) => v.name === '隔离 worker').ready).toBe(current);
+  const html = await (await f.app.request('/settings', { headers: f.headers })).text();
+  expect(html).toContain(current ? includedCopy : pendingCopy);
+  if (!current) expect(html).not.toContain(includedCopy);
+  expect(html).toContain('额外支出上限'); expect(html).toContain('$0.00');
+  expect(f.store.list('attempts')).toHaveLength(0); expect(f.store.get('tasks', f.task.id)?.attempts).toBe(0);
+  for (const secret of [f.proofPath, f.proof.evidenceDigest, f.proof.accountFingerprint, f.proof.workspaceFingerprint, f.proof.authRouteFingerprint]) { expect(JSON.stringify(state)).not.toContain(secret); expect(html).not.toContain(secret); }
+});
+it('task HTTP suppresses raw provider errors/private billing metadata and exposes only safe accounting status', async () => {
+  const f = billingHttp();
+  await expect(f.billing.runLima(f.input, 'codex', undefined, undefined, async () => { throw new Error('RAW-PROVIDER-SECRET synthetic-account /private/proof'); })).rejects.toThrow('RAW-PROVIDER');
+  const attempt = f.store.list('attempts')[0]!;
+  f.store.save('attempts', { ...attempt, billing: undefined, error: 'RAW-PROVIDER-SECRET /private/proof', provider: 'RAW-PROVIDER-SECRET', model: 'RAW-PROVIDER-SECRET' });
+  f.store.save('tasks', { ...f.store.get('tasks', f.task.id)!, status: 'blocked', error: 'RAW-PROVIDER-SECRET /private/proof' });
+  for (const path of ['/api/state', `/api/tasks/${f.task.id}`, `/tasks/${f.task.id}`, '/']) {
+    const text = await (await f.app.request(path, { headers: f.headers })).text();
+    expect(text).not.toContain('RAW-PROVIDER-SECRET'); expect(text).not.toContain('/private/proof'); expect(text).not.toContain('profileHash'); expect(text).not.toContain('evidenceDigest'); expect(text).not.toContain('authorityEpoch');
+  }
+  const detail = await (await f.app.request(`/api/tasks/${f.task.id}`, { headers: f.headers })).json();
+  expect(detail.billing).toMatchObject({ attempts: 1, attemptsLimit: 32, additionalSpendingCapUsd: 0 });
+});
+it.each(['cap', 'incident'] as const)('manual HTTP retry preserves %s hold and renders truthful no-JS task explanation', async kind => {
+  const f = billingHttp();
+  if (kind === 'cap') {
+    f.config.maxAttemptsPerTask = 1;
+    await f.billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ output: { cards: [] }, provider: f.included.provider, model: f.included.model, costUsd: 0 }));
+    await expect(f.billing.reserve(f.input, 'codex')).rejects.toMatchObject({ code: 'subscription_attempt_limit' });
+  } else await expect(f.billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ output: { cards: [] }, provider: f.included.provider, model: f.included.model, costUsd: 0.2 }))).rejects.toMatchObject({ code: 'billing_policy_violation' });
+  const before = f.store.get('tasks', f.task.id)!;
+  const response = await f.app.request(`/api/tasks/${f.task.id}/retry`, { method: 'POST', headers: { ...f.headers, Accept: 'application/json' } });
+  expect(response.status).toBe(409); expect((await response.json()).code).toBe(before.billingStop?.code);
+  expect(f.store.get('tasks', f.task.id)).toEqual(before);
+  const html = await (await f.app.request(`/tasks/${f.task.id}`, { headers: f.headers })).text();
+  expect(html).toContain(kind === 'cap' ? '已达到任务总尝试上限（已用 1 / 上限 1）；重试不会重置。' : incidentCopy);
+  expect(html).not.toContain(`action="/api/tasks/${f.task.id}/retry"`);
+  const form = await f.app.request(`/api/tasks/${f.task.id}/retry`, { method: 'POST', headers: { ...f.headers, Accept: 'text/html' } });
+  expect(form.status).toBe(409); expect(await form.text()).toContain(kind === 'cap' ? '重试不会重置' : incidentCopy);
+});
+it('a no-charge profile refusal is blocked availability, without financial incident or claimed fallback success', async () => {
+  const f = billingHttp();
+  await expect(f.billing.runLima(f.input, 'codex', undefined, undefined, async () => { throw new SubscriptionAccessError({ disposition: 'verified-no-charge-refusal', reason: 'quota', observedAt: f.at.toISOString(), evidenceDigest: 'synthetic-refusal-private', noChargeEvidenceDigest: 'synthetic-charge-private' }, 'Synthetic verified refusal'); })).rejects.toBeInstanceOf(SubscriptionAccessError);
+  const state = await (await f.app.request('/api/state', { headers: f.headers })).json();
+  expect(state.billing[f.project.id].codex).toMatchObject({ state: 'blocked', reason: 'subscription_profile_unavailable' });
+  const html = await (await f.app.request('/settings', { headers: f.headers })).text();
+  expect(html).toContain('订阅额度或认证暂不可用；等待新的宿主核验。'); expect(html).not.toContain(incidentCopy); expect(html).not.toContain(includedCopy); expect(html).not.toContain('已继续原任务');
+});
+it('metered settings explains positive reservation even when zero additional-spending cap blocks admission', async () => {
+  const f = billingHttp(); f.config.billingBoundary = 'metered-only'; f.included.billing = { mode: 'metered-api' }; f.included.costPerRunUsd = 1;
+  const html = await (await f.app.request('/settings', { headers: f.headers })).text();
+  expect(html).toContain('需正数保守费用预留；0 美元上限将阻止调用。'); expect(html).not.toContain(includedCopy);
+});
+it('settings distinguishes configured model/provider from currently verified billing', async () => {
+  const f = billingHttp(false);
+  const html = await (await f.app.request('/settings', { headers: f.headers })).text();
+  expect(html).not.toContain('>已准入<'); expect(html).toContain(`已配置：${f.included.provider} · ${f.included.model}`);
+  expect(html).toContain(pendingCopy); expect(f.store.list('attempts')).toHaveLength(0);
+});
+
+it.each(['accepted', 'mismatched-result'] as const)('task trace preserves canonical host provider/model with truthful %s provenance and no private metadata', async outcome => {
+  const f = billingHttp();
+  const run = f.billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ output: { cards: [] }, provider: outcome === 'accepted' ? f.included.provider : 'UNTRUSTED-RESULT-PROVIDER', model: f.included.model, costUsd: 0 }));
+  if (outcome === 'accepted') await run; else await expect(run).rejects.toMatchObject({ code: 'provider_not_admitted' });
+  const response = await f.app.request(`/api/tasks/${f.task.id}`, { headers: f.headers }), data = await response.json();
+  expect(data.attempts[0]).toMatchObject({ provider: f.included.provider, model: f.included.model, configurationSource: outcome === 'accepted' ? 'host-validated' : 'configured' });
+  expect(data.attempts[0].billing).toBeUndefined();
+  const html = await (await f.app.request(`/tasks/${f.task.id}`, { headers: f.headers })).text();
+  expect(html).toContain(f.included.provider); expect(html).toContain(f.included.model);
+  expect(html).toContain(outcome === 'accepted' ? '宿主核验的实际运行配置' : '已配置的运行参数（本次未取得已接受结果）');
+  for (const text of [JSON.stringify(data), html]) { expect(text).not.toContain('UNTRUSTED-RESULT-PROVIDER'); expect(text).not.toContain('profileHash'); expect(text).not.toContain('evidenceDigest'); expect(text).not.toContain('authorityEpoch'); }
+});
+it('historical provider failure events are sanitized along with task errors on every owner surface', async () => {
+  const f = billingHttp();
+  f.store.save('events', { id: 'synthetic-old-provider-failure', projectId: f.project.id, domain: f.project.domain, taskId: f.task.id, type: 'private-provider-detail', message: 'OLD-RAW-PROVIDER-SECRET', data: { stage: f.task.stage, runAfter: f.at.toISOString(), accountFingerprint: 'OLD-RAW-PROVIDER-SECRET' }, createdAt: f.at.toISOString() });
+  for (const path of ['/api/state', `/api/tasks/${f.task.id}`, `/tasks/${f.task.id}`, '/activity']) {
+    expect(await (await f.app.request(path, { headers: f.headers })).text()).not.toContain('OLD-RAW-PROVIDER-SECRET');
+  }
+});
+
+it('a live baseline-change worker error replans without exposing raw details or resetting accounting', async () => {
+  const marker = 'SYNTHETIC-LIVE-BASELINE-PROVIDER-SECRET';
+  let calls = 0;
+  const f = billingHttp(true, [{ name: 'codex', async run() { calls++; throw new DomainError(marker, 'baseline_changed', 409); } }]);
+  f.config.maxAttemptsPerTask = 7;
+  await f.billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ output: { cards: [] }, provider: f.included.provider, model: f.included.model, costUsd: 0 }));
+  const before = { ...f.store.get('tasks', f.task.id)!, attemptLimit: 7, repairCount: 1,
+    plan: { taskVersion: f.task.version, sourceRevision: f.task.sourceRevision, baselineSha: 'synthetic-old-baseline', summary: 'Synthetic old plan', paths: ['docs/PRD.md'], steps: ['Synthetic step'], tests: ['synthetic check'], stopConditions: ['Synthetic stop'] },
+    artifact: { taskVersion: f.task.version, planHash: 'synthetic-plan', baselineSha: 'synthetic-old-baseline', files: [{ path: 'docs/PRD.md', content: 'Synthetic only' }], tests: [{ command: 'synthetic check', passed: true, output: 'Synthetic' }], summary: 'Synthetic artifact' },
+    review: { taskVersion: f.task.version, planHash: 'synthetic-plan', artifactHash: 'synthetic-artifact', verdict: 'repair' as const, summary: 'Synthetic review', issues: [], tests: [{ command: 'synthetic check', passed: true, output: 'Synthetic' }] },
+    baselineFiles: [{ path: 'docs/PRD.md', content: 'Synthetic baseline' }], receiptId: 'synthetic-old-receipt' };
+  f.store.save('tasks', before);
+  await f.engine.tick();
+  const after = f.store.get('tasks', f.task.id)!;
+  expect(calls).toBe(1);
+  expect(after).toMatchObject({ version: before.version + 1, stage: 'plan', status: 'planning', attempts: before.attempts + 1, attemptLimit: 7, billingBoundary: before.billingBoundary, spentUsd: before.spentUsd, budgetUsd: before.budgetUsd, repairCount: 0, error: 'baseline_changed' });
+  expect(after.billingStop).toEqual(before.billingStop);
+  for (const key of ['plan', 'artifact', 'review', 'baselineFiles', 'receiptId'] as const) expect(after[key]).toBeUndefined();
+  expect(f.store.list('attempts').filter(a => a.taskId === f.task.id)).toHaveLength(2);
+  expect(f.store.list('attempts').find(a => a.status === 'failed')).toMatchObject({ taskVersion: before.version, error: 'baseline_changed', billing: { ordinal: 2, attemptLimit: 7 } });
+  expect(f.store.list('actions').filter(a => a.taskId === f.task.id && a.kind === before.stage)).toMatchObject([{ status: 'completed', payload: { taskVersion: before.version } }]);
+  expect(f.store.list('events').filter(e => e.type === 'baseline.changed')).toHaveLength(1);
+  for (const path of ['/api/state', `/api/tasks/${f.task.id}`, `/tasks/${f.task.id}`, '/activity']) {
+    const response = await f.app.request(path, { headers: f.headers });
+    const text = await response.text();
+    expect(response.status).toBe(200); expect.soft(text, path).not.toContain(marker);
+    expect(text).toContain('仓库基线已变化；将重新规划并验证。'); expect(text).toContain('baseline.changed');
+  }
+  expect(JSON.stringify({ task: after, events: f.store.list('events'), outbox: f.store.list('outbox') })).not.toContain(marker);
+});
+
+it('historical baseline-change events with empty data hide raw details on every owner surface', async () => {
+  const f = billingHttp(), marker = 'SYNTHETIC-HISTORICAL-BASELINE-PROVIDER-SECRET';
+  f.store.save('events', { id: 'synthetic-old-baseline-change', projectId: f.project.id, domain: f.project.domain, taskId: f.task.id, type: 'baseline.changed', message: marker, data: {}, createdAt: f.at.toISOString() });
+  const before = f.store.get('tasks', f.task.id);
+  for (const path of ['/api/state', `/api/tasks/${f.task.id}`, `/tasks/${f.task.id}`, '/activity']) {
+    const response = await f.app.request(path, { headers: f.headers });
+    const text = await response.text();
+    expect(response.status).toBe(200); expect.soft(text, path).not.toContain(marker);
+    expect(text).toContain('仓库基线已变化；将重新规划并验证。'); expect(text).toContain('baseline.changed');
+  }
+  expect(f.store.get('tasks', f.task.id)).toEqual(before);
+  expect(f.store.list('attempts')).toHaveLength(0);
+  expect(f.store.get('events', 'synthetic-old-baseline-change')?.message).toBe(marker);
+});
+
+it('a successful host-ledger trace retains historical provider/model after ordinary policy revision while current admission returns pending', async () => {
+  const f = billingHttp(), provider = f.included.provider, model = f.included.model;
+  await f.billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ output: { cards: [] }, provider, model, costUsd: 0 }));
+  f.included.provider = 'synthetic-revised-provider'; f.included.model = 'synthetic-revised-model';
+  const data = await (await f.app.request(`/api/tasks/${f.task.id}`, { headers: f.headers })).json();
+  expect(data.attempts[0]).toMatchObject({ provider, model, configurationSource: 'host-validated' });
+  expect(data.billing.state).toBe('pending-proof'); expect(data.attempts[0].billing).toBeUndefined();
+  const html = await (await f.app.request(`/tasks/${f.task.id}`, { headers: f.headers })).text();
+  expect(html).toContain(provider); expect(html).toContain(model); expect(html).toContain(pendingCopy);
+});
+it('current billing status is bound to the exact admitted role policy rather than another policy for the same runner', async () => {
+  const f = billingHttp();
+  f.config.runnerPolicies.push({ ...f.included, roles: ['decide'], model: 'synthetic-other-role-model' });
+  f.store.save('tasks', { ...f.task, stage: 'decide' });
+  const data = await (await f.app.request(`/api/tasks/${f.task.id}`, { headers: f.headers })).json();
+  expect(data.billing.state).toBe('pending-proof');
+  const html = await (await f.app.request('/settings', { headers: f.headers })).text();
+  expect(html.match(/>费用边界已核验</g)).toHaveLength(1);
+});
+it('an unadmitted earlier policy never hides the canonical admitted policy status for the same runner', async () => {
+  const f = billingHttp(); f.config.runnerPolicies.unshift({ ...f.included, admitted: false });
+  const state = await (await f.app.request('/api/state', { headers: f.headers })).json();
+  expect(state.billing[f.project.id].codex.state).toBe('included-admitted');
+});
+it('two independently verified canonical role/model policies on one runner both receive their own current status', async () => {
+  const f = billingHttp();
+  const second = { ...f.included, roles: ['knowledge_extract' as const, 'decide' as const], model: 'synthetic-independent-decide-model', billing: { mode: 'included-subscription' as const, admissionId: 'synthetic-decide-proof' } };
+  f.config.runnerPolicies.push(second);
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(`${f.root}/synthetic-decide-proof.json`, JSON.stringify({ ...f.proof, id: 'synthetic-decide-proof', model: second.model }), { mode: 0o600 });
+  const reads: string[] = [];
+  const provider = { async read(policy: typeof f.included) { reads.push(policy.model); return { ...f.current, model: policy.model }; } };
+  const billing = new BillingAuthority(f.store, f.config, provider, { proofRoot: f.root, now: f.now });
+  expect(await billing.status(f.project, second)).toMatchObject({ state: 'included-admitted' }); reads.length = 0;
+  const engine = new Workbench({ store: f.store, config: f.config, workers: [], billing, writer: { async baseline() { return ''; }, async deliver() { throw Error('Synthetic only'); } }, research: { async research() { throw Error('Synthetic only'); } } });
+  const app = createApp({ store: f.store, config: f.config, engine });
+  f.store.save('tasks', { ...f.task, stage: 'decide' });
+  const data = await (await app.request(`/api/tasks/${f.task.id}`, { headers: f.headers })).json();
+  expect(data.billing.state).toBe('included-admitted');
+  expect(reads.sort()).toEqual([f.included.model, second.model].sort()); reads.length = 0;
+  const html = await (await app.request('/settings', { headers: f.headers })).text();
+  expect(html.match(/>费用边界已核验</g)).toHaveLength(2);
+  expect(reads.sort()).toEqual([f.included.model, second.model].sort());
+  expect(f.store.list('attempts')).toHaveLength(0);
+});

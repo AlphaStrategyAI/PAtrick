@@ -244,7 +244,8 @@ test('weekly reflection uses the scoped owner decision and keeps budget and conn
   await expect(page.locator('.readiness-list')).toContainText('已配置');
   const delivered = state.tasks.find((task: { status: string }) => task.status === 'delivered');
   await page.goto(`/tasks/${delivered.id}`);
-  await expect(page.getByText('预算记账（保守预估）', { exact: false })).toBeVisible();
+  await expect(page.getByText('额外支出记账（保守预留）', { exact: true })).toBeVisible();
+  await expect(page.getByText('每次调用仍须通过当前费用与运行边界复核；保守预留不代表提供方账单，0 美元不会自动准入。', { exact: true })).toBeVisible();
   await expect(page.getByText('实际尝试与费用', { exact: false })).toHaveCount(0);
 });
 

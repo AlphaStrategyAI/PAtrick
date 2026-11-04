@@ -158,7 +158,12 @@ export class Store {
   private redactTemporary(table: Table, entity: Entities[Table]): Entities[Table] {
     if (table === 'tasks') return { ...entity, title: 'Temporary task', description: '', decision: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, baselineFiles: undefined, error: 'Temporary content is kept only in the active process.' } as Entities['tasks'];
     if (table === 'events') return { ...entity, message: 'Temporary task event.', data: {} } as Entities['events'];
-    if (table === 'attempts') return { ...entity, error: undefined } as Entities['attempts'];
+    if (table === 'attempts') {
+      const attempt = entity as Entities['attempts'];
+      // Retain only fixed accounting/availability codes, never provider or source text.
+      const error = ['attempt_abandoned_after_host_restart', 'billing_policy_violation', 'subscription_unavailable'].includes(attempt.error ?? '') ? attempt.error : undefined;
+      return { ...attempt, error };
+    }
     if (table === 'actions') return { ...entity, payload: {} } as Entities['actions'];
     if (table === 'outbox') return { ...entity, text: '', status: 'sent', remoteId: 'expired-temporary' } as Entities['outbox'];
     if (table === 'questions') {
