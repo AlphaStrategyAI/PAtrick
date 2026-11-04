@@ -1,5 +1,20 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import type { HostDispatchPermit } from './billing.js';
+
+export type BillingBoundary = 'included-only' | 'metered-only';
+export type BillingPolicy = { mode: 'metered-api' } | { mode: 'included-subscription'; admissionId: string };
+export type BillingStop = {
+  code: 'subscription_attempt_limit' | 'billing_policy_violation' | 'subscription_quota' | 'subscription_auth' | 'subscription_overflow';
+  at: string; holdId?: string;
+};
+export type AttemptBilling = {
+  mode: 'metered-api' | 'included-subscription'; reserveUsd: number;
+  ordinal: number; attemptLimit: number; policyHash: string;
+  billingBoundary: BillingBoundary; authorityEpoch: string; abandonedAt?: string;
+  admissionId?: string; evidenceDigest?: string; profileHash?: string;
+  dispatchState: 'reserved' | 'dispatched' | 'adapter-entered';
+};
 
 export type Runner = 'grok' | 'dsh' | 'codex';
 export const roles = ['knowledge_extract', 'case_extract', 'decide', 'plan', 'execute', 'check', 'feedback'] as const;
@@ -20,6 +35,7 @@ export interface SourceRevision extends Scope {
   authorId: string; retention: 'permanent' | 'ephemeral'; status: 'active' | 'superseded' | 'withdrawn'; createdAt: string;
 }
 export interface Task extends Scope {
+  billingBoundary?: BillingBoundary; attemptLimit?: number; billingStop?: BillingStop;
   id: string; sourceId: string; sourceRevision: string; title: string; description: string; status: TaskStatus;
   version: number; createdAt: string; updatedAt: string; runAfter: string; attempts: number; repairCount: number;
   budgetUsd: number; spentUsd: number; stage: Role | 'research' | 'delivery'; questionId?: string;
@@ -69,6 +85,7 @@ export interface AuditEvent extends Scope {
   id: string; taskId?: string; type: string; message: string; createdAt: string; data: Record<string, unknown>;
 }
 export interface Attempt extends Scope {
+  billing?: AttemptBilling;
   id: string; taskId: string; taskVersion: number; role: Role; runner: Runner; model: string; provider: string;
   inputHash: string; status: 'running' | 'succeeded' | 'unavailable' | 'failed' | 'stale';
   costUsd: number; startedAt: string; finishedAt?: string; error?: string;
@@ -140,12 +157,13 @@ export interface WorkerInput {
   answer?: string; research?: ResearchRecord; receipt?: DeliveryReceipt; plan?: ExecutionPlan; artifact?: Artifact; baselineSha?: string; baselineFiles?: {path:string;content:string}[];
 }
 export interface WorkerResult { output: unknown; costUsd: number; model: string; provider: string }
-export interface WorkerAdapter { name: Runner; run(input: WorkerInput, signal?: AbortSignal): Promise<WorkerResult> }
+export interface WorkerAdapter { name: Runner; run(input: WorkerInput, signal?: AbortSignal, permit?: HostDispatchPermit): Promise<WorkerResult> }
 export interface DeliveryWriter { deliver(task: Task, project: Project): Promise<DeliveryReceipt>; baseline(project: Project): Promise<string>; readBaseline?(project:Project,sha:string):Promise<{path:string;content:string}[]> }
 export interface ResearchAdapter { research(question: string, project: Project): Promise<ResearchRecord> }
 export interface NotificationAdapter { send(message: OutboxMessage): Promise<{ remoteId: string }> }
-export interface RunnerPolicy { runner: Runner; roles: Role[]; domains: string[]; provider: string; model: string; admitted: boolean; costPerRunUsd: number; independentReview: boolean }
+export interface RunnerPolicy { runner: Runner; roles: Role[]; domains: string[]; provider: string; model: string; admitted: boolean; costPerRunUsd: number; independentReview: boolean; billing?: BillingPolicy }
 export interface AppConfig {
+  billingBoundary?: BillingBoundary; maxAttemptsPerTask?: number;
   mode: 'live' | 'demo' | 'test'; host: string; port: number; dataDir: string; vaultDir: string; ownerId: string;
   authToken: string; sessionSecret: string; projects: Project[]; runnerPolicies: RunnerPolicy[];
   workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string; guestUser?: string }>>;
@@ -159,6 +177,9 @@ export class DomainError extends Error {
   constructor(message: string, public code = 'invalid', public status = 400) { super(message); this.name = 'DomainError'; }
 }
 export class WorkerUnavailable extends Error { constructor(message: string) { super(message); this.name = 'WorkerUnavailable'; } }
+export class SubscriptionAccessError extends DomainError {
+  constructor(code: 'subscription_quota' | 'subscription_auth' | 'subscription_overflow', message: string) { super(message, code, 409); }
+}
 export function now(): string { return new Date().toISOString(); }
 export function digest(value: string | object): string { return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex'); }
 export function stableId(...parts: unknown[]): string { return digest(JSON.stringify(parts)).slice(0, 32); }

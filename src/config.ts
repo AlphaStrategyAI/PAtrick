@@ -23,13 +23,21 @@ export const projectSchema = z.object({
   for (const path of p.allowedPaths) { try { safeRelativePath(path.endsWith('/') ? path.slice(0,-1) : path); } catch { ctx.addIssue({ code:'custom',message:'Unsafe allowed path.' }); } }
 });
 
-const policySchema = z.object({
+export const billingPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('metered-api') }).strict(),
+  z.object({ mode: z.literal('included-subscription'), admissionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/) }).strict(),
+]);
+export const policySchema = z.object({
   runner: z.enum(['grok', 'dsh', 'codex']), roles: z.array(z.enum(roles)), domains: z.array(z.string().min(1)),
   provider: z.string().min(1), model: z.string().min(1), admitted: z.boolean(),
-  costPerRunUsd: z.number().nonnegative(), independentReview: z.boolean().default(false),
+  costPerRunUsd: z.number().finite().nonnegative(), independentReview: z.boolean().default(false), billing: billingPolicySchema.optional(),
+}).superRefine((policy, ctx) => {
+  if (policy.billing?.mode === 'included-subscription' && policy.costPerRunUsd !== 0) ctx.addIssue({ code: 'custom', message: 'Included subscription requires exactly zero reservation.', path: ['costPerRunUsd'] });
 });
 const workerSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]), timeoutMs: z.number().int().min(1000).max(3600000).default(180000), isolation:z.literal('lima'), instance:z.string().regex(/^[a-zA-Z0-9_-]+$/), guestUser:z.string().regex(/^patrick-[a-z][a-z0-9-]{0,23}$/).optional() });
 const fileSchema = z.object({
+  billingBoundary: z.enum(['included-only', 'metered-only']).default('metered-only'),
+  maxAttemptsPerTask: z.number().int().min(1).max(256).default(32),
   projects:z.array(projectSchema).default([]), runnerPolicies:z.array(policySchema).optional(),
   workers:z.object({grok:workerSchema.optional(),dsh:workerSchema.optional(),codex:workerSchema.optional()}).default({}),
   egressPolicies:z.array(z.object({domain:z.string().min(1),research:z.boolean(),feishu:z.boolean()})).default([{domain:'personal',research:true,feishu:true}]),
@@ -61,6 +69,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = z.coerce.number().int().min(1).max(65535).parse(env.PATRICK_PORT ?? 4317);
   const ownerId = env.PATRICK_OWNER_ID ?? 'owner';
   return {
+    billingBoundary: parsed.billingBoundary, maxAttemptsPerTask: parsed.maxAttemptsPerTask,
     mode,host,port,dataDir,vaultDir:resolve(env.PATRICK_VAULT_DIR ?? join(dataDir,'vault')),ownerId,authToken,
     sessionSecret:env.PATRICK_SESSION_SECRET ?? authToken, projects:parsed.projects as Project[],
     runnerPolicies:parsed.runnerPolicies ?? defaultPolicies(),workers:parsed.workers,

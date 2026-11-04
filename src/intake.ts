@@ -100,7 +100,9 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
 
 export function withdrawSource(store: Store, sourceId: string): void { store.transaction(() => invalidateSource(store, sourceId, 'withdrawn')); }
 
-export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, input: IngestInput, parentSources?: SourceRevision['parentSources']): Task | undefined {
+export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 'billingBoundary'>, input: IngestInput, parentSources?: SourceRevision['parentSources']): Task | undefined {
+  const billingBoundary = config.billingBoundary === undefined ? 'metered-only' : config.billingBoundary;
+  if (billingBoundary !== 'included-only' && billingBoundary !== 'metered-only') throw new DomainError('Invalid host billing boundary.', 'billing_policy_invalid');
   const project = store.get('projects', input.projectId) ?? config.projects.find(p => p.id === input.projectId);
   if (!project) throw new DomainError('Unknown project.', 'unknown_project', 404);
   if (!input.externalId?.trim() || !input.title?.trim() || typeof input.content !== 'string' || input.content.length > 2_000_000) throw new DomainError('A source identifier, title and bounded text are required.');
@@ -144,7 +146,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
       store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention, purpose } });
       return undefined;
     }
-    const task: Task = { ...scope, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
+    const task: Task = { ...scope, billingBoundary, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
     store.save('tasks', task);
     store.save('events', { ...scope, id: stableId('ingest', id), taskId: task.id, type: 'source.received', message: 'Source revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention } });
     return task;

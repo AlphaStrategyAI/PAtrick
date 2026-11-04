@@ -65,3 +65,25 @@ describe('configuration', () => {
     expect(projectSchema.safeParse({ ...base, autoMerge: true, trustedChecks: ['validate'], trustedAppIds: [123] }).success).toBe(true);
   });
 });
+
+describe('billing policy configuration', () => {
+  const policy = { runner: 'codex', roles: ['plan'], domains: ['personal'], provider: 'synthetic', model: 'synthetic', admitted: false, costPerRunUsd: 0 };
+  function parse(value: unknown) {
+    const dir = mkdtempSync(join(tmpdir(), 'patrick-SYNTHETIC-policy-'));
+    try { const file = join(dir, 'config.json'); writeFileSync(file, JSON.stringify(value)); return readConfig({ PATRICK_CONFIG: file }); }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  it('emits legacy metered host default and common attempt default without inferring included from zero', () => {
+    expect(readConfig({})).toMatchObject({ billingBoundary: 'metered-only', maxAttemptsPerTask: 32 });
+    expect(parse({ runnerPolicies: [policy] }).runnerPolicies[0]?.billing).toBeUndefined();
+    expect(parse({ runnerPolicies: [{ ...policy, billing: { mode: 'metered-api' } }] }).runnerPolicies[0]?.billing).toEqual({ mode: 'metered-api' });
+  });
+  it.each(['included-only', 'metered-only'])('parses host boundary %s', billingBoundary => { expect(parse({ billingBoundary }).billingBoundary).toBe(billingBoundary); });
+  it.each(['free', '', null, 0])('rejects invalid explicit host boundary %j', billingBoundary => { expect(() => parse({ billingBoundary })).toThrow(); });
+  it.each([1, 32, 256])('accepts attempt limit %s', maxAttemptsPerTask => { expect(parse({ maxAttemptsPerTask }).maxAttemptsPerTask).toBe(maxAttemptsPerTask); });
+  it.each([0, 257, 1.5, NaN, Infinity, '32'])('rejects invalid attempt limit %j', maxAttemptsPerTask => { expect(() => parse({ maxAttemptsPerTask })).toThrow(); });
+  it('preserves included mode only with explicit ID and exactly zero cost', () => { expect(parse({ runnerPolicies: [{ ...policy, billing: { mode: 'included-subscription', admissionId: 'synthetic_1' } }] }).runnerPolicies[0]?.billing).toEqual({ mode: 'included-subscription', admissionId: 'synthetic_1' }); });
+  it.each([{ mode: 'free' }, { mode: 'metered-api', admissionId: 'extra' }, { mode: 'included-subscription' }, { mode: 'included-subscription', admissionId: '../bad' }, { mode: 'included-subscription', admissionId: 'a'.repeat(65) }, { mode: 'included-subscription', admissionId: 'x', secret: 'extra' }])('rejects unknown/malformed billing contract %j', billing => { expect(() => parse({ runnerPolicies: [{ ...policy, billing }] })).toThrow(); });
+  it.each([.01, -1, Infinity, NaN])('rejects included cost %j', costPerRunUsd => { expect(() => parse({ runnerPolicies: [{ ...policy, costPerRunUsd, billing: { mode: 'included-subscription', admissionId: 'synthetic' } }] })).toThrow(); });
+  it.each([Infinity, NaN, -1])('rejects metered nonfinite/negative cost %j', costPerRunUsd => { expect(() => parse({ runnerPolicies: [{ ...policy, costPerRunUsd }] })).toThrow(); });
+});
