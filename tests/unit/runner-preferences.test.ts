@@ -114,6 +114,27 @@ describe('project execution runner preference', () => {
     expect(f.calls).toEqual([]); expect(f.store.list('attempts')).toEqual([]);
     expect(f.store.list('events').at(-1)?.type).toBe('budget_exhausted');
   });
+
+  for (const role of roles) {
+    it.each([
+      ['zero project cap with an older positive task cap', { projectBudget: 0, taskBudget: 10 }],
+      ['zero task cap with a positive project cap', { projectBudget: 10, taskBudget: 0 }],
+      ['claimed zero-cost admission without subscription proof', { policies: { grok: { costPerRunUsd: 0 }, dsh: { costPerRunUsd: 0 }, codex: { costPerRunUsd: 0 } } }],
+    ] satisfies [string, Options][])(`blocks ${role} for %s before any attempt or reservation`, async (_, options) => {
+      const f = setup(options);
+      const original = f.store.get('tasks', 'task')!;
+      expect(await f.run(role)).toBeUndefined();
+      expect(f.calls).toEqual([]);
+      expect(f.store.list('attempts')).toEqual([]);
+      expect(f.store.list('tasks')).toHaveLength(1);
+      expect(f.store.get('tasks', original.id)).toMatchObject({
+        id: original.id, version: original.version, sourceRevision: original.sourceRevision,
+        budgetUsd: original.budgetUsd, spentUsd: original.spentUsd, attempts: original.attempts,
+        status: 'blocked', plan: original.plan,
+      });
+      expect(f.store.list('events').at(-1)?.type).toBe('budget_exhausted');
+    });
+  }
 });
 
 describe('independent review preference', () => {

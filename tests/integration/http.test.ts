@@ -11,6 +11,57 @@ function setup(mode:'live'|'demo'='live') {
   return {app:createApp({store,config,engine}),store,config};
 }
 describe('authenticated workbench HTTP',()=>{
+  const validProject = { name: 'Budget regression', repository: 'owner/repo', prdPath: 'docs/PRD.md', allowedPaths: 'docs/PRD.md' };
+
+  for (const encoding of ['json', 'form'] as const) {
+    it.each([
+      ['numeric zero', 0, 0], ['string zero', '0', 0], ['missing', undefined, 5],
+      ['blank', '', 5], ['whitespace', '  ', 5], ['positive', .25, .25],
+      ['maximum', '10000', 10000], ['decimal', '.25', .25],
+      ['scientific', '  +2.5e-1  ', .25],
+    ] as const)(`preserves/defaults ${encoding} project budget: %s`, async (_, budgetUsd, expected) => {
+      const { app, store } = setup('demo');
+      const payload = { ...validProject, ...(budgetUsd === undefined ? {} : { budgetUsd }) };
+      const response = await app.request('/api/projects', { method: 'POST', headers: { 'Content-Type': encoding === 'json' ? 'application/json' : 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: encoding === 'json' ? JSON.stringify(payload) : new URLSearchParams(Object.entries(payload).map(([key, value]) => [key, String(value)])) });
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.project.budgetUsd).toBe(expected);
+      expect(data.redirect).toBe(`/?project=${data.project.id}`);
+      expect(store.get('projects', data.project.id)?.budgetUsd).toBe(expected);
+      if (expected === 0) {
+        const settings = await app.request(`/settings?project=${data.project.id}`);
+        expect(await settings.text()).toContain('<dt>单任务预算</dt><dd>$0.00</dd>');
+      }
+    });
+
+    it.each(['-1', '10000.01', 'Infinity', '-Infinity', 'NaN', 'oops', '0x10', '0b10', '0o10', '1_000', '1,000', '1e999'])(`rejects invalid ${encoding} budget %s without persisting a project`, async budgetUsd => {
+      const { app, store, config } = setup('demo');
+      const payload = { ...validProject, budgetUsd };
+      const response = await app.request('/api/projects', { method: 'POST', headers: { 'Content-Type': encoding === 'json' ? 'application/json' : 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: encoding === 'json' ? JSON.stringify(payload) : new URLSearchParams(payload) });
+      expect(response.status).toBe(400);
+      expect(store.list('projects')).toEqual([]);
+      expect(config.projects).toEqual([]);
+    });
+  }
+
+  it.each([true, false, null, [], [0], {}, -1, 10000.01])('rejects invalid JSON budget %j without persisting a project', async budgetUsd => {
+    const { app, store, config } = setup('demo');
+    const response = await app.request('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ ...validProject, budgetUsd }) });
+    expect(response.status).toBe(400);
+    expect(store.list('projects')).toEqual([]);
+    expect(config.projects).toEqual([]);
+  });
+
+  it('renders a zero-dollar starting budget with a pending-entitlement explanation', async () => {
+    const { app } = setup('demo');
+    const response = await app.request('/settings');
+    const html = await response.text();
+    const budgetInput = html.match(/<input[^>]*name="budgetUsd"[^>]*>/)?.[0];
+    expect(budgetInput).toContain('type="number" min="0" max="10000" step="0.01"');
+    expect(budgetInput).toContain('value="0"');
+    expect(html).toContain('0 将阻止需要费用预留的运行器；订阅权限仍需单独核验。');
+  });
+
   it('keeps business state private and rejects hostile origins',async()=>{
     const {app,config}=setup();
     expect((await app.request('/api/state')).status).toBe(401);

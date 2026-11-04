@@ -11,7 +11,7 @@ export const projectSchema = z.object({
   repository: z.string().regex(/^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+$/), repositoryProvider: z.enum(['github', 'gitlab']).default('github'),
   prdPath: repoPath, allowedPaths: z.array(repoPath.or(z.string().regex(/^[a-zA-Z0-9_./-]+\/$/))).min(1),
   trustedChecks: z.array(z.string().min(1)).default([]), trustedAppIds: z.array(z.number().int().positive()).default([]),
-  ownerId: z.string().min(1), autoMerge: z.boolean().default(false), budgetUsd: z.number().positive().max(10000).default(5),
+  ownerId: z.string().min(1), autoMerge: z.boolean().default(false), budgetUsd: z.number().finite().nonnegative().max(10000).default(5),
   executionRunner: z.enum(['grok', 'dsh']).default('grok'),
   reviewIntervalDays: z.number().int().min(1).max(365).default(7), sourceDir: z.string().optional(), createdAt: z.string().default(now),
 }).superRefine((p, ctx) => {

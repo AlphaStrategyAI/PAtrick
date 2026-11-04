@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { readConfig, projectSchema } from '../../src/config.js';
 
 describe('configuration', () => {
+  const project = { id: 'p', projectId: 'p', domain: 'personal', name: 'Notes', repository: 'owner/repo', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], ownerId: 'owner' };
+
+  it.each([0, .01, 5, 10000])('preserves a finite project budget of %s', budgetUsd => {
+    expect(projectSchema.parse({ ...project, budgetUsd }).budgetUsd).toBe(budgetUsd);
+  });
+
+  it('defaults an omitted project budget to five dollars', () => {
+    expect(projectSchema.parse(project).budgetUsd).toBe(5);
+  });
+
+  it.each([-1, 10000.01, NaN, Infinity, -Infinity, '0', true, false, null, [], {}])('rejects an invalid schema budget %j', budgetUsd => {
+    expect(projectSchema.safeParse({ ...project, budgetUsd }).success).toBe(false);
+  });
+
   it('starts unconfigured in live mode with no admitted worker or automatic merge', () => {
     const config = readConfig({});
     expect(config.mode).toBe('live');

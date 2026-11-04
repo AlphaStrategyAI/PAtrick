@@ -128,7 +128,13 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     const array=(v:unknown)=>Array.isArray(v)?v.map(String):String(v??'').split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
     const interval=value.reviewIntervalDays;
     const reviewIntervalDays=!c.req.header('Content-Type')?.includes('application/json')&&typeof interval==='string'?(interval.trim()?Number(interval):undefined):interval;
-    const project=projectSchema.parse({id,projectId:id,name,domain:value.domain||'personal',description:value.description??'',repository:value.repository,repositoryProvider:value.repositoryProvider??'github',prdPath:value.prdPath,allowedPaths:array(value.allowedPaths),trustedChecks:array(value.trustedChecks),trustedAppIds:array(value.trustedAppIds).map(Number),ownerId:config.ownerId,autoMerge:value.autoMerge===true||value.autoMerge==='on',budgetUsd:Number(value.budgetUsd||5),sourceDir:value.sourceDir||undefined,executionRunner:value.executionRunner??'grok',reviewIntervalDays,createdAt:now()});
+    const rawBudget=value.budgetUsd;
+    const budgetUsd=rawBudget===undefined||(typeof rawBudget==='string'&&rawBudget.trim()==='')
+      ?5
+      :typeof rawBudget==='string'
+        ?/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(rawBudget.trim())?Number(rawBudget):Number.NaN
+        :rawBudget;
+    const project=projectSchema.parse({id,projectId:id,name,domain:value.domain||'personal',description:value.description??'',repository:value.repository,repositoryProvider:value.repositoryProvider??'github',prdPath:value.prdPath,allowedPaths:array(value.allowedPaths),trustedChecks:array(value.trustedChecks),trustedAppIds:array(value.trustedAppIds).map(Number),ownerId:config.ownerId,autoMerge:value.autoMerge===true||value.autoMerge==='on',budgetUsd,sourceDir:value.sourceDir||undefined,executionRunner:value.executionRunner??'grok',reviewIntervalDays,createdAt:now()});
     store.save('projects',project);config.projects.push(project);return respond(c,{project,message:'项目已创建。外部连接可在连接设置中核对。'},`/?project=${id}`);
   });
   const pages:Record<string,string>={'/':'workbench','/knowledge':'knowledge','/standards':'standards','/sources':'sources','/activity':'activity','/settings':'settings'};

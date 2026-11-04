@@ -87,7 +87,7 @@ export function ProjectForm({ config, compact = false }: { config: AppConfig; co
     <label>目标仓库<input name="repository" required placeholder="owner/repository"/><span class="field-hint">GitHub 填写 owner/repo；GitLab 可填写带子组的项目路径。</span></label>
     <div class="form-grid">
       <label>PRD 路径<input name="prdPath" required value="docs/PRD.md"/></label>
-      <label>单任务预算（USD）<input name="budgetUsd" type="number" min="0.01" max="10000" step="0.01" required value="2"/></label>
+      <label>单任务预算（USD）<input name="budgetUsd" type="number" min="0" max="10000" step="0.01" required value="0"/><span class="field-hint">0 将阻止需要费用预留的运行器；订阅权限仍需单独核验。</span></label>
     </div>
     <label>结果复核间隔（天）<input name="reviewIntervalDays" type="number" min="1" max="365" step="1" value="7" required/><span class="field-hint">默认 7 天，可设为 1–365 天。每次初判保存当时的间隔；之后调整不改写历史安排。</span></label>
     <label>允许修改的路径<textarea name="allowedPaths" rows={2} required placeholder="docs/PRD.md"/><span class="field-hint">每行一个路径；目录以 / 结尾。</span></label>

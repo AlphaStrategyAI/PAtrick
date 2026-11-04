@@ -204,6 +204,30 @@ test('project creation accepts repository service, trusted CI identities and opt
   await expect(page.locator('.project-switcher summary')).toContainText(originalProject.name);
 });
 
+test('project creation persists the default zero-dollar spending cap after settings reload', async ({ page, request }) => {
+  const name = `零预算验收 ${Date.now()}`;
+  await page.goto('/settings#projects');
+  const form = page.locator('#projects .project-form');
+  const budget = form.locator('input[name="budgetUsd"]');
+  await expect(budget).toHaveAttribute('min', '0');
+  await expect(budget).toHaveValue('0');
+  await expect(form).toContainText('0 将阻止需要费用预留的运行器；订阅权限仍需单独核验。');
+  await form.getByLabel('项目名称', { exact: true }).fill(name);
+  await form.getByLabel('目标仓库').fill('owner/zero-cap');
+  await form.getByLabel('允许修改的路径').fill('docs/PRD.md');
+  expect(await budget.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(true);
+  expect(await form.evaluate((element: HTMLFormElement) => element.checkValidity())).toBe(true);
+  await form.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.locator('.project-switcher summary')).toContainText(name);
+  const state = await (await request.get('/api/state')).json();
+  const created = state.projects.find((project: { name: string }) => project.name === name);
+  expect(created).toMatchObject({ budgetUsd: 0, repository: 'owner/zero-cap' });
+  await page.goto(`/settings?project=${created.id}`);
+  await page.reload();
+  await expect(page.locator('.project-switcher summary')).toContainText(name);
+  await expect(page.locator('.key-value > div').filter({ has: page.getByText('单任务预算', { exact: true }) })).toHaveText('单任务预算$0.00');
+});
+
 test('weekly reflection uses the scoped owner decision and keeps budget and connection labels qualified', async ({ page, request }) => {
   const state = await (await request.get('/api/state')).json();
   const project = state.projects[0];
