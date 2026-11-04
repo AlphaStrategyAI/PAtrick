@@ -31,7 +31,7 @@ const research = { async research() { return { queries: [], summary: 'Synthetic'
 
 it('binds Workbench and native fake scheduling to the injected canonical authority', async () => {
   const f = fixture(), billing = new BillingAuthority(f.store, f.config, f.currentProvider, { proofRoot: f.proofRoot, now: f.now });
-  const fake = { name: 'codex' as const, async run() { return { output: { summary: 'Synthetic', cards: [] }, costUsd: 0, provider: f.included.provider, model: f.included.model }; } };
+  const fake = { name: 'codex' as const, async run() { return { output: { cards: [] }, costUsd: 0, provider: f.included.provider, model: f.included.model }; } };
   const engine = new Workbench({ store: f.store, config: f.config, workers: [fake], writer, research, billing });
   const scheduler = (engine as unknown as { scheduler: { billing: BillingAuthority; run: (task: typeof f.task, project: typeof f.project, input: typeof f.input) => Promise<unknown> } }).scheduler;
   expect(scheduler.billing).toBe(billing);

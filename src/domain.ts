@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { HostDispatchPermit } from './billing.js';
+import type { ExperienceDetails } from './knowledge-contract.js';
+export type { ExperienceDetails } from './knowledge-contract.js';
 
 export type BillingBoundary = 'included-only' | 'metered-only';
 export type BillingPolicy = { mode: 'metered-api' } | { mode: 'included-subscription'; admissionId: string };
@@ -49,6 +51,7 @@ export interface KnowledgeCard extends Scope {
   id: string; sourceId: string; sourceRevision: string; title: string; body: string; quote: string; locator: string;
   kind: 'fact' | 'knowledge' | 'experience'; verification: 'reported' | 'verified' | 'inference';
   status: 'active' | 'withdrawn'; aliases: string[]; createdAt: string; expiresAt?: string;
+  experience?: ExperienceDetails;
 }
 export interface Rule extends Scope {
   id: string; title: string; statement: string; conditions: string; exceptions: string;
@@ -141,10 +144,28 @@ export const reviewSchema = z.object({
   tests: z.array(z.object({ command: z.string(), passed: z.boolean(), output: z.string() })).min(1),
 });
 export type Review = z.infer<typeof reviewSchema>;
+const boundedDescription = (max: number) => z.string().trim().min(1).max(max);
+const experienceFileSchema = boundedDescription(1024).superRefine((value, ctx) => {
+  try { safeRelativePath(value); }
+  catch { ctx.addIssue({ code: 'custom', message: 'Experience files must be safe relative repository paths.' }); }
+});
+const uniqueDescriptions = (entry: z.ZodType<string>, max: number) => z.array(entry).min(1).max(max).superRefine((values, ctx) => {
+  if (new Set(values).size !== values.length) ctx.addIssue({ code: 'custom', message: 'Entries must be unique after normalization.' });
+});
+export const experienceDetailsSchema: z.ZodType<ExperienceDetails> = z.object({
+  schemaVersion: z.literal(1), problem: boundedDescription(8192),
+  symptomAliases: uniqueDescriptions(boundedDescription(256), 32), solution: boundedDescription(8192),
+  files: uniqueDescriptions(experienceFileSchema, 128), productId: boundedDescription(512), codeVersion: boundedDescription(512),
+  environment: boundedDescription(8192), invalidationConditions: z.array(boundedDescription(2048)).min(1).max(32),
+}).strict();
 export const knowledgeOutputSchema = z.object({ cards: z.array(z.object({
   title: z.string().min(1), body: z.string(), quote: z.string().min(1), aliases: z.array(z.string()),
   verification: z.enum(['reported', 'inference']), kind: z.enum(['fact', 'knowledge', 'experience']),
-})) });
+  experience: experienceDetailsSchema.optional(),
+}).strict().superRefine((candidate, ctx) => {
+  if (candidate.kind === 'experience' && !candidate.experience) ctx.addIssue({ code: 'custom', message: 'Experience extraction requires a complete reported description.', path: ['experience'] });
+  if (candidate.kind !== 'experience' && candidate.experience !== undefined) ctx.addIssue({ code: 'custom', message: 'Only experience cards may carry experience descriptions.', path: ['experience'] });
+})) }).strict();
 export const caseOutputSchema = z.object({ observations: z.array(z.object({ title: z.string(), statement: z.string(), quote: z.string().min(1), conditions: z.string(), exceptions: z.string() })) });
 export const feedbackSchema = z.object({ summary: z.string().min(1), observations: z.array(z.string()) });
 export const roleSchemas = { knowledge_extract: knowledgeOutputSchema, case_extract: caseOutputSchema, decide: decisionSchema, plan: executionPlanSchema, execute: artifactSchema, check: reviewSchema, feedback: feedbackSchema };

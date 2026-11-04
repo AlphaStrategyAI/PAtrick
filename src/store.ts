@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { digest, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
+import { digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
 import { ingestSource, redactWithdrawnEvidence } from './intake.js';
 
 const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
@@ -53,6 +53,7 @@ export class Store {
     this.assertTable(table);
     const previous = this.get(table, entity.id);
     const value = structuredClone(entity);
+    if (table === 'cards' && !this.cardActive(value as KnowledgeCard, value)) delete (value as KnowledgeCard).experience;
     const key = `${table}:${entity.id}`;
     if (table === 'sources' && (value as Entities['sources']).retention === 'ephemeral') {
       this.temporary.set(key, value);
@@ -125,7 +126,7 @@ export class Store {
   indexCard(card: KnowledgeCard): void {
     this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);
     if (!this.cardActive(card, card) || this.get('sources', card.sourceId)?.retention === 'ephemeral') return;
-    this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, tokenize([card.title, card.aliases.join(' '), card.body, card.quote].join(' ')));
+    this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, tokenize([card.title, card.aliases.join(' '), card.experience?.problem ?? '', card.experience?.symptomAliases.join(' ') ?? '', card.body, card.quote].join(' ')));
   }
 
   rebuildIndex(): void {
@@ -188,7 +189,11 @@ export class Store {
     const title = 'title' in entity ? entity.title : 'originalWords' in entity ? 'Decision case' : entity.id;
     let body = '';
     if (table === 'sources') body = (entity as Entities['sources']).content;
-    if (table === 'cards') { const card = entity as Entities['cards']; body = `${card.body}\n\n> ${card.quote.replaceAll('\n', '\n> ')}\n\nSource: ${card.locator}\nRevision: ${card.sourceRevision}`; }
+    if (table === 'cards') {
+      const card = entity as Entities['cards'], experience = card.experience;
+      const description = card.kind === 'experience' ? `\n\nExperience: pending (reported description; no host evidence)${experience ? `\nReported problem: ${experience.problem}\nReported solution: ${experience.solution}\nReported files: ${experience.files.join(', ')}\nReported product: ${experience.productId}\nReported code version: ${experience.codeVersion}\nReported environment: ${experience.environment}\nReported invalidation conditions: ${experience.invalidationConditions.join('; ')}` : '\nReported details unavailable (legacy card).'}` : '';
+      body = `${card.body}${description}\n\n> ${card.quote.replaceAll('\n', '\n> ')}\n\nSource: ${card.locator}\nRevision: ${card.sourceRevision}`;
+    }
     if (table === 'rules') { const rule = entity as Entities['rules']; body = `${rule.statement}\n\nKind: ${rule.kind}\nVersion: ${rule.version}\nConditions: ${rule.conditions}\nExceptions: ${rule.exceptions}\n\n${rule.citations.map(c => `> ${c.quote}\n\nSource: ${c.locator} (${c.revision})`).join('\n\n')}`; }
     if (table === 'cases') {
       const c = entity as Entities['cases'], s = c.decisionSnapshot;
@@ -223,7 +228,7 @@ export class Store {
 
   private vaultEntity(table: Table, entity: Entities[Table]): Entities[Table] {
     if (table === 'sources') { const s = entity as Entities['sources']; return s.status === 'active' ? s : { ...s, title: '[withdrawn]', content: '', locator: `withdrawn:${s.id}` }; }
-    if (table === 'cards') { const c = entity as Entities['cards']; return this.cardActive(c, c) ? c : { ...c, status: 'withdrawn', title: '[withdrawn]', body: '', quote: '', aliases: [], locator: `withdrawn:${c.sourceId}` }; }
+    if (table === 'cards') { const c = entity as Entities['cards']; return this.cardActive(c, c) ? c : { ...c, status: 'withdrawn', title: '[withdrawn]', body: '', quote: '', aliases: [], experience: undefined, locator: `withdrawn:${c.sourceId}` }; }
     if (table === 'rules') {
       const r = entity as Entities['rules'];
       if (r.status !== 'active' || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision; })) return { ...r, status: 'suspended', title: '[withdrawn]', statement: '[Evidence no longer active]', conditions: '[withdrawn]', exceptions: '[withdrawn]', citations: r.citations.map(c => ({ ...c, quote: '[inactive]', locator: `withdrawn:${c.sourceId}` })) };
@@ -326,6 +331,13 @@ export class Store {
         if (!this.cardActive(c, c) || source?.retention !== 'permanent' || !source.content.includes(c.quote) || !Array.isArray(c.aliases) || !['reported', 'verified', 'inference'].includes(c.verification)) continue;
         // A recovered model card is never promoted to verified merely by its Markdown label.
         if (!existing && c.verification === 'verified') c.verification = 'reported';
+        if (c.experience !== undefined) {
+          const details = experienceDetailsSchema.safeParse(c.experience);
+          if (c.kind === 'experience' && details.success && details.data.productId === c.projectId) {
+            c.experience = details.data;
+            c.aliases = [...new Set([...c.aliases, ...details.data.symptomAliases].map(value => value.trim()).filter(Boolean))];
+          } else delete c.experience;
+        }
       }
       if (table === 'cases') {
         const c = entity as Entities['cases']; const p = this.get('projects', c.projectId); const source = this.get('sources', c.sourceId); const q = this.get('questions', c.questionId);

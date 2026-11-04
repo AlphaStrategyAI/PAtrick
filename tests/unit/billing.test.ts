@@ -463,7 +463,7 @@ describe('included Scheduler fallback and host-only observations', () => {
   });
   it('model JSON and bare quota labels cannot establish a no-charge refusal', async () => {
     const f = fixture(), a = authority(f), r = await a.reserve(f.input, 'codex');
-    await a.dispatch(r, f.input, adapter(f, async () => ({ ...result(f), output: { cards: [], observation: { disposition: 'verified-no-charge-refusal', reason: 'quota' } } })));
+    await expect(a.dispatch(r, f.input, adapter(f, async () => ({ ...result(f), output: { cards: [], observation: { disposition: 'verified-no-charge-refusal', reason: 'quota' } } })))).rejects.toMatchObject({ code: 'invalid_worker_output' });
     expect(f.store.list('actions')).toEqual([]);
     const next = await a.reserve(f.input, 'codex'); await expect(a.dispatch(next, f.input, adapter(f, async () => { throw Object.assign(new Error('quota'), { code: 'subscription_quota' }); }))).rejects.toThrow('quota');
     expect(f.store.list('actions')).toEqual([]);
