@@ -14,7 +14,7 @@ const HERE=dirname(fileURLToPath(import.meta.url));
 export const CODE='/usr/local/libexec/patrick-worker';
 export const CONFIG='/etc/patrick-worker';
 export const NODE='/opt/patrick/node-v24.22.2-linux-arm64/bin/node';
-export const ARTIFACTS=Object.freeze(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','synthetic-network.mjs','patrick-worker-firewall.service','patrick-worker-proxy.service','patrick-worker-sudoers','patrick-worker-probe','route-inventory.json']);
+export const ARTIFACTS=Object.freeze(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','synthetic-network.mjs','installed-network.mjs','patrick-worker-firewall.service','patrick-worker-proxy.service','patrick-worker-sudoers','patrick-worker-probe','route-inventory.json']);
 const SOURCES={identity:'5c3f5188e41f04eff3a2564cd38208a7e3768019',proxy:'43659a3d6dc7a22e914ef654163842b158de428c'};
 const REASONS=new Set(['arguments','not_root','untrusted_artifact','dependency','account_conflict','inventory_incomplete','policy_invalid','active_worker','nft_check','nft_apply','service_state','installed_mismatch']);
 const ENV=Object.freeze({PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C'});
@@ -140,7 +140,7 @@ function trustCode(deps) {
 }
 export async function loadModules(deps) {trustCode(deps);return deps.loadModules();}
 function dependencies(deps) {
-  for(const path of ['/usr/local/bin/node',NODE,'/usr/bin/env','/usr/bin/dash','/usr/bin/setpriv','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run','/usr/bin/sudo','/usr/sbin/visudo','/usr/sbin/useradd','/usr/sbin/groupadd','/usr/sbin/nologin','/usr/sbin/ip'])trustedExecutable(path,deps.io);
+  for(const path of ['/usr/local/bin/node',NODE,'/usr/bin/env','/usr/bin/dash','/usr/bin/setpriv','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run','/usr/bin/sudo','/usr/sbin/visudo','/usr/sbin/useradd','/usr/sbin/groupadd','/usr/sbin/nologin','/usr/sbin/ip','/usr/bin/journalctl'])trustedExecutable(path,deps.io);
   if(deps.io.realpathSync('/usr/local/bin/node')!==NODE)fail('dependency');
   if(command(deps,'/usr/local/bin/node',['--no-addons','--version']).stdout.trim()!=='v24.22.2')fail('dependency');
   for(const [path,required] of [['/usr/bin/env',['--ignore-environment']],['/usr/bin/systemd-run',['--unit','--property','--wait','--pipe','--collect']],['/usr/sbin/useradd',['--uid','--gid','--no-user-group','--no-create-home','--home-dir','--shell','--password']],['/usr/sbin/groupadd',['--gid']]]){
@@ -297,7 +297,7 @@ export function liveInstaller(deps,state,manifest) {
     return artifacts.artifactHash===state.artifactHash&&sha(trustedRead(input.policyPath,deps.io))===artifacts.manifest.policyHash;
   }catch{return false;}
 }
-function renderSudo(template,admin) {if(template.split('@CONTROL_ADMIN@').length!==8)fail('untrusted_artifact');return template.replaceAll('@CONTROL_ADMIN@',admin);}
+function renderSudo(template,admin) {if(template.split('@CONTROL_ADMIN@').length!==9)fail('untrusted_artifact');return template.replaceAll('@CONTROL_ADMIN@',admin);}
 function stopProxy(deps) {
   command(deps,'/usr/bin/systemctl',['stop','patrick-worker-proxy.service'],undefined,'service_state');
   const text=command(deps,'/usr/bin/systemctl',['show','patrick-worker-proxy.service','--no-pager','--property=ActiveState,SubState,MainPID']).stdout;

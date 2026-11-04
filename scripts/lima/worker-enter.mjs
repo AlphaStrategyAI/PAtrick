@@ -186,6 +186,15 @@ function serviceFacts() {
   const sockets=fs.readdirSync(`/proc/${pid}/fd`).flatMap(fd=>{try{const target=fs.readlinkSync(`/proc/${pid}/fd/${fd}`);return /^socket:\[\d+\]$/.test(target)?[target.slice(8,-1)]:[];}catch{return [];}});
   return parseProxyFacts(fields,status,fs.readFileSync(`/proc/${pid}/net/tcp`,'utf8'),fs.readFileSync(`/proc/${pid}/net/tcp6`,'utf8'),sockets);
 }
+// Preserve policy.validateEntry's canonical command shape while carrying the
+// separately validated account group evidence required by the lifetime ABI.
+export function installedAdmission(context,command,state){
+  if(state?.fence?.status!=='ready')deny();validateAccounts(state.policy,state.accounts);
+  const canonical=validateEntry(context,command,state.policy,state.accounts[context.user]);
+  assertReadiness(state.nft(),state.proxy(),state.policy,state.accounts);
+  const entry=Object.freeze({...canonical,groups:Object.freeze([...state.accounts[context.user].groups])});
+  return {entry,policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash};
+}
 export function productionDependencies() {
   const identity=context=>{
     const passwd=readTrustedFile('/etc/passwd'),all=parseAccounts(passwd,readTrustedFile('/etc/group')),account=all[context.user];
@@ -196,8 +205,7 @@ export function productionDependencies() {
   };
   const admit=async(context,command)=>{
     const installer=await import('./install-guest.mjs'),state=await installer.inspectInstalled();if(state.fence.status!=='ready')deny();
-    const entry=validateEntry(context,command,state.policy,state.accounts[context.user]);trust(entry);assertReadiness(state.nft(),state.proxy(),state.policy,state.accounts);
-    return {entry,policyHash:state.manifest.installation.policyHash,artifactHash:state.manifest.installation.artifactHash};
+    const admission=installedAdmission(context,command,state);trust(admission.entry);return admission;
   };
   const deps={effectiveUid:()=>process.geteuid?.(),trust,readPolicy:()=>JSON.parse(readTrustedFile(policyPath)),accounts:()=>parseAccounts(readTrustedFile('/etc/passwd'),readTrustedFile('/etc/group')),readiness:(policy,accounts)=>({nft:JSON.parse(probe('/usr/sbin/nft',['-j','list','table','inet','patrick_worker'])),proxy:serviceFacts(policy,accounts)}),dispatch:request=>lifecycle.executeStage(request,lifecycle.productionLifetimeDependencies({trust,identity,admit}))};
   return deps;

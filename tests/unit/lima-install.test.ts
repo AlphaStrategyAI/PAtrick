@@ -29,12 +29,16 @@ describe('fixed installer and probe arguments',()=>{
     const names=['LD_PRELOAD','LD_LIBRARY_PATH','NODE_OPTIONS','NODE_PATH','ENV','BASH_ENV','HOME','PATH','PWD','OLDPWD'];
     try{for(const name of names)vi.stubEnv(name,'fixture-contamination');spawned.mockReturnValue({status:0,stdout:'fixture'});install.productionDependencies().run('/usr/bin/systemctl',['--version']);expect(spawned).toHaveBeenLastCalledWith('/usr/bin/systemctl',['--version'],expect.objectContaining({cwd:'/',env:{PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C'}}));const sudo=fs.readFileSync(new URL('../../examples/lima/patrick-worker-sudoers',import.meta.url),'utf8');for(const token of ['env_reset','!setenv','NOSETENV','LD_*','NODE_*','ENV','BASH_ENV','HOME','PATH','PWD'])expect(sudo).toContain(token);const bootstrap=fs.readFileSync(new URL('../../examples/lima/patrick-worker-probe',import.meta.url),'utf8');expect(bootstrap.startsWith('#!/usr/bin/dash\nexec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C')).toBe(true);expect(bootstrap).toContain('/usr/local/bin/node --no-addons');expect(bootstrap).not.toContain('/usr/bin/env node');}finally{vi.unstubAllEnvs();}
   });
+  it('requires exactly 16 artifacts and eight literal control-admin grants',()=>{
+    expect(install.ARTIFACTS).toHaveLength(16);expect(install.ARTIFACTS).toContain('installed-network.mjs');expect(install.ARTIFACTS).not.toContain('installed-network.d.mts');
+    const sudo=fs.readFileSync(new URL('../../examples/lima/patrick-worker-sudoers',import.meta.url),'utf8');expect(sudo.split('@CONTROL_ADMIN@')).toHaveLength(9);const grants=sudo.split('\n').filter(line=>line.startsWith('@CONTROL_ADMIN@ '));expect(grants).toHaveLength(8);expect(grants.filter(line=>line.endsWith('--operation qualification-network'))).toHaveLength(1);expect(grants.every(line=>!line.includes('*'))).toBe(true);
+  });
   it('accepts only absolute policy/artifact paths and one mode',()=>{
     expect(install.parseInstallArguments(['--policy','/stage/policy.json','--artifacts','/stage','--check'])).toEqual({policyPath:'/stage/policy.json',artifactDir:'/stage',apply:false});
   });
   it.each([[],['--policy','relative','--artifacts','/stage','--check'],['--policy','/a/../policy','--artifacts','/stage','--check'],['--policy','/p','--policy','/p','--artifacts','/stage','--check'],['--policy','/p','--artifacts','/stage','--check','--apply'],['--policy','/p','--artifacts','/stage','--unknown'],['--policy','/p','--artifacts','/stage']].map(args=>({args})))('rejects ambiguous installer argv %j',({args})=>expect(()=>install.parseInstallArguments(args)).toThrow('arguments'));
-  it('accepts six finite probe operations without command/path overrides',()=>{
-    for(const operation of ['snapshot','firewall-load','synthetic-network','qualification','qualification-start','qualification-finish'])expect(probe.parseProbeArguments(['--operation',operation])).toBe(operation);
+  it('accepts seven finite probe operations without command/path overrides',()=>{
+    for(const operation of ['snapshot','firewall-load','synthetic-network','qualification','qualification-start','qualification-finish','qualification-network'])expect(probe.parseProbeArguments(['--operation',operation])).toBe(operation);
     for(const args of [[],['--operation','stop'],['--operation','snapshot','--path','/tmp/a'],['--operation','snapshot','--operation','snapshot']])expect(()=>probe.parseProbeArguments(args)).toThrow('arguments');
   });
 });
@@ -165,7 +169,7 @@ async function prepared() {
   fixture.file('/etc/group','root:x:0:\nadmin:x:1000:\n'+Object.entries(accountFacts).map(([name,account])=>`${name}:x:${account.gid}:`).join('\n')+'\n');
   fixture.file('/etc/shadow','root:!:1:0:99999:7:::\nadmin:$fixture:1:0:99999:7:::\n'+Object.keys(accountFacts).map(name=>`${name}:!:1:0:99999:7:::`).join('\n')+'\n',0o600);
   for(const [name,account] of Object.entries(accountFacts)){fs.mkdirSync(fixture.physical(`/var/lib/${name}`),{recursive:true,mode:0o700});fixture.owners.set(`/var/lib/${name}`,{uid:account.uid,gid:account.gid});}
-  for(const path of ['/usr/local/bin/node',install.NODE,'/usr/bin/env','/usr/bin/dash','/usr/bin/setpriv','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run','/usr/bin/sudo','/usr/sbin/visudo','/usr/sbin/useradd','/usr/sbin/groupadd','/usr/sbin/nologin','/usr/sbin/ip'])fixture.file(path,'fixture executable',0o755);
+  for(const path of ['/usr/local/bin/node',install.NODE,'/usr/bin/env','/usr/bin/dash','/usr/bin/setpriv','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run','/usr/bin/sudo','/usr/sbin/visudo','/usr/sbin/useradd','/usr/sbin/groupadd','/usr/sbin/nologin','/usr/sbin/ip','/usr/bin/journalctl'])fixture.file(path,'fixture executable',0o755);
   fs.unlinkSync(fixture.physical('/usr/local/bin/node'));fs.symlinkSync(fixture.physical(install.NODE),fixture.physical('/usr/local/bin/node'));
   for(const path of ['/usr/local/libexec','/etc/systemd/system','/etc/sudoers.d','/run','/proc/4321/fd'])fs.mkdirSync(fixture.physical(path),{recursive:true,mode:0o755});
   fixture.file('/etc/resolv.conf','nameserver 192.0.2.53\n');fixture.file('/etc/hosts','127.0.0.1 localhost\n::1 localhost\n192.0.2.2 host.lima.internal\n');fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n');

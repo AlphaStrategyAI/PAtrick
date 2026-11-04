@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import * as fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { networkProbeIds, type NetworkCoverage, type InstalledNetworkControl } from './installed-network.mjs';
 import { fileURLToPath } from 'node:url';
 import { profileFor, type Stage, type StageProfile } from './stage-lifetime.mjs';
 import { spawn } from 'node:child_process';
@@ -13,12 +14,15 @@ import { LimaWorker, limaFailureEvidence } from '../../src/integrations/workers.
 import { BillingAuthority, type IncludedAdmission, type CurrentBillingContext } from '../../src/billing.js';
 import { Store } from '../../src/store.js';
 import { digest, type AppConfig, type WorkerInput, type Runner } from '../../src/domain.js';
-export const probeIds=['grok-pass','planned-test-failure','cli-nonzero','malformed-output','codex-pass','codex-missing-result','acp-pass','acp-permission','acp-non-end-turn','acp-early-exit','profile-home','network-direct-ip443','network-dns-udp','network-dns-tcp','network-public-ipv6','network-loopback-ipv6','network-host-alias','network-host-ip','network-lan','network-gateway','network-resolver','network-vpn','network-metadata','network-other-loopback','network-other-provider-port','network-disallowed-host','network-alternate-port','network-ip-connect','network-wrong-sni','network-ech','network-empty-codex','network-empty-dsh','task-network-proxy','task-network-ip','synthetic-network','profile-setup-failure','workspace-substitution','prepare-interrupted','startup-stop','aborted-test','aborted-cleanup','private-mount-removal','abort-cli','abort-acp','timeout','fork-setsid','stdout-overflow','stderr-overflow','cleanup-denied','ssh-disconnect','control-unavailable','vm-unavailable','token-collision','lingering-process','reboot-registry','runtime-expiry','proxy-stopped','firewall-removed','proxy-restart','firewall-restart','vm-restart'] as const;
+export const probeIds=['grok-pass','planned-test-failure','cli-nonzero','malformed-output','codex-pass','codex-missing-result','acp-pass','acp-permission','acp-non-end-turn','acp-early-exit','profile-home',...networkProbeIds,'task-network-proxy','task-network-ip','synthetic-network','profile-setup-failure','workspace-substitution','prepare-interrupted','startup-stop','aborted-test','aborted-cleanup','private-mount-removal','abort-cli','abort-acp','timeout','fork-setsid','stdout-overflow','stderr-overflow','cleanup-denied','ssh-disconnect','control-unavailable','vm-unavailable','token-collision','lingering-process','reboot-registry','runtime-expiry','proxy-stopped','firewall-removed','proxy-restart','firewall-restart','vm-restart'] as const;
 export type ProbeId=typeof probeIds[number];
-export const reasons=['ok','not_run','dependency','identity','trust','policy','network','tls','lifetime','workspace','control_unavailable','host_health','unexpected_output'] as const;
+export const reasons=['ok','not_run','dependency','identity','trust','policy','network','tls','lifetime','workspace','control_unavailable','host_health','unexpected_output','not_applicable'] as const;
 export type ReasonCode=typeof reasons[number];
-export type Result={id:ProbeId;status:'pass'|'fail'|'not_run';reason:ReasonCode;actualGuest:boolean;synthetic:boolean;environment:'installed'|'isolated-fixture'|'host-protocol';stage?:Stage;profile?:StageProfile;role?:'grok'|'codex'|'dsh';profileFacts?:{persistentMarkerReadable:boolean;persistentMarkerUnchanged:boolean;persistentConfigUnchanged:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;workspaceMatchesRecord:boolean;closedNetworkObserved:boolean};postDrop?:{uid:number;gid:number;groups:number[];noNewPrivileges:boolean;capEffective:string;capPermitted:string;capInheritable:string;capAmbient:string;capBounding:string;homeMatches:boolean;fixedEnvironmentMatches:boolean;extraEnvironmentKeys:('PWD'|'OLDPWD')[];unknownEnvironmentKeyPresent:boolean;derivedPwdMatchesHome:boolean;derivedOldPwdMatchesTrustedCwd:boolean}};
-export type QualificationReport={version:1;observedAt:string;instanceKind:'local-trial';limaVersion:string;guestVersion:string;systemdVersion:string;artifactHash:string;policyHash:string;inventoryHash:string;results:Result[];realModelCalls:0;costUsd:0;realProviderAdmission:false;providerAccountFeePrivacyQualified:false;productionMiniQualified:false};
+/** Host report only: no trusted coverage observation was retained. These zeros
+ * do not prove that no physical packet or guest action occurred. */
+export type UnobservedNetworkCoverage={targets:0;attempted:0;denied:0;basis:'unobserved';gate:'unobserved'};
+export type Result={id:ProbeId;status:'pass'|'fail'|'not_run'|'not_applicable';reason:ReasonCode;actualGuest:boolean;synthetic:boolean;environment:'installed'|'isolated-fixture'|'host-protocol';stage?:Stage;profile?:StageProfile;network?:NetworkCoverage|UnobservedNetworkCoverage;role?:'grok'|'codex'|'dsh';profileFacts?:{persistentMarkerReadable:boolean;persistentMarkerUnchanged:boolean;persistentConfigUnchanged:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;workspaceMatchesRecord:boolean;closedNetworkObserved:boolean};postDrop?:{uid:number;gid:number;groups:number[];noNewPrivileges:boolean;capEffective:string;capPermitted:string;capInheritable:string;capAmbient:string;capBounding:string;homeMatches:boolean;fixedEnvironmentMatches:boolean;extraEnvironmentKeys:('PWD'|'OLDPWD')[];unknownEnvironmentKeyPresent:boolean;derivedPwdMatchesHome:boolean;derivedOldPwdMatchesTrustedCwd:boolean}};
+export type QualificationReport={version:1;observedAt:string;instanceKind:'local-trial';limaVersion:string;guestVersion:string;systemdVersion:string;artifactHash:string;policyHash:string;inventoryHash:string;networkPreconditionRequests?:{header:0|1;tls:0|1};results:Result[];realModelCalls:0;costUsd:0;realProviderAdmission:false;providerAccountFeePrivacyQualified:false;productionMiniQualified:false};
 export function parseQualificationArguments(argv:string[]):{instance:string;user:string;reportPath:string}{
  const values:Record<string,string>={};
  for(let i=0;i<argv.length;i+=2){const flag=argv[i],value=argv[i+1];if(!['--instance','--user','--report'].includes(flag??'')||Object.hasOwn(values,flag!)||typeof value!=='string'||value.startsWith('--'))throw Error('arguments');values[flag!]=value;}
@@ -27,9 +31,59 @@ export function parseQualificationArguments(argv:string[]):{instance:string;user
 }
 const profileFactsSchema=z.object({persistentMarkerReadable:z.boolean(),persistentMarkerUnchanged:z.boolean(),persistentConfigUnchanged:z.boolean(),privateHomeWritable:z.boolean(),privateScratchRemoved:z.boolean(),workspaceMatchesRecord:z.boolean(),closedNetworkObserved:z.boolean()}).strict();
 const postDropSchema=z.object({uid:z.number().int().min(1000).max(2147483647),gid:z.number().int().min(1000).max(2147483647),groups:z.array(z.number().int().min(0).max(2147483647)).max(64),noNewPrivileges:z.boolean(),capEffective:z.string().regex(/^[0-9a-f]{1,16}$/),capPermitted:z.string().regex(/^[0-9a-f]{1,16}$/),capInheritable:z.string().regex(/^[0-9a-f]{1,16}$/),capAmbient:z.string().regex(/^[0-9a-f]{1,16}$/),capBounding:z.string().regex(/^[0-9a-f]{1,16}$/),homeMatches:z.boolean(),fixedEnvironmentMatches:z.boolean(),extraEnvironmentKeys:z.array(z.enum(['PWD','OLDPWD'])).max(2).refine(a=>new Set(a).size===a.length),unknownEnvironmentKeyPresent:z.boolean(),derivedPwdMatchesHome:z.boolean(),derivedOldPwdMatchesTrustedCwd:z.boolean()}).strict();
-const resultSchema=z.object({id:z.enum(probeIds),status:z.enum(['pass','fail','not_run']),reason:z.enum(reasons),actualGuest:z.boolean(),synthetic:z.literal(true),environment:z.enum(['installed','isolated-fixture','host-protocol']),stage:z.enum(['prepare','cli','read','tests','cleanup','acp']).optional(),profile:z.enum(['task-only','authenticated-client']).optional(),role:z.enum(['grok','codex','dsh']).optional(),profileFacts:profileFactsSchema.optional(),postDrop:postDropSchema.optional()}).strict();
+const coverageSchema=z.object({targets:z.number().int().min(0).max(1024),attempted:z.number().int().min(0).max(1024),denied:z.number().int().min(0).max(1024),basis:z.enum(['socket-policy','empty-allowlist','no-inventory-target','ipv6-upstream-disabled','nonempty-allowlist']),gate:z.enum(['nft','proxy-header','proxy-tls','inventory'])}).strict().refine(n=>n.denied<=n.attempted&&n.attempted<=n.targets);
+const unobservedCoverageSchema=z.object({targets:z.literal(0),attempted:z.literal(0),denied:z.literal(0),basis:z.literal('unobserved'),gate:z.literal('unobserved')}).strict();
+const networkSet=new Set<string>(networkProbeIds);
+const expectedNetworkPairs=new Set(networkProbeIds.flatMap(id=>(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']).map(role=>id+'/'+role)));
+const resultSchema=z.object({id:z.enum(probeIds),status:z.enum(['pass','fail','not_run','not_applicable']),reason:z.enum(reasons),actualGuest:z.boolean(),synthetic:z.literal(true),environment:z.enum(['installed','isolated-fixture','host-protocol']),stage:z.enum(['prepare','cli','read','tests','cleanup','acp']).optional(),profile:z.enum(['task-only','authenticated-client']).optional(),role:z.enum(['grok','codex','dsh']).optional(),network:z.union([coverageSchema,unobservedCoverageSchema]).optional(),profileFacts:profileFactsSchema.optional(),postDrop:postDropSchema.optional()}).strict().superRefine((r,ctx)=>{
+ const invalid=()=>ctx.addIssue({code:'custom',message:'invalid network evidence'});
+ if(!networkSet.has(r.id)){if(r.network||r.status==='not_applicable'||r.reason==='not_applicable')invalid();return;}
+ const n=r.network;if(!n||!r.role||r.environment!=='installed'||r.profile!=='authenticated-client'||r.stage||r.profileFacts||r.postDrop){invalid();return;}
+ if(r.id==='network-empty-codex'&&r.role!=='codex'||r.id==='network-empty-dsh'&&r.role!=='dsh')invalid();
+ if(n.basis==='unobserved'){if(r.status!=='not_run'||r.actualGuest||!['not_run','control_unavailable','lifetime'].includes(r.reason))invalid();return;}
+ if(r.status==='pass'&&(r.reason!=='ok'||n.targets===0||n.attempted!==n.targets||n.denied!==n.targets))invalid();
+ if(r.status!=='pass'&&r.reason==='ok')invalid();
+ if(r.status==='not_applicable'||r.status==='not_run'&&n.gate==='inventory'){
+  if(r.status==='not_applicable'&&r.reason!=='not_applicable'||n.targets!==0||n.attempted!==0||n.denied!==0||n.gate!=='inventory')invalid();
+  if(n.basis==='ipv6-upstream-disabled'){if(r.id!=='network-public-ipv6')invalid();}
+  else if(n.basis==='nonempty-allowlist'){if(!['network-empty-codex','network-empty-dsh'].includes(r.id))invalid();}
+  else if(n.basis==='no-inventory-target'){if(!['network-host-alias','network-host-ip','network-lan','network-gateway','network-resolver','network-vpn'].includes(r.id))invalid();}
+  else invalid();
+ }else{
+  if(r.reason==='not_applicable'||!['socket-policy','empty-allowlist'].includes(n.basis)||n.gate==='inventory')invalid();
+  const proxy=['network-disallowed-host','network-alternate-port','network-ip-connect','network-wrong-sni','network-ech','network-empty-codex','network-empty-dsh'].includes(r.id);
+  if(proxy&&n.gate==='nft'||!proxy&&n.gate!=='nft')invalid();
+  if(n.basis==='empty-allowlist'&&(!proxy||n.gate!=='proxy-header'))invalid();
+  if(['network-disallowed-host','network-alternate-port','network-ip-connect'].includes(r.id)&&n.gate!=='proxy-header')invalid();
+  if(['network-wrong-sni','network-ech'].includes(r.id)&&n.basis==='socket-policy'&&n.gate!=='proxy-tls')invalid();
+  if(r.id.startsWith('network-empty-')&&(n.basis!=='empty-allowlist'||n.gate!=='proxy-header'))invalid();
+ }
+});
+const uniqueNetwork=(rows:{id:string;role?:string}[])=>{const keys=rows.filter(r=>networkSet.has(r.id)).map(r=>r.id+'/'+r.role);return new Set(keys).size===keys.length;};
+function networkAggregates(rows:ReadonlyArray<{id:string;role?:string;status:string;network?:NetworkCoverage|UnobservedNetworkCoverage}>):boolean{
+ const proxyIds=['network-disallowed-host','network-alternate-port','network-ip-connect','network-wrong-sni','network-ech'];
+ for(const aggregate of rows.filter(r=>r.id.startsWith('network-empty-'))){
+  const n=aggregate.network;if(!n)return false;const members=rows.filter(r=>r.role===aggregate.role&&proxyIds.includes(r.id));
+  if(n.basis==='nonempty-allowlist'){if(members.some(r=>r.network?.basis==='empty-allowlist'))return false;continue;}
+  if(n.basis!=='empty-allowlist'||members.length!==5||members.some(r=>r.network?.basis!=='empty-allowlist'||r.network.gate!=='proxy-header'))return false;
+  if((['targets','attempted','denied'] as const).some(k=>n[k]!==members.reduce((total,r)=>total+r.network![k],0)))return false;
+ }
+ return true;
+}
 const versionSchema=z.string().regex(/^[0-9][0-9A-Za-z.+_-]{0,63}$/);
-const reportSchema=z.object({version:z.literal(1),observedAt:z.iso.datetime(),instanceKind:z.literal('local-trial'),limaVersion:versionSchema,guestVersion:versionSchema,systemdVersion:versionSchema,artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),results:z.array(resultSchema).max(1024),realModelCalls:z.literal(0),costUsd:z.literal(0),realProviderAdmission:z.literal(false),providerAccountFeePrivacyQualified:z.literal(false),productionMiniQualified:z.literal(false)}).strict();
+const reportSchema=z.object({version:z.literal(1),observedAt:z.iso.datetime(),instanceKind:z.literal('local-trial'),limaVersion:versionSchema,guestVersion:versionSchema,systemdVersion:versionSchema,artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),networkPreconditionRequests:z.object({header:z.union([z.literal(0),z.literal(1)]),tls:z.union([z.literal(0),z.literal(1)])}).strict().optional(),results:z.array(resultSchema).max(1024),realModelCalls:z.literal(0),costUsd:z.literal(0),realProviderAdmission:z.literal(false),providerAccountFeePrivacyQualified:z.literal(false),productionMiniQualified:z.literal(false)}).strict().refine(r=>{
+ const rows=r.results.filter(row=>networkSet.has(row.id));
+ if(rows.some(row=>row.network?.basis==='unobserved'))return !Object.hasOwn(r,'networkPreconditionRequests')&&rows.length===expectedNetworkPairs.size&&uniqueNetwork(rows)&&rows.every(row=>row.network?.basis==='unobserved'&&expectedNetworkPairs.has(row.id+'/'+row.role));
+ return uniqueNetwork(rows)&&networkAggregates(rows);
+},'inconsistent network pairs');
+// The installed root operation still requires observed coverage on every row,
+// including failed returns. The host-only fallback cannot certify that ABI.
+const installedResultSchema=resultSchema.refine(row=>row.network?.basis!=='unobserved','unobserved coverage is report-only');
+const installedNetworkSchema=z.object({version:z.literal(1),operation:z.literal('qualification-network'),outcome:z.enum(['pass','fail']),reason:z.enum(['ok','dependency','trust','network','lifetime']),synthetic:z.literal(true),environment:z.literal('installed'),actualGuest:z.boolean(),artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),preconditionRequests:z.object({header:z.union([z.literal(0),z.literal(1)]),tls:z.union([z.literal(0),z.literal(1)])}).strict(),results:z.array(installedResultSchema).length(59)}).strict().superRefine((r,ctx)=>{
+ const expected=new Set(expectedNetworkPairs);
+ if(!uniqueNetwork(r.results)||!networkAggregates(r.results)||r.results.some(row=>!expected.delete(row.id+'/'+row.role)||row.actualGuest!==r.actualGuest)||expected.size||r.outcome==='pass'&&(r.reason!=='ok'||r.results.some(row=>!['pass','not_applicable'].includes(row.status)))||r.outcome==='fail'&&r.reason==='ok')ctx.addIssue({code:'custom',message:'incomplete installed network evidence'});
+});
+export function parseInstalledNetworkControl(value:unknown):InstalledNetworkControl{return installedNetworkSchema.parse(value) as InstalledNetworkControl;}
 export function sanitizeQualificationReport(value:unknown):QualificationReport{return reportSchema.parse(value);}
 export function writeQualificationReport(path:string,report:QualificationReport):void {
  if(!isAbsolute(path)||resolve(path)!==path||path.includes('\0'))throw Error('report');
@@ -111,11 +165,16 @@ export async function qualify(input:{instance:string;user:string;reportPath:stri
    report.results.push({id,status:passed?'pass':'fail',reason:passed?'ok':reason,actualGuest:true,synthetic:true,environment:'installed',role:runner});for(const {outcome:_,...o} of observations)report.results.push({id,status:passed?'pass':'fail',reason:passed?'ok':reason,actualGuest:true,synthetic:true,environment:'installed',...o});
   }
   const taskFacts=report.results.filter(r=>r.profile==='task-only'),taskNetworkPassed=healthy&&taskFacts.length>0&&taskFacts.every(r=>r.status==='pass'&&r.profileFacts?.closedNetworkObserved);for(const id of ['task-network-proxy','task-network-ip'] as const)report.results.push({id,status:taskNetworkPassed?'pass':'fail',reason:taskNetworkPassed?'ok':'network',actualGuest:true,synthetic:true,environment:'installed',profile:'task-only'});
+  if(healthy){try{
+   const network=parseInstalledNetworkControl(JSON.parse(await capture('limactl',['shell',parsed.instance,'--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-probe','--operation','qualification-network'],900000,true)));
+   if(network.artifactHash!==initial.artifactHash||network.policyHash!==initial.policyHash||network.inventoryHash!==initial.inventoryHash||!network.actualGuest)throw Error('trust');
+   report.networkPreconditionRequests=network.preconditionRequests;report.results.push(...network.results);if(['lifetime','trust'].includes(network.reason))healthy=false;
+  }catch{healthy=false;}}
   if(healthy){try{const network=JSON.parse(await capture('limactl',['shell',parsed.instance,'--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-probe','--operation','synthetic-network'],25000,true));const pass=network.version===1&&network.operation==='synthetic-network'&&network.outcome==='pass'&&network.reason==='ok'&&network.synthetic===true&&network.environment==='isolated-fixture'&&network.actualGuest===true&&network.positive===1&&network.proxyDenials===7&&network.firewallDenials===15;report.results.push({id:'synthetic-network',status:pass?'pass':network.reason==='dependency'?'not_run':'fail',reason:pass?'ok':network.reason==='dependency'?'dependency':'network',actualGuest:network.outcome==='pass'||network.reason!=='dependency',synthetic:true,environment:'isolated-fixture'});}catch{report.results.push({id:'synthetic-network',status:'fail',reason:'network',actualGuest:true,synthetic:true,environment:'isolated-fixture'});}}
  }finally{if(started){try{await control(parsed.instance,'qualification-finish');}catch{report.results.push({id:'profile-home',status:'fail',reason:'trust',actualGuest:true,synthetic:true,environment:'installed'});}}}
- const executed=new Set(report.results.map(r=>r.id));for(const id of probeIds)if(!executed.has(id)){const roles:('grok'|'codex'|'dsh'|undefined)[]=id.startsWith('network-')?(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']):[undefined];for(const role of roles)report.results.push({id,status:'not_run',reason:'not_run',actualGuest:false,synthetic:true,environment:id==='synthetic-network'?'isolated-fixture':'installed',...(role?{role,profile:'authenticated-client' as const}:{})});}
+ const executed=new Set(report.results.map(r=>r.id));for(const id of probeIds)if(!executed.has(id)){const roles:('grok'|'codex'|'dsh'|undefined)[]=networkSet.has(id)?(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']):[undefined];for(const role of roles)report.results.push({id,status:'not_run',reason:'not_run',actualGuest:false,synthetic:true,environment:id==='synthetic-network'?'isolated-fixture':'installed',...(role?{role,profile:'authenticated-client' as const,network:{targets:0,attempted:0,denied:0,basis:'unobserved' as const,gate:'unobserved' as const}}:{})});}
  const sanitized=sanitizeQualificationReport(report);writeQualificationReport(parsed.reportPath,sanitized);return sanitized;
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{const report=await qualify(parseQualificationArguments(process.argv.slice(2)));if(report.results.some(r=>r.status!=='pass'))process.exitCode=1;}catch{process.stderr.write('qualification-failed\n');process.exitCode=78;}
+ try{const report=await qualify(parseQualificationArguments(process.argv.slice(2)));if(report.results.some(r=>!['pass','not_applicable'].includes(r.status)))process.exitCode=1;}catch{process.stderr.write('qualification-failed\n');process.exitCode=78;}
 }

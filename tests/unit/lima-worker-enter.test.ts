@@ -252,3 +252,24 @@ describe('contained lifetime grammar',()=>{
     expect(()=>parseArguments([...prefix,...suffix,'--','node'])).toThrow();
   });
 });
+
+describe('actual installed admission to lifetime ABI',()=>{
+ it('carries validated empty groups from real validateEntry through production admission into executeStage and closure',async()=>{
+  const module=await import(new URL('../../scripts/lima/worker-enter.mjs',import.meta.url).href);
+  const {fixture}=await import('../fixtures/lima-lifetime.mjs');
+  const {executeStage}=await import(new URL('../../scripts/lima/stage-lifetime.mjs',import.meta.url).href);
+  const f=fixture({scope,account});
+  const state={fence:{status:'ready'},policy:parsePolicy(rawPolicy),accounts,manifest:{installation:{artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64)}},nft,proxy:()=>proxy};
+  try{
+   expect(validateEntry(scope,['node'],state.policy,account)).not.toHaveProperty('groups');
+   const admitted=module.installedAdmission(scope,['node'],state);expect(admitted.entry.groups).toEqual([]);expect(Object.isFrozen(admitted.entry.groups)).toBe(true);expect(admitted.entry.groups).not.toBe(account.groups);
+   f.deps.admit=async(c:any,args:any)=>module.installedAdmission(c,args,state);
+   await executeStage(f.request(),f.deps);await f.run('cli');await f.run('cli','stop');await f.run('cleanup');expect(await f.run('cleanup','reconcile')).toMatchObject({invocationClosed:true});
+  }finally{f.close();}
+ });
+ it('retains identity, readiness and generation refusals in production admission',async()=>{
+  const module=await import(new URL('../../scripts/lima/worker-enter.mjs',import.meta.url).href);
+  const state={fence:{status:'ready'},policy:parsePolicy(rawPolicy),accounts,manifest:{installation:{artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64)}},nft,proxy:()=>proxy};
+  for(const changed of [{...state,accounts:{...accounts,'patrick-grok':{...account,groups:[27]}}},{...state,accounts:{...accounts,alias:{...account}}},{...state,fence:{status:'failed'}},{...state,nft:()=>null}])expect(()=>module.installedAdmission(scope,['node'],changed)).toThrow();
+ });
+});
