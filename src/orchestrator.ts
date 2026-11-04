@@ -185,9 +185,11 @@ export class Workbench {
         this.advance(task, 'execute', { plan, artifact: undefined, review: undefined });
       } else if (task.stage === 'execute') {
         const artifact = artifactSchema.parse(output); this.validateArtifact(task, project, artifact);
+        this.recordFailedTests(task, input, artifact.tests);
         this.advance(task, 'check', { artifact, review: undefined });
       } else if (task.stage === 'check') {
         const review = reviewSchema.parse(output); this.validateReview(task, review);
+        this.recordFailedTests(task, input, review.tests);
         if (review.verdict === 'ask') this.advance(task, 'decide', { review, decision: undefined });
         else if (review.verdict === 'repair' || !this.testsPassed(task.plan!.tests, task.artifact!.tests) || !this.testsPassed(task.plan!.tests, review.tests)) this.repair(task, review);
         else this.advance(task, 'delivery', { review });
@@ -352,6 +354,17 @@ export class Workbench {
     const current = this.task(task.id); const source = this.store.get('sources', task.sourceId);
     if (current.version !== task.version || current.stage !== task.stage || current.status === 'cancelled' || source?.status !== 'active' || source.revision !== task.sourceRevision || source.projectId !== task.projectId || source.domain !== task.domain) throw new DomainError('Task input or source is obsolete.', 'stale_attempt', 409);
     return current;
+  }
+  /** Only validated stage results enter the host ledger, before a repair replaces task buffers. */
+  private recordFailedTests(task: Task, input: WorkerInput, tests: { command: string; passed: boolean; output: string }[]): void {
+    const failed = tests.filter(test => !test.passed && task.plan?.tests.includes(test.command));
+    if (!failed.length || !task.decisionSnapshotId) return;
+    const attempt = this.store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.role === input.role && a.status === 'succeeded' && a.inputHash === digest(input)).at(-1);
+    if (!attempt) throw new DomainError('A validated test observation requires its accepted host attempt.', 'invalid_test_observation');
+    const id = stableId('planned-test-observation', task.decisionSnapshotId, task.version, attempt.id, input.role);
+    if (this.store.get('actions', id)) return;
+    const recordedAt = now();
+    this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.tests', status: 'completed', payload: { testObservation: { schemaVersion: 1, snapshotId: task.decisionSnapshotId, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, stage: input.role, plannedTests: task.plan!.tests, tests: failed, recordedAt } }, updatedAt: recordedAt });
   }
   private actionId(task: Task): string { return stableId('stage-action', task.id, task.version, task.stage, task.repairCount); }
   private beginAction(task: Task): void { const id = this.actionId(task); if (!this.store.get('actions', id)) this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: task.stage, status: 'pending', payload: { taskVersion: task.version, sourceRevision: task.sourceRevision }, updatedAt: now() }); }

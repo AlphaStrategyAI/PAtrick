@@ -3,6 +3,12 @@ import { citationSchema, DomainError, digest, stableId, type ActionRecord, type 
 import type { Store } from './store.js';
 const quotedText = z.string().min(1).refine(value => value.trim().length > 0, 'A quotation must contain substantive text.');
 const attributionCitationSchema = citationSchema.extend({ quote: quotedText }).strict();
+const testObservationSchema = z.object({
+    schemaVersion: z.literal(1), snapshotId: z.string().min(1), taskVersion: z.number().int().positive(), attemptId: z.string().min(1), inputHash: z.string().min(1),
+    stage: z.enum(['execute', 'check']), plannedTests: z.array(z.string().min(1)).min(1),
+    tests: z.array(z.object({ command: z.string().min(1), passed: z.literal(false), output: z.string().refine(value => value.trim().length > 0) }).strict()).min(1),
+    recordedAt: z.string().datetime({ offset: true }),
+}).strict();
 const isoDate = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString());
 export const metricObservationSchema = z.object({
     schemaVersion: z.literal(1), name: z.string().trim().min(1), value: z.number().finite(), baseline: z.number().finite().optional(),
@@ -66,10 +72,14 @@ export interface OutcomeReviewView extends Scope {
 }
 const sameScope = (a: Scope, b: Scope) => a.projectId === b.projectId && a.domain === b.domain;
 const before = (date: string, at: Date) => Number.isFinite(Date.parse(date)) && Date.parse(date) <= +at;
-function source(store: Store, scope: Scope, id: string, revision: string, temporary: boolean, at: Date, quote?: string, locator?: string): SourceRevision {
+function source(store: Store, scope: Scope, id: string, revision: string, temporary: boolean, at: Date, quote?: string, locator?: string, ancestors = new Set<string>()): SourceRevision {
     const s = store.get('sources', id);
     if (!s || s.status !== 'active' || s.revision !== revision || !sameScope(s, scope) || !before(s.createdAt, at) || !temporary && s.retention === 'ephemeral')
         throw new DomainError('Evidence source is obsolete, out of scope or outside retention/time bounds.', 'invalid_evidence_source', 409);
+    if (ancestors.has(id) || s.kind === 'file' && s.externalId.startsWith('vault:') && !s.parentSources?.length)
+        throw new DomainError('Vault evidence lacks current trusted ancestry.', 'invalid_evidence_source', 409);
+    const lineage = new Set(ancestors).add(id);
+    for (const parent of s.parentSources ?? []) source(store, scope, parent.id, parent.revision, temporary, at, undefined, undefined, lineage);
     if (quote !== undefined && (!quote.trim() || !s.content.includes(quote) || locator !== undefined && locator !== s.locator))
         throw new DomainError('Evidence must quote the current source exactly.', 'invalid_quote');
     return s;
@@ -158,7 +168,7 @@ function actionIndex(store: Store): { actions: ActionRecord[]; bySnapshot: Map<s
     const actions = store.list('actions'), bySnapshot = new Map<string, ActionRecord[]>();
     for (const a of actions) {
         const id = a.kind === 'decision.evidence' ? (a.payload.evidence as OutcomeEvidence | undefined)?.snapshotId
-            : a.kind === 'decision.review' ? (a.payload.review as OutcomeReview | undefined)?.snapshotId : undefined;
+            : a.kind === 'decision.review' ? (a.payload.review as OutcomeReview | undefined)?.snapshotId : a.kind === 'decision.tests' ? (a.payload.testObservation as { snapshotId?: string } | undefined)?.snapshotId : undefined;
         if (!id) continue;
         const group = bySnapshot.get(id) ?? [];
         group.push(a); bySnapshot.set(id, group);
@@ -178,7 +188,20 @@ function reportInputs(store: Store, actions: ActionRecord[], snapshot: DecisionS
             c.name === name && c.conclusion === 'success' && c.headSha === r.headSha && project.trustedAppIds.includes(c.appId) && !!c.url));
     });
     const ownerChoices = store.list('cases').filter(c => c.taskId === task.id && sameScope(c, snapshot) && caseMatchesSnapshot(store, c, snapshot) && c.status === 'active' && c.actorId === project.ownerId && before(c.createdAt, at) && Date.parse(c.createdAt) >= Date.parse(snapshot.recordedAt) && store.get('sources', c.sourceId)?.status === 'active').map(c => ({ caseId: c.id, choice: c.choice, createdAt: c.createdAt }));
-    const failedTests = before(task.updatedAt, at) ? [...(task.artifact?.tests ?? []), ...(task.review?.tests ?? [])].filter(t => !t.passed && task.plan?.tests.includes(t.command)) : [];
+    const historicalTests = actions.flatMap(action => {
+        if (action.kind !== 'decision.tests' || action.status !== 'completed' || action.taskId !== task.id || !sameScope(action, snapshot)) return [];
+        const parsed = testObservationSchema.safeParse(action.payload.testObservation);
+        if (!parsed.success) return [];
+        const observation = parsed.data, attempt = store.get('attempts', observation.attemptId);
+        if (observation.snapshotId !== snapshot.id || observation.taskVersion < snapshot.taskVersion || observation.taskVersion > task.version || !before(observation.recordedAt, at)
+            || !attempt || attempt.status !== 'succeeded' || attempt.role !== observation.stage || attempt.taskId !== task.id || attempt.taskVersion !== observation.taskVersion || !sameScope(attempt, snapshot) || attempt.inputHash !== observation.inputHash
+            || action.id !== stableId('planned-test-observation', snapshot.id, observation.taskVersion, attempt.id, observation.stage)) return [];
+        return observation.tests.filter(test => observation.plannedTests.includes(test.command));
+    });
+    // A legacy current buffer is usable only for the same judgment version/context.
+    const legacyTests = before(task.updatedAt, at) && task.version === snapshot.taskVersion && (!task.decisionSnapshotId || task.decisionSnapshotId === snapshot.id)
+        ? [...(task.artifact?.tests ?? []), ...(task.review?.tests ?? [])].filter(t => !t.passed && !!t.output.trim() && task.plan?.taskVersion === snapshot.taskVersion && task.plan.tests.includes(t.command)) : [];
+    const failedTests = [...new Map([...historicalTests, ...legacyTests].map(test => [digest(test), test])).values()];
     const taskState = before(task.updatedAt, at) ? task.status : 'deciding';
     const gaps: string[] = [];
     if (!receipts.length)

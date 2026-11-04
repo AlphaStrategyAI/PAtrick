@@ -14,6 +14,8 @@ export interface Project extends Scope {
 }
 export interface SourceRevision extends Scope {
   purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading';
+  /** Host-recorded Vault dependencies; editable projections cannot replace these edges. */
+  parentSources?: { id: string; revision: string }[];
   externalId: string; revision: string; title: string; content: string; locator: string;
   authorId: string; retention: 'permanent' | 'ephemeral'; status: 'active' | 'superseded' | 'withdrawn'; createdAt: string;
 }

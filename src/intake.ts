@@ -12,6 +12,7 @@ const finished = new Set(['delivered', 'archived', 'cancelled']);
 export function invalidateSource(store: Store, sourceId: string, status: 'superseded' | 'withdrawn'): void {
   const source = store.get('sources', sourceId);
   if (!source) return;
+  if (source.status === 'superseded' && status === 'superseded') return;
   if (source.status === 'withdrawn') { if (status === 'withdrawn') redactWithdrawnEvidence(store, sourceId); return; }
   const scope = { projectId: source.projectId, domain: source.domain }; const changed = now();
   if (status === 'withdrawn') {
@@ -20,6 +21,8 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     return;
   }
   store.save('sources', { ...source, status });
+  // Copies retain their originating revision, including secondary/historical Vault edits.
+  for (const child of store.list('sources')) if (child.projectId === source.projectId && child.domain === source.domain && child.parentSources?.some(ref => ref.id === sourceId)) invalidateSource(store, child.id, status);
   const invalidRules = new Set<string>();
   for (const card of store.list('cards')) if (card.sourceId === sourceId) store.save('cards', { ...card, status: 'withdrawn', body: '', quote: '' });
   for (const rule of store.list('rules')) if (rule.citations.some(c => c.sourceId === sourceId)) {
@@ -57,6 +60,7 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   let previousSize = -1;
   while (previousSize !== sourceIds.size + taskIds.size + ruleIds.size + caseIds.size) {
     previousSize = sourceIds.size + taskIds.size + ruleIds.size + caseIds.size;
+    for (const child of sources) if (child.parentSources?.some(ref => sourceIds.has(ref.id))) sourceIds.add(child.id);
     for (const rule of rules) if (rule.citations.some(c => sourceIds.has(c.sourceId))) ruleIds.add(rule.id);
     for (const c of cases) if (sourceIds.has(c.sourceId) || c.decisionSnapshot?.sourceRefs.some(ref => sourceIds.has(ref.id)) || c.ruleIds.some(id => ruleIds.has(id)) || taskIds.has(c.taskId)) { caseIds.add(c.id); taskIds.add(c.taskId); sourceIds.add(c.sourceId); }
     for (const task of tasks) if (sourceIds.has(task.sourceId) || task.decision?.citations.some(c => sourceIds.has(c.sourceId)) || task.decision?.ruleIds.some(id => ruleIds.has(id))) taskIds.add(task.id);
@@ -96,7 +100,7 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
 
 export function withdrawSource(store: Store, sourceId: string): void { store.transaction(() => invalidateSource(store, sourceId, 'withdrawn')); }
 
-export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, input: IngestInput): Task | undefined {
+export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, input: IngestInput, parentSources?: SourceRevision['parentSources']): Task | undefined {
   const project = store.get('projects', input.projectId) ?? config.projects.find(p => p.id === input.projectId);
   if (!project) throw new DomainError('Unknown project.', 'unknown_project', 404);
   if (!input.externalId?.trim() || !input.title?.trim() || typeof input.content !== 'string' || input.content.length > 2_000_000) throw new DomainError('A source identifier, title and bounded text are required.');
@@ -120,7 +124,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
       if ((existing.purpose ?? 'task') !== purpose) throw new DomainError('This source revision has a different purpose.', 'purpose_conflict', 409);
       if (knownHash && knownHash !== contentHash) throw new DomainError('This source revision already has different content.', 'revision_conflict', 409);
       if (existing.status !== 'active') throw new DomainError('A revoked source revision cannot be reused. Send a new revision.', 'revoked_revision', 409);
-      const task = store.list('tasks').find(t => t.sourceId === id);
+      const task = purpose === 'reference' ? undefined : store.list('tasks').find(t => t.sourceId === id);
       if (existing.retention === 'ephemeral' && !existing.content) {
         store.save('sources', { ...existing, title: input.title, content: input.content });
         if (task && !finished.has(task.status)) {
@@ -133,7 +137,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects'>, 
     }
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
     const createdAt = now();
-    const source: SourceRevision = { ...scope, id, purpose, kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
+    const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
     store.save('sources', source);
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
     if (purpose === 'reference') {

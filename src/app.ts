@@ -54,15 +54,15 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.post('/logout',c=>{deleteCookie(c,'patrick_session',{path:'/'});return c.redirect('/login',303);});
   const body=async(c:any):Promise<Record<string,unknown>>=>c.req.header('Content-Type')?.includes('application/json')?c.req.json():c.req.parseBody();
   const respond=(c:any,data:Record<string,unknown>,redirect:string)=>c.req.header('Accept')?.includes('application/json')?c.json({...data,redirect}):c.redirect(redirect,303);
-  const reviewProject=(projectId:string|undefined,domain:string|undefined)=>{
+  const ownedProject=(projectId:string|undefined,domain?:string)=>{
     const project=store.get('projects',projectId??'');
-    if(!project||project.domain!==domain)throw new DomainError('Project not found.','not_found',404);
-    if(project.ownerId!==config.ownerId)throw new DomainError('Only the project owner may access outcome reviews and references.','forbidden',403);
+    if(!project||domain!==undefined&&project.domain!==domain)throw new DomainError('Project not found.','not_found',404);
+    if(project.ownerId!==config.ownerId)throw new DomainError('Only the current project owner may access this project.','forbidden',403);
     return project;
   };
   app.post('/api/reference-sources',async c=>{
     const data=z.object({projectId:z.string().min(1),domain:z.string().min(1),externalId:z.string().trim().min(1),revision:z.string().trim().min(1),title:z.string().trim().min(1).max(200),content:z.string().min(1).max(1_000_000).refine(text=>text.trim().length>0,'Reference text is required.'),retention:z.enum(['permanent','ephemeral']),locator:z.string().optional()}).strict().parse(await body(c));
-    const project=reviewProject(data.projectId,data.domain);
+    const project=ownedProject(data.projectId,data.domain);
     engine.ingest({...data,kind:'reading',purpose:'reference',authorId:config.ownerId});
     const source=store.get('sources',stableId('source',{projectId:project.id,domain:project.domain},'reading',data.externalId,data.revision))!;
     const {content,...metadata}=source;
@@ -70,37 +70,40 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   });
   app.post('/api/judgments/:id/evidence',async c=>c.json({evidence:recordOutcomeEvidence(store,config,c.req.param('id'),await body(c),config.ownerId)}));
   app.get('/api/reviews',c=>{
-    const project=reviewProject(c.req.query('project'),c.req.query('domain'));
+    const project=ownedProject(c.req.query('project'),c.req.query('domain')??'');
     return c.json({reviews:outcomeReviewViews(store,project)});
   });
   app.post('/api/reviews/run',async c=>{
     const scope=z.object({projectId:z.string().min(1),domain:z.string().min(1)}).strict().parse(await body(c));
-    const project=reviewProject(scope.projectId,scope.domain);
+    const project=ownedProject(scope.projectId,scope.domain);
     runOutcomeReviews(store,new Date(),project);
     return c.json({reviews:outcomeReviewViews(store,project)});
   });
   app.get('/api/state',c=>{
-    const requested=c.req.query('project'),project=requested?store.get('projects',requested):undefined;
-    if(requested&&!project)return c.json({error:'Project not found.'},404);
-    const scope=(v:{projectId:string;domain:string})=>!project||v.projectId===project.id&&v.domain===project.domain;
-    return c.json({mode:config.mode,projects:store.list('projects').filter(p=>!project||p.id===project.id&&p.domain===project.domain),tasks:store.list('tasks').filter(scope),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active'),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100),readiness:readiness({...config,projects:project?[project]:store.list('projects')})});
+    const requested=c.req.query('project'),project=requested?ownedProject(requested):undefined;
+    const projects=project?[project]:store.list('projects').filter(p=>p.ownerId===config.ownerId);
+    const scopes=new Map(projects.map(p=>[p.id,p.domain]));
+    const scope=(v:{projectId:string;domain:string})=>scopes.get(v.projectId)===v.domain;
+    return c.json({mode:config.mode,projects,tasks:store.list('tasks').filter(scope),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active'),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100),readiness:readiness({...config,projects})});
   });
-  app.get('/api/tasks/:id',c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);return c.json({task,question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id),attempts:store.list('attempts').filter(a=>a.taskId===task.id),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
+  app.get('/api/tasks/:id',c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);ownedProject(task.projectId,task.domain);return c.json({task,question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id),attempts:store.list('attempts').filter(a=>a.taskId===task.id),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
   app.get('/api/lookup',c=>{
     const project=store.get('projects',c.req.query('project')??'');
     if(!project||project.domain!==c.req.query('domain'))return c.json({cards:[]});
+    ownedProject(project.id,project.domain);
     return c.json({cards:store.searchCards((c.req.query('q')??'').slice(0,500),project,10)});
   });
-  app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);return c.json(weeklyReport(store,project));});
-  app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);return c.json({question});});
+  app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
+  app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);ownedProject(question.projectId,question.domain);return c.json({question});});
   app.post('/api/tasks',async c=>{
     const value=await body(c),data=z.object({projectId:z.string().min(1),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional()}).parse(value);
+    ownedProject(data.projectId);
     const task=engine.ingest({...data,kind:'manual',externalId:data.externalId??`manual:${randomUUID()}`,authorId:config.ownerId,retention:'permanent'});
     return respond(c,{task,message:'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
   });
   app.post('/api/conversations',async c=>{
     const data=z.object({projectId:z.string(),domain:z.string(),sessionId:z.string().min(1),turnId:z.string().min(1),revision:z.string().min(1),content:z.string().min(1).max(100000),tool:z.enum(['codex','cursor']),retention:z.enum(['permanent','ephemeral'])}).parse(await body(c));
-    const project=store.get('projects',data.projectId);if(!project||project.domain!==data.domain)return c.json({error:'Unknown authorized project.'},403);
+    const project=ownedProject(data.projectId,data.domain);
     const content=data.content.replace(/<patrick-memory>[\s\S]*?<\/patrick-memory>/g,'').trim();
     if(!content)return c.json({recorded:false});
     const task=engine.ingest({projectId:project.id,kind:'conversation',externalId:`${data.tool}:${data.sessionId}:${data.turnId}`,revision:data.revision,title:`${data.tool} · ${data.sessionId.slice(0,40)}`,content,authorId:`tool:${data.tool}`,retention:data.retention,locator:`${data.tool}://${data.sessionId}/${data.turnId}`});
@@ -108,12 +111,15 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   });
   app.post('/api/questions/:id/answer',async c=>{
     const value=await body(c);const answer={...value,questionId:c.req.param('id'),taskVersion:Number(value.taskVersion),questionVersion:Number(value.questionVersion),actorId:config.ownerId,eventId:String(value.eventId??randomUUID())} as QuestionAnswer;
+    const question=store.get('questions',answer.questionId);if(!question)throw new DomainError('Question not found.','not_found',404);ownedProject(question.projectId,question.domain);
     const task=engine.answer(answer);return respond(c,{task,message:'已记录你的决定，原任务继续处理。'},`/tasks/${task.id}`);
   });
-  app.post('/api/tasks/:id/retry',c=>{const task=engine.retry(c.req.param('id'));return respond(c,{task,message:'已安排重试。'},`/tasks/${task.id}`);});
-  app.post('/api/tasks/:id/cancel',c=>{const task=engine.cancel(c.req.param('id'));return respond(c,{task,message:'任务已取消。'},`/tasks/${task.id}`);});
+  const ownedTask=(id:string)=>{const task=store.get('tasks',id);if(!task)throw new DomainError('Task not found.','not_found',404);ownedProject(task.projectId,task.domain);return task;};
+  app.post('/api/tasks/:id/retry',c=>{const task=engine.retry(ownedTask(c.req.param('id')).id);return respond(c,{task,message:'已安排重试。'},`/tasks/${task.id}`);});
+  app.post('/api/tasks/:id/cancel',c=>{const task=engine.cancel(ownedTask(c.req.param('id')).id);return respond(c,{task,message:'任务已取消。'},`/tasks/${task.id}`);});
   app.post('/api/sources/:id/withdraw',c=>{
     const source=store.get('sources',c.req.param('id'));if(!source)throw new DomainError('Source not found.','not_found',404);
+    ownedProject(source.projectId,source.domain);
     engine.withdraw(source.id);return respond(c,{message:'来源已撤回，相关知识与规则已停用。'},`/sources?project=${source.projectId}`);
   });
   app.post('/api/search/rebuild',async c=>{store.rebuildIndex();return respond(c,{message:'已从当前有效资料重建搜索索引。'},'/knowledge');});
@@ -132,7 +138,7 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.onError((error,c)=>{
     const status=error instanceof DomainError?error.status:error instanceof ZodError?400:500;
     const message=error instanceof DomainError?error.message:error instanceof ZodError?error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；'):'处理暂时失败，请稍后重试。';
-    if(c.req.header('Accept')?.includes('text/html')) {
+    if(status!==403&&c.req.header('Accept')?.includes('text/html')) {
       const questionId=c.req.path.match(/^\/api\/questions\/([^/]+)\/answer$/)?.[1],question=questionId?store.get('questions',questionId):undefined;
       const taskId=question?.taskId??c.req.path.match(/^\/api\/tasks\/([^/]+)\//)?.[1];
       const task=taskId?store.get('tasks',taskId):undefined;

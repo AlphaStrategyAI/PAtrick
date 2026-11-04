@@ -227,12 +227,50 @@ export class Store {
     return entity;
   }
 
+  private ordinarySourceIdentity(source: Entities['sources']): boolean {
+    return ['file', 'feishu', 'github', 'conversation', 'manual', 'reading'].includes(source.kind)
+      && typeof source.externalId === 'string' && !!source.externalId.trim()
+      && source.id === stableId('source', { projectId: source.projectId, domain: source.domain }, source.kind, source.externalId, source.revision);
+  }
+
+  /** Missing rows must match a host-generated identity; editable classification is not authority. */
+  private recoverableSourceIdentity(source: Entities['sources'], trustedQuestions: ReadonlyMap<string, Entities['questions']>): boolean {
+    if (this.ordinarySourceIdentity(source)) return true;
+    if (source.kind !== 'conversation' || typeof source.externalId !== 'string' || !source.externalId.startsWith('answer:')) return false;
+    const question = trustedQuestions.get(source.externalId.slice('answer:'.length));
+    if (!question || question.status !== 'answered' || !question.answer || source.id !== stableId('owner-answer', question.id)) return false;
+    const project = this.get('projects', question.projectId), task = this.get('tasks', question.taskId);
+    const primary = task && this.get('sources', task.sourceId);
+    return !!project && !!task && !!primary && question.projectId === source.projectId && question.domain === source.domain
+      && project.domain === source.domain && project.ownerId === question.ownerId && question.answer.actorId === project.ownerId
+      && source.authorId === project.ownerId && task.projectId === source.projectId && task.domain === source.domain && task.version >= question.taskVersion
+      && primary.status === 'active' && primary.revision === task.sourceRevision && primary.projectId === source.projectId && primary.domain === source.domain
+      && source.retention === primary.retention && source.revision === digest(question.answer.text) && source.content === question.answer.text
+      && source.locator === `question:${question.id}@${question.version}`;
+  }
+
   /** Import only our structured card format; existing withdrawal records always win. */
   private recoverVault(): void {
     if (!this.vaultDir) return;
     // Capture authority before any editable projection can be written back into SQLite.
     const trustedSources = new Map(this.list('sources').map(source => [source.id, source]));
-    const trustedTasks = this.list('tasks');
+    const trustedQuestions = new Map(this.list('questions').map(question => [question.id, question]));
+    let trustedTasks: Entities['tasks'][] | undefined;
+    const trustedPaths = new Map<string, { id: string; revision: string }[]>();
+    for (const table of vaultTables) for (const entity of this.list(table)) {
+      const refs = table === 'sources' ? [{ id: entity.id, revision: (entity as Entities['sources']).revision }]
+        : table === 'rules' ? (entity as Entities['rules']).citations.map(c => ({ id: c.sourceId, revision: c.revision }))
+        : table === 'cards' ? [{ id: (entity as Entities['cards']).sourceId, revision: (entity as Entities['cards']).sourceRevision }]
+        : [{ id: (entity as Entities['cases']).sourceId, revision: trustedSources.get((entity as Entities['cases']).sourceId)?.revision ?? '' }, ...((entity as Entities['cases']).decisionSnapshot?.sourceRefs ?? [])];
+      trustedPaths.set(`vault:${relative(this.vaultDir, this.vaultPath(table, entity))}`, refs);
+    }
+    // Legacy SQLite rows have trustworthy path identities even when their projections were edited or removed.
+    for (const source of trustedSources.values()) if (!source.parentSources && source.kind === 'file' && source.externalId.startsWith('vault:')) {
+      const refs = trustedPaths.get(source.externalId);
+      if (refs?.length && !refs.some(ref => ref.id === source.id)) {
+        source.parentSources = refs; this.write('sources', source);
+      }
+    }
     const records: { table: Table; entity: Entities[Table]; path: string; text: string }[] = [];
     const walk = (directory: string) => {
       for (const item of readdirSync(directory, { withFileTypes: true })) {
@@ -253,7 +291,11 @@ export class Store {
     };
     walk(this.vaultDir);
     const order = ['sources', 'cases', 'cards', 'rules'];
-    records.sort((a, b) => order.indexOf(a.table) - order.indexOf(b.table));
+    // Accepted answers depend on primary rows: finish ordinary source recovery first, regardless of filenames.
+    const recoveryOrder = (record: typeof records[number]) => record.table === 'sources'
+      ? this.ordinarySourceIdentity(record.entity as Entities['sources']) ? 0 : 1
+      : order.indexOf(record.table) + 1;
+    records.sort((a, b) => recoveryOrder(a) - recoveryOrder(b));
     const edits: typeof records = [];
     for (const record of records) {
       const { table, entity, path, text } = record;
@@ -266,8 +308,12 @@ export class Store {
         // Purpose normalization is recovery bookkeeping, not an independent content edit.
         sourceEdited = text !== this.markdown(table, entity);
         const canonical = trustedSources.get(s.id);
-        const executable = trustedTasks.some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain);
-        s.purpose = canonical ? canonical.purpose ?? 'task' : executable ? 'task' : 'reference';
+        s.parentSources = canonical?.parentSources;
+        s.purpose = canonical ? canonical.purpose ?? 'task' : (trustedTasks ??= this.list('tasks')).some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
+        if (!canonical && (!this.recoverableSourceIdentity(s, trustedQuestions) || s.kind === 'file' && s.externalId.startsWith('vault:'))) {
+          // Mismatched identities and copies without host provenance cannot recover readable material.
+          s.status = 'withdrawn'; s.content = ''; s.title = '[withdrawn]'; s.locator = `withdrawn:${s.id}`; s.parentSources = []; s.purpose = 'reference'; sourceEdited = false;
+        }
       }
       if (table === 'cards') {
         const c = entity as Entities['cards']; const source = this.get('sources', c.sourceId);
@@ -296,7 +342,10 @@ export class Store {
       const revision=stableId('vault-occurrence',lineage.at(-1)?.id??'first',digest(content));
       // Source purpose was resolved from pre-recovery authority, never from editable frontmatter.
       const purpose=record.table==='sources'?(record.entity as Entities['sources']).purpose??'reference':'task';
-      try { ingestSource(this, { projects: [] }, { projectId: record.entity.projectId, kind: 'file', externalId,revision, title: `Vault edit: ${'title' in record.entity ? record.entity.title : record.entity.id}`, content, locator: record.path, retention: 'permanent',purpose }); }
+      const parentSources = trustedPaths.get(`vault:${relative(this.vaultDir, record.path)}`)
+        ?? (record.table === 'sources' ? [{ id: record.entity.id, revision: (record.entity as Entities['sources']).revision }] : []);
+      if (parentSources.some(ref => { const parent = this.get('sources', ref.id); return parent?.status !== 'active' || parent.revision !== ref.revision; })) continue;
+      try { ingestSource(this, { projects: [] }, { projectId: record.entity.projectId, kind: 'file', externalId,revision, title: `Vault edit: ${'title' in record.entity ? record.entity.title : record.entity.id}`, content, locator: record.path, retention: 'permanent',purpose }, parentSources); }
       catch { /* Revoked/conflicting edits remain intact for explicit review. */ }
     }
   }

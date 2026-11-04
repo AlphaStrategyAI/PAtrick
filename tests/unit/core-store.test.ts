@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../../src/store.js';
+import { ingestSource } from '../../src/intake.js';
 import type { KnowledgeCard, SourceRevision } from '../../src/domain.js';
 
 const roots: string[] = [];
@@ -60,10 +61,13 @@ describe('durable scoped knowledge store', () => {
   });
 
   it('recovers missing SQLite knowledge from permanent Vault cards without reviving revoked evidence', () => {
-    const { store, root } = setup(); const s = source(); store.save('sources', s); store.save('cards', card(s));
+    const { store, root } = setup();
+    store.save('projects', { id: 'one', projectId: 'one', domain: 'personal', name: 'One', description: '', repository: 'owner/repo', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], trustedChecks: ['validate'], trustedAppIds: [1], ownerId: 'owner', autoMerge: false, budgetUsd: 1, createdAt: new Date().toISOString() });
+    const task = ingestSource(store, { projects: [] }, { projectId: 'one', externalId: 'source', revision: 'r1', title: '草稿恢复', content: source().content, locator: 'manual:test', authorId: 'owner' })!;
+    const s = store.get('sources', task.sourceId)!; store.save('cards', card(s));
     const recovered = new Store(join(root, 'recovered.sqlite'), join(root, 'vault')); stores.push(recovered);
-    expect(recovered.searchCards('恢复', s).map(c => c.id)).toEqual(['card-source']);
-    const cardPath = readdirSync(join(root, 'vault'), { recursive: true }).map(String).find(p => p.endsWith('card-source.md'))!;
+    expect(recovered.searchCards('恢复', s).map(c => c.id)).toEqual([`card-${s.id}`]);
+    const cardPath = readdirSync(join(root, 'vault'), { recursive: true }).map(String).find(p => p.endsWith(`card-${s.id}.md`))!;
     const old = readFileSync(join(root, 'vault', cardPath), 'utf8');
     recovered.save('sources', { ...s, status: 'withdrawn', content: '' });
     writeFileSync(join(root, 'vault', cardPath), old);
