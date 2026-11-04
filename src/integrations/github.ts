@@ -1,5 +1,8 @@
 import { DomainError, digest, now, pathAllowed, stableId, type ActionRecord, type AppConfig, type CheckEvidence, type DeliveryReceipt, type DeliveryWriter, type Project, type Task } from '../domain.js';
 import type { Store } from '../store.js';
+import type { RepositoryReadback, RepositoryReadRequest } from '../knowledge-contract.js';
+import type { SourceRevision } from '../domain.js';
+import { readAuthenticatedRepositoryKnowledge } from './repository-knowledge.js';
 
 export function validateDelivery(task: Task, project: Project): void {
   const { plan, artifact, review } = task;
@@ -23,7 +26,17 @@ export function validateChecks(checks: CheckEvidence[], project: Project, headSh
 
 type Json = Record<string, any>;
 export class GitHubWriter implements DeliveryWriter {
-  constructor(private store: Store, private config: AppConfig, private fetcher: typeof fetch = fetch, private apiUrl='https://api.github.com') {}
+  readonly #knowledgeRead:GitHubWriter['readKnowledge'];
+  constructor(private store: Store, private config: AppConfig, private fetcher: typeof fetch = fetch, private apiUrl='https://api.github.com') {
+    // The constructor-created closure brands this read path and captures its transport.
+    const readConfig={githubToken:config.githubToken};
+    this.#knowledgeRead=(project,source,request,signal)=>readAuthenticatedRepositoryKnowledge('github',store,readConfig,fetcher,project,source,request,signal,apiUrl);
+  }
+
+  readKnowledge(project:Project,source:SourceRevision,request:RepositoryReadRequest,signal:AbortSignal):Promise<RepositoryReadback> {
+    if(!(#knowledgeRead in this))throw new DomainError('Concrete authorized repository writer required.','scope',403);
+    return this.#knowledgeRead(project,source,request,signal);
+  }
 
   private async api(path:string, method='GET', body?:unknown, missing=false):Promise<any> {
     if (!this.config.githubToken) throw new DomainError('Set PATRICK_GITHUB_TOKEN for repository delivery.', 'delivery_unready',409);

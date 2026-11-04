@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { HostDispatchPermit } from './billing.js';
-import type { ExperienceDetails } from './knowledge-contract.js';
+import { claimCandidateSchema, requestedRepositoryClaimSchema, type ClaimCandidate, type DecisionGrounds, type ExperienceDetails, type RequestedRepositoryClaim } from './knowledge-contract.js';
 export type { ExperienceDetails } from './knowledge-contract.js';
 
 export type BillingBoundary = 'included-only' | 'metered-only';
@@ -52,6 +52,7 @@ export interface KnowledgeCard extends Scope {
   kind: 'fact' | 'knowledge' | 'experience'; verification: 'reported' | 'verified' | 'inference';
   status: 'active' | 'withdrawn'; aliases: string[]; createdAt: string; expiresAt?: string;
   experience?: ExperienceDetails;
+  claim?: ClaimCandidate; pendingClaim?: RequestedRepositoryClaim;
 }
 export interface Rule extends Scope {
   id: string; title: string; statement: string; conditions: string; exceptions: string;
@@ -125,7 +126,7 @@ export const decisionSchema = z.object({
 }).superRefine((v, ctx) => {
   if (v.action === 'ask' && !v.question) ctx.addIssue({ code: 'custom', message: 'A question with exactly two recommendations is required.' });
 });
-export type Decision = z.infer<typeof decisionSchema>;
+export type Decision = z.infer<typeof decisionSchema> & { grounds?: DecisionGrounds };
 export const executionPlanSchema = z.object({
   taskVersion: z.number().int().positive(), sourceRevision: z.string(), baselineSha: z.string().min(1),
   summary: z.string().min(1), paths: z.array(z.string()).min(1), steps: z.array(z.string()).min(1),
@@ -162,6 +163,7 @@ export const knowledgeOutputSchema = z.object({ cards: z.array(z.object({
   title: z.string().min(1), body: z.string(), quote: z.string().min(1), aliases: z.array(z.string()),
   verification: z.enum(['reported', 'inference']), kind: z.enum(['fact', 'knowledge', 'experience']),
   experience: experienceDetailsSchema.optional(),
+  claim: claimCandidateSchema.optional(), pendingClaim: requestedRepositoryClaimSchema.optional(),
 }).strict().superRefine((candidate, ctx) => {
   if (candidate.kind === 'experience' && !candidate.experience) ctx.addIssue({ code: 'custom', message: 'Experience extraction requires a complete reported description.', path: ['experience'] });
   if (candidate.kind !== 'experience' && candidate.experience !== undefined) ctx.addIssue({ code: 'custom', message: 'Only experience cards may carry experience descriptions.', path: ['experience'] });

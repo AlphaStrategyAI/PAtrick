@@ -9,6 +9,11 @@ import { GitLabWriter } from '../../src/integrations/gitlab.js';
 const BASE = 'a'.repeat(40), HEAD = 'b'.repeat(40), MERGE = 'c'.repeat(40);
 const roots: string[] = [], stores: Store[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+it('knowledge read rejects changed project authorization before delivery transport',async()=>{
+  const s=setup();s.store.save('projects',{...s.project,ownerId:'another-owner'});
+  await expect(s.writer.readKnowledge(s.project,s.source,{repository:s.project.repository,headSha:HEAD,checks:[],filePaths:[]},new AbortController().signal)).rejects.toMatchObject({code:'scope'});
+  expect(s.remote.requests).toEqual([]);expect(s.store.list('actions')).toEqual([]);
+});
 
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'patrick-gitlab-')); roots.push(directory);

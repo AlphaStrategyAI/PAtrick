@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { DomainError, digest, now, pathAllowed, stableId, type ActionRecord, type AppConfig, type CheckEvidence, type DeliveryReceipt, type DeliveryWriter, type Project, type Task } from '../domain.js';
 import type { Store } from '../store.js';
+import type { RepositoryReadback, RepositoryReadRequest } from '../knowledge-contract.js';
+import type { SourceRevision } from '../domain.js';
+import { readAuthenticatedRepositoryKnowledge } from './repository-knowledge.js';
 import { validateChecks, validateDelivery } from './github.js';
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
@@ -34,10 +37,18 @@ function parse<T>(schema:z.ZodType<T>,value:unknown,label:string):T {
 }
 
 export class GitLabWriter implements DeliveryWriter {
+  readonly #knowledgeRead:GitLabWriter['readKnowledge'];
   private readonly gitlabUrl:string|undefined;
   private readonly gitlabToken:string|undefined;
   constructor(private store:Store, config:AppConfig, private fetcher:typeof fetch=fetch) {
     this.gitlabUrl=config.gitlabUrl; this.gitlabToken=config.gitlabToken;
+    const readConfig={gitlabUrl:config.gitlabUrl,gitlabToken:config.gitlabToken};
+    this.#knowledgeRead=(project,source,request,signal)=>readAuthenticatedRepositoryKnowledge('gitlab',store,readConfig,fetcher,project,source,request,signal);
+  }
+
+  readKnowledge(project:Project,source:SourceRevision,request:RepositoryReadRequest,signal:AbortSignal):Promise<RepositoryReadback> {
+    if(!(#knowledgeRead in this))throw new DomainError('Concrete authorized repository writer required.','scope',403);
+    return this.#knowledgeRead(project,source,request,signal);
   }
 
   private approvedBase():string {

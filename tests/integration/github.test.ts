@@ -5,6 +5,11 @@ import { readConfig } from '../../src/config.js';
 import { digest, now, type Project, type Task } from '../../src/domain.js';
 const BASE='a'.repeat(40),HEAD='b'.repeat(40),MERGE='c'.repeat(40),stores:Store[]=[];
 afterEach(()=>stores.splice(0).forEach(store=>store.close()));
+it('knowledge read rejects a stale source before any delivery transport',async()=>{
+  const s=setup(),source=s.store.get('sources','source')!;s.store.save('sources',{...source,status:'withdrawn'});
+  await expect(s.writer.readKnowledge(s.project,source,{repository:s.project.repository,headSha:HEAD,checks:[],filePaths:[]},new AbortController().signal)).rejects.toMatchObject({code:'stale_source'});
+  expect(s.remote.requests).toEqual([]);expect(s.store.list('actions')).toEqual([]);
+});
 function setup(){
   const store=new Store(':memory:');stores.push(store);
   const project:Project={id:'p',projectId:'p',domain:'personal',name:'P',description:'',repository:'owner/repo',repositoryProvider:'github',prdPath:'docs/PRD.md',allowedPaths:['docs/PRD.md'],trustedChecks:['validate'],trustedAppIds:[15368],ownerId:'owner',autoMerge:true,budgetUsd:1,createdAt:now()};
