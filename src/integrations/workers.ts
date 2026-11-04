@@ -42,7 +42,7 @@ const cleanupScript=String.raw`const fs=require('node:fs');const d=process.argv[
 export const guestScripts={prepare:prepareScript,tests:testsScript,read:readScript,cleanup:cleanupScript};
 
 function guestProcess(instance:string,args:string[],signal?:AbortSignal) {
-  return spawn('limactl',['shell',instance,'--',...args],{stdio:['pipe','pipe','pipe'],signal,env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR}});
+  return spawn('limactl',['shell',instance,'--',...args],{stdio:['pipe','pipe','pipe'],signal,env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LIMA_HOME:process.env.LIMA_HOME}});
 }
 async function collect(instance:string,args:string[],input:string,signal?:AbortSignal):Promise<string> {
   return new Promise((resolve,reject)=>{
