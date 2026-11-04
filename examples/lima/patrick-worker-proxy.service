@@ -1,0 +1,31 @@
+[Unit]
+Description=PAtrick restricted worker CONNECT proxy
+Requires=patrick-worker-firewall.service
+After=patrick-worker-firewall.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=patrick-proxy
+Group=patrick-proxy
+SupplementaryGroups=
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+ExecStart=/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C /usr/local/bin/node --no-addons /usr/local/libexec/patrick-worker/connect-proxy.mjs
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=15
+TimeoutStopSec=10
+LimitNOFILE=256
+TasksMax=32
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

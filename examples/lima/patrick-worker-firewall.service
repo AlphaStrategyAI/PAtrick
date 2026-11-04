@@ -1,0 +1,13 @@
+[Unit]
+Description=PAtrick worker owned firewall table
+Before=patrick-worker-proxy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C /usr/local/bin/node --no-addons /usr/local/libexec/patrick-worker/probe-guest.mjs --operation firewall-load
+TimeoutStartSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

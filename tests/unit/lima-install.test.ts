@@ -1,0 +1,455 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { runInNewContext } from 'node:vm';
+const spawned=vi.hoisted(()=>vi.fn());
+vi.mock('node:child_process',()=>({spawnSync:spawned}));
+
+// Import by URL so these administrative JavaScript entry points need no unused
+// application declarations. No test invokes a host command or requires root.
+const installerUrl=new URL('../../scripts/lima/install-guest.mjs',import.meta.url).href;
+const probeUrl=new URL('../../scripts/lima/probe-guest.mjs',import.meta.url).href;
+const install=await import(installerUrl);
+const probe=await import(probeUrl);
+const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+const policy={version:1,proxyUser:'patrick-proxy',workers:['grok','codex','dsh'].map((runner,index)=>({runner,user:`patrick-${runner}`,projectId:'fixture',domain:'personal',proxyPort:18743+index,hosts:[]})),deniedCidrs:['10.0.0.0/8','::/0']};
+const guest={addresses:[{family:4,address:'192.0.2.10/32'}],routes:[{family:4,destination:'0.0.0.0/0',gateway:'192.0.2.1'}],resolvers:['192.0.2.53'],hostAliases:['192.0.2.2']};
+function inventory() {
+  const data={version:1,collectedAt:'2026-11-04T00:00:00.000Z',sources:['guest-addresses','guest-routes','guest-resolvers','guest-host-aliases','lima-host-gateway','mac-addresses','lan-vpn-routes','host-resolvers','translator','guest-admin-sockets'].map(kind=>({kind,version:1})),sourceVersion:1,translator:'unknown',translatorPrefixes:[],extraPrivilegedSocketPaths:[],guest,host:{addresses:[],routes:[],resolvers:[]},lima:{hostAddresses:['192.0.2.2'],gatewayAddresses:['192.0.2.1']},exclusions:[
+    {family:4,cidr:'192.0.2.10/32',categories:['guest']}, {family:4,cidr:'192.0.2.1/32',categories:['gateway']}, {family:4,cidr:'192.0.2.53/32',categories:['resolver']}, {family:4,cidr:'192.0.2.2/32',categories:['host']},
+  ],routes:[{family:4,cidr:'0.0.0.0/0',classification:'internet'},{family:4,cidr:'0.0.0.0/1',classification:'internet'},{family:4,cidr:'128.0.0.0/1',classification:'internet'}]};
+  return {...data,fingerprint:hash(JSON.stringify(data))};
+}
+function accounts() {return Object.fromEntries(['patrick-proxy','patrick-grok','patrick-codex','patrick-dsh'].map((name,index)=>[name,{uid:1100+index,gid:1100+index,home:`/var/lib/${name}`,groups:[],shell:'/usr/sbin/nologin',locked:true,primaryGroup:name}]));}
+
+describe('fixed installer and probe arguments',()=>{
+  it('clears loader, Node, startup, HOME, PATH and cwd contamination before fixed administrative children',()=>{
+    const names=['LD_PRELOAD','LD_LIBRARY_PATH','NODE_OPTIONS','NODE_PATH','ENV','BASH_ENV','HOME','PATH','PWD','OLDPWD'];
+    try{for(const name of names)vi.stubEnv(name,'fixture-contamination');spawned.mockReturnValue({status:0,stdout:'fixture'});install.productionDependencies().run('/usr/bin/systemctl',['--version']);expect(spawned).toHaveBeenLastCalledWith('/usr/bin/systemctl',['--version'],expect.objectContaining({cwd:'/',env:{PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C'}}));const sudo=fs.readFileSync(new URL('../../examples/lima/patrick-worker-sudoers',import.meta.url),'utf8');for(const token of ['env_reset','!setenv','NOSETENV','LD_*','NODE_*','ENV','BASH_ENV','HOME','PATH','PWD'])expect(sudo).toContain(token);const bootstrap=fs.readFileSync(new URL('../../examples/lima/patrick-worker-probe',import.meta.url),'utf8');expect(bootstrap.startsWith('#!/usr/bin/dash\nexec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C')).toBe(true);expect(bootstrap).toContain('/usr/local/bin/node --no-addons');expect(bootstrap).not.toContain('/usr/bin/env node');}finally{vi.unstubAllEnvs();}
+  });
+  it('accepts only absolute policy/artifact paths and one mode',()=>{
+    expect(install.parseInstallArguments(['--policy','/stage/policy.json','--artifacts','/stage','--check'])).toEqual({policyPath:'/stage/policy.json',artifactDir:'/stage',apply:false});
+  });
+  it.each([[],['--policy','relative','--artifacts','/stage','--check'],['--policy','/a/../policy','--artifacts','/stage','--check'],['--policy','/p','--policy','/p','--artifacts','/stage','--check'],['--policy','/p','--artifacts','/stage','--check','--apply'],['--policy','/p','--artifacts','/stage','--unknown'],['--policy','/p','--artifacts','/stage']].map(args=>({args})))('rejects ambiguous installer argv %j',({args})=>expect(()=>install.parseInstallArguments(args)).toThrow('arguments'));
+  it('accepts exactly three finite probe operations without command/path overrides',()=>{
+    for(const operation of ['snapshot','firewall-load','synthetic-network'])expect(probe.parseProbeArguments(['--operation',operation])).toBe(operation);
+    for(const args of [[],['--operation','stop'],['--operation','snapshot','--path','/tmp/a'],['--operation','snapshot','--operation','snapshot']])expect(()=>probe.parseProbeArguments(args)).toThrow('arguments');
+  });
+});
+
+describe('account and route inventory preconditions',()=>{
+  it('validates locked, private, alias-free account identities and explicitly plans missing allocation',()=>{
+    const facts={admin:{uid:1000,gid:1000,home:'/home/admin',groups:[27],shell:'/bin/bash',locked:false,primaryGroup:'admin'},...accounts()};
+    expect(install.planAccounts(policy,facts,'admin').missing).toEqual([]);
+    delete (facts as Record<string,unknown>)['patrick-dsh'];
+    expect(install.planAccounts(policy,facts,'admin').missing).toEqual(['patrick-dsh']);
+  });
+  it.each(['uid','gid','home','groups','shell','locked','primaryGroup','alias','admin'])('rejects an existing conflicting %s without repurposing',field=>{
+    const facts:any={admin:{uid:1000,gid:1000,home:'/home/admin',groups:[],shell:'/bin/bash',locked:false,primaryGroup:'admin'},...accounts()};
+    const changes:any={uid:0,gid:999,home:'/root',groups:[27],shell:'/bin/bash',locked:false,primaryGroup:'other'};
+    if(field==='alias')facts.alias={...facts['patrick-grok']};
+    else if(field==='admin')facts.admin={...facts['patrick-grok']};
+    else facts['patrick-grok'][field]=changes[field];
+    expect(()=>install.planAccounts(policy,facts,'admin')).toThrow('account_conflict');
+  });
+  it('keeps default/split routes as context and explicitly denies unknown IPv6 translators',()=>{
+    const result=install.validateInventory(inventory(),policy,guest,Date.parse('2026-11-04T00:01:00Z'));
+    expect(result.ipv6UpstreamDisabled).toBe(true);
+    expect(result.deniedCidrs).toContain('::/0');
+    expect(result.deniedCidrs).not.toContain('0.0.0.0/0');
+    expect(result.deniedCidrs).toContain('192.0.2.1/32');
+  });
+  it.each(['missing-source','fingerprint','guest-drift','unknown-route','noncanonical','missing-gateway','missing-resolver','stale','future','overflow'])('fails closed for %s inventory',kind=>{
+    const value:any=inventory();let live=guest;
+    if(kind==='missing-source')value.sources.pop();
+    if(kind==='fingerprint')value.fingerprint='0'.repeat(64);
+    if(kind==='guest-drift')live={...guest,resolvers:['192.0.2.54']};
+    if(kind==='unknown-route')value.routes[0].classification='unknown';
+    if(kind==='noncanonical')value.exclusions[0].cidr='192.0.2.11/24';
+    if(kind==='missing-gateway')value.exclusions=value.exclusions.filter((entry:any)=>!entry.categories.includes('gateway'));
+    if(kind==='missing-resolver')value.exclusions=value.exclusions.filter((entry:any)=>!entry.categories.includes('resolver'));
+    if(kind==='stale')value.collectedAt='2020-01-01T00:00:00.000Z';
+    if(kind==='future')value.collectedAt='2030-01-01T00:00:00.000Z';
+    if(kind==='overflow')value.exclusions=Array.from({length:129},(_,index)=>({family:4,cidr:`198.51.100.${index}/32`,categories:['host']}));
+    if(kind!=='fingerprint'){const {fingerprint:_,...data}=value;value.fingerprint=hash(JSON.stringify(data));}
+    expect(()=>install.validateInventory(value,policy,live,Date.parse('2026-11-04T00:01:00Z'))).toThrow('inventory_incomplete');
+  });
+  it('requires actual public host and host-resolver exclusions rather than category labels alone',()=>{
+    const value:any=inventory();value.host.addresses=['8.8.4.4'];value.host.resolvers=['8.8.8.8'];const {fingerprint:_,...data}=value;value.fingerprint=hash(JSON.stringify(data));expect(()=>install.validateInventory(value,policy,guest,Date.parse('2026-11-04T00:01:00Z'))).toThrow('inventory_incomplete');
+  });
+  it('deduplicates one CIDR shared by the Lima host and gateway classifications',()=>{
+    const value:any=inventory();value.lima.hostAddresses=['192.0.2.1'];const gateway=value.exclusions.find((entry:any)=>entry.cidr==='192.0.2.1/32');delete gateway.category;gateway.categories=['gateway','host'];const {fingerprint:_,...data}=value;value.fingerprint=hash(JSON.stringify(data));expect(install.validateInventory(value,policy,guest,Date.parse('2026-11-04T00:01:00Z')).deniedCidrs.filter((cidr:string)=>cidr==='192.0.2.1/32')).toHaveLength(1);
+  });
+  it.each([{paths:['relative']},{paths:['/run/../tmp/agent']},{paths:['/run/*.sock']},{paths:['/run/agent\n.sock']},{paths:['@privileged-abstract']},{paths:['/run/admin.sock','/run/admin.sock']},{paths:Array.from({length:65},(_,index)=>`/run/admin${index}.sock`)},{paths:undefined}])('rejects unsupported or unbounded privileged socket inventory %j',({paths})=>{
+    const value:any=inventory();if(paths===undefined)delete value.extraPrivilegedSocketPaths;else value.extraPrivilegedSocketPaths=paths;const {fingerprint:_,...data}=value;value.fingerprint=hash(JSON.stringify(data));expect(()=>install.validateInventory(value,policy,guest,Date.parse('2026-11-04T00:01:00Z'))).toThrow('inventory_incomplete');
+  });
+});
+
+// Filesystem fixture is bounded to a temporary directory. Ownership is synthetic
+// Linux metadata; no real chown, user creation, nft, sudo or systemd is executed.
+function filesystemFixture() {
+  const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'patrick-install-')));
+  const owners=new Map<string,{uid:number;gid:number}>();const mutations:string[]=[];
+  const physical=(path:string)=>join(root,path);
+  const io:any={closeSync:fs.closeSync,fsyncSync:fs.fsyncSync,
+    lstatSync:(path:string)=>{const stat=fs.lstatSync(physical(path));return Object.assign(Object.create(stat),{uid:owners.get(path)?.uid??0,gid:owners.get(path)?.gid??0});},
+    readFileSync:(path:string|number,...args:any[])=>fs.readFileSync(typeof path==='number'?path:physical(path),...args as [any]),
+    openSync:(path:string,flags:number,mode?:number)=>{if(flags&fs.constants.O_CREAT)mutations.push(`open:${path}`);return fs.openSync(physical(path),flags,mode);},
+    fstatSync:(fd:number)=>{const stat=fs.fstatSync(fd);return Object.assign(Object.create(stat),{uid:0,gid:0});},
+    readdirSync:(path:string)=>fs.readdirSync(physical(path)),readlinkSync:(path:string,options:any)=>{const raw=fs.readlinkSync(physical(path),{encoding:'buffer'});const prefix=Buffer.from(root+'/');const bytes=raw.subarray(0,prefix.length).equals(prefix)?Buffer.concat([Buffer.from('/'),raw.subarray(prefix.length)]):raw;return options?.encoding==='buffer'?bytes:bytes.toString('utf8');},
+    realpathSync:(path:string)=>fs.realpathSync(physical(path)).slice(root.length)||'/',
+    mkdirSync:(path:string,options:any)=>{mutations.push(`mkdir:${path}`);return fs.mkdirSync(physical(path),options);},
+    rmdirSync:(path:string)=>{mutations.push(`rmdir:${path}`);return fs.rmdirSync(physical(path));},
+    writeFileSync:(path:string|number,data:any,options:any)=>{mutations.push(`write:${path}`);return fs.writeFileSync(typeof path==='number'?path:physical(path),data,options);},
+    renameSync:(from:string,to:string)=>{mutations.push(`rename:${to}`);return fs.renameSync(physical(from),physical(to));},
+    unlinkSync:(path:string)=>{mutations.push(`unlink:${path}`);return fs.unlinkSync(physical(path));},
+    chmodSync:(path:string,mode:number)=>{mutations.push(`chmod:${path}`);return fs.chmodSync(physical(path),mode);},
+    chownSync:(path:string,uid:number,gid:number)=>{mutations.push(`chown:${path}`);owners.set(path,{uid,gid});},
+  };
+  const file=(path:string,data:string,mode=0o644)=>{fs.mkdirSync(dirname(physical(path)),{recursive:true,mode:0o755});fs.writeFileSync(physical(path),data,{mode});fs.chmodSync(physical(path),mode);};
+  fs.chmodSync(root,0o755);
+  return {io,file,owners,mutations,physical,close:()=>fs.rmSync(root,{recursive:true,force:true})};
+}
+describe('trusted artifact set',()=>{
+  it.each(['invalid-utf8','mutable-hop','parent-hop','nonexecutable','writable-file'])('rejects a %s executable chain in kernel traversal order',kind=>{
+    const fixture=filesystemFixture();try{
+      fixture.file('/opt/trusted/tool','fixture',kind==='nonexecutable'?0o644:kind==='writable-file'?0o777:0o755);fixture.file('/usr/bin/placeholder','');fs.unlinkSync(fixture.physical('/usr/bin/placeholder'));
+      if(kind==='invalid-utf8'){fixture.file('/opt/\uFFFD/tool','fixture',0o755);fs.symlinkSync(Buffer.concat([Buffer.from(fixture.physical('/opt/')),Buffer.from([0xff]),Buffer.from('/tool')]),fixture.physical('/usr/bin/tool'));}
+      else if(kind==='mutable-hop'||kind==='parent-hop'){fixture.file('/var/lib/patrick-grok/hop','fixture',0o755);fixture.owners.set('/var/lib/patrick-grok',{uid:1101,gid:1101});fs.unlinkSync(fixture.physical('/var/lib/patrick-grok/hop'));fs.symlinkSync(fixture.physical('/opt/trusted/tool'),fixture.physical('/var/lib/patrick-grok/hop'));fs.symlinkSync(kind==='parent-hop'?fixture.physical('/')+'/var/lib/patrick-grok/../../../opt/trusted/tool':fixture.physical('/var/lib/patrick-grok/hop'),fixture.physical('/usr/bin/tool'));}
+      else fs.symlinkSync(fixture.physical('/opt/trusted/tool'),fixture.physical('/usr/bin/tool'));
+      expect(()=>install.trustedExecutable('/usr/bin/tool',fixture.io)).toThrow('dependency');
+    }finally{fixture.close();}
+  });
+  it('preserves BOM and literal replacement-character bytes in valid executable links',()=>{
+    const fixture=filesystemFixture();try{const target='\uFEFF目标-\uFFFD/tool';fixture.file('/usr/bin/'+target,'fixture',0o755);fs.symlinkSync(target,fixture.physical('/usr/bin/tool'));expect(()=>install.trustedExecutable('/usr/bin/tool',fixture.io)).not.toThrow();}finally{fixture.close();}
+  });
+  it('rejects a root setuid Node dependency and accepts a trusted resolver file symlink',async()=>{
+    const fixture=await prepared();try{const lstat=fixture.io.lstatSync;fixture.io.lstatSync=(path:string)=>{const stat=lstat(path);return path===install.NODE?Object.assign(Object.create(stat),{mode:stat.mode|0o4000}):stat;};await expect(install.installGuest(fixture.input,fixture.deps)).rejects.toThrow('dependency');fixture.io.lstatSync=lstat;fixture.file('/run/systemd/resolve/resolv.conf','nameserver 192.0.2.53\n');fs.unlinkSync(fixture.physical('/etc/resolv.conf'));fs.symlinkSync(fixture.physical('/run/systemd/resolve/resolv.conf'),fixture.physical('/etc/resolv.conf'));await expect(install.installGuest(fixture.input,fixture.deps)).resolves.toMatchObject({applied:false});expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it('rejects partial future artifacts instead of installing placeholders',()=>{
+    const fixture=filesystemFixture();
+    try {fixture.file('/stage/manifest.json',JSON.stringify({version:1}));expect(()=>install.inspectArtifacts('/stage',fixture.io)).toThrow('untrusted_artifact');expect(fixture.mutations).toEqual([]);} finally {fixture.close();}
+  });
+  it('rejects symlinks, mutable ancestors and nonroot inputs before evaluating source',()=>{
+    for(const kind of ['symlink','writable','owner']){
+      const fixture=filesystemFixture();
+      try {
+        fixture.file('/stage/manifest.json','{}');
+        if(kind==='symlink'){fs.renameSync(fixture.physical('/stage/manifest.json'),fixture.physical('/stage/other'));fs.symlinkSync('other',fixture.physical('/stage/manifest.json'));}
+        if(kind==='writable')fs.chmodSync(fixture.physical('/stage'),0o777);
+        if(kind==='owner')fixture.owners.set('/stage/manifest.json',{uid:1101,gid:1101});
+        expect(()=>install.inspectArtifacts('/stage',fixture.io)).toThrow('untrusted_artifact');expect(fixture.mutations).toEqual([]);
+      } finally {fixture.close();}
+    }
+  });
+});
+
+async function prepared() {
+  const fixture=filesystemFixture(),calls:{path:string;args:string[];input?:string}[]=[],summaries:any[]=[];
+  const directory=new URL('../../scripts/lima/',import.meta.url);
+  for(const name of ['install-guest.mjs','probe-guest.mjs','policy.mjs','worker-enter.mjs'])fixture.file(decodeURI(new URL(name,directory).pathname),fs.readFileSync(new URL(name,directory),'utf8'));
+  const contents:Record<string,string>={};
+  for(const name of install.ARTIFACTS){
+    if(name==='route-inventory.json')contents[name]=JSON.stringify(inventory());
+    else if(name==='stage-lifetime.mjs'||name==='synthetic-worker.mjs')contents[name]='// Hermetic future-unit artifact fixture; never executed.\n';
+    else if(name.startsWith('patrick-worker'))contents[name]=fs.readFileSync(new URL('../../examples/lima/'+name,import.meta.url),'utf8');
+    else contents[name]=fs.readFileSync(new URL(name,directory),'utf8');
+    fixture.file('/stage/'+name,contents[name]!,name==='route-inventory.json'?0o600:0o644);
+  }
+  fixture.file('/policy-input',JSON.stringify(policy));
+  const manifest={version:1,controlAdmin:'admin',reviewedSources:{identity:'5c3f5188e41f04eff3a2564cd38208a7e3768019',proxy:'43659a3d6dc7a22e914ef654163842b158de428c'},policyHash:hash(JSON.stringify(policy)),files:Object.fromEntries(Object.entries(contents).map(([name,text])=>[name,hash(text)]))};
+  fixture.file('/stage/manifest.json',JSON.stringify(manifest));
+  const accountFacts=accounts();
+  fixture.file('/etc/passwd','root:x:0:0::/root:/bin/sh\nadmin:x:1000:1000::/home/admin:/bin/bash\n'+Object.entries(accountFacts).map(([name,account])=>`${name}:x:${account.uid}:${account.gid}::${account.home}:${account.shell}`).join('\n')+'\n');
+  fixture.file('/etc/group','root:x:0:\nadmin:x:1000:\n'+Object.entries(accountFacts).map(([name,account])=>`${name}:x:${account.gid}:`).join('\n')+'\n');
+  fixture.file('/etc/shadow','root:!:1:0:99999:7:::\nadmin:$fixture:1:0:99999:7:::\n'+Object.keys(accountFacts).map(name=>`${name}:!:1:0:99999:7:::`).join('\n')+'\n',0o600);
+  for(const [name,account] of Object.entries(accountFacts)){fs.mkdirSync(fixture.physical(`/var/lib/${name}`),{recursive:true,mode:0o700});fixture.owners.set(`/var/lib/${name}`,{uid:account.uid,gid:account.gid});}
+  for(const path of ['/usr/local/bin/node',install.NODE,'/usr/bin/env','/usr/bin/dash','/usr/bin/setpriv','/usr/sbin/nft','/usr/bin/systemctl','/usr/bin/systemd-run','/usr/bin/sudo','/usr/sbin/visudo','/usr/sbin/useradd','/usr/sbin/groupadd','/usr/sbin/nologin','/usr/sbin/ip'])fixture.file(path,'fixture executable',0o755);
+  fs.unlinkSync(fixture.physical('/usr/local/bin/node'));fs.symlinkSync(fixture.physical(install.NODE),fixture.physical('/usr/local/bin/node'));
+  for(const path of ['/usr/local/libexec','/etc/systemd/system','/etc/sudoers.d','/run','/proc/4321/fd'])fs.mkdirSync(fixture.physical(path),{recursive:true,mode:0o755});
+  fixture.file('/etc/resolv.conf','nameserver 192.0.2.53\n');fixture.file('/etc/hosts','127.0.0.1 localhost\n::1 localhost\n192.0.2.2 host.lima.internal\n');fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n');
+  fixture.file('/proc/4321/status','Name:\tnode\nUid:\t1100\t1100\t1100\t1100\nGid:\t1100\t1100\t1100\t1100\nGroups:\t\n');
+  fixture.file('/proc/sys/kernel/random/boot_id','01234567-89ab-4cde-8fab-0123456789ab\n');fixture.file('/proc/5678/stat','5678 (node) '+['S',...Array(18).fill('0'),'12345'].join(' ')+'\n');fixture.file('/proc/5678/status','Uid:\t0\t0\t0\t0\n');fixture.file('/proc/5678/cmdline',Buffer.from(['/usr/local/bin/node','--no-addons',decodeURI(new URL('install-guest.mjs',directory).pathname),'--policy','/policy-input','--artifacts','/stage','--apply',''].join('\0')).toString());fs.symlinkSync(fixture.physical(install.NODE),fixture.physical('/proc/5678/exe'));
+  fixture.file('/proc/sys/kernel/hostname','fixture-host\n');
+  fixture.file('/proc/4321/net/tcp','header\n'+[18743,18744,18745].map((port,index)=>`0: 0100007F:${port.toString(16)} 00000000:0000 0A 0:0 0:0 0 1100 0 ${9000+index} 1`).join('\n')+'\n');fixture.file('/proc/4321/net/tcp6','header\n');
+  for(let index=0;index<3;index++)fs.symlinkSync(`socket:[${9000+index}]`,fixture.physical(`/proc/4321/fd/${index}`));
+  const policyLibrary=await import(new URL('policy.mjs',directory).href),entryLibrary=await import(new URL('worker-enter.mjs',directory).href);
+  let liveNft:any=null,transactionText='',failCommand='',activeState='active';
+  const match=(left:any,right:any)=>({match:{op:'==',left,right}});
+  function kernelNft(){const current=install.readAccounts(deps).facts,base={family:'inet',table:'patrick_worker'};return {nftables:[{metainfo:{version:'1.0.9',release_name:'fixture',json_schema_version:1}},{table:{family:'inet',name:'patrick_worker'}},{chain:{...base,name:'output',type:'filter',hook:'output',prio:-50,policy:'accept'}},...policy.workers.map(worker=>({chain:{...base,name:worker.runner+'_out'}})),...policy.workers.flatMap(worker=>[{rule:{...base,chain:'output',expr:[match({meta:{key:'skuid'}},current[worker.user]!.uid),{jump:{target:worker.runner+'_out'}}]}},{rule:{...base,chain:worker.runner+'_out',expr:[match({meta:{key:'oifname'}},'lo'),match({payload:{protocol:'ip',field:'daddr'}},'127.0.0.1'),match({payload:{protocol:'tcp',field:'dport'}},worker.proxyPort),{accept:null}]}},{rule:{...base,chain:worker.runner+'_out',expr:[{reject:{type:'icmpx',expr:'admin-prohibited'}}]}}])]};}
+  const deps={io:fixture.io,installerPid:5678,effectiveUid:()=>0,now:()=>Date.parse('2026-11-04T00:01:00Z'),loadModules:async()=>({...policyLibrary,...entryLibrary}),summary:(value:any)=>summaries.push(value),run:(path:string,args:string[],input?:string)=>{
+    calls.push({path,args:[...args],input});const key=path+' '+args.join(' ');if(failCommand&&key.includes(failCommand))return {status:1,stdout:'private secret must not be reported'};
+    let stdout='';
+    if(path==='/usr/local/bin/node')stdout='v24.22.2\n';
+    else if(path==='/usr/bin/env')stdout='--ignore-environment';
+    else if(path==='/usr/bin/systemd-run')stdout='--unit --property --wait --pipe --collect';
+    else if(path==='/usr/bin/sudo')stdout=`User ${args[3]} is not allowed to run sudo on fixture-host.\n`;
+    else if(path==='/usr/bin/setpriv')stdout=args[0]==='--help'?'--reuid --regid --clear-groups --no-new-privs --bounding-set --inh-caps --ambient-caps':'denied\n';
+    else if(path==='/usr/sbin/ip')stdout=JSON.stringify(args.includes('address')?[{addr_info:[{family:'inet',local:'192.0.2.10',scope:'global'}]}]:args.includes('-4')?[{dst:'default',gateway:'192.0.2.1'}]:[]);
+    else if(path==='/usr/sbin/nft'){
+      if(args[0]==='--version')stdout='nftables v1.0.9 (fixture)\n';
+      else if(args.join(' ')==='-j list tables')stdout=JSON.stringify({nftables:liveNft?[{table:{family:'inet',name:'unrelated'}},{table:{family:'inet',name:'patrick_worker'}}]:[{table:{family:'inet',name:'unrelated'}}]});
+      else if(args.join(' ')==='-j list table inet patrick_worker')stdout=JSON.stringify(liveNft);
+      else if(args[0]==='-c')transactionText=fixture.io.readFileSync(args[2],'utf8');
+      else if(args[0]==='-f'){expect(fixture.io.readFileSync(args[1],'utf8')).toBe(transactionText);liveNft=kernelNft();}
+      else throw Error('unexpected nft command');
+    }
+    else if(path==='/usr/bin/systemctl'){
+      if(args[0]==='--version')stdout='systemd 255 (fixture)\n';
+      else if(args[0]==='list-units')stdout='';
+      else if(args.includes('--property=FragmentPath,DropInPaths,LoadState')){const name=args[1];const loaded=fs.existsSync(fixture.physical('/etc/systemd/system/'+name));stdout=`FragmentPath=${loaded?'/etc/systemd/system/'+name:''}\nDropInPaths=\nLoadState=${loaded?'loaded':'not-found'}\n`;}
+      else if(args.includes('--property=User,Group,MainPID,ActiveState,SubState,FragmentPath,DropInPaths'))stdout=`User=patrick-proxy\nGroup=patrick-proxy\nMainPID=4321\nActiveState=${activeState}\nSubState=running\nFragmentPath=/etc/systemd/system/patrick-worker-proxy.service\nDropInPaths=\n`;
+      else if(args.includes('--property=ActiveState,SubState,MainPID'))stdout='ActiveState=inactive\nSubState=dead\nMainPID=0\n';
+      else if(args.some(arg=>arg.startsWith('--property=NoNewPrivileges')))stdout='MemoryMax=268435456\nTasksMax=32\nPrivateNetwork=no\nAmbientCapabilities=\nCapabilityBoundingSet=\nNoNewPrivileges=yes\nLimitNOFILE=256\n';
+      else if(!['daemon-reload','enable','start','stop'].includes(args[0]!))throw Error('unexpected systemctl command');
+    }else if(path==='/usr/sbin/groupadd'){if(args[0]==='--help')stdout='--gid';else{const name=args.at(-1),id=args[1];fixture.file('/etc/group',fixture.io.readFileSync('/etc/group','utf8')+`${name}:x:${id}:\n`);}}
+    else if(path==='/usr/sbin/useradd'){if(args[0]==='--help')stdout='--uid --gid --no-user-group --no-create-home --home-dir --shell --password';else{const name=args.at(-1),uid=args[1],gid=args[3];fixture.file('/etc/passwd',fixture.io.readFileSync('/etc/passwd','utf8')+`${name}:x:${uid}:${gid}::/var/lib/${name}:/usr/sbin/nologin\n`);fixture.file('/etc/shadow',fixture.io.readFileSync('/etc/shadow','utf8')+`${name}:!:1:0:99999:7:::\n`,0o600);}}
+    else if(path!=='/usr/sbin/visudo')throw Error('unexpected process '+path);
+    return {status:0,stdout,stderr:''};
+  }};
+  fixture.mutations.length=0;
+  return {...fixture,deps,calls,summaries,manifest,contents,kernelNft,transaction:()=>transactionText,setFailure:(value:string)=>{failCommand=value;},setNft:(value:any)=>{liveNft=value;},setActive:(value:string)=>{activeState=value;},input:{policyPath:'/policy-input',artifactDir:'/stage',apply:false}};
+}
+
+describe('hermetic check/apply control plane',()=>{
+  function stageGeneration(fixture:Awaited<ReturnType<typeof prepared>>,kind:string) {
+    const value=inventory();
+    value.collectedAt='2026-11-04T02:00:00.000Z';
+    const {fingerprint:_,...data}=value;
+    value.fingerprint=hash(JSON.stringify(data));
+    fixture.contents['route-inventory.json']=JSON.stringify(value);
+    if(kind==='template')fixture.contents['patrick-worker-proxy.service']+='\n# Reviewed generation update\n';
+    for(const name of ['route-inventory.json','patrick-worker-proxy.service']){
+      fixture.file('/stage/'+name,fixture.contents[name]!,name==='route-inventory.json'?0o600:0o644);
+      fixture.manifest.files[name]=hash(fixture.contents[name]!);
+    }
+    fixture.file('/stage/manifest.json',JSON.stringify(fixture.manifest));
+    fixture.deps.now=()=>Date.parse('2026-11-04T02:01:00Z');
+  }
+  it.each(['inventory','template'])('updates a trusted %s generation after old inventory expires, without absorbing old metadata as readiness',async kind=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      const identities=install.readAccounts(fixture.deps),oldManifest=fixture.io.readFileSync('/etc/patrick-worker/manifest.json','utf8');
+      stageGeneration(fixture,kind);
+      fixture.mutations.length=0;fixture.calls.length=0;
+      await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('inventory_incomplete');
+      await expect(install.installGuest(fixture.input,fixture.deps)).rejects.toThrow();
+      expect(fixture.mutations).toEqual([]);
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).resolves.toMatchObject({applied:true});
+      expect(install.readAccounts(fixture.deps)).toEqual(identities);
+      expect(fixture.io.readFileSync('/etc/patrick-worker/manifest.json','utf8')).not.toBe(oldManifest);
+      const transaction=fixture.calls.find(call=>call.path==='/usr/sbin/nft'&&call.args[0]==='-c');
+      expect(transaction).toBeDefined();
+      expect(fixture.transaction().startsWith('delete table inet patrick_worker\ntable inet patrick_worker')).toBe(true);
+      expect(fixture.transaction()).not.toContain('unrelated');
+      expect(fixture.calls.filter(call=>call.path==='/usr/sbin/nft'&&call.args[0]==='-f')).toHaveLength(1);
+      expect(fixture.calls.every(call=>!call.args.includes('flush')&&!call.args.includes('unrelated'))).toBe(true);
+      await expect(probe.probeGuest('snapshot',fixture.deps)).resolves.toMatchObject({outcome:'pass'});
+      fixture.mutations.length=0;fixture.calls.length=0;
+      await install.installGuest(fixture.input,fixture.deps);
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      expect(fixture.mutations).toEqual([]);
+      expect(fixture.calls.filter(call=>['start','stop','enable','daemon-reload','-f'].includes(call.args[0]!))).toEqual([]);
+    }finally{fixture.close();}
+  });
+  it.each(['expired','future','fingerprint','unreviewed-bytes'])('refuses %s new target inventory even though the previous generation is owned',async kind=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      stageGeneration(fixture,'inventory');
+      const value=JSON.parse(fixture.contents['route-inventory.json']!);
+      if(kind==='expired')value.collectedAt='2026-11-04T00:00:00.000Z';
+      if(kind==='future')value.collectedAt='2026-11-04T03:00:00.000Z';
+      const {fingerprint:_,...data}=value;
+      value.fingerprint=kind==='fingerprint'?'0'.repeat(64):hash(JSON.stringify(data));
+      const text=JSON.stringify(value)+(kind==='unreviewed-bytes'?'\n':'');
+      fixture.file('/stage/route-inventory.json',text,0o600);
+      if(kind!=='unreviewed-bytes')fixture.manifest.files['route-inventory.json']=hash(text);
+      fixture.file('/stage/manifest.json',JSON.stringify(fixture.manifest));
+      fixture.mutations.length=0;fixture.calls.length=0;
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow(kind==='unreviewed-bytes'?'untrusted_artifact':'inventory_incomplete');
+      expect(fixture.mutations).toEqual([]);
+      expect(fixture.calls.some(call=>['start','stop','-f'].includes(call.args[0]!))).toBe(false);
+    }finally{fixture.close();}
+  });
+  it.each(['table','unit','manifest','inventory','policy','code','account-alias'])('refuses modified previous %s evidence even with a valid refreshed target',async kind=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      stageGeneration(fixture,'template');
+      if(kind==='table'){const nft=fixture.kernelNft();nft.nftables.pop();fixture.setNft(nft);}
+      if(kind==='unit')fixture.file('/etc/systemd/system/patrick-worker-proxy.service',fixture.contents['patrick-worker-proxy.service']!);
+      if(kind==='manifest'){const path='/etc/patrick-worker/manifest.json',value=JSON.parse(fixture.io.readFileSync(path,'utf8'));value.installation.artifactHash='0'.repeat(64);fixture.file(path,JSON.stringify(value));}
+      if(kind==='inventory')fixture.file('/etc/patrick-worker/route-inventory.json',fixture.contents['route-inventory.json']!,0o600);
+      if(kind==='policy')fixture.file('/etc/patrick-worker/policy.json',JSON.stringify({...policy,deniedCidrs:['::/0']}));
+      if(kind==='code')fixture.file(install.CODE+'/connect-proxy.mjs','// tampered\n',0o755);
+      if(kind==='account-alias')fixture.file('/etc/passwd',fixture.io.readFileSync('/etc/passwd','utf8')+'alias:x:1101:1101::/home/alias:/bin/sh\n');
+      fixture.mutations.length=0;fixture.calls.length=0;
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();
+      expect(fixture.mutations).toEqual([]);
+      expect(fixture.calls.some(call=>['stop','start','-f'].includes(call.args[0]!))).toBe(false);
+    }finally{fixture.close();}
+  });
+  it.each(['owner-write','owner-directory-fsync','fence-write','fence-rename','fence-directory-fsync'])('stops and verifies an existing proxy after one-shot %s failure',async fault=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      const path='/etc/patrick-worker/install-state.json',state=JSON.parse(fixture.io.readFileSync(path,'utf8'));
+      fixture.file(path,JSON.stringify({...state,status:'failed'}),0o600);
+      const descriptors=new Map<number,string>(),open=fixture.io.openSync,write=fixture.io.writeFileSync,rename=fixture.io.renameSync,sync=fixture.io.fsyncSync;
+      let injected=false,renamedFence=false;
+      const trip=()=>{injected=true;throw Object.assign(Error('one-shot fixture I/O fault'),{code:'EIO'});};
+      fixture.io.openSync=(name:string,flags:number,mode?:number)=>{const fd=open(name,flags,mode);descriptors.set(fd,name);return fd;};
+      fixture.io.writeFileSync=(fd:number,data:any,options:any)=>{const name=descriptors.get(fd)??'';if(!injected&&((fault==='owner-write'&&name.includes('/owner.json.tmp-'))||(fault==='fence-write'&&name.includes('/install-state.json.tmp-'))))trip();return write(fd,data,options);};
+      fixture.io.renameSync=(from:string,to:string)=>{if(!injected&&fault==='fence-rename'&&to===path)trip();const result=rename(from,to);if(to===path)renamedFence=true;return result;};
+      fixture.io.fsyncSync=(fd:number)=>{const name=descriptors.get(fd);if(!injected&&((fault==='owner-directory-fsync'&&name==='/run/patrick-worker/install.lock')||(fault==='fence-directory-fsync'&&renamedFence&&name==='/etc/patrick-worker')))trip();return sync(fd);};
+      fixture.calls.length=0;
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();
+      expect(injected).toBe(true);
+      expect(fixture.calls.slice(-2).map(call=>call.args)).toEqual([['stop','patrick-worker-proxy.service'],['show','patrick-worker-proxy.service','--no-pager','--property=ActiveState,SubState,MainPID']]);
+      expect(JSON.parse(fixture.io.readFileSync(path,'utf8')).status).toBe('failed');
+      expect(fs.existsSync(fixture.physical('/run/patrick-worker/install.lock'))).toBe(fault==='owner-write');
+    }finally{fixture.close();}
+  });
+  it.each(['stop-failed','stop-unknown'])('retains the mutex when an early fence failure leaves proxy state %s',async kind=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      const path='/etc/patrick-worker/install-state.json',state=JSON.parse(fixture.io.readFileSync(path,'utf8'));
+      fixture.file(path,JSON.stringify({...state,status:'failed'}),0o600);
+      const rename=fixture.io.renameSync,run=fixture.deps.run;let injected=false;
+      fixture.io.renameSync=(from:string,to:string)=>{const result=rename(from,to);if(!injected&&to===path){injected=true;throw Error('after fence rename');}return result;};
+      fixture.deps.run=(command,args,input)=>command==='/usr/bin/systemctl'&&((kind==='stop-failed'&&args[0]==='stop')||(kind==='stop-unknown'&&args.includes('--property=ActiveState,SubState,MainPID')))?{status:kind==='stop-failed'?1:0,stdout:'ActiveState=active\nSubState=running\nMainPID=4321\n',stderr:''}:run(command,args,input);
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('service_state');
+      expect(JSON.parse(fixture.io.readFileSync(path,'utf8')).status).toBe('failed');
+      expect(fixture.io.lstatSync('/run/patrick-worker/install.lock').isDirectory()).toBe(true);
+    }finally{fixture.close();}
+  });
+  it('retries a trusted generation update after its new failure fence was persisted over the old installed generation',async()=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      stageGeneration(fixture,'template');
+      const path='/etc/patrick-worker/install-state.json',rename=fixture.io.renameSync;
+      let injected=false;
+      fixture.io.renameSync=(from:string,to:string)=>{const result=rename(from,to);if(!injected&&to===path){injected=true;throw Error('after new generation fence rename');}return result;};
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();
+      const fence=JSON.parse(fixture.io.readFileSync(path,'utf8')),previous=JSON.parse(fixture.io.readFileSync('/etc/patrick-worker/manifest.json','utf8'));
+      expect(fence.status).toBe('failed');
+      expect(fence.artifactHash).not.toBe(previous.installation.artifactHash);
+      await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('installed_mismatch');
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).resolves.toMatchObject({applied:true});
+      await install.installGuest(fixture.input,fixture.deps);
+      fixture.mutations.length=0;
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      expect(fixture.mutations).toEqual([]);
+    }finally{fixture.close();}
+  });
+  it('checks without filesystem, account, service or nft mutations',async()=>{
+    const fixture=await prepared();try{await expect(install.installGuest(fixture.input,fixture.deps)).resolves.toMatchObject({applied:false});expect(fixture.mutations).toEqual([]);expect(fixture.calls.some(call=>['-f','enable','start','stop','daemon-reload','--uid','--gid'].includes(call.args[0]!))).toBe(false);expect(fixture.summaries.at(-1)).toMatchObject({outcome:'pass',accountsToCreate:0});}finally{fixture.close();}
+  });
+  it.each(['version','required-flag'])('rejects missing pinned dependency %s without package fallback',async kind=>{
+    const fixture=await prepared();try{const original=fixture.deps.run;fixture.deps.run=(path,args,input)=>kind==='version'&&path==='/usr/local/bin/node'?{status:0,stdout:'v25.0.0\n'}:kind==='required-flag'&&path==='/usr/sbin/useradd'&&args[0]==='--help'?{status:0,stdout:'--uid --gid'}:original(path,args,input);await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('dependency');expect(fixture.mutations).toEqual([]);expect(fixture.calls.some(call=>/apt|dnf|yum|apk/.test(call.path))).toBe(false);}finally{fixture.close();}
+  });
+  it.each(['grant-exit-zero','wrong-user','wrong-host','extra-line','plugin-error','wrong-status'])('rejects %s effective sudo output before mutation',async kind=>{
+    const fixture=await prepared();try{const original=fixture.deps.run;fixture.deps.run=(path,args,input)=>{if(path!=='/usr/bin/sudo')return original(path,args,input);const user=kind==='wrong-user'?'other':args[3],host=kind==='wrong-host'?'other-host':'fixture-host';return {status:kind==='wrong-status'?1:0,stdout:kind==='grant-exit-zero'?'User fixture may run (ALL) NOPASSWD: ALL\n':`User ${user} is not allowed to run sudo on ${host}.\n`+(kind==='extra-line'?'extra\n':''),stderr:kind==='plugin-error'?'policy plugin failed':''};};await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('account_conflict');expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it.each(['admin-world','root-worker-group'])('rejects accessible %s privileged Unix sockets before mutation',async kind=>{
+    const fixture=await prepared();try{fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n000: 1 0 0 1 1 123 /run/privileged.sock\n');fixture.file('/run/privileged.sock','synthetic socket',kind==='admin-world'?0o666:0o660);fixture.owners.set('/run/privileged.sock',{uid:kind==='admin-world'?1000:0,gid:kind==='root-worker-group'?1101:1000});const original=fixture.deps.run;fixture.deps.run=(path,args,input)=>path==='/usr/bin/setpriv'&&args[0]==='--reuid=1101'?{status:0,stdout:'accessible\n',stderr:''}:original(path,args,input);await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('dependency');expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it.each(['accessible','unknown'])('rejects effective %s socket results even when mode facts deny access',async result=>{
+    const fixture=await prepared();try{const original=fixture.deps.run;fixture.deps.run=(path,args,input)=>path==='/usr/bin/setpriv'&&args[0]!=='--help'?{status:0,stdout:result+'\n',stderr:''}:original(path,args,input);await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('dependency');expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it('does not classify an ordinary public DBus endpoint as admin solely from root ownership',async()=>{
+    const fixture=await prepared();try{fixture.file('/proc/net/unix','Num RefCount Protocol Flags Type St Inode Path\n000: 1 0 0 1 1 123 /run/dbus/system_bus_socket\n');fixture.file('/run/dbus/system_bus_socket','synthetic public DBus',0o666);await expect(install.installGuest(fixture.input,fixture.deps)).resolves.toMatchObject({applied:false});expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it('uses only the fixed baseline, numeric admin runtime and bound trusted extras after full privilege drop',async()=>{
+    const fixture=await prepared();try{const value:any=inventory();value.extraPrivilegedSocketPaths=['/run/operator/admin-control.sock'];const {fingerprint:_,...data}=value;value.fingerprint=hash(JSON.stringify(data));const text=JSON.stringify(value);fixture.file('/stage/route-inventory.json',text,0o600);fixture.manifest.files['route-inventory.json']=hash(text);fixture.file('/stage/manifest.json',JSON.stringify(fixture.manifest));await install.installGuest(fixture.input,fixture.deps);const calls=fixture.calls.filter(call=>call.path==='/usr/bin/setpriv'&&call.args[0]!=='--help');expect(calls).toHaveLength(4);for(const call of calls){expect(call.args.slice(2,16)).toEqual(['--clear-groups','--no-new-privs','--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--','/usr/bin/env','-i','PATH=/usr/local/bin:/usr/bin:/bin','LANG=C','/usr/local/bin/node','--no-addons','-e',expect.any(String)]);const paths=JSON.parse(call.args.at(-1)!);expect(paths).toContain('/run/operator/admin-control.sock');expect(paths).toContain('/run/systemd/private');expect(paths).toContain('/run/user/1000/bus');expect(paths).not.toContain('/run/dbus/system_bus_socket');expect(call.args[15]).toContain('fs.accessSync(path,fs.constants.W_OK)');expect(call.args[15]).toContain('NoNewPrivs:');expect(call.args[15]).not.toContain('connect(');}expect(fixture.mutations).toEqual([]);}finally{fixture.close();}
+  });
+  it('executes the fixed access program against synthetic kernel facts including ACL grants and capability errors',async()=>{
+    const fixture=await prepared();try{await install.installGuest(fixture.input,fixture.deps);const call=fixture.calls.find(item=>item.path==='/usr/bin/setpriv'&&item.args[0]!=='--help')!;
+      function evaluate(change:{uid?:number;groups?:number[];cap?:string;nnp?:string;acl?:boolean;io?:boolean}={}){let output='';const processFacts={argv:['node',call.args[16],call.args[17],call.args[18]],getuid:()=>change.uid??Number(call.args[16]),geteuid:()=>Number(call.args[16]),getgid:()=>Number(call.args[17]),getegid:()=>Number(call.args[17]),getgroups:()=>change.groups??[],stdout:{write:(text:string)=>{output+=text;}},exitCode:0};const status=['CapInh: 0000000000000000','CapPrm: 0000000000000000',`CapEff: ${change.cap??'0000000000000000'}`,'CapBnd: 0000000000000000','CapAmb: 0000000000000000',`NoNewPrivs: ${change.nnp??'1'}`].join('\n');const kernel={constants:{W_OK:2},readFileSync:(path:string)=>{expect(path).toBe('/proc/self/status');return status;},accessSync:(_path:string,mode:number)=>{expect(mode).toBe(2);if(!change.acl)throw Object.assign(Error('synthetic kernel denial'),{code:change.io?'EIO':'EACCES'});}};runInNewContext(call.args[15]!,{require:(name:string)=>{expect(name).toBe('node:fs');return kernel;},process:processFacts});return {output,exit:processFacts.exitCode};}
+      expect(evaluate()).toEqual({output:'denied\n',exit:0});expect(evaluate({acl:true})).toEqual({output:'accessible\n',exit:0});for(const change of [{uid:0},{groups:[1101]},{cap:'0000000000000001'},{nnp:'0'},{io:true}])expect(evaluate(change)).toEqual({output:'unknown\n',exit:78});
+    }finally{fixture.close();}
+  });
+  it('applies, rechecks and reapplies idempotently with one exact owned-table transaction',async()=>{
+    const fixture=await prepared();try{
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      const before=new Map(install.ARTIFACTS.filter((name:string)=>name.endsWith('.mjs')).map((name:string)=>[name,fixture.io.readFileSync(install.CODE+'/'+name,'utf8')]));
+      fixture.mutations.length=0;fixture.calls.length=0;
+      await install.installGuest(fixture.input,fixture.deps);expect(fixture.mutations).toEqual([]);expect(fixture.summaries.at(-1)).toMatchObject({filesToReplace:0,ownedTableToReplace:false});
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);
+      expect(fixture.mutations).toEqual([]);
+      for(const [name,text] of before)expect(fixture.io.readFileSync(install.CODE+'/'+name,'utf8')).toBe(text);
+      expect(fixture.calls.filter(call=>call.path==='/usr/sbin/nft'&&call.args[0]==='-f')).toHaveLength(0);
+      const launcher=fixture.io.readFileSync('/usr/local/libexec/patrick-worker-enter','utf8');expect(launcher).not.toContain('\n+');
+    }finally{fixture.close();}
+  });
+  it.each(['not-root','forged-manifest','extra-payload','partial','active','inventory','service-dropin','service-mismatch','account-home','unexpected-table','dependency'])('performs no mutations for failed precondition %s',async kind=>{
+    const fixture=await prepared();try{
+      if(kind==='not-root')fixture.deps.effectiveUid=()=>1000;
+      if(kind==='forged-manifest')fixture.file('/stage/policy.mjs','forged');
+      if(kind==='extra-payload')fixture.file('/stage/root-command','payload');
+      if(kind==='partial')fs.unlinkSync(fixture.physical('/stage/stage-lifetime.mjs'));
+      if(kind==='active')fixture.file('/proc/999/status','Uid:\t1101\t1101\t1101\t1101\n');
+      if(kind==='inventory')fixture.file('/etc/resolv.conf','nameserver 192.0.2.54\n');
+      if(kind==='service-dropin')fs.mkdirSync(fixture.physical('/etc/systemd/system/patrick-worker-proxy.service.d'));
+      if(kind==='service-mismatch')fixture.file('/etc/systemd/system/patrick-worker-proxy.service','[Service]\nUser=root\n');
+      if(kind==='account-home')fs.chmodSync(fixture.physical('/var/lib/patrick-grok'),0o755);
+      if(kind==='unexpected-table')fixture.setNft(fixture.kernelNft());
+      if(kind==='dependency')fixture.setFailure('nft --version');
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();expect(fixture.mutations).toEqual([]);expect(fixture.calls.some(call=>['enable','start','stop'].includes(call.args[0]!))).toBe(false);
+      expect(JSON.stringify(fixture.summaries)).not.toContain('192.0.2');expect(JSON.stringify(fixture.summaries)).not.toContain('private secret');
+    }finally{fixture.close();}
+  });
+  it.each(['nft -c','nft -f'])('keeps services closed and never touches unrelated tables on %s failure',async failure=>{
+    const fixture=await prepared();try{fixture.setFailure(failure);await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow(failure==='nft -c'?'nft_check':'nft_apply');expect(fixture.calls.some(call=>['enable','start'].includes(call.args[0]!))).toBe(false);expect(fixture.calls.every(call=>!call.args.includes('flush')&&!call.args.includes('unrelated'))).toBe(true);}finally{fixture.close();}
+  });
+  it('rejects partial actual listeners instead of accepting active text',async()=>{
+    const fixture=await prepared();try{fixture.file('/proc/4321/net/tcp','header\n');await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();expect(fixture.summaries.at(-1)).toMatchObject({outcome:'fail'});}finally{fixture.close();}
+  });
+  it('stops the proxy after a failed apply and keeps the owned deny table',async()=>{
+    const fixture=await prepared();try{fixture.setFailure('systemctl start patrick-worker-proxy.service');await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('service_state');expect(fixture.calls.slice(-2).map(call=>call.args[0])).toEqual(['stop','show']);expect(fixture.calls.some(call=>call.args.includes('delete'))).toBe(false);}finally{fixture.close();}
+  });
+  it('validates the complete installed runtime before a snapshot or firewall reload',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);await expect(probe.probeGuest('snapshot',fixture.deps)).resolves.toMatchObject({outcome:'pass',ipv6UpstreamDisabled:true});fixture.file('/usr/local/libexec/patrick-worker-enter','#!/usr/bin/dash\nexec /bin/sh "$@"\n',0o755);await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('installed_mismatch');}finally{fixture.close();}
+  });
+  it('reports the future synthetic traffic dependency without claiming a network pass',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);await expect(probe.probeGuest('synthetic-network',fixture.deps)).rejects.toThrow('dependency');}finally{fixture.close();}
+  });
+  it('persists a private failed fence and repairs it only after a complete trusted apply',async()=>{
+    const fixture=await prepared();try{fixture.setFailure('nft -f');await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('nft_apply');expect(JSON.parse(fixture.io.readFileSync('/etc/patrick-worker/install-state.json','utf8'))).toMatchObject({version:1,status:'failed'});expect(fixture.io.lstatSync('/etc/patrick-worker/install-state.json').mode&0o777).toBe(0o600);fixture.setFailure('');await install.installGuest({...fixture.input,apply:true},fixture.deps);expect(JSON.parse(fixture.io.readFileSync('/etc/patrick-worker/install-state.json','utf8'))).toMatchObject({status:'ready'});}finally{fixture.close();}
+  });
+  it('keeps serialization locked when stopping a failed apply cannot be verified',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);fixture.setActive('inactive');fixture.setFailure('systemctl stop');await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow('service_state');expect(fixture.io.lstatSync('/run/patrick-worker/install.lock').isDirectory()).toBe(true);expect(JSON.parse(fixture.io.readFileSync('/etc/patrick-worker/install-state.json','utf8')).status).toBe('failed');}finally{fixture.close();}
+  });
+  it('fails check for a stopped proxy while preserving all deny rules and files',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);fixture.setActive('inactive');fixture.mutations.length=0;await expect(install.installGuest(fixture.input,fixture.deps)).rejects.toThrow('service_state');expect(fixture.mutations).toEqual([]);expect(fixture.calls.some(call=>call.args.includes('flush'))).toBe(false);}finally{fixture.close();}
+  });
+  it('rejects a missing or nonready installation fence on a live snapshot',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);fs.unlinkSync(fixture.physical('/etc/patrick-worker/install-state.json'));await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('installed_mismatch');}finally{fixture.close();}
+  });
+  it('reports prospective account allocation in check and re-resolves numeric identity under apply',async()=>{
+    const fixture=await prepared();try{
+      for(const path of ['/etc/passwd','/etc/group','/etc/shadow'])fixture.file(path,fixture.io.readFileSync(path,'utf8').split('\n').filter((line:string)=>!line.startsWith('patrick-dsh:')).join('\n'),path==='/etc/shadow'?0o600:0o644);
+      fs.rmdirSync(fixture.physical('/var/lib/patrick-dsh'));
+      await install.installGuest(fixture.input,fixture.deps);expect(fixture.summaries.at(-1)).toMatchObject({accountsToCreate:1});expect(fixture.calls.some(call=>call.path==='/usr/sbin/useradd'&&call.args[0]!=='--help')).toBe(false);expect(fixture.mutations).toEqual([]);
+      await install.installGuest({...fixture.input,apply:true},fixture.deps);expect(install.readAccounts(fixture.deps).facts['patrick-dsh']).toMatchObject({uid:1001,gid:1001,locked:true,groups:[],home:'/var/lib/patrick-dsh'});expect(fixture.calls.filter(call=>call.path==='/usr/sbin/useradd'&&call.args[0]!=='--help')).toHaveLength(1);
+    }finally{fixture.close();}
+  });
+  it.each(['authorized-key','same-name-group','active-record','active-service'])('refuses %s before mutation',async kind=>{
+    const fixture=await prepared();try{
+      if(kind==='authorized-key')fixture.file('/var/lib/patrick-grok/.ssh/authorized_keys','fixture key');
+      if(kind==='same-name-group'){fixture.file('/etc/passwd',fixture.io.readFileSync('/etc/passwd','utf8').split('\n').filter((line:string)=>!line.startsWith('patrick-dsh:')).join('\n'));fs.rmdirSync(fixture.physical('/var/lib/patrick-dsh'));}
+      if(kind==='active-record'){fixture.file('/run/patrick-worker/invocations/fixture','record');fs.chmodSync(fixture.physical('/run/patrick-worker'),0o700);fs.chmodSync(fixture.physical('/run/patrick-worker/invocations'),0o700);}
+      if(kind==='active-service'){const original=fixture.deps.run;fixture.deps.run=(path,args,input)=>path==='/usr/bin/systemctl'&&args[0]==='list-units'?{status:0,stdout:'patrick-worker-0123456789abcdef-1.service loaded activating start fixture\n'}:original(path,args,input);}
+      await expect(install.installGuest({...fixture.input,apply:true},fixture.deps)).rejects.toThrow();expect(fixture.mutations).toEqual([]);
+    }finally{fixture.close();}
+  });
+  it.each(['stale','wrong-uid','wrong-code','wrong-boot'])('restores only the owned table and rejects %s applying witness',async kind=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);const path='/etc/patrick-worker/install-state.json',state=JSON.parse(fixture.io.readFileSync(path,'utf8'));state.status='applying';fixture.file(path,JSON.stringify(state),0o600);fs.mkdirSync(fixture.physical('/run/patrick-worker/install.lock'),{mode:0o700});if(kind==='stale')fixture.file('/proc/5678/stat','5678 (node) '+['S',...Array(18).fill('0'),'9999'].join(' ')+'\n');if(kind==='wrong-uid')fixture.file('/proc/5678/status','Uid:\t1000\t1000\t1000\t1000\n');if(kind==='wrong-code')fixture.file(decodeURI(new URL('../../scripts/lima/install-guest.mjs',import.meta.url).pathname),'other trusted root source');if(kind==='wrong-boot')fixture.file('/proc/sys/kernel/random/boot_id','11111111-1111-4111-8111-111111111111\n');fixture.calls.length=0;await expect(probe.probeGuest('firewall-load',fixture.deps)).rejects.toThrow('service_state');expect(fixture.calls.some(call=>call.path==='/usr/sbin/nft'&&call.args[0]==='-f')).toBe(true);expect(fixture.calls.some(call=>['enable','start'].includes(call.args[0]!))).toBe(false);}finally{fixture.close();}
+  });
+  it('allows firewall startup for the exact live applying installer only',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);const path='/etc/patrick-worker/install-state.json',state=JSON.parse(fixture.io.readFileSync(path,'utf8'));state.status='applying';fixture.file(path,JSON.stringify(state),0o600);fs.mkdirSync(fixture.physical('/run/patrick-worker/install.lock'),{mode:0o700});fixture.file('/run/patrick-worker/install.lock/owner.json',JSON.stringify({version:1,kind:'installer',...state.installer,artifactHash:state.artifactHash,policyHash:state.policyHash}),0o600);await expect(probe.probeGuest('firewall-load',fixture.deps)).resolves.toMatchObject({operation:'firewall-load',outcome:'pass'});await expect(probe.probeGuest('snapshot',fixture.deps)).rejects.toThrow('installed_mismatch');}finally{fixture.close();}
+  });
+  it('never treats an ownerless applying lock as the live installer lock',async()=>{
+    const fixture=await prepared();try{await install.installGuest({...fixture.input,apply:true},fixture.deps);const path='/etc/patrick-worker/install-state.json',state=JSON.parse(fixture.io.readFileSync(path,'utf8'));state.status='applying';fixture.file(path,JSON.stringify(state),0o600);fs.mkdirSync(fixture.physical('/run/patrick-worker/install.lock'),{mode:0o700});await expect(probe.probeGuest('firewall-load',fixture.deps)).rejects.toThrow('service_state');}finally{fixture.close();}
+  });
+});

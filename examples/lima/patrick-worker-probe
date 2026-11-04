@@ -1,0 +1,4 @@
+#!/usr/bin/dash
+exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C \
+  /usr/local/bin/node --no-addons \
+  /usr/local/libexec/patrick-worker/probe-guest.mjs "$@"
