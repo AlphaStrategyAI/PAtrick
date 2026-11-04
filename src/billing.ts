@@ -181,6 +181,11 @@ type PermitRecord = {
 type RegistrationSnapshot = { taskHash: string; attemptsHash: string; switchRows?: { noticeId: string; noticeHash: string; eventId: string; eventHash: string } };
 const permits = new WeakMap<HostDispatchPermit, PermitRecord>();
 const authorityBindings = new WeakMap<BillingAuthority, { store: Store; config: AppConfig }>();
+/** Lima has no separate Store: its authority owns that binding; config must be canonical. */
+export function assertBillingAuthorityConfig(authority: BillingAuthority, config: AppConfig): void {
+  const binding = authorityBindings.get(authority);
+  if (!binding || binding.config !== config) throw error('billing_authority_mismatch');
+}
 /** Validate shared host identity without exposing a Store/config getter or rebinding operation. */
 export function assertBillingAuthorityBinding(authority: BillingAuthority, store: Store, config: AppConfig): void {
   const binding = authorityBindings.get(authority);

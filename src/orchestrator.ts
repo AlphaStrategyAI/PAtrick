@@ -5,11 +5,13 @@ import { publishKnowledge } from './knowledge.js';
 import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
+import type { BillingAuthority } from './billing.js';
 
 export interface WorkbenchOptions {
   store: Store; config: AppConfig; workers: WorkerAdapter[] | Partial<Record<Runner, WorkerAdapter>>;
   writer: DeliveryWriter; research: ResearchAdapter; notifier?: NotificationAdapter;
   canRun?: (project: Project) => boolean;
+  billing?: BillingAuthority;
 }
 const stageStatus: Record<Task['stage'], TaskStatus> = { knowledge_extract: 'extracting', case_extract: 'extracting', decide: 'deciding', research: 'researching', plan: 'planning', execute: 'executing', check: 'checking', delivery: 'publishing', feedback: 'feedback' };
 const stopped = new Set<TaskStatus>(['awaiting_answer', 'delivered', 'archived', 'cancelled']);
@@ -31,13 +33,11 @@ export class Workbench {
   constructor(options: WorkbenchOptions) {
     this.store = options.store; this.config = options.config; this.writer = options.writer; this.research = options.research; this.notifier = options.notifier;
     this.canRun = options.canRun;
-    this.scheduler = new Scheduler(this.store, this.config, options.workers);
+    this.scheduler = new Scheduler(this.store, this.config, options.workers, options.billing);
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
     this.store.rebuildIndex();
-    // Previous process/session results may no longer commit. The stage remains replayable.
-    this.store.transaction(() => {
-      for (const attempt of this.store.list('attempts')) if (attempt.status === 'running') this.store.save('attempts', { ...attempt, status: 'stale', finishedAt: now(), error: 'Interrupted process; result must be recomputed.' });
-    });
+    // Only leased runtime initialization may reconcile a previous authority's attempts.
+    // Constructing a Workbench must never close work owned by the live authority.
   }
 
   ingest(input: IngestInput): Task | undefined { return ingestSource(this.store, this.config, input); }
