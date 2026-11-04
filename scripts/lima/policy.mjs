@@ -23,7 +23,7 @@ export function parsePolicy(raw) {
   if(!exact(raw,['version','proxyUser','workers','deniedCidrs'])||raw.version!==1||raw.proxyUser!=='patrick-proxy'||!Array.isArray(raw.workers)||!raw.workers.length||raw.workers.length>3||!Array.isArray(raw.deniedCidrs)||!raw.deniedCidrs.length||raw.deniedCidrs.length>128||!raw.deniedCidrs.every(validCidr)||new Set(raw.deniedCidrs).size!==raw.deniedCidrs.length)fail();
   const seen={runner:new Set(),user:new Set(),proxyPort:new Set()};
   const workers=raw.workers.map(worker=>{
-    if(!exact(worker,['runner','user','projectId','domain','proxyPort','hosts'])||!contextValid({runner:worker.runner,user:worker.user,projectId:worker.projectId,domain:worker.domain})||worker.user===raw.proxyUser||!integer(worker.proxyPort,1024,65535)||!Array.isArray(worker.hosts)||!worker.hosts.length||worker.hosts.length>64||!worker.hosts.every(validHost)||new Set(worker.hosts).size!==worker.hosts.length)fail();
+    if(!exact(worker,['runner','user','projectId','domain','proxyPort','hosts'])||!contextValid({runner:worker.runner,user:worker.user,projectId:worker.projectId,domain:worker.domain})||worker.user===raw.proxyUser||!integer(worker.proxyPort,1024,65535)||!Array.isArray(worker.hosts)||worker.hosts.length>64||!worker.hosts.every(validHost)||new Set(worker.hosts).size!==worker.hosts.length)fail();
     for(const key of ['runner','user','proxyPort']){if(seen[key].has(worker[key]))fail();seen[key].add(worker[key]);}
     return Object.freeze({...worker,hosts:Object.freeze([...worker.hosts])});
   });
@@ -46,4 +46,24 @@ export function validateAccounts(policy,accounts) {
     for(const [other,facts] of Object.entries(accounts))if(other!==user&&(!facts||facts.uid===account.uid||facts.gid===account.gid))fail();
   }
   return accounts;
+}
+
+// This module is checked as one file before privileged helper import. Keep its
+// dependencies limited to Node built-ins; proxy-only parsing lives separately.
+export function parseAuthority(authority,allowed) {
+  if(typeof authority!=='string'||!authority.endsWith(':443'))throw new Error('AUTHORITY');
+  const host=authority.slice(0,-4);
+  if(!validHost(host)||/^(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*$/.test(host)||!allowed.has(host))throw new Error('AUTHORITY');
+  return host;
+}
+export function renderNft(policy,accounts) {
+  const parsed=parsePolicy(policy),users=[...parsed.workers.map(worker=>worker.user),parsed.proxyUser];
+  if(!object(accounts)||Reflect.ownKeys(accounts).length!==users.length||!users.every(user=>Object.hasOwn(accounts,user)))fail();
+  const uids=new Map(users.map(user=>[user,accounts[user]]));
+  if(![...uids.values()].every(uid=>integer(uid,1000))||new Set(uids.values()).size!==users.length)fail();
+  const lines=['table inet patrick_worker {','  chain output {','    type filter hook output priority -50; policy accept;'];
+  for(const worker of parsed.workers)lines.push(`    meta skuid ${uids.get(worker.user)} jump ${worker.runner}_out`);
+  lines.push('  }');
+  for(const worker of parsed.workers)lines.push(`  chain ${worker.runner}_out {`,`    oifname "lo" ip daddr 127.0.0.1 tcp dport ${worker.proxyPort} accept`,'    reject with icmpx type admin-prohibited','  }');
+  return [...lines,'}',''].join('\n');
 }

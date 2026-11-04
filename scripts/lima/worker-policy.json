@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "proxyUser": "patrick-proxy",
+  "workers": [
+    {"runner":"grok","user":"patrick-grok","projectId":"patrick","domain":"personal","proxyPort":18743,"hosts":["cli-chat-proxy.grok.com","auth.x.ai"]},
+    {"runner":"codex","user":"patrick-codex","projectId":"patrick","domain":"personal","proxyPort":18744,"hosts":[]},
+    {"runner":"dsh","user":"patrick-dsh","projectId":"patrick","domain":"personal","proxyPort":18745,"hosts":[]}
+  ],
+  "deniedCidrs": ["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","100.64.0.0/10","169.254.0.0/16","127.0.0.0/8","fc00::/7","fe80::/10"]
+}

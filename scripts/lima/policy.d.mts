@@ -6,3 +6,5 @@ export function validateContext(raw:unknown):GuestContext;
 export function parsePolicy(raw:unknown):GuestPolicy;
 export function validateEntry(context:GuestContext,command:string[],policy:GuestPolicy,account:Account):Entry;
 export function validateAccounts(policy:GuestPolicy,accounts:unknown):Record<string,Account>;
+export function parseAuthority(authority:string,allowed:ReadonlySet<string>):string;
+export function renderNft(policy:GuestPolicy,accounts:Record<string,number>):string;
