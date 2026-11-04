@@ -150,7 +150,7 @@ export interface AppConfig {
   authToken: string; sessionSecret: string; projects: Project[]; runnerPolicies: RunnerPolicy[];
   workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string }>>;
   githubToken?: string; gitlabToken?: string; gitlabUrl?: string;
-  feishu?: { appId: string; appSecret: string; verificationToken: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
+  feishu?: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
   researchUrl?: string; researchToken?: string; scanIntervalMs: number;
   egressPolicies?: {domain:string;research:boolean;feishu:boolean}[]; networkFile?:string;
 }

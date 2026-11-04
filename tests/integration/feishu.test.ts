@@ -1,16 +1,22 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { createCipheriv, createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { WSClient } from '@larksuiteoapi/node-sdk';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeishuChannel } from '../../src/integrations/feishu.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { Store } from '../../src/store.js';
 import { now, stableId, type AppConfig, type OutboxMessage, type Project, type Question } from '../../src/domain.js';
 
 const stores: Store[] = [];
+const directories: string[] = [];
 const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: 'P', description: '', repository: 'owner/p', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], trustedChecks: ['test'], trustedAppIds: [123], ownerId: 'owner', autoMerge: true, budgetUsd: 1, createdAt: now() };
 const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: '/tmp/unused', vaultDir: '/tmp/unused', ownerId: 'owner', authToken: 'a', sessionSecret: 'b', projects: [project], runnerPolicies: [], workers: {}, scanIntervalMs: 1000, feishu: { appId: 'cli_app', appSecret: 'secret', ownerOpenId: 'ou_owner', verificationToken: 'verification', chatId: 'oc_dm' } };
 const sdkMessage = (id: string, text: string, update = '1000') => ({ message_id: id, chat_id: 'oc_dm', msg_type: 'text', create_time: '1000', update_time: update, sender: { id: 'ou_owner', id_type: 'open_id', sender_type: 'user' }, body: { content: JSON.stringify({ text }) } });
 function event(id: string, text: string, update = '1000', owner = 'ou_owner') { return { event_id: `event-${id}-${update}`, event_type: 'im.message.receive_v1', sender: { sender_type: 'user', sender_id: { open_id: owner } }, message: { message_id: id, chat_id: 'oc_dm', chat_type: 'p2p', create_time: '1000', update_time: update, message_type: 'text', content: JSON.stringify({ text }) } }; }
-function setup(overrides: Partial<AppConfig> = {}) {
-  const store = new Store(':memory:'); stores.push(store); const c = { ...config, ...overrides };
+function setup(overrides: Partial<AppConfig> = {}, persistence?: { databasePath: string; vaultDir: string }) {
+  const store = new Store(persistence?.databasePath ?? ':memory:', persistence?.vaultDir); stores.push(store); const c = { ...config, ...overrides };
   const engine = new Workbench({ store, config: c, workers: [], writer: { async baseline() { throw new Error('unused'); }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
   const messages: any[] = []; let creates = 0; let listCalls = 0; let loseCreateResponse = false;
   let list = async (_input: any) => ({ code: 0, data: { items: messages, has_more: false } } as any);
@@ -27,9 +33,118 @@ function setup(overrides: Partial<AppConfig> = {}) {
   };
   return { store, engine, channel, sdk, messages, notice, question, counts: () => ({ creates, listCalls }), setList: (fn: typeof list) => { list = fn; }, loseResponse: () => { loseCreateResponse = true; } };
 }
-afterEach(() => { for (const store of stores.splice(0)) store.close(); });
+afterEach(() => { vi.restoreAllMocks(); for (const store of stores.splice(0)) store.close(); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+function encryptedCallback(payload: unknown, encryptKey: string, timestamp = String(Math.floor(Date.now() / 1000))) {
+  const iv = Buffer.alloc(16, 7);
+  const cipher = createCipheriv('aes-256-cbc', createHash('sha256').update(encryptKey).digest(), iv);
+  const raw = { encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(payload)), cipher.final()]).toString('base64') };
+  const nonce = 'fake-nonce';
+  const signature = createHash('sha256').update(timestamp + nonce + encryptKey + JSON.stringify(raw)).digest('hex');
+  return { raw, headers: { 'x-lark-request-timestamp': timestamp, 'x-lark-request-nonce': nonce, 'x-lark-signature': signature } };
+}
 
 describe('authenticated durable Feishu channel', () => {
+  it('supports authenticated WS receive, history recovery and send without an HTTP callback token', async () => {
+    const f = setup({ feishu: { ...config.feishu!, verificationToken: undefined } });
+    expect(f.channel.ready().ready).toBe(false);
+    f.messages.push(sdkMessage('offline-owner', 'Offline idea'), { ...sdkMessage('history-wrong-owner', 'Ignore intruder history'), sender: { id: 'ou_other', id_type: 'open_id', sender_type: 'user' } }, { ...sdkMessage('history-wrong-chat', 'Ignore other chat history'), chat_id: 'oc_other' });
+    await f.channel.catchup();
+    expect(f.channel.ready()).toEqual({ ready: true });
+    expect(f.store.list('tasks')).toHaveLength(1);
+    await f.channel.dispatcher.invoke({ schema: '2.0', header: { event_type: 'im.message.receive_v1' }, event: event('ws-owner', 'Live idea') }, { needCheck: false });
+    await f.channel.receive(event('wrong-owner', 'Ignore intruder', '1000', 'ou_other'));
+    const wrongChat = event('wrong-chat', 'Ignore other chat'); wrongChat.message.chat_id = 'oc_other';
+    await f.channel.receive(wrongChat);
+    expect(f.store.list('tasks')).toHaveLength(2);
+    expect(await f.channel.send(f.notice())).toEqual({ remoteId: 'om_1' });
+    await expect(f.channel.send({ ...f.notice(), id: 'wrong-recipient', recipient: 'ou_other' })).rejects.toMatchObject({ code: 'feishu_recipient' });
+    expect(f.counts().creates).toBe(1);
+  });
+
+  it('starts the official WS client only after authorized history without an HTTP callback token', async () => {
+    const start = vi.spyOn(WSClient.prototype, 'start').mockResolvedValue(undefined);
+    const f = setup({ feishu: { ...config.feishu!, verificationToken: undefined } });
+    await f.channel.start();
+    expect(f.counts().listCalls).toBe(1);
+    expect(start).toHaveBeenCalledWith({ eventDispatcher: f.channel.dispatcher });
+    expect(f.channel.ready()).toEqual({ ready: true });
+  });
+
+  it.each(['appId', 'appSecret', 'ownerOpenId', 'chatId'] as const)('keeps missing %s unready with no HTTP callback token', async key => {
+    const f = setup({ feishu: { ...config.feishu!, verificationToken: undefined, [key]: undefined } as AppConfig['feishu'] });
+    expect(f.channel.ready().ready).toBe(false);
+    await expect(f.channel.catchup()).rejects.toMatchObject({ code: 'feishu_unready' });
+    await expect(f.channel.send(f.notice())).rejects.toMatchObject({ code: 'feishu_unready' });
+    expect(f.counts()).toEqual({ listCalls: 0, creates: 0 });
+  });
+
+  it.each([undefined, '', '   '])('denies every HTTP callback form without an actual verification token (%s)', async verificationToken => {
+    const f = setup({ feishu: { ...config.feishu!, verificationToken } });
+    await f.channel.catchup(); expect(f.channel.ready()).toEqual({ ready: true });
+    const challenge = { type: 'url_verification', token: verificationToken, challenge: 'unauthenticated-challenge' };
+    const incoming = { schema: '2.0', header: { token: verificationToken, event_type: 'im.message.receive_v1' }, event: event('http-without-token', 'Do not ingest') };
+    for (const payload of [challenge, incoming]) {
+      await expect(f.channel.webhook(payload, {})).rejects.toMatchObject({ code: 'feishu_verification', status: 403 });
+    }
+    const key = 'fake-encryption-key';
+    const encrypted = setup({ feishu: { ...config.feishu!, verificationToken, encryptKey: key } });
+    await encrypted.channel.catchup(); expect(encrypted.channel.ready()).toEqual({ ready: true });
+    for (const payload of [challenge, incoming]) {
+      const callback = encryptedCallback(payload, key);
+      await expect(encrypted.channel.webhook(callback.raw, callback.headers)).rejects.toMatchObject({ code: 'feishu_verification', status: 403 });
+    }
+    expect(f.store.list('sources')).toHaveLength(0); expect(encrypted.store.list('sources')).toHaveLength(0);
+  });
+
+  it('keeps reserved pairing text out of business records and readable SQLite/Vault bytes across replay and restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'patrick-feishu-pair-')); directories.push(root);
+    const persistence = { databasePath: join(root, 'patrick.db'), vaultDir: join(root, 'vault') };
+    const f = setup({}, persistence);
+    const commands = ['/pair PAIR_PRIVATE_SENTINEL_1', '  /PAIR PAIR_PRIVATE_SENTINEL_2', '/pair', '/pair\nPAIR_PRIVATE_SENTINEL_3'];
+    await f.channel.receive(event('unknown-pair', commands[0]!, '1000', 'ou_other'));
+    expect(f.store.list('actions')).toHaveLength(0); expect(f.store.list('cursors')).toHaveLength(0);
+    for (const [i, command] of commands.entries()) {
+      if (i < 2) await f.channel.receive(event(`pair-${i}`, command));
+      f.messages.push(sdkMessage(`pair-${i}`, command));
+    }
+    await f.channel.catchup(); await f.channel.catchup();
+    const assertNoBusinessRecords = (store: Store) => {
+      for (const table of ['sources', 'tasks', 'cases', 'rules', 'cards', 'outbox'] as const) expect(store.list(table)).toHaveLength(0);
+      expect(store.list('actions')).toHaveLength(commands.length);
+      expect(store.list('cursors')).toHaveLength(commands.length + 1);
+    };
+    const assertNoCommandBytes = () => {
+      for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const bytes = readFileSync(join(entry.parentPath, entry.name));
+        for (const command of commands) expect(bytes.includes(Buffer.from(command))).toBe(false);
+        expect(bytes.includes(Buffer.from('PAIR_PRIVATE_SENTINEL'))).toBe(false);
+      }
+    };
+    assertNoBusinessRecords(f.store); assertNoCommandBytes(); f.store.close();
+    const reopened = setup({}, persistence); reopened.messages.push(...f.messages); await reopened.channel.catchup();
+    assertNoBusinessRecords(reopened.store); assertNoCommandBytes();
+  });
+
+  it('preserves encrypted callback authentication, freshness and exact signed body binding', async () => {
+    const key = 'fake-encryption-key'; const f = setup({ feishu: { ...config.feishu!, encryptKey: key } });
+    const challenge = encryptedCallback({ type: 'url_verification', token: 'verification', challenge: 'encrypted-challenge' }, key);
+    expect(await f.channel.webhook(challenge.raw, challenge.headers)).toEqual({ challenge: 'encrypted-challenge' });
+    const payload = { schema: '2.0', header: { token: 'verification', event_type: 'im.message.receive_v1' }, event: event('encrypted-owner', 'Encrypted idea') };
+    const valid = encryptedCallback(payload, key);
+    await expect(f.channel.webhook(valid.raw, { ...valid.headers, 'x-lark-signature': 'wrong' })).rejects.toMatchObject({ status: 403 });
+    const stale = encryptedCallback(payload, key, String(Math.floor(Date.now() / 1000) - 600));
+    await expect(f.channel.webhook(stale.raw, stale.headers)).rejects.toMatchObject({ status: 403 });
+    const modified = encryptedCallback({ ...payload, event: event('changed-body', 'Different idea') }, key);
+    await expect(f.channel.webhook(modified.raw, valid.headers)).rejects.toMatchObject({ status: 403 });
+    const wrongToken = encryptedCallback({ ...payload, header: { ...payload.header, token: 'wrong' } }, key);
+    await expect(f.channel.webhook(wrongToken.raw, wrongToken.headers)).rejects.toMatchObject({ status: 403 });
+    expect(f.store.list('sources')).toHaveLength(0);
+    await f.channel.webhook(valid.raw, valid.headers);
+    expect(f.store.list('sources')).toHaveLength(1);
+  });
+
   it('accepts only the owner open_id and deduplicates live and history delivery of the same revision', async () => {
     const f = setup(); await f.channel.receive(event('one', '保留草稿', '1000', 'intruder'));
     await f.channel.receive({ ...event('bot', 'notification'), sender: { sender_type: 'app', sender_id: { open_id: 'ou_owner' } } });
@@ -142,7 +257,7 @@ describe('authenticated durable Feishu channel', () => {
   it('fails readiness when reliable history deduplication is unavailable', async () => {
     const f = setup({ feishu: { ...config.feishu!, chatId: undefined } });
     expect(f.channel.ready().ready).toBe(false); await expect(f.channel.send(f.notice())).rejects.toThrow(); expect(f.counts().creates).toBe(0);
-    const offline = setup(); offline.setList(async () => ({ code: 99991672, msg: 'permission denied' }));
+    const offline = setup({ feishu: { ...config.feishu!, verificationToken: undefined } }); offline.setList(async () => ({ code: 99991672, msg: 'permission denied' }));
     await expect(offline.channel.send(offline.notice())).rejects.toThrow(); expect(offline.channel.ready().ready).toBe(false); expect(offline.counts().creates).toBe(0);
   });
 

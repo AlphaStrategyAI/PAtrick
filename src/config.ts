@@ -57,7 +57,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     runnerPolicies:parsed.runnerPolicies ?? defaultPolicies(),workers:parsed.workers,
     githubToken:env.PATRICK_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN,
     gitlabToken:env.PATRICK_GITLAB_TOKEN, gitlabUrl:env.PATRICK_GITLAB_URL,
-    ...(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.FEISHU_VERIFICATION_TOKEN && env.FEISHU_OWNER_OPEN_ID ? { feishu:{appId:env.FEISHU_APP_ID,appSecret:env.FEISHU_APP_SECRET,verificationToken:env.FEISHU_VERIFICATION_TOKEN,encryptKey:env.FEISHU_ENCRYPT_KEY,ownerOpenId:env.FEISHU_OWNER_OPEN_ID,chatId:env.FEISHU_CHAT_ID} } : {}),
+    ...(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.FEISHU_OWNER_OPEN_ID ? { feishu:{appId:env.FEISHU_APP_ID,appSecret:env.FEISHU_APP_SECRET,verificationToken:env.FEISHU_VERIFICATION_TOKEN,encryptKey:env.FEISHU_ENCRYPT_KEY,ownerOpenId:env.FEISHU_OWNER_OPEN_ID,chatId:env.FEISHU_CHAT_ID} } : {}),
     researchUrl:env.PATRICK_RESEARCH_URL,researchToken:env.PATRICK_RESEARCH_TOKEN,
     egressPolicies:parsed.egressPolicies,networkFile:env.PATRICK_NETWORK_CONFIG,
     scanIntervalMs:z.coerce.number().min(1000).parse(env.PATRICK_SCAN_INTERVAL_MS ?? 60000),

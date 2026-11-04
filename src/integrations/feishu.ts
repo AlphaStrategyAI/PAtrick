@@ -44,7 +44,7 @@ export class FeishuChannel implements NotificationAdapter {
   ready(): { ready: boolean; reason?: string } {
     if (this.stopping) return { ready: false, reason: 'The Feishu channel is shutting down.' };
     const f = this.config.feishu;
-    if (!f?.appId || !f.appSecret || !f.ownerOpenId || !f.verificationToken) return { ready: false, reason: 'Feishu application credentials, verification token and owner open_id are required.' };
+    if (!f?.appId || !f.appSecret || !f.ownerOpenId) return { ready: false, reason: 'Feishu application credentials and owner open_id are required.' };
     if (!f.chatId) return { ready: false, reason: 'A configured owner chatId and readable history are required for recovery and duplicate-send reconciliation.' };
     return this.historyReady ? { ready: true } : { ready: false, reason: this.readinessReason };
   }
@@ -52,6 +52,8 @@ export class FeishuChannel implements NotificationAdapter {
   async webhook(payload: unknown, headers: Record<string, string | undefined>): Promise<unknown> {
     if (this.stopping) throw new DomainError('The Feishu channel is shutting down.', 'feishu_unready', 503);
     const f = this.requireConfiguration();
+    const verificationToken = f.verificationToken;
+    if (!verificationToken?.trim()) throw new DomainError('Feishu webhook verification failed.', 'feishu_verification', 403);
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new DomainError('Invalid Feishu event.', 'feishu_invalid');
     const raw = payload as Json;
     let decoded = raw;
@@ -65,8 +67,8 @@ export class FeishuChannel implements NotificationAdapter {
       try { decoded = JSON.parse(new AESCipher(f.encryptKey).decrypt(raw.encrypt)); } catch { throw new DomainError('Feishu webhook verification failed.', 'feishu_verification', 403); }
     }
     const token = decoded.header?.token ?? decoded.token;
-    if (!equal(token, f.verificationToken)) throw new DomainError('Feishu webhook verification failed.', 'feishu_verification', 403);
-    if (decoded.type === 'url_verification') return generateChallenge(raw, { encryptKey: f.encryptKey ?? '', verificationToken: f.verificationToken }).challenge;
+    if (!equal(token, verificationToken)) throw new DomainError('Feishu webhook verification failed.', 'feishu_verification', 403);
+    if (decoded.type === 'url_verification') return generateChallenge(raw, { encryptKey: f.encryptKey ?? '', verificationToken }).challenge;
     // The SDK signs only the original JSON body: headers belong on the prototype, as in adaptDefault.
     const data = Object.assign(Object.create({ headers }), raw);
     await this.dispatcher.invoke(data, { needCheck: true });
@@ -126,6 +128,8 @@ export class FeishuChannel implements NotificationAdapter {
   }
 
   private route(messageId: string, revision: string, text: string, message: Json): string[] {
+    // One-time private pairing is configuration, including when replayed from history.
+    if (/^\s*\/pair(?:\s|$)/i.test(text)) return [];
     const f = this.config.feishu!; const internalOwner = this.config.ownerId;
     const explicit = text.match(/^\/answer\s+(\S+)\s+(\d+)\.(\d+)\s+([ABC])(?:\s+([\s\S]*))?$/i);
     const replyChoice = text.match(/^\s*([ABC])(?:\s+([\s\S]*))?\s*$/i);
@@ -253,7 +257,7 @@ export class FeishuChannel implements NotificationAdapter {
   }
   private requireConfiguration(): NonNullable<AppConfig['feishu']> & { chatId: string } {
     const f = this.config.feishu;
-    if (!f?.appId || !f.appSecret || !f.ownerOpenId || !f.verificationToken || !f.chatId) throw new DomainError(this.ready().reason ?? 'Feishu is not configured.', 'feishu_unready', 503);
+    if (!f?.appId || !f.appSecret || !f.ownerOpenId || !f.chatId) throw new DomainError(this.ready().reason ?? 'Feishu is not configured.', 'feishu_unready', 503);
     return f as NonNullable<AppConfig['feishu']> & { chatId: string };
   }
   private text(content: unknown): string | undefined { if (typeof content !== 'string' || content.length > 100_000) return undefined; try { const value = JSON.parse(content); return typeof value.text === 'string' && value.text.trim() ? value.text : undefined; } catch { return undefined; } }
