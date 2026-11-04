@@ -86,7 +86,7 @@ function ordinaryFixture(signal:AbortSignal,runner:'grok'|'codex'|'dsh',behavior
  log({stage:operation==='exec'?stage:operation,prefix,invocation});
  let recorded=false;const outcome=code=>{if(recorded)return;recorded=true;fs.appendFileSync(${JSON.stringify(outcomesPath)},JSON.stringify({stage,outcome:{phase:'complete',code,submitterExited:true,invocationClosed:true}})+'\\n');};
  if(operation!=='exec'){
-  process.stdin.resume();process.stdout.write(JSON.stringify({version:1,state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:operation==='reconcile',privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'}));return;
+  process.stdin.resume();process.stdout.write(JSON.stringify({version:2,kind:'registered',closure:operation==='stop'?'none':'workspace-cleaned',state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:operation==='reconcile',privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'}));return;
  }
  if(stage==='cli'||stage==='acp'){
   const extra=stage==='cli'?args.slice(6):args.slice(1);

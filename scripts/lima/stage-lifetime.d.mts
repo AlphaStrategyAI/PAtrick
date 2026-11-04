@@ -5,7 +5,13 @@ export type StageProfile='task-only'|'authenticated-client';
 export type Operation='exec'|'stop'|'reconcile';
 export type InvocationState='active'|'stopping'|'drained'|'cleaning'|'closed'|'quarantined';
 export type LifetimeContext=Readonly<{invocation:string;stage:Stage;profile:StageProfile;operation:Operation}>;
-export type ReconcileResult=Readonly<{version:1;state:InvocationState;cgroupsEmpty:boolean;workerProcessesAbsent:boolean;workspacesAbsent:boolean;privateMountsAbsent:boolean;invocationClosed:boolean;reason:'ok'|'active'|'unknown'|'workspace_residual'|'control_unavailable'}>;
+export type ControlReason='ok'|'active'|'unknown'|'workspace_residual'|'control_unavailable'|'boot_mismatch'|'authority_unavailable';
+export type ControlFacts=Readonly<{cgroupsEmpty:boolean;workerProcessesAbsent:boolean;workspacesAbsent:boolean;privateMountsAbsent:boolean}>;
+export type ReconcileResult=ControlFacts & (
+ | Readonly<{version:2;kind:'registered';state:InvocationState;closure:'none'|'workspace-cleaned';invocationClosed:boolean;reason:ControlReason}>
+ | Readonly<{version:2;kind:'denial-only';state:'denied';closure:'never-registered';invocationClosed:true;reason:'ok'|'unknown'|'workspace_residual'}>
+ | Readonly<{version:2;kind:'unknown';state:'quarantined';closure:'none';invocationClosed:false;reason:'unknown'|'control_unavailable'|'authority_unavailable'}>
+);
 export type NodeIdentity=Readonly<{dev:number;ino:number}>;
 export type MarkerIdentity=Readonly<NodeIdentity & {hash:string}>;
 export type RegistryReference=Readonly<{version:1;authorityId:string;witnessHash:string}>;
@@ -18,7 +24,8 @@ export type SyntheticAssertion={version:1;stage:'prepare'|'read'|'tests'|'cleanu
 export type TrustedStageObservation={pid:number;start:string;directEnvironmentClean:true;postDrop:{uid:number;gid:number;groups:[];noNewPrivileges:true;capEffective:string;capPermitted:string;capInheritable:string;capAmbient:string;capBounding:string;homeMatches:true;fixedEnvironmentMatches:true;extraEnvironmentKeys:('PWD'|'OLDPWD')[];unknownEnvironmentKeyPresent:false;derivedPwdMatchesHome:true;derivedOldPwdMatchesTrustedCwd:true};profileFacts:{persistentMarkerReadable:boolean;persistentMarkerUnchanged:boolean;persistentConfigUnchanged:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;workspaceMatchesRecord:boolean;closedNetworkObserved:boolean}};
 export type PersistedStage={stage:Stage;profile:StageProfile;sequence:number;unit:string;description:string;phase:'pending'|'acknowledged'|'complete'|'unknown'|'cancelled';invocationId:string|null;controlGroup:string|null;submission:{pid:number;start:string}|null;submitterExited:boolean;code:number|null;observation?:TrustedStageObservation|null};
 export type RegisteredRecord=Readonly<{version:2;kind:'registered';authorityId:string;invocation:string;context:GuestContext;identity:Readonly<{uid:number;gid:number;home:string}>;admission:Readonly<{policyHash:string;artifactHash:string;proxyPort:number}>;boot:string;generation:string;state:InvocationState;payloadSealed:boolean;cleanupConsumed:boolean;sequence:number;stages:readonly PersistedStage[];layout:PersistedLayout;baseline:AbsenceFacts;drain:Readonly<{generation:string;sequence:number}>|null;cleanupConfirmed:boolean;bootRevocation:string|null}>;
-export type InvocationRecord=RegisteredRecord;
+export type DenialRecord=Readonly<{version:2;kind:'denial-only';authorityId:string;invocation:string;context:GuestContext;identity:Readonly<{uid:number;gid:number;home:string}>;authorization:Readonly<{policyHash:string;artifactHash:string}>;boot:string;state:'denied';payloadSealed:true}>;
+export type InvocationRecord=RegisteredRecord|DenialRecord;
 export type RegistryIO={
  lstatSync(path:string):Stats;openSync(path:string,flags:number,mode?:number):number;fstatSync(fd:number):Stats;
  readSync(fd:number,buffer:Buffer,offset:number,length:number,position:null):number;closeSync(fd:number):void;

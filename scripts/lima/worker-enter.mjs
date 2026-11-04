@@ -224,7 +224,7 @@ if(directInvocation) {
     // Do not evaluate a sibling module as root until the whole code path is trusted.
     const loaded=await loadTrustedPolicy({effectiveUid:()=>process.geteuid?.(),trust:()=>{assertTrustedPath(resolve(process.argv[1]),{kind:'file',uid:0});trust();},load:async()=>({policy:await import('./policy.mjs'),lifetime:await import('./stage-lifetime.mjs')})});
     ({parsePolicy,validateContext,validateEntry,validateAccounts}=loaded.policy);lifecycle=loaded.lifetime;
-    const result=await enterWorker(process.argv.slice(2),productionDependencies());if(result?.version===1)process.stdout.write(JSON.stringify(result)+'\n');
+    const result=await enterWorker(process.argv.slice(2),productionDependencies());if(result?.version===2)process.stdout.write(JSON.stringify(result)+'\n');
   }
   catch {process.stderr.write('Worker entry denied.\n');process.exitCode=78;}
 } else {({parsePolicy,validateContext,validateEntry,validateAccounts}=await import('./policy.mjs'));lifecycle=await import('./stage-lifetime.mjs');}

@@ -252,7 +252,8 @@ describe('serialized trusted stage lifetime',()=>{
    const r=structuredClone(closed);r.invocation=n.toString(16).padStart(32,'0');r.generation=r.invocation;
    r.layout.root='/var/lib/patrick-workspaces/'+r.invocation;r.layout.path=r.layout.root+'/work';r.drain.generation=r.generation;
    for(const stage of r.stages){stage.unit=`patrick-worker-${r.generation}-${stage.sequence}.service`;stage.description=`patrick-worker:${r.generation}:${r.invocation}:${stage.sequence}`;stage.controlGroup='/system.slice/'+stage.unit;}
-   fs.writeFileSync(f.physical('/var/lib/patrick-worker/invocations/'+r.invocation+'.json'),JSON.stringify(r),{mode:0o600});
+   const retained=n%2?r:{version:2,kind:'denial-only',authorityId:r.authorityId,invocation:r.invocation,context:r.context,identity:r.identity,authorization:{policyHash:r.admission.policyHash,artifactHash:r.admission.artifactHash},boot:r.boot,state:'denied',payloadSealed:true};
+   fs.writeFileSync(f.physical('/var/lib/patrick-worker/invocations/'+r.invocation+'.json'),JSON.stringify(retained),{mode:0o600});
   }
   for(const fresh of ['b'.repeat(32),'c'.repeat(32)]){
    expect(lifetime.registryQuiescent(f.io)).toBe(true);await expect(f.run()).rejects.toThrow();
@@ -411,7 +412,7 @@ it('reinstantiates after runtime loss with retained records and no authority rec
   await f.run();const reference=f.seedAuthority(),old=f.record(),markerBytes=f.io.readFileSync(marker),witnessBytes=f.io.readFileSync(witness);
   fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true});const next=fixture({root:f.root,boot:'22222222-2222-4222-8222-222222222222'});
   expect(fs.existsSync(next.physical('/run/patrick-worker'))).toBe(false);next.deps.manager.inspect=vi.fn(()=>{throw Error('old manager');});next.deps.manager.stop=vi.fn(()=>{throw Error('old manager');});
-  expect(await next.run('cli','stop')).toMatchObject({state:'quarantined',reason:'unknown',invocationClosed:false});
+  expect(await next.run('cli','stop')).toMatchObject({state:'quarantined',reason:'boot_mismatch',invocationClosed:false});
   expect(next.record()).toMatchObject({authorityId:reference.authorityId,boot:old.boot,bootRevocation:'22222222-2222-4222-8222-222222222222'});
   expect(next.io.readFileSync(marker)).toEqual(markerBytes);expect(next.io.readFileSync(witness)).toEqual(witnessBytes);expect(next.io.readdirSync('/run/patrick-worker')).toEqual([]);
   await expect(next.run('cli')).rejects.toThrow();await expect(next.run('cleanup')).rejects.toThrow();expect(next.deps.manager.inspect).not.toHaveBeenCalled();
@@ -445,3 +446,104 @@ describe('recovery binding and terminal preservation',()=>{
   const r=f.record();r.authorityId='f'.repeat(32);f.io.writeFileSync(recordPath,JSON.stringify(r));expect(lifetime.registryRecordsClosed(f.io,reference,[token])).toBe(false);
  }));
 });
+
+
+describe('durable pre-registration denial and control IPC2',()=>{
+ it('stop before prepare registration durably denies only that token',()=>using(async f=>{
+  const global=f.physical('/run/patrick-worker/install.lock');fs.mkdirSync(global,{mode:0o700});
+  const late=f.run().catch(error=>error);await f.waitFor('mkdir-attempt:/run/patrick-worker/install.lock');
+  try{
+   expect(await f.run('cleanup','stop')).toMatchObject({version:2,kind:'denial-only',state:'denied',closure:'never-registered',invocationClosed:true,reason:'ok'});
+  }finally{fs.rmdirSync(global);await late;}
+  expect(await late).toBeInstanceOf(Error);expect(f.submissions).toEqual([]);
+  const record=f.record();expect(record.kind).toBe('denial-only');
+  for(const key of ['generation','stages','layout','drain','cleanupConsumed','cleanupConfirmed'])expect(Object.hasOwn(record,key)).toBe(false);
+  for(const stage of ['prepare','cli','acp','read','tests','cleanup'])await expect(f.run(stage)).rejects.toThrow();
+  await expect(f.run('prepare','exec','b'.repeat(32))).resolves.toMatchObject({code:0});
+ }));
+ it('prepare registration owns the token before ACK while stop waits on the real UID lock',()=>using(async f=>{
+  const done=f.hold(),ack=f.ack(),prepare=f.run().catch(error=>error);await f.waitFor('ack-wait');
+  expect(f.record()).toMatchObject({kind:'registered',stages:[{phase:'pending'}]});
+  let stopped=false;const stopping=f.run('cleanup','stop').then(value=>{stopped=true;return value;});await f.waitFor('mkdir-attempt:/run/patrick-worker/uid-1101.lock',2);
+  expect(stopped).toBe(false);expect(f.record().kind).toBe('registered');ack.resolve(undefined);
+  expect(await stopping).toMatchObject({version:2,kind:'registered',state:'drained',closure:'none',invocationClosed:false});done.resolve({code:0});await prepare;
+ }));
+ it('absent reconcile writes nothing; stop and repeat controls retain a byte-preserving denial across boots',()=>using(async f=>{
+  expect(await f.run('cleanup','reconcile')).toEqual({version:2,kind:'unknown',state:'quarantined',closure:'none',invocationClosed:false,reason:'unknown',cgroupsEmpty:false,workerProcessesAbsent:false,workspacesAbsent:false,privateMountsAbsent:false});
+  expect(f.io.readdirSync(records)).toEqual(['.authority.json']);
+  expect(await f.run('cleanup','stop')).toMatchObject({kind:'denial-only',reason:'ok'});const bytes=f.io.readFileSync(recordPath);
+  f.setBoot('22222222-2222-4222-8222-222222222222');f.deps.manager.inspect=vi.fn(()=>{throw Error('no stage authority');});f.deps.manager.stop=vi.fn(()=>{throw Error('no stage authority');});
+  for(const operation of ['stop','reconcile'])expect(await f.run('cleanup',operation)).toMatchObject({version:2,kind:'denial-only',state:'denied',closure:'never-registered',reason:'ok'});
+  expect(f.io.readFileSync(recordPath)).toEqual(bytes);expect(lifetime.registryQuiescent(f.io)).toBe(true);expect(lifetime.registryRecordsClosed(f.io,f.seedAuthority(),[token])).toBe(true);
+ }));
+ it('denial observes the token root and leaves unrelated work and residuals untouched',()=>using(async f=>{
+  await f.run();f.setObserved({cgroupsEmpty:false,workerProcessesAbsent:false});
+  const other='b'.repeat(32);expect(await f.run('cleanup','stop',other)).toMatchObject({kind:'denial-only',invocationClosed:true,reason:'unknown',cgroupsEmpty:false,workerProcessesAbsent:false});expect(f.stops).toEqual([]);expect(f.record().state).toBe('active');
+  const root='/var/lib/patrick-workspaces/'+other;fs.mkdirSync(f.physical(root),{mode:0o700});f.io.chownSync(root,account.uid,account.gid);f.setObserved({cgroupsEmpty:true,workerProcessesAbsent:true});
+  expect(await f.run('cleanup','reconcile',other)).toMatchObject({kind:'denial-only',reason:'workspace_residual',workspacesAbsent:false});expect(fs.existsSync(f.physical(root))).toBe(true);expect(f.submissions).toHaveLength(1);
+ }));
+ it('never mutates a denial through foreign scope, account, malformed record or withdrawn cancellation authority',()=>using(async f=>{
+  const recover=f.deps.recover;f.deps.recover=async c=>({...await recover(c),cancellationBinding:null});
+  expect(await f.run('cleanup','stop')).toMatchObject({kind:'unknown',invocationClosed:false});expect(f.io.readdirSync(records)).toEqual(['.authority.json']);f.deps.recover=recover;
+  await f.run('cleanup','stop');const bytes=f.io.readFileSync(recordPath);
+  expect(await f.run('cleanup','stop',token,{...scope,domain:'foreign'})).toMatchObject({kind:'unknown',invocationClosed:false});
+  f.setIdentity(false);expect(await f.run('cleanup','reconcile')).toMatchObject({kind:'unknown',invocationClosed:false});f.setIdentity(true);expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+  const denial=f.record();for(const key of ['layout','stages','generation','drain','cleanupConsumed']){f.io.writeFileSync(recordPath,JSON.stringify({...denial,[key]:null})+'\n');expect(()=>lifetime.registryQuiescent(f.io)).toThrow();}f.io.writeFileSync(recordPath,bytes);
+ }));
+ it.each(['write','file-fsync','directory-fsync'])('denial %s failure never confirms closure and retains UID lock',fault=>using(async f=>{
+  const open=f.io.openSync,write=f.io.writeFileSync,sync=f.io.fsyncSync,paths=new Map<number,string>();let tripped=false;
+  f.io.openSync=(p,...args)=>{const fd=open(p,...args);paths.set(fd,p);return fd;};
+  f.io.writeFileSync=(p,...args)=>{if(!tripped&&fault==='write'&&typeof p==='number'&&paths.get(p)?.startsWith(records+'/.write-')){tripped=true;throw Error('write failed');}return write(p,...args);};
+  f.io.fsyncSync=fd=>{const p=paths.get(fd);if(!tripped&&(fault==='file-fsync'&&p?.startsWith(records+'/.write-')||fault==='directory-fsync'&&p===records)){tripped=true;throw Error('fsync failed');}sync(fd);};
+  expect(await f.run('cleanup','stop')).toMatchObject({version:2,kind:'unknown',reason:'control_unavailable',invocationClosed:false});expect(tripped).toBe(true);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(true);expect(f.submissions).toEqual([]);
+ }));
+ it('re-reads a no-replace cross-UID winner without quarantining or replacing its bytes',()=>using(async f=>{
+  const link=f.io.linkSync;let winner:Buffer|undefined;f.io.linkSync=(from,to)=>{if(to===recordPath&&!winner){const r=JSON.parse(f.io.readFileSync(from,'utf8'));r.identity={uid:1201,gid:1201,home:'/var/lib/patrick-codex'};r.context={...r.context,runner:'codex',user:'patrick-codex'};winner=Buffer.from(JSON.stringify(r)+'\n');f.io.writeFileSync(to,winner,{mode:0o600});}link(from,to);};
+  expect(await f.run('cleanup','stop')).toMatchObject({kind:'unknown',invocationClosed:false});expect(f.io.readFileSync(recordPath)).toEqual(winner);expect(fs.existsSync(f.physical('/run/patrick-worker/uid-1101.lock'))).toBe(false);expect(f.submissions).toEqual([]);
+ }));
+});
+
+
+it('keeps denial closure historical while fresh observer, root metadata and current binding fail closed',()=>using(async f=>{
+ await f.run('cleanup','stop');const bytes=f.io.readFileSync(recordPath),observe=f.deps.observe;
+ f.deps.observe=()=>{throw Error('observer unavailable');};expect(await f.run('cleanup','reconcile')).toMatchObject({kind:'denial-only',invocationClosed:true,reason:'unknown',cgroupsEmpty:false,workerProcessesAbsent:false,privateMountsAbsent:false,workspacesAbsent:false});f.deps.observe=observe;
+ const root='/var/lib/patrick-workspaces/'+token;fs.symlinkSync(f.physical(account.home),f.physical(root));expect(await f.run('cleanup','reconcile')).toMatchObject({kind:'denial-only',reason:'unknown',workspacesAbsent:false});fs.unlinkSync(f.physical(root));
+ fs.mkdirSync(f.physical(root),{mode:0o700});expect(await f.run('cleanup','reconcile')).toMatchObject({kind:'denial-only',reason:'unknown',workspacesAbsent:false});fs.rmdirSync(f.physical(root));
+ const lstat=f.io.lstatSync;f.io.lstatSync=p=>{if(p===root)throw Object.assign(Error('unreadable root'),{code:'EACCES'});return lstat(p);};expect(await f.run('cleanup','reconcile')).toMatchObject({kind:'denial-only',reason:'unknown',workspacesAbsent:false});f.io.lstatSync=lstat;
+ const recover=f.deps.recover;f.deps.recover=async c=>({...await recover(c),cancellationBinding:null});expect(await f.run('cleanup','stop')).toMatchObject({kind:'denial-only',reason:'ok'});expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+}));
+it.each(['missing-witness','bad-marker','foreign-record','unknown-file'])('never mints absent denial through %s registry uncertainty',kind=>using(async f=>{
+ if(kind==='missing-witness')f.io.unlinkSync(witness);if(kind==='bad-marker')f.io.writeFileSync(marker,'{}\n');
+ if(kind==='unknown-file')f.io.writeFileSync(records+'/unowned','preserve');
+ if(kind==='foreign-record'){await f.run('cleanup','stop','b'.repeat(32));const other=records+'/'+'b'.repeat(32)+'.json',r=JSON.parse(f.io.readFileSync(other,'utf8'));r.authorityId='f'.repeat(32);f.io.writeFileSync(other,JSON.stringify(r)+'\n');}
+ expect(await f.run('cleanup','stop')).toMatchObject({kind:'unknown',invocationClosed:false});expect(fs.existsSync(f.physical(recordPath))).toBe(false);expect(f.submissions).toEqual([]);
+}));
+it('keeps exact record131072 readable and rejects131073; padded marker4096 and4097 never become authority',()=>using(async f=>{
+ await f.run('cleanup','stop');const r=f.record(),base=Buffer.byteLength(JSON.stringify(r)+'\n');r.context.projectId+='x'.repeat(131072-base);const bytes=Buffer.from(JSON.stringify(r)+'\n');expect(bytes.length).toBe(131072);f.io.writeFileSync(recordPath,bytes);expect(lifetime.registryQuiescent(f.io)).toBe(true);
+ f.io.writeFileSync(recordPath,Buffer.concat([bytes,Buffer.from(' ')]));expect(()=>lifetime.registryQuiescent(f.io)).toThrow();
+ const original=f.io.readFileSync(marker);for(const size of [4096,4097]){f.io.writeFileSync(marker,Buffer.concat([original,Buffer.alloc(size-original.length,32)]));expect(()=>lifetime.readRegistryAuthority(f.io)).toThrow();}f.io.writeFileSync(marker,original);
+}));
+
+
+it.each(['denial','closed'])('refuses fresh workspace absence through an untrusted workspace base for %s history',kind=>using(async f=>{
+ if(kind==='denial')await f.run('cleanup','stop');else{await f.run();await f.run('cleanup','stop');await f.run('cleanup');await f.run('cleanup','reconcile');}
+ const bytes=f.io.readFileSync(recordPath),base='/var/lib/patrick-workspaces';fs.renameSync(f.physical(base),f.physical(base+'.saved'));fs.symlinkSync(f.physical(account.home),f.physical(base));
+ expect(await f.run('cleanup','reconcile')).toMatchObject({invocationClosed:true,reason:'unknown',workspacesAbsent:false});expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+}));
+it.each(['denial','closed'])('refuses writable workspace-base metadata for %s history',kind=>using(async f=>{
+ if(kind==='denial')await f.run('cleanup','stop');else{await f.run();await f.run('cleanup','stop');await f.run('cleanup');await f.run('cleanup','reconcile');}
+ const bytes=f.io.readFileSync(recordPath),base='/var/lib/patrick-workspaces';
+ const inode=f.io.lstatSync(recordPath).ino;
+ for(const mode of [0o777,0o770,0o707]){
+  fs.chmodSync(f.physical(base),mode);
+  for(const operation of ['stop','reconcile'] as const){
+   expect(await f.run('cleanup',operation)).toMatchObject({invocationClosed:true,reason:'unknown',workspacesAbsent:false});
+   expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+   expect(f.io.lstatSync(recordPath).ino).toBe(inode);
+   expect(f.io.lstatSync(base).mode&0o7777).toBe(mode);
+  }
+ }
+ fs.chmodSync(f.physical(base),0o750);
+ expect(await f.run('cleanup','reconcile')).toMatchObject({invocationClosed:true,reason:'ok',workspacesAbsent:true});
+ expect(f.io.readFileSync(recordPath)).toEqual(bytes);
+}));

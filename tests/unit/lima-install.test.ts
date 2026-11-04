@@ -676,3 +676,40 @@ it.each(['authority','target'])('refuses an under-mutex %s change without stoppi
   if(before)expect(f.io.readFileSync('/etc/patrick-worker/install-state.json')).toEqual(before);else expect(fs.existsSync(f.physical('/etc/patrick-worker/install-state.json'))).toBe(false);
  }finally{f.close();}
 });
+
+
+it('uses real installed recovery for denial stop/reconcile through proxy nft inventory and payload admission failure',async()=>{
+ const f=await prepared();try{
+  await install.installGuest({...f.input,apply:true},f.deps);const state=await install.inspectRecordAuthority(f.deps),context={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'},invocation='a'.repeat(32);
+  f.setActive('inactive');f.setFailure('nft');f.deps.now=()=>Date.parse('2030-01-01T00:00:00Z');f.calls.length=0;
+  const unused=()=>{throw Error('no manager or payload permission');},ld={io:f.io,effectiveUid:()=>0,trust:()=>{},identity:()=>state.accounts[context.user],recover:async(c:any)=>state.modules.recoveryBinding(c,await install.inspectRecordAuthority(f.deps)),admit:async()=>unused(),manager:{submit:unused,acknowledge:unused,inspect:unused,pending:unused,stop:unused},observe:()=>({cgroupsEmpty:true,workerProcessesAbsent:true,privateMountsAbsent:true}),boot:()=> '01234567-89ab-4cde-8fab-0123456789ab',witness:()=>({pid:5678,start:'12345'})};
+  for(const operation of ['stop','reconcile'])expect(await state.modules.executeStage({context,lifetime:{invocation,stage:'cleanup',profile:'task-only',operation},command:[]},ld)).toMatchObject({version:2,kind:'denial-only',reason:'ok'});
+  expect(f.calls.every(c=>!['/usr/sbin/ip','/usr/sbin/nft','/usr/bin/journalctl','/usr/bin/systemctl'].includes(c.path))).toBe(true);
+ }finally{f.close();}
+});
+it.each(['code','account','registry'])('refuses installed %s loss before creating denial',async kind=>{
+ const f=await prepared();try{
+  await install.installGuest({...f.input,apply:true},f.deps);const state=await install.inspectRecordAuthority(f.deps),context={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'},invocation='a'.repeat(32);
+  if(kind==='code')f.file(install.CODE+'/stage-lifetime.mjs','changed',0o755);
+  if(kind==='account')f.file('/etc/passwd',f.io.readFileSync('/etc/passwd','utf8').replace('/var/lib/patrick-grok','/var/lib/foreign'));
+  if(kind==='registry')f.io.unlinkSync('/etc/patrick-worker/registry-identity.json');
+  const ld={io:f.io,effectiveUid:()=>0,trust:()=>{},identity:()=>state.accounts[context.user],recover:async(c:any)=>state.modules.recoveryBinding(c,await install.inspectRecordAuthority(f.deps)),boot:()=> '01234567-89ab-4cde-8fab-0123456789ab',witness:()=>({pid:5678,start:'12345'})};
+  expect(await state.modules.executeStage({context,lifetime:{invocation,stage:'cleanup',profile:'task-only',operation:'stop'},command:[]},ld)).toMatchObject({kind:'unknown',invocationClosed:false});expect(fs.existsSync(f.physical('/var/lib/patrick-worker/invocations/'+invocation+'.json'))).toBe(false);
+ }finally{f.close();}
+});
+
+
+it.each(['missing','nonterminal'])('preserves private session and exact markers when referenced record is %s despite empty runtime',async kind=>{
+ const f=await prepared();try{
+  await install.installGuest({...f.input,apply:true},f.deps);await probe.probeGuest('qualification-start',f.deps);const path='/etc/patrick-worker/qualification.json',session=JSON.parse(f.io.readFileSync(path,'utf8')),invocation='a'.repeat(32);session.records=[invocation];f.file(path,JSON.stringify(session)+'\n',0o600);
+  if(kind==='nonterminal'){
+   const generation='b'.repeat(32),unit='patrick-worker-'+generation+'-1.service';
+   const record={version:2,kind:'registered',authorityId:session.registry.authorityId,invocation,context:{runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'},identity:{uid:session.bindings[0].uid,gid:session.bindings[0].gid,home:session.bindings[0].home},admission:{policyHash:session.policyHash,artifactHash:session.artifactHash,proxyPort:session.bindings[0].proxyPort},boot:'01234567-89ab-4cde-8fab-0123456789ab',generation,bootRevocation:null,state:'active',payloadSealed:false,cleanupConsumed:false,sequence:1,stages:[{stage:'prepare',profile:'task-only',sequence:1,unit,description:'patrick-worker:'+generation+':'+invocation+':1',phase:'pending',invocationId:null,controlGroup:null,submission:null,submitterExited:false,code:null}],layout:{root:'/var/lib/patrick-workspaces/'+invocation,path:'/var/lib/patrick-workspaces/'+invocation+'/work',rootIno:null,workIno:null,status:'intended'},baseline:{workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true},drain:null,cleanupConfirmed:false};
+   f.file('/var/lib/patrick-worker/invocations/'+invocation+'.json',JSON.stringify(record)+'\n',0o600);
+  }
+  fs.rmSync(f.physical('/run/patrick-worker'),{recursive:true});const before=f.io.readFileSync(path);f.mutations.length=0;
+  await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow('active_worker');expect(f.io.readFileSync(path)).toEqual(before);
+  for(const b of session.bindings)for(const m of b.markers)expect(fs.existsSync(f.physical(b.home+'/'+m.name))).toBe(true);
+  expect(f.mutations.filter(m=>m.includes('qualification.json')||m.includes('.patrick-synthetic-'))).toEqual([]);
+ }finally{f.close();}
+});

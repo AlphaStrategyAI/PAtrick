@@ -273,3 +273,15 @@ describe('actual installed admission to lifetime ABI',()=>{
   for(const changed of [{...state,accounts:{...accounts,'patrick-grok':{...account,groups:[27]}}},{...state,accounts:{...accounts,alias:{...account}}},{...state,fence:{status:'failed'}},{...state,nft:()=>null}])expect(()=>module.installedAdmission(scope,['node'],changed)).toThrow();
  });
 });
+
+
+it('routes parsed command-free stop/reconcile to real denial authority without payload admission',async()=>{
+ const {fixture}=await import('../fixtures/lima-lifetime.mjs'),{executeStage}=await import(new URL('../../scripts/lima/stage-lifetime.mjs',import.meta.url).href),f=fixture({scope,account});
+ try{
+  f.deps.admit=async()=>{throw Error('payload/proxy/nft admission unavailable');};
+  const deps={effectiveUid:()=>0,trust:()=>{},readPolicy:()=>{throw Error('no payload policy read');},accounts:()=>{throw Error('no payload account read');},readiness:()=>{throw Error('no payload readiness');},dispatch:(request:any)=>executeStage(request,f.deps)};
+  const prefix=argv.slice(0,8),suffix=['--invocation','a'.repeat(32),'--stage','cleanup','--operation'];
+  for(const operation of ['stop','reconcile'])expect(await enterWorker([...prefix,...suffix,operation,'--'],deps)).toMatchObject({version:2,kind:'denial-only',state:'denied',closure:'never-registered',reason:'ok'});
+  expect(f.events).not.toContain('admit');expect(f.submissions).toEqual([]);
+ }finally{f.close();}
+});

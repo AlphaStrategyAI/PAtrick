@@ -147,7 +147,10 @@ function helper(deps,args,input,onLine,timeout=15000){
  });
  if(input!==null)child.stdin.end(input??'');return {done,child};
 }
-function closure(value){return exact(value,['version','state','reason','invocationClosed','cgroupsEmpty','workerProcessesAbsent','privateMountsAbsent','workspacesAbsent'])&&value.version===1&&value.state==='closed'&&value.reason==='ok'&&['invocationClosed','cgroupsEmpty','workerProcessesAbsent','privateMountsAbsent','workspacesAbsent'].every(k=>value[k]===true);}
+const controlKeys=['version','kind','state','closure','invocationClosed','reason','cgroupsEmpty','workerProcessesAbsent','workspacesAbsent','privateMountsAbsent'];
+function registeredDrain(value){return exact(value,controlKeys)&&value.version===2&&value.kind==='registered'&&value.state==='drained'&&value.closure==='none'&&value.invocationClosed===false&&value.reason==='ok'&&typeof value.workspacesAbsent==='boolean'&&['cgroupsEmpty','workerProcessesAbsent','privateMountsAbsent'].every(k=>value[k]===true);}
+function closure(value){return exact(value,controlKeys)&&value.version===2&&value.kind==='registered'&&value.state==='closed'&&value.closure==='workspace-cleaned'&&value.reason==='ok'&&['invocationClosed','cgroupsEmpty','workerProcessesAbsent','privateMountsAbsent','workspacesAbsent'].every(k=>value[k]===true);}
+
 function observed(rows,binding,expected,closed){
  if(rows.length!==expected.length||!same(rows.map(r=>r.stage),expected))return false;
  return rows.every(r=>r.role===binding.runner&&r.profile===(['cli','acp'].includes(r.stage)?'authenticated-client':'task-only')&&r.postDrop.uid===binding.uid&&r.postDrop.gid===binding.gid&&r.postDrop.groups.length===0&&r.postDrop.noNewPrivileges&&['capEffective','capPermitted','capInheritable','capAmbient','capBounding'].every(k=>/^0+$/.test(r.postDrop[k]))&&r.postDrop.homeMatches&&r.postDrop.fixedEnvironmentMatches&&!r.postDrop.unknownEnvironmentKeyPresent&&r.postDrop.derivedPwdMatchesHome&&r.postDrop.derivedOldPwdMatchesTrustedCwd&&r.profileFacts.persistentMarkerUnchanged&&r.profileFacts.persistentConfigUnchanged&&r.profileFacts.workspaceMatchesRecord&&r.profileFacts.privateScratchRemoved&&(r.profile==='authenticated-client'?r.profileFacts.persistentMarkerReadable:r.profileFacts.closedNetworkObserved&&r.profileFacts.privateHomeWritable&&!r.profileFacts.persistentMarkerReadable)&&(closed?r.outcome.phase==='complete'&&r.outcome.code===0&&r.outcome.submitterExited&&r.outcome.invocationClosed:r.stage===expected.at(-1)?r.outcome.phase==='acknowledged'&&!r.outcome.invocationClosed:r.outcome.phase==='complete'&&r.outcome.code===0&&r.outcome.submitterExited));
@@ -208,11 +211,11 @@ export async function runInstalledNetwork(state,session,deps){
   }catch(error){roleGood=false;if(error?.reason==='trust'||error?.reason==='installed_mismatch'||error?.reason==='account_conflict')trustFailure=true;}
   finally{
    let closed=false;
-   if(submitted){try{await update(op=>{op.roles.find(r=>r.role===b.runner).phase='closing';});}catch{trustFailure=true;}try{
+   if(submitted){try{await update(op=>{if(current.records.includes(activeToken))op.roles.find(r=>r.role===b.runner).phase='closing';});}catch{trustFailure=true;}try{
     // Recovery deliberately does not require current readiness. The production
     // record alone authorizes its own stop and once-only nonroot cleanup.
     const stopped=await helper(deps,helperArgs(b,activeToken,stage,'stop',[]),'').done;let stop;try{stop=JSON.parse(stopped.stdout);}catch{}
-    if(stopped.valid&&stop?.state==='drained'&&stop.reason==='ok'&&stop.cgroupsEmpty&&stop.workerProcessesAbsent&&stop.privateMountsAbsent){
+    if(stopped.valid&&registeredDrain(stop)){
      const cleaned=await helper(deps,helperArgs(b,activeToken,'cleanup','exec',['node','-e',initial.fresh.modules.guestScripts.cleanup,workspace]),'').done;
      const reconciled=await helper(deps,helperArgs(b,activeToken,'cleanup','reconcile',[]),'').done;let receipt;try{receipt=JSON.parse(reconciled.stdout);}catch{}
      closed=cleaned.valid&&reconciled.valid&&closure(receipt);

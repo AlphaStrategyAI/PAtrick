@@ -202,7 +202,8 @@ async function networkFixture(options:any={}) {
    },acknowledge:async(unit:string)=>units.get(unit),inspect:async(unit:string)=>units.get(unit),pending:async()=>false,stop:async(unit:string)=>{if(options.stopFail)throw Error('virtual owned stop failure');const facts=units.get(unit);if(facts){facts.active=false;facts.empty=true;}},observeStage:async({stage}:any)=>observation(stage,context)
   };
   const ld={io:f.io,effectiveUid:()=>0,trust:()=>{},identity:()=>state.accounts[context.user],recover:async(c:any)=>state.modules.recoveryBinding(c,await install.inspectRecordAuthority(f.deps)),admit:async(c:any,command:any)=>state.modules.installedAdmission(c,command,state),manager,observe:()=>({workerProcessesAbsent:true,privateMountsAbsent:true,cgroupsEmpty:true}),boot:()=> '01234567-89ab-4cde-8fab-0123456789ab',witness:()=>({pid:5678,start:'12345'})};
-  queueMicrotask(()=>lifetime.executeStage(parsed,ld).then((result:any)=>{if(result?.version===1)child.stdout.write(JSON.stringify(result)+'\n');child.stdout.end();child.stderr.end();child.emit('close',0,null);},(error:any)=>{child.stderr.write('Worker entry denied.\n');child.stdout.end();child.stderr.end();child.emit('close',78,null);}));return child;
+  if(options.beforeRegistration&&life.stage==='prepare'&&life.operation==='exec'){queueMicrotask(()=>{child.stdin.resume();child.stdout.end();child.stderr.end();child.emit('close',78,null);});return child;}
+  queueMicrotask(()=>lifetime.executeStage(parsed,ld).then((result:any)=>{if(result?.version===2)child.stdout.write(JSON.stringify(result)+'\n');child.stdout.end();child.stderr.end();child.emit('close',0,null);},(error:any)=>{child.stderr.write('Worker entry denied.\n');child.stdout.end();child.stderr.end();child.emit('close',78,null);}));return child;
  };
  const privateSession=()=>JSON.parse(f.io.readFileSync('/etc/patrick-worker/qualification.json','utf8'));
  f.mutations.length=0;f.calls.length=0;
@@ -281,4 +282,16 @@ describe('network unchanged root policy and session observations',()=>{
  it.each([{proxyDrift:true},{nftDrift:true},{extraRecord:true}])('does not clear ownership or pass after %j and still attempts the exact owned stop',async options=>{
   const f=await networkFixture(options);try{const {runInstalledNetwork}=await import(url.href);const r=await runInstalledNetwork(f.state,f.session,f.deps);expect(r.outcome).toBe('fail');expect(r.results.every((v:any)=>v.status!=='pass')).toBe(true);expect(f.events.filter((e:any)=>e.operation==='stop')).toHaveLength(1);expect(f.privateSession().networkOperation.phase).not.toBe('complete');await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();}finally{f.close();}
  });
+});
+
+
+it('keeps actual pre-registration denial a failed network lifetime without unauthorized cleanup or finish',async()=>{
+ const f=await networkFixture({beforeRegistration:true});try{
+  const {runInstalledNetwork}=await import(url.href),result=await runInstalledNetwork(f.state,f.session,f.deps);
+  expect(result).toMatchObject({version:1,outcome:'fail',reason:'lifetime'});expect(result.results.every((r:any)=>r.status!=='pass')).toBe(true);
+  expect(f.submissions).toEqual([]);expect(f.events.filter((e:any)=>e.stage==='cleanup'&&e.operation==='exec')).toEqual([]);
+  const op=f.privateSession().networkOperation;expect(op.phase).toBe('unknown');expect(op.roles[0].phase).toBe('unknown');expect(f.privateSession().records).toEqual([]);
+  const record=JSON.parse(f.io.readFileSync('/var/lib/patrick-worker/invocations/'+op.roles[0].token+'.json','utf8'));expect(record).toMatchObject({kind:'denial-only',state:'denied'});
+  await expect(probe.probeGuest('qualification-finish',f.deps)).rejects.toThrow();
+ }finally{f.close();}
 });

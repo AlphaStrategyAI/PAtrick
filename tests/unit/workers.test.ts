@@ -60,7 +60,7 @@ let input = '';
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   let stage;
-  if(operation!=='exec'){stage=operation;process.stdout.write(JSON.stringify({version:1,state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:operation==='reconcile',privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'}));}
+  if(operation!=='exec'){stage=operation;process.stdout.write(JSON.stringify({version:2,kind:'registered',closure:operation==='stop'?'none':'workspace-cleaned',state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:operation==='reconcile',privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'}));}
   else if (args[0] === 'node' && args[1] === '-e' && args[2] === scripts.prepare) {
     const payload = JSON.parse(input);
     if (payload.schema.type !== 'object' || !payload.prompt.includes('feedback worker') || payload.files.length) fail('Invalid preparation payload');
@@ -137,7 +137,7 @@ function waitForAcpInputEof(f:{events:(complete?:boolean)=>any[]},run:Promise<un
   if(signal.aborted)aborted();else queueMicrotask(inspect);
  });
 }
-type FixtureOptions={runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'unrelated-early'|'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
+type FixtureOptions={controlReceipt?:unknown;runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'unrelated-early'|'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
 function protocolFixture(options:FixtureOptions={}) {
   const root=mkdtempSync(join(tmpdir(),'patrick-identity-protocol-')),bin=join(root,'bin'),eventsPath=join(root,'events');mkdirSync(bin);
   const runner=options.runner??'grok',role=options.role??'feedback',createdAt='2026-01-01T00:00:00.000Z';
@@ -158,7 +158,7 @@ if(JSON.stringify(argv.slice(0,3))!==JSON.stringify(['shell','fixture-instance',
 let stage=operation!=='exec'?operation:args[0]==='node'?(args[2]===scripts.prepare?'prepare':args[2]===scripts.tests?'tests':args[2]===scripts.read?'read':args[2]===scripts.cleanup?'cleanup':'invalid'):args[0]==='sh'?'cli':args[0]==='fixture-dsh'?'acp':'invalid';
 fs.appendFileSync(${JSON.stringify(eventsPath)},JSON.stringify({stage,prefix,args,invocation,profile:['cli','acp'].includes(argv[18])?'authenticated-client':'task-only',purpose:argv[18],operation})+'\\n');
 if(stage===options.fail||(stage==='cleanup'&&options.cleanupFailure))process.exit(78);
-if(stage==='stop'||stage==='reconcile'){process.stdout.write(JSON.stringify({version:1,state:stage==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:stage==='reconcile',privateMountsAbsent:true,invocationClosed:stage==='reconcile',reason:'ok'}));}
+if(stage==='stop'||stage==='reconcile'){process.stdout.write(JSON.stringify(Object.hasOwn(options,'controlReceipt')?options.controlReceipt:{version:2,kind:'registered',closure:stage==='stop'?'none':'workspace-cleaned',state:stage==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:stage==='reconcile',privateMountsAbsent:true,invocationClosed:stage==='reconcile',reason:'ok'}));}
 else if(stage==='cli'&&options.holdCli){setInterval(()=>{},1000);process.stdin.resume();}
 else if(stage==='acp') {
  if(options.acpBehavior==='early')process.exit(0);
@@ -193,7 +193,7 @@ else if(stage==='acp') {
 
 // Host-protocol fixture: real root lifecycle records/locks/ACK gate with a
 // local NDJSON server. No Linux service/profile/guest qualification is claimed.
-function lifecycleProtocolFixture(role:'execute'|'check',unconfirmed=false,probe:{bootstrapDelayMs?:number;exitCode?:number;holdInputOpen?:boolean;releaseOnEarlyTests?:boolean}={}) {
+function lifecycleProtocolFixture(role:'execute'|'check',unconfirmed=false,probe:{bootstrapDelayMs?:number;exitCode?:number;holdInputOpen?:boolean;releaseOnEarlyTests?:boolean;holdInitialPrepare?:boolean}={}) {
  const f=protocolFixture({runner:'dsh',role}),root=join(f.root,'lifecycle');mkdirSync(root);
  const context={runner:'dsh',user:'patrick-dedicated',projectId:f.input.project.projectId,domain:f.input.project.domain};
  const options={root,scope:context,account:{uid:1101,gid:1101,home:'/var/lib/patrick-dedicated',groups:[]}};
@@ -224,6 +224,7 @@ lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.exi
  const request={context:${JSON.stringify(context)},lifetime:{invocation,stage,operation,profile:lifetime.profileFor(stage)},command};
  const events=${JSON.stringify(events)},log=event=>fs.appendFileSync(events,JSON.stringify({event,stage,operation})+'\\n');
  log('request');
+ if(stage==='prepare'&&operation==='exec'&&${probe.holdInitialPrepare===true}&&!fs.existsSync(${JSON.stringify(join(root,'prepare-held'))})){fs.writeFileSync(${JSON.stringify(join(root,'prepare-held'))},'held');log('prepare-held');process.stdin.resume();await new Promise(()=>{setInterval(()=>{},1000);});}
  if(stage==='tests'&&operation==='exec'){
   const r=f.record(invocation),prior=r.stages.at(-1);
   if(prior.stage!=='acp'||prior.phase!=='complete'||r.payloadSealed){log('tests-before-confirmation');${probe.releaseOnEarlyTests?"fs.writeFileSync("+JSON.stringify(release)+",'early tests observed');":''}}
@@ -262,7 +263,7 @@ function assertAcpTerminal(f:ReturnType<typeof lifecycleProtocolFixture>,result:
  expect(events.some(e=>e.event==='tests-before-confirmation'),'Tests started before ACP helper confirmation').toBe(false);
  expect(endTurn).toBeGreaterThan(-1);expect(eof).toBeGreaterThan(endTurn);expect(exit).toBeGreaterThan(eof);expect(confirmed).toBeGreaterThan(exit);expect(tests).toBeGreaterThan(confirmed);
  expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:'actual synthetic test'}]}});
- const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name))!.slice(0,32);
+ const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name)&&f.controller.record(name.slice(0,32)).kind==='registered')!.slice(0,32);
  expect(f.controller.record(token)).toMatchObject({state:'closed',payloadSealed:true});
 }
 async function assertHeldAcpHandoff(f:ReturnType<typeof lifecycleProtocolFixture>,signal:AbortSignal){
@@ -270,7 +271,7 @@ async function assertHeldAcpHandoff(f:ReturnType<typeof lifecycleProtocolFixture
  try{
   await waitForAcpInputEof(f,run,signal);
   expect(f.events(false).filter(e=>e.stage==='tests')).toEqual([]);
-  const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name))!.slice(0,32);
+  const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name)&&f.controller.record(name.slice(0,32)).kind==='registered')!.slice(0,32);
   expect(f.controller.record(token)).toMatchObject({state:'active',payloadSealed:false,sequence:2,stages:[{stage:'prepare',phase:'complete'},{stage:'acp',phase:'acknowledged'}]});
   expect(f.events(false).filter(e=>e.stage==='acp'&&e.event==='helper-confirmed')).toEqual([]);
   f.release();assertAcpTerminal(f,await run);
@@ -515,5 +516,43 @@ describe('ACP readiness observation',()=>{
    expect(String(error)).toContain(kind==='cancelled'?'ACP readiness cancelled':kind==='rejected'?'Worker failed':kind==='invalid-order'||kind==='malformed'?'Invalid ACP readiness':'Worker settled');
    expect(vi.getTimerCount()).toBe(0);
   }finally{controller.abort();await wait;vi.useRealTimers();rmSync(root,{recursive:true,force:true});}
+ });
+});
+
+
+describe('strict ordinary control IPC2 finalization',()=>{
+ const denied={version:2,kind:'denial-only',state:'denied',closure:'never-registered',invocationClosed:true,reason:'ok',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:true,privateMountsAbsent:true};
+ it.each([
+  ['state',{...denied,state:'closed'}],['kind',{...denied,kind:'registered'}],['closure',{...denied,closure:'workspace-cleaned'}],
+  ['nonclosed',{...denied,invocationClosed:false}],['extra',{...denied,extra:true}],['v1',{...denied,version:1}],
+  ['false workspace',{...denied,workspacesAbsent:false}],['false process',{...denied,workerProcessesAbsent:false}],['false group',{...denied,cgroupsEmpty:false}],['false mounts',{...denied,privateMountsAbsent:false}],
+  ['unavailable',{...denied,reason:'control_unavailable'}],['active reason',{...denied,reason:'active'}],['unknown reason',{...denied,reason:'unknown'}],
+  ['unknown true facts',{...denied,kind:'unknown',state:'quarantined',closure:'none',invocationClosed:false,reason:'unknown'}],
+  ['registered closure',{...denied,kind:'registered',state:'drained',closure:'workspace-cleaned',invocationClosed:false}],
+  ['registered closed',{...denied,kind:'registered',state:'closed',closure:'none'}],
+  ['boot mismatch',{...denied,kind:'registered',state:'quarantined',closure:'none',invocationClosed:false,reason:'boot_mismatch'}],
+  ['unknown control',{version:2,kind:'unknown',state:'quarantined',closure:'none',invocationClosed:false,reason:'control_unavailable',cgroupsEmpty:false,workerProcessesAbsent:false,workspacesAbsent:false,privateMountsAbsent:false}],
+ ] as const)('rejects forged %s receipt through subprocess bytes',async(_name,controlReceipt)=>{
+  const f=protocolFixture({fail:'prepare',controlReceipt});try{await expect(new LimaWorker('grok',f.config,f.billing).run(f.input)).rejects.toMatchObject({code:'worker_cleanup_unconfirmed',cause:{name:'WorkerUnavailable'}});expect(f.events().at(-1).stage).toBe('reconcile');}finally{f.close();}
+ });
+ it('rejects denial without a primary failed or cancelled attempt',async()=>{
+  const f=protocolFixture({controlReceipt:denied});try{await expect(new LimaWorker('grok',f.config,f.billing).run(f.input)).rejects.toMatchObject({code:'worker_cleanup_unconfirmed'});expect(f.events().filter(e=>e.stage==='cleanup')).toEqual([]);}finally{f.close();}
+ });
+ it('cancels before real registration, persists denial using fresh controls, then completes a fresh ordinary attempt',async({signal})=>{
+  const f=lifecycleProtocolFixture('execute',false,{holdInitialPrepare:true}),abort=new AbortController(),worker=new LimaWorker('dsh',f.config,f.billing);
+  const run=worker.run(f.input,AbortSignal.any([signal,abort.signal])).catch(error=>error);
+  try{
+   await new Promise<void>((resolve,reject)=>{
+    const timer=setInterval(()=>{if(f.events(false).some(e=>e.event==='prepare-held')){clearInterval(timer);signal.removeEventListener('abort',cancel);resolve();}},5);
+    const cancel=()=>{clearInterval(timer);reject(signal.reason);};signal.addEventListener('abort',cancel,{once:true});
+    run.then(outcome=>{clearInterval(timer);signal.removeEventListener('abort',cancel);reject(Error('settled before prepare barrier: '+protocolDiagnostic(f.events(false),outcome)));});
+   });
+   expect(f.controller.io.readdirSync('/var/lib/patrick-worker/invocations')).toEqual(['.authority.json']);abort.abort();
+   const error=await run;expect(error).toMatchObject({name:'WorkerUnavailable'});expect(error.code).not.toBe('worker_cleanup_unconfirmed');
+   const events=f.events();expect(events.filter(e=>e.operation==='exec').map(e=>e.stage)).toEqual(['prepare','prepare']);expect(events.some(e=>e.operation==='stop')).toBe(true);expect(events.some(e=>e.operation==='reconcile')).toBe(true);
+   const names=f.controller.io.readdirSync('/var/lib/patrick-worker/invocations').filter(n=>n.endsWith('.json')&&!n.startsWith('.'));expect(names).toHaveLength(1);const token=names[0]!.slice(0,32);expect(f.controller.record(token)).toMatchObject({kind:'denial-only',state:'denied'});
+   f.release();const fresh=await worker.run(f.input,signal);assertAcpTerminal(f,fresh);
+   expect(f.controller.record(token)).toMatchObject({kind:'denial-only',state:'denied'});
+  }finally{abort.abort();f.release();await run;f.close();}
  });
 });

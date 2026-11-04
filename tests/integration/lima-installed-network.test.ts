@@ -45,7 +45,7 @@ if(argv[6]==='/usr/local/libexec/patrick-worker-probe'&&argv.length===9&&argv[7]
  log({stage,operation});
  if(operation==='exec'&&stage==='prepare')process.exit(78);
  if(stage!=='cleanup'||argv.length!==22||!['stop','reconcile'].includes(operation)||failure==='unhealthy-adapter')process.exit(78);
- emit({version:1,state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:true,privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'});
+ emit({version:2,kind:'registered',closure:operation==='stop'?'none':'workspace-cleaned',state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:true,privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'});
 }else process.exit(78);
 `,{mode:0o700});
  return {root,bin,reportPath,events:()=>readFileSync(eventsPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)),close(){rmSync(root,{recursive:true,force:true});}};

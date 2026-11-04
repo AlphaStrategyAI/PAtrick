@@ -15,7 +15,7 @@ export function fixture(options?:{root?:string;boot?:string;scope?:Scope;account
  deps:{io:any;effectiveUid:()=>number;trust:()=>void;boot:()=>string;witness:()=>{pid:number;start:string};lockTimeoutMs:number;
  identity:()=>any;recover:(context:any)=>Promise<any>;admit:(context:any,command:any)=>Promise<any>;observe:(record?:any)=>Observation;
  manager:{submit:(spec:any)=>any;acknowledge:(unit:string)=>Promise<any>;inspect:(unit:string)=>Promise<any>;settled:(stage:any)=>Promise<boolean>;stop:(unit:string)=>Promise<void>;pending:(unit?:string)=>Promise<boolean>}};
- submissions:any[];stops:string[];events:string[];units:Map<string,any>;
+ submissions:any[];stops:string[];events:string[];units:Map<string,any>;waitFor:(event:string,occurrence?:number)=>Promise<void>;
  seedAuthority:()=>RegistryReference;setBoot:(id:string)=>void;
  setAdmission:(value:string)=>void;setIdentity:(value:boolean)=>void;setObserved:(value:Partial<Observation>)=>void;
  hold:()=>Deferred;ack:()=>Deferred;close:()=>void;

@@ -47,9 +47,21 @@ async function collect(context:GuestContext,lifetime:LifetimeContext,args:readon
   });
 }
 
+const controlKeys=['version','kind','state','closure','invocationClosed','reason','cgroupsEmpty','workerProcessesAbsent','workspacesAbsent','privateMountsAbsent'] as const;
+function completeAbsence(r:ReconcileResult){return r.cgroupsEmpty&&r.workerProcessesAbsent&&r.workspacesAbsent&&r.privateMountsAbsent;}
+function completeDrain(r:ReconcileResult){return r.kind==='registered'&&r.reason==='ok'&&r.cgroupsEmpty&&r.workerProcessesAbsent&&r.privateMountsAbsent&&(r.state==='drained'&&r.closure==='none'&&!r.invocationClosed||r.state==='closed'&&r.closure==='workspace-cleaned'&&r.invocationClosed);}
 function controlResult(text:string):ReconcileResult {
-  const r=JSON.parse(text),keys=['version','state','cgroupsEmpty','workerProcessesAbsent','workspacesAbsent','privateMountsAbsent','invocationClosed','reason'];
-  if(!r||Object.keys(r).length!==keys.length||!keys.every(k=>Object.hasOwn(r,k))||r.version!==1||!['active','stopping','drained','cleaning','closed','quarantined'].includes(r.state)||!['ok','active','unknown','workspace_residual','control_unavailable'].includes(r.reason)||['cgroupsEmpty','workerProcessesAbsent','workspacesAbsent','privateMountsAbsent','invocationClosed'].some(k=>typeof r[k]!=='boolean'))throw Error('Invalid lifecycle receipt');return r;
+  const r=JSON.parse(text),facts=['cgroupsEmpty','workerProcessesAbsent','workspacesAbsent','privateMountsAbsent'] as const;
+  const invalid=()=>{throw Error('Invalid lifecycle receipt');};
+  if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).length!==controlKeys.length||!controlKeys.every(k=>Object.hasOwn(r,k))||r.version!==2||typeof r.invocationClosed!=='boolean'||facts.some(k=>typeof r[k]!=='boolean'))return invalid();
+  if(r.kind==='registered'){
+    if(!['active','stopping','drained','cleaning','closed','quarantined'].includes(r.state)||!['ok','active','unknown','workspace_residual','control_unavailable','boot_mismatch','authority_unavailable'].includes(r.reason)||(r.state==='closed'?r.closure!=='workspace-cleaned'||!r.invocationClosed:r.closure!=='none'||r.invocationClosed)||r.reason==='active'&&r.state!=='active')return invalid();
+  }else if(r.kind==='denial-only'){
+    if(r.state!=='denied'||r.closure!=='never-registered'||!r.invocationClosed||!['ok','unknown','workspace_residual'].includes(r.reason)||r.reason==='ok'&&!completeAbsence(r)||r.reason==='workspace_residual'&&r.workspacesAbsent)return invalid();
+  }else if(r.kind==='unknown'){
+    if(r.state!=='quarantined'||r.closure!=='none'||r.invocationClosed||!['unknown','control_unavailable','authority_unavailable'].includes(r.reason)||facts.some(k=>r[k]))return invalid();
+  }else return invalid();
+  return r;
 }
 
 export class LimaWorker implements WorkerAdapter {
@@ -97,15 +109,20 @@ export class LimaWorker implements WorkerAdapter {
       return {output,costUsd:policy.costPerRunUsd,model:policy.model,provider:policy.provider};
     } catch(error) { primaryFailure=error;throw error; }
     finally {
-      let unconfirmed=false;
+      let unconfirmed=false,stoppedKind:ReconcileResult['kind']|undefined;
       try {
         const stopped=controlResult(await collect(context,lifetime('cleanup','stop'),[],'',AbortSignal.timeout(5000)));
-        if(!stopped.cgroupsEmpty||!stopped.workerProcessesAbsent||!stopped.privateMountsAbsent||!['drained','closed'].includes(stopped.state))throw Error('Unconfirmed drain');
-        if(!stopped.workspacesAbsent)await collect(context,lifetime('cleanup'),['node','-e',cleanupScript,dir],'',AbortSignal.timeout(10000));
+        if(stopped.kind==='denial-only'){
+          if(primaryFailure===undefined||!completeAbsence(stopped)||stopped.reason!=='ok')throw Error('Unconfirmed denial');
+        }else if(stopped.kind==='registered'){
+          if(!completeDrain(stopped))throw Error('Unconfirmed drain');
+          if(stopped.state!=='closed'&&!stopped.workspacesAbsent)await collect(context,lifetime('cleanup'),['node','-e',cleanupScript,dir],'',AbortSignal.timeout(10000));
+        }else throw Error('Unconfirmed authority');
+        stoppedKind=stopped.kind;
       } catch {unconfirmed=true;}
       try {
         const reconciled=controlResult(await collect(context,lifetime('cleanup','reconcile'),[],'',AbortSignal.timeout(5000)));
-        if(!reconciled.invocationClosed||!reconciled.cgroupsEmpty||!reconciled.workerProcessesAbsent||!reconciled.workspacesAbsent||!reconciled.privateMountsAbsent||reconciled.state!=='closed'||reconciled.reason!=='ok')unconfirmed=true;
+        if(reconciled.kind!==stoppedKind||!completeAbsence(reconciled)||reconciled.reason!=='ok'||!(reconciled.kind==='registered'&&reconciled.state==='closed'&&reconciled.closure==='workspace-cleaned'&&reconciled.invocationClosed||reconciled.kind==='denial-only'&&reconciled.state==='denied'&&reconciled.closure==='never-registered'&&reconciled.invocationClosed))unconfirmed=true;
       } catch {unconfirmed=true;}
       if(unconfirmed){const error=new DomainError('Isolated worker cleanup could not be confirmed.','worker_cleanup_unconfirmed',503);if(primaryFailure!==undefined)error.cause=primaryFailure;throw error;}
     }
