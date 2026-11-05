@@ -58,8 +58,10 @@ describe('descriptive pending experience candidates', () => {
     const [card] = publishKnowledge(store, source, { cards: [value] });
     expect(card?.experience).toEqual(details());
     expect(card?.aliases).toEqual(['config', '启动报错找不到配置']);
-    expect(store.searchCards('配置文件找不到', source).map(card => card.id)).toEqual([card!.id]);
-    expect(store.searchCards('启动报错找不到配置', source).map(card => card.id)).toEqual([card!.id]);
+    expect(store.searchCards('配置文件找不到', source)).toEqual([]);
+    expect(store.searchCards('配置文件找不到', source, 20, {usage:'browse'}).map(card => card.id)).toEqual([card!.id]);
+    expect(store.searchCards('启动报错找不到配置', source)).toEqual([]);
+    expect(store.searchCards('启动报错找不到配置', source, 20, {usage:'browse'}).map(card => card.id)).toEqual([card!.id]);
     expect(store.searchCards('config', { ...source, domain: 'company' })).toEqual([]);
   });
 
@@ -148,11 +150,13 @@ describe('descriptive pending experience candidates', () => {
   it('recovers complete descriptions and keeps legacy details-free experience browseable and reported', () => {
     const { store, source, root } = setup(); const [card] = publishKnowledge(store, source, { cards: [candidate()] });
     const complete = new Store(join(root, 'complete.sqlite'), join(root, 'vault')); stores.push(complete);
-    expect(complete.searchCards('配置文件找不到', source)[0]?.experience).toEqual(details());
+    expect(complete.searchCards('配置文件找不到', source)).toEqual([]);
+    expect(complete.searchCards('配置文件找不到', source, 20, {usage:'browse'})[0]?.experience).toEqual(details());
     complete.close();
     editEntity(cardPath(root), entity => { delete entity.experience; entity.verification = 'verified'; });
     const legacy = new Store(join(root, 'legacy.sqlite'), join(root, 'vault')); stores.push(legacy);
-    const recovered = legacy.searchCards('config', source)[0];
+    expect(legacy.searchCards('config', source)).toEqual([]);
+    const recovered = legacy.searchCards('config', source, 20, {usage:'browse'})[0];
     expect(recovered?.id).toBe(card!.id);
     expect(recovered?.experience).toBeUndefined();
     expect(recovered?.verification).toBe('reported');
@@ -170,7 +174,8 @@ describe('descriptive pending experience candidates', () => {
       entity.verification = 'verified';
     });
     const recovered = new Store(join(root, 'recovered.sqlite'), join(root, 'vault')); stores.push(recovered);
-    const card = recovered.searchCards('config', source)[0];
+    expect(recovered.searchCards('config', source)).toEqual([]);
+    const card = recovered.searchCards('config', source, 20, {usage:'browse'})[0];
     expect(card?.experience).toBeUndefined();
     expect(card?.verification).toBe('reported');
     expect(recovered.list('actions')).toEqual([]);

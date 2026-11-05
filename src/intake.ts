@@ -1,7 +1,7 @@
 import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
 import type { Store } from './store.js';
-import { enqueueStructuredKnowledge, isStructuredKnowledgeCard } from './knowledge-jobs.js';
-import { knowledgeActionSourceRefs } from './knowledge-records.js';
+import { consumedStageResult, enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
+import { canonicalExperiencePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs } from './knowledge-records.js';
 
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
@@ -9,6 +9,27 @@ export interface IngestInput {
   purpose?: 'task' | 'reference'; status?: 'active' | 'withdrawn';
 }
 const finished = new Set(['delivered', 'archived', 'cancelled']);
+
+/** Preserve no evidence content or authority when a normalization link is sanitized. */
+function normalizationTombstone(store:Store,action:Entities['actions'],invalid:Set<string>,base:Record<string,unknown>):Record<string,unknown> {
+  if(action.kind!=='experience.evidence-link'||action.status!=='completed')return base;
+  const parsed=canonicalExperiencePayloadSchema.safeParse(action.payload);if(!parsed.success)return base;
+  const association=parsed.data.association,binding=association.versionBinding,card=store.get('cards',association.cardId);
+  if(!binding||binding.reported!=='unknown'||!card||card.status!=='active'||card.expiresAt&&!(Date.parse(card.expiresAt)>Date.now())||card.projectId!==action.projectId||card.domain!==action.domain||card.sourceId!==association.sourceId||card.sourceRevision!==association.sourceRevision||invalid.has(card.sourceId)||card.experience?.codeVersion!==binding.observedRevision||action.id!==stableId('experience-evidence-link',association)||parsed.data.digest!==digest(association)||parsed.data.sourceRefs.some(ref=>!store.get('sources',ref.id)))return base;
+  const refs=knowledgeSourceRefs(store,card.sourceId,card);if(!refs||refs.some(ref=>invalid.has(ref.id)))return base;
+  return {...base,sourceRefs:refs,normalizationOrigin:{cardId:card.id,candidateHash:association.candidateHash,sourceId:card.sourceId,sourceRevision:card.sourceRevision,reported:'unknown',observedRevision:binding.observedRevision}};
+}
+
+/** Historical snapshots are negative dependencies only when their host identity and references are coherent. */
+function historicalSnapshot(store: Store, action: Entities['actions'], scope: { projectId: string; domain: string }): DecisionSnapshot | undefined {
+  if (action.projectId !== scope.projectId || action.domain !== scope.domain || action.kind !== 'decision.snapshot' || action.status !== 'completed' || typeof action.taskId !== 'string' || !action.taskId.trim() || typeof action.id !== 'string' || !action.id.trim()) return;
+  const snapshot = action.payload?.snapshot as Partial<DecisionSnapshot> | undefined;
+  if (!snapshot || snapshot.schemaVersion !== 1 || snapshot.id !== action.id || snapshot.projectId !== scope.projectId || snapshot.domain !== scope.domain || snapshot.taskId !== action.taskId || !Number.isSafeInteger(snapshot.taskVersion) || snapshot.taskVersion! < 1 || typeof snapshot.attemptId !== 'string' || !snapshot.attemptId.trim() || action.id !== stableId('decision-snapshot', action.taskId, snapshot.taskVersion, snapshot.attemptId) || !Array.isArray(snapshot.sourceRefs)) return;
+  const task = store.get('tasks', action.taskId);
+  if (!task || task.projectId !== scope.projectId || task.domain !== scope.domain || snapshot.taskVersion! > task.version || snapshot.sourceId !== task.sourceId || snapshot.sourceRevision !== task.sourceRevision) return;
+  if (!snapshot.sourceRefs.every(ref => ref && typeof ref === 'object' && typeof ref.id === 'string' && !!ref.id.trim() && typeof ref.revision === 'string' && !!ref.revision.trim())) return;
+  return snapshot as DecisionSnapshot;
+}
 
 /** Revoke evidence before any newly received revision can be scheduled. */
 export function invalidateSource(store: Store, sourceId: string, status: 'superseded' | 'withdrawn'): void {
@@ -24,8 +45,9 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
   }
   const dependentCards=new Set(store.list('actions').filter(action=>action.kind==='knowledge.structured-ingest'&&knowledgeActionSourceRefs(action).some(ref=>ref.id===sourceId)).map(action=>action.payload.sourceId).filter((id):id is string=>typeof id==='string'));
   store.save('sources', { ...source, status });
-  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','experience.test-observation'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
-    store.save('actions', { ...action, status: 'completed', payload: { phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] }, updatedAt: changed });
+  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','experience.test-observation','experience.evidence-link'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
+    const payload=normalizationTombstone(store,action,new Set([sourceId]),{ phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] });
+    store.save('actions', { ...action, status: 'completed', payload, updatedAt: changed });
   }
   // Copies retain their originating revision, including secondary/historical Vault edits.
   for (const child of store.list('sources')) if (child.projectId === source.projectId && child.domain === source.domain && child.parentSources?.some(ref => ref.id === sourceId)) invalidateSource(store, child.id, status);
@@ -45,16 +67,28 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     const question = store.get('questions', decisionCase.questionId);
     if (question) store.save('questions', { ...question, status: 'stale' });
   }
+  // A historical citation can still underlie retained research. It is a negative
+  // invalidation dependency only, never evidence authorizing current work.
+  const historicalTasks = new Set<string>();
+  for (const action of store.list('actions')) {
+    const snapshot = historicalSnapshot(store, action, scope);
+    if (snapshot?.sourceRefs.some(ref => ref.id === sourceId)) historicalTasks.add(action.taskId!);
+  }
   for (const task of store.list('tasks')) {
     if (task.projectId !== scope.projectId || task.domain !== scope.domain || finished.has(task.status)) continue;
     const direct = task.sourceId === sourceId;
-    const depends = invalidCaseTasks.has(task.id) || task.decision?.citations.some(c => c.sourceId === sourceId) || task.decision?.ruleIds.some(id => invalidRules.has(id));
+    const depends = invalidCaseTasks.has(task.id) || historicalTasks.has(task.id) || task.decision?.citations.some(c => c.sourceId === sourceId) || task.decision?.ruleIds.some(id => invalidRules.has(id));
     if (!direct && !depends) continue;
     for (const question of store.list('questions')) if (question.taskId === task.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
     for (const attempt of store.list('attempts')) if (attempt.taskId === task.id && attempt.status === 'running') store.save('attempts', { ...attempt, status: 'stale', finishedAt: changed, error: 'Source changed during execution.' });
     for (const action of store.list('actions')) if (action.taskId === task.id && action.status === 'pending') store.save('actions', { ...action, status: 'completed', payload: { invalidated: true, reason: status }, updatedAt: changed });
     for (const message of store.list('outbox')) if (message.taskId === task.id && message.status === 'pending') store.save('outbox', { ...message, status: 'sent', text: '[invalidated]', remoteId: 'invalidated' });
-    store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
+    if(task.stage==='feedback'&&task.receiptId){
+      // The source change revokes further work, but cannot undo a completed delivery.
+      store.save('tasks',{...task,status:'cancelled',updatedAt:changed,runAfter:changed,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,error:`Source ${status}; completed delivery state retained.`});
+    }else{
+      store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
+    }
   }
   store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: `source.${status}`, message: `Source ${sourceId} ${status}; dependent evidence and actions invalidated.`, createdAt: changed, data: { sourceId } });
 }
@@ -74,8 +108,8 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
     for (const c of cases) if (sourceIds.has(c.sourceId) || c.decisionSnapshot?.sourceRefs.some(ref => sourceIds.has(ref.id)) || c.ruleIds.some(id => ruleIds.has(id)) || taskIds.has(c.taskId)) { caseIds.add(c.id); taskIds.add(c.taskId); sourceIds.add(c.sourceId); }
     for (const task of tasks) if (sourceIds.has(task.sourceId) || task.decision?.citations.some(c => sourceIds.has(c.sourceId)) || task.decision?.ruleIds.some(id => ruleIds.has(id))) taskIds.add(task.id);
     for (const action of historicalJudgments) {
-      const snapshot = action.payload.snapshot as DecisionSnapshot | undefined;
-      if (action.taskId && snapshot && (sourceIds.has(snapshot.sourceId) || snapshot.sourceRefs.some(ref => sourceIds.has(ref.id)))) taskIds.add(action.taskId);
+      const snapshot = historicalSnapshot(store, action, origin);
+      if (snapshot && (sourceIds.has(snapshot.sourceId) || snapshot.sourceRefs.some(ref => sourceIds.has(ref.id)))) taskIds.add(snapshot.taskId);
     }
     for (const q of questions) if (taskIds.has(q.taskId)) { const id = stableId('owner-answer', q.id); if (sources.some(s => s.id === id)) sourceIds.add(id); }
   }
@@ -94,16 +128,24 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   for (const q of questions) if (taskIds.has(q.taskId)) write('questions', { ...q, title: '[withdrawn]', context: '', options: { A: option, B: option }, research: { queries: [], summary: '', gaps: [] }, answer: undefined, status: 'stale' });
   for (const task of tasks) if (taskIds.has(task.id)) {
     const terminal = finished.has(task.status);
-    const status = terminal ? task.status : sourceIds.has(task.sourceId) ? 'cancelled' : 'deciding';
+    const completedDelivery = task.stage === 'feedback' && !!task.receiptId;
+    const status = terminal ? task.status : completedDelivery || sourceIds.has(task.sourceId) ? 'cancelled' : 'deciding';
     const alreadyRedacted = task.error === 'Evidence withdrawn; readable content retracted.' && !task.description && !task.decision && !task.plan && !task.artifact && !task.review && !task.feedback;
-    write('tasks', { ...task, title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
+    write('tasks', { ...task, title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal || completedDelivery ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
   }
   for (const event of store.list('events')) if (scoped(event) && (event.taskId && taskIds.has(event.taskId) || refers(event.data) || mentions(event.data) || mentions(event.message))) write('events', { ...event, message: 'Evidence retracted.', data: { retracted: true } });
   for (const attempt of store.list('attempts')) if (taskIds.has(attempt.taskId)) write('attempts', { ...attempt, error: undefined, ...(attempt.status === 'running' ? { status: 'stale' as const, finishedAt: now() } : {}) });
   const outboxIds = new Set<string>();
-  for (const action of store.list('actions')) if (scoped(action) && (action.taskId && taskIds.has(action.taskId) || refers(action.payload) || mentions(action.payload))) {
+  for (const action of store.list('actions')) if (scoped(action) && (()=>{
+    if(action.kind==='experience.evidence-link'){
+      const dependencies=knowledgeActionDependencies(action);
+      if(!dependencies.unresolved)return dependencies.refs.some(ref=>sourceIds.has(ref.id));
+    }
+    return !!(action.taskId && taskIds.has(action.taskId) || refers(action.payload) || mentions(action.payload));
+  })()) {
     if (typeof action.payload.outboxId === 'string') outboxIds.add(action.payload.outboxId);
-    write('actions', { ...action, status: 'completed', payload: { retracted: true, sourceIds: [...sourceIds], ...(typeof action.payload.receiptId === 'string' ? { receiptId: action.payload.receiptId } : {}), ...(typeof action.payload.remoteId === 'string' ? { remoteId: action.payload.remoteId } : {}) } });
+    const payload=normalizationTombstone(store,action,sourceIds,{ retracted: true, sourceIds: [...sourceIds], ...(typeof action.payload.receiptId === 'string' ? { receiptId: action.payload.receiptId } : {}), ...(typeof action.payload.remoteId === 'string' ? { remoteId: action.payload.remoteId } : {}) });
+    write('actions', { ...action, status: 'completed', payload });
   }
   for (const message of store.list('outbox')) if (scoped(message) && (message.taskId && taskIds.has(message.taskId) || message.sourceIds?.some(id => sourceIds.has(id)) || outboxIds.has(message.id) || mentions(message.text))) write('outbox', { ...message, text: '[Evidence retracted]', status: 'sent', remoteId: message.remoteId ?? 'invalidated' });
 }
@@ -142,6 +184,16 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
         store.save('sources', restored);
         enqueueStructuredKnowledge(store, restored);
         if (task && !finished.has(task.status)) {
+          if(task.stage==='feedback'){
+            const held:Task={...task,title:input.title,status:'blocked',blockedFrom:'feedback',error:'Delivery completed, but feedback context expired; automatic recovery is unavailable.',updatedAt:now()};
+            store.save('tasks',held);return held;
+          }
+          const action=store.get('actions',structuredKnowledgeJobId(restored)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+          const heldRead=action?.status==='pending'&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??'');
+          if(heldRead||consumedStageResult(store,task)){
+            const held:Task={...task,title:input.title,status:'blocked',error:'knowledge_snapshot_unavailable',updatedAt:now()};
+            store.save('tasks',held);return held;
+          }
           for (const question of store.list('questions')) if (question.taskId === task.id) store.save('questions', { ...question, status: 'stale' });
           const reconstructed: Task = { ...task, title: input.title, version: task.version + 1, status: 'queued', stage: 'knowledge_extract', runAfter: now(), updatedAt: now(), repairCount: 0, decision: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, feedback: undefined, baselineFiles: undefined, error: undefined };
           store.save('tasks', reconstructed); return reconstructed;

@@ -1,13 +1,18 @@
+import { linkRetainedExperienceEvidence } from './experience.js';
+import { knowledgeReference } from './knowledge-use.js';
 import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { ingestStructuredKnowledge, publishKnowledge } from './knowledge.js';
-import { enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
+import { consumedStageResult, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
+import { knowledgePolicyHash } from './knowledge-identity.js';
+import { knowledgeRequestSourceRefs } from './knowledge-records.js';
+import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
-import { Store } from './store.js';
+import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
 import { BillingAuthority } from './billing.js';
 import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
@@ -39,6 +44,9 @@ export class Workbench {
   private hostAbort?: AbortController;
   private hostPreferredTaskId?: string;
   private activeHostReads = 0;
+  private activeHostActors = new Set<Promise<unknown>>();
+  private localHolds = new Set<string>();
+  private localRetryOnce = new Set<string>();
 
   constructor(options: WorkbenchOptions) {
     this.store = options.store; this.config = options.config; this.writer = options.writer; this.research = options.research; this.notifier = options.notifier;
@@ -48,18 +56,23 @@ export class Workbench {
       // An adapter may ignore abort; its I/O still occupies a host-read slot until it settles.
       if(this.activeHostReads>=4)return Promise.reject(new DomainError('Host read capacity is occupied.','host_read_capacity',409));
       this.activeHostReads++;
-      try{return Promise.resolve(reader.read(project,source,request,signal)).finally(()=>{this.activeHostReads--;});}
+      try{
+        let actor:Promise<unknown>;
+        const result=Promise.resolve(reader.read(project,source,request,signal)).finally(()=>{this.activeHostReads--;this.activeHostActors.delete(actor);});
+        actor=result;this.activeHostActors.add(actor);return result;
+      }
       catch(error){this.activeHostReads--;throw error;}
     }};
     this.billing = options.billing ?? new BillingAuthority(this.store, this.config, { async read() { return undefined; } });
     this.scheduler = new Scheduler(this.store, this.config, options.workers, this.billing);
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
     this.store.rebuildIndex();
+    linkRetainedExperienceEvidence(this.store);
     // Only leased runtime initialization may reconcile a previous authority's attempts.
     // Constructing a Workbench must never close work owned by the live authority.
   }
 
-  ingest(input: IngestInput): Task | undefined { return ingestSource(this.store, this.config, input); }
+  ingest(input: IngestInput): Task | undefined {return ingestSource(this.store,this.config,input);}
   withdraw(sourceId: string): void { withdrawSource(this.store, sourceId); }
 
   answer(input: QuestionAnswer): Task {
@@ -111,17 +124,58 @@ export class Workbench {
 
   retry(taskId: string): Task {
     const task = this.task(taskId);
-    if (!task.billingStop && !['blocked', 'retrying'].includes(task.status)) throw new DomainError('Only a blocked or retrying task can be retried.', 'invalid_transition', 409);
+    const source=this.store.get('sources',task.sourceId),jobAction=source&&this.store.get('actions',structuredKnowledgeJobId(source)),job=jobAction&&structuredIngestJobSchema.safeParse(jobAction.payload);
+    const heldRead=task.stage==='knowledge_extract'&&jobAction?.status==='pending'&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??'');
+    const expiredFeedback=source?.retention==='ephemeral'&&task.stage==='feedback'&&(!source.content||!task.plan||!task.artifact||!task.review||!task.receiptId);
+    const heldFeedback=source?.retention==='ephemeral'&&task.stage==='feedback'&&(this.localHolds.has(this.actionId(task))||consumedStageResult(this.store,task));
+    if (!task.billingStop && !['blocked', 'retrying'].includes(task.status)&&!heldRead&&!expiredFeedback&&!heldFeedback) throw new DomainError('Only a blocked or retrying task can be retried.', 'invalid_transition', 409);
     // Commit an exhausted cap before returning the 409; throwing inside the
     // retry transaction would roll the durable stop and owner notice back.
     const stop = this.billing.taskStop(task);
     if (stop) throw new DomainError(billingMessage({ state: 'blocked', reason: stop, attemptsLimit: Math.min(task.attemptLimit ?? 32, this.config.maxAttemptsPerTask ?? 32), attempts: task.attempts }), stop, 409);
-    return this.store.transaction(() => {
+    const retried=this.store.transaction(() => {
       this.current(task);
       const project = this.project(task);
-      const next: Task = { ...task, budgetUsd: project.budgetUsd, status: stageStatus[task.stage], error: undefined, runAfter: now(), updatedAt: now() };
+      const source=this.store.get('sources',task.sourceId),acceptedHash=source&&this.store.get('cursors',stableId('source-hash',source.id))?.value;
+      if(source&&task.stage==='feedback'&&!this.feedbackContextAvailable(task,source,project))throw new DomainError('Delivery completed, but feedback context expired; automatic recovery is unavailable.','feedback_context_unavailable',409);
+      if(!source||acceptedHash&&acceptedHash!==digest(source.content))throw new DomainError('Knowledge source content changed.','stale_source',409);
+      this.recoverStructuredHold(source);
+      const reconstruct=source.retention==='ephemeral'&&task.stage!=='knowledge_extract'&&task.stage!=='feedback'&&consumedStageResult(this.store,task);
+      const next: Task = reconstruct
+        ? {...task,budgetUsd:project.budgetUsd,version:task.version+1,status:'queued',stage:'knowledge_extract',runAfter:now(),updatedAt:now(),repairCount:0,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,receiptId:undefined,feedback:undefined,baselineFiles:undefined,error:undefined,blockedFrom:undefined}
+        : { ...task, budgetUsd: project.budgetUsd, status: stageStatus[task.stage], error: undefined, runAfter: now(), updatedAt: now() };
       this.store.save('tasks', next); this.event(task, 'task.retried', 'Task explicitly retried.'); return next;
     });
+    const actionId=this.actionId(task);this.localHolds.delete(actionId);if(retried.version===task.version)this.localRetryOnce.add(actionId);return retried;
+  }
+
+  private recoverStructuredHold(source:import('./domain.js').SourceRevision):void {
+    const id=structuredKnowledgeJobId(source),action=this.store.get('actions',id),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+    if(action?.status==='pending'&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??'')){
+      const project=this.store.get('projects',source.projectId),acceptedHash=this.store.get('cursors',stableId('source-hash',source.id))?.value;
+      if(!project||source.status!=='active'||project.id!==project.projectId||project.id!==source.projectId||project.domain!==source.domain||
+        action.projectId!==source.projectId||action.domain!==source.domain||action.kind!=='knowledge.structured-ingest'||job.data.sourceId!==source.id||job.data.sourceRevision!==source.revision||
+        job.data.sourceHash!==digest(source.content)||acceptedHash&&acceptedHash!==digest(source.content)||!validStructuredJobRefs(this.store,source,job.data.sourceRefs))throw new DomainError('Structured ingest job changed.','stale_source',409);
+      if(job.data.readHold&&(job.data.readHold.policyHash!==knowledgePolicyHash(project)||job.data.readHold.sourceHashes.length!==job.data.sourceRefs.length||job.data.readHold.sourceHashes.some((ref,index)=>{
+        const dependency=this.store.get('sources',ref.id),hash=this.store.get('cursors',stableId('source-hash',ref.id))?.value;
+        return ref.id!==job.data.sourceRefs[index]?.id||ref.revision!==job.data.sourceRefs[index]?.revision||!dependency||dependency.status!=='active'||dependency.revision!==ref.revision||dependency.projectId!==source.projectId||dependency.domain!==source.domain||digest(dependency.content)!==ref.hash||!!hash&&hash!==ref.hash;
+      })))throw new DomainError('Knowledge dependencies or policy changed.','stale_source',409);
+      assertKnowledgeSource(this.store,source,project);const parsed=parseStructuredKnowledge(source,project);
+      if(!parsed)throw new DomainError('Structured ingest job changed.','stale_source',409);
+      const request=structuredRepositoryRequest(this.store,source,project,parsed),refs=knowledgeRequestSourceRefs(this.store,source.id,project,request);
+      if(!refs||digest(refs)!==digest(job.data.sourceRefs))throw new DomainError('Knowledge dependencies changed.','stale_source',409);
+      const {readHold:_hold,...remaining}=job.data;
+      this.store.save('actions',{...action,payload:{...remaining,errorCode:undefined,runAfter:now()},updatedAt:now()});
+    }
+  }
+
+  private holdLocalTask(task:Task):void {
+    this.localHolds.add(this.actionId(task));
+    try{
+      const current=this.store.get('tasks',task.id);
+      if(current&&current.version===task.version&&current.stage===task.stage&&current.repairCount===task.repairCount&&!stopped.has(current.status))
+        this.store.save('tasks',{...current,status:'blocked',blockedFrom:stageStatus[current.stage],error:'knowledge_snapshot_unavailable',updatedAt:now()});
+    }catch(error){if(!isKnowledgeSnapshotFailure(error))throw error;}
   }
 
   cancel(taskId: string): Task {
@@ -150,6 +204,7 @@ export class Workbench {
     }
     this.busy = true;
     try {
+      this.store.reconcileVault();
       const ready = this.readyTask();
       const source = ready?.stage==='knowledge_extract' ? this.store.get('sources',ready.sourceId) : undefined;
       if(source)enqueueStructuredKnowledge(this.store,source);
@@ -172,8 +227,9 @@ export class Workbench {
             if(job.data.phase==='processed'){this.beginAction(task);this.store.transaction(()=>this.advance(task,'case_extract'));handled=true;}
             if(job.data.phase!=='ordinary')handled=true;
           }
-          if(!handled){this.beginAction(task);await this.process(task, project);}
+          if(!handled){this.beginAction(task);this.localRetryOnce.delete(this.actionId(task));await this.process(task, project);}
         } catch (error) {
+          if(isKnowledgeSnapshotFailure(error)||error instanceof VaultSyncError){this.holdLocalTask(task);throw error;}
           const latest = this.store.get('tasks', task.id);
           // Cancellation/revocation and a newer attempt own their own transition.
           if (latest && latest.version === task.version && latest.stage === task.stage && !stopped.has(latest.status)) {
@@ -198,23 +254,28 @@ export class Workbench {
     const jobs=[...first,...(onlyPreferred?[]:readyStructuredKnowledgeJobs(this.store,at,4).filter(j=>j.id!==preferredId))].slice(0,bounded);
     if(!jobs.length)return {count:0,aborted:false};
     const controller=new AbortController();this.hostAbort=controller;this.hostPreferredTaskId=preferredTaskId;
-    try{await Promise.all(jobs.map(async job=>{
+    try{
+    const actors=jobs.map(async job=>{
       const payload=structuredIngestJobSchema.safeParse(job.payload),project=this.store.get('projects',job.projectId);
       if(!payload.success||!project||project.domain!==job.domain)return;
       const denied=!!this.canRun&&!this.canRun(project);
-      try{await ingestStructuredKnowledge(this.store,denied?undefined:this.repositoryKnowledgeReader,payload.data.sourceId,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]),denied?{readbackUnavailableReason:'host_egress_unavailable'}:{});}catch{
+      try{await ingestStructuredKnowledge(this.store,denied?undefined:this.repositoryKnowledgeReader,payload.data.sourceId,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]),denied?{readbackUnavailableReason:'host_egress_unavailable'}:{});}catch(error){
+        if(isKnowledgeSnapshotFailure(error))throw error;
         // An unexpected pre-read failure must not leave a ready job in a tight retry loop.
         const current=this.store.get('actions',job.id),state=current&&structuredIngestJobSchema.safeParse(current.payload);
         if(current?.status==='pending'&&state?.success&&isReadyStructuredKnowledgeJob(this.store,current,now()))this.store.save('actions',{...current,payload:{...state.data,phase:'pending-readback',tries:state.data.tries+1,runAfter:new Date(Date.now()+30_000).toISOString(),errorCode:'knowledge_processing_failed'},updatedAt:now()});
       }
-    }));}finally{if(this.hostAbort===controller){this.hostAbort=undefined;this.hostPreferredTaskId=undefined;}}
+    });
+    try{await Promise.all(actors);}
+    catch(error){controller.abort();await Promise.allSettled(actors);await Promise.allSettled([...this.activeHostActors]);throw error;}
+    }finally{if(this.hostAbort===controller){this.hostAbort=undefined;this.hostPreferredTaskId=undefined;}}
     return {count:jobs.length,aborted:controller.signal.aborted};
   }
 
   async drainStructuredKnowledge(limit=4):Promise<number>{
     if(this.busy||this.stopping||this.pauseDepth>0)return 0;
     this.busy=true;
-    try{return (await this.drainHostJobs(limit)).count;}finally{this.busy=false;for(const resolve of this.idleWaiters.splice(0))resolve();}
+    try{this.store.reconcileVault();return (await this.drainHostJobs(limit)).count;}finally{this.busy=false;for(const resolve of this.idleWaiters.splice(0))resolve();}
   }
 
   /** Retain writer ownership until the current stage and its notification flush have settled. */
@@ -222,8 +283,9 @@ export class Workbench {
     this.stopping = true;
     this.hostAbort?.abort();
     if (this.busy) await new Promise<void>(resolve => this.idleWaiters.push(resolve));
+    await Promise.allSettled([...this.activeHostActors]);
   }
-  async pause():Promise<()=>void>{this.pauseDepth++;this.hostAbort?.abort();if(this.busy)await new Promise<void>(resolve=>this.idleWaiters.push(resolve));let resumed=false;return ()=>{if(!resumed){resumed=true;this.pauseDepth--;}};}
+  async pause():Promise<()=>void>{this.pauseDepth++;this.hostAbort?.abort();if(this.busy)await new Promise<void>(resolve=>this.idleWaiters.push(resolve));await Promise.allSettled([...this.activeHostActors]);let resumed=false;return ()=>{if(!resumed){resumed=true;this.pauseDepth--;}};}
 
   async runUntilIdle(maxSteps = 100): Promise<void> {
     for (let step = 0; step < maxSteps; step++) {
@@ -318,16 +380,14 @@ export class Workbench {
     });
   }
 
-  private input(task: Task, project: Project, role: Role): WorkerInput {
+  private input(task: Task, project: Project, role: Role): WorkerInput {return this.store.readSnapshot(()=>{const live=this.store.get('projects',project.id);if(!live||digest(live)!==digest(project))throw new DomainError('Project state changed; retry.','stale_project_state',409);return this.inputBody(task,live,role);});}
+  private inputBody(task: Task, project: Project, role: Role): WorkerInput {
     const current = this.task(task.id); const source = this.store.get('sources', task.sourceId)!;
     const question = current.questionId ? this.store.get('questions', current.questionId) : undefined;
     const completedResearch = this.store.list('actions').find(a => a.taskId === task.id && a.kind === 'research' && a.status === 'completed' && a.payload.taskVersion === task.version && a.payload.sourceRevision === task.sourceRevision)?.payload.research as ResearchRecord | undefined;
-    const activeCards = this.store.list('cards').filter(card => {
-      const evidence = this.store.get('sources', card.sourceId);
-      return card.projectId === task.projectId && card.domain === task.domain && card.status === 'active' && evidence?.status === 'active' && evidence.revision === card.sourceRevision && (!card.expiresAt || Date.parse(card.expiresAt) > Date.now());
-    });
+    const activeCards = this.store.list('cards').filter(card=>card.sourceId===source.id).flatMap(card=>{const view=knowledgeReference(this.store,card,project);return view?[view]:[];});
     const relevant=this.store.searchCards(`${current.title}\n${current.description}`,project,30);
-    const cards=[...new Map([...activeCards.filter(card=>card.sourceId===source.id),...relevant].map(card=>[card.id,card])).values()].slice(0,30);
+    const cards=[...new Map([...activeCards,...relevant].map(card=>[card.id,card])).values()].slice(0,30);
     return { task: current, project, role, source, cards, rules: applicableRules(this.store, current), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
   }
 
@@ -378,10 +438,22 @@ export class Workbench {
   }
 
   private validateReceipt(task: Task, project: Project, receipt: DeliveryReceipt): void {
+    // Adapter and retained data are runtime values: inspect every element before matching policy.
+    const nonempty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+    if (!receipt || typeof receipt !== 'object' || !nonempty(receipt.id) || !nonempty(receipt.taskId) || !nonempty(receipt.projectId) || !nonempty(receipt.domain) || !nonempty(receipt.repository) || !nonempty(receipt.path) || !nonempty(receipt.pullRequestUrl) || !nonempty(receipt.headSha) || !nonempty(receipt.mergeSha) || !nonempty(receipt.contentHash) || !nonempty(receipt.verifiedAt) || !Array.isArray(receipt.checks) || !receipt.checks.every(check => !!check && typeof check === 'object' && nonempty(check.name) && nonempty(check.conclusion) && nonempty(check.headSha) && Number.isInteger(check.appId) && nonempty(check.url))) throw new DomainError('The writer returned a malformed receipt.', 'invalid_receipt');
     const file = task.artifact?.files.find(f => f.path === project.prdPath);
     if (!receipt || !file || receipt.taskId !== task.id || receipt.projectId !== task.projectId || receipt.domain !== task.domain || receipt.repository !== project.repository || receipt.path !== project.prdPath || !receipt.mergeSha?.trim() || !receipt.headSha?.trim() || !receipt.id || !Number.isInteger(receipt.pullRequestNumber) || receipt.pullRequestNumber < 1 || !Number.isFinite(Date.parse(receipt.verifiedAt)) || receipt.contentHash !== digest(file.content)) throw new DomainError('The writer did not return a verified, matching merged-file receipt.', 'invalid_receipt');
     try { if (new URL(receipt.pullRequestUrl).protocol !== 'https:') throw new Error(); } catch { throw new DomainError('The writer did not provide a valid remote pull request URL.', 'invalid_receipt'); }
     if (!project.autoMerge || !project.trustedChecks.length || !project.trustedAppIds.length || !Array.isArray(receipt.checks) || project.trustedChecks.some(name => !receipt.checks.some(check => check.name === name && check.conclusion === 'success' && check.headSha === receipt.headSha && project.trustedAppIds.includes(check.appId) && !!check.url))) throw new DomainError('The merged head lacks every required trusted successful check.', 'invalid_receipt');
+  }
+
+  private feedbackContextAvailable(task:Task,source:import('./domain.js').SourceRevision,project:Project):boolean {
+    if(!source.content||source.status!=='active'||source.id!==task.sourceId||source.revision!==task.sourceRevision||source.projectId!==task.projectId||source.domain!==task.domain||project.id!==task.projectId||project.domain!==task.domain||!task.plan||!task.artifact||!task.review||!task.receiptId)return false;
+    const acceptedHash=this.store.get('cursors',stableId('source-hash',source.id))?.value;
+    if(acceptedHash&&acceptedHash!==digest(source.content)||!executionPlanSchema.safeParse(task.plan).success||!artifactSchema.safeParse(task.artifact).success||!reviewSchema.safeParse(task.review).success)return false;
+    const receipt=this.store.get('receipts',task.receiptId);if(!receipt)return false;
+    try{this.validatePlan(task,project);this.validateArtifact(task,project,task.artifact);this.validateReview(task,task.review);this.validateReceipt(task,project,receipt);return task.review.verdict==='pass'&&this.testsPassed(task.plan.tests,task.artifact.tests)&&this.testsPassed(task.plan.tests,task.review.tests);}
+    catch(error){if(error instanceof VaultSyncError||isKnowledgeSnapshotFailure(error))throw error;if(error instanceof DomainError)return false;throw error;}
   }
 
   private testsPassed(commands: string[], tests: { command: string; passed: boolean; output: string }[]): boolean { return testsRecorded(commands, tests) && tests.every(test => test.passed); }
@@ -424,8 +496,20 @@ export class Workbench {
 
   private readyTask(excludeId?:string): Task | undefined {
     if (this.stopping) return undefined;
+    const attempts=this.store.list('attempts');
     return this.store.list('tasks').filter(task => {
       if (task.id===excludeId || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      const project = this.store.get('projects', task.projectId);
+      const feedbackSource=task.stage==='feedback'?this.store.get('sources',task.sourceId):undefined;
+      if(task.stage==='feedback'&&project&&(!feedbackSource||!this.feedbackContextAvailable(task,feedbackSource,project))){
+        const error='Delivery completed, but feedback context expired; automatic recovery is unavailable.';
+        if(task.status!=='blocked'||task.error!==error)this.store.save('tasks',{...task,status:'blocked',blockedFrom:'feedback',error,updatedAt:now()});
+        return false;
+      }
+      if(roles.some(role=>task.stage===role)){
+        const id=this.actionId(task),consumed=consumedStageResult(this.store,task,attempts);
+        if(!this.localRetryOnce.has(id)&&(this.localHolds.has(id)||task.error==='knowledge_snapshot_unavailable'||consumed)){this.holdLocalTask(task);return false;}
+      }
       if(task.stage==='knowledge_extract'){
         const source=this.store.get('sources',task.sourceId),action=source&&this.store.get('actions',structuredKnowledgeJobId(source));
         const job=action&&structuredIngestJobSchema.safeParse(action.payload);
@@ -433,7 +517,6 @@ export class Workbench {
         if(action?.status==='pending'&&job?.success&&!isReadyStructuredKnowledgeJob(this.store,action,now()))return false;
         if(action?.status==='completed'&&job?.success&&job.data.phase==='invalid'&&task.status==='blocked')return false;
       }
-      const project = this.store.get('projects', task.projectId);
       return !!project && project.domain === task.domain && (!this.canRun || this.canRun(project));
     }).sort((a, b) => a.runAfter.localeCompare(b.runAfter) || a.createdAt.localeCompare(b.createdAt))[0];
   }
@@ -456,7 +539,14 @@ export class Workbench {
     this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.tests', status: 'completed', payload: { testObservation: { schemaVersion: 1, snapshotId: task.decisionSnapshotId, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, stage: input.role, plannedTests: task.plan!.tests, tests: failed, recordedAt } }, updatedAt: recordedAt });
   }
   private actionId(task: Task): string { return stableId('stage-action', task.id, task.version, task.stage, task.repairCount); }
-  private beginAction(task: Task): void { const id = this.actionId(task); if (!this.store.get('actions', id)) this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: task.stage, status: 'pending', payload: { taskVersion: task.version, sourceRevision: task.sourceRevision }, updatedAt: now() }); }
+  private beginAction(task: Task): void {
+    const id=this.actionId(task),existing=this.store.get('actions',id);
+    if(!existing||existing.status==='completed')this.store.transaction(()=>{
+      const live=this.store.get('actions',id);if(live&&live.status!=='completed')return;
+      const current=this.task(task.id),priorSucceededAttemptIds=this.store.list('attempts').filter(attempt=>attempt.taskId===task.id&&attempt.projectId===task.projectId&&attempt.domain===task.domain&&attempt.taskVersion===task.version&&attempt.role===task.stage&&attempt.status==='succeeded').map(attempt=>attempt.id);
+      this.store.save('actions',{id,projectId:task.projectId,domain:task.domain,taskId:task.id,kind:task.stage,status:'pending',payload:{taskVersion:task.version,sourceRevision:task.sourceRevision,attemptsBefore:current.attempts,priorSucceededAttemptIds},updatedAt:now()});
+    });
+  }
   private completeAction(task: Task): void { const action = this.store.get('actions', this.actionId(task)); if (action) this.store.save('actions', { ...action, status: 'completed', updatedAt: now() }); }
   private event(task: Task, type: string, message: string, data: Record<string, unknown> = {}): void { this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type, message, data, createdAt: now() }); }
   private enqueue(task: Task, id: string, text: string): void { if (!this.store.get('outbox', id)) this.store.save('outbox', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, channel: this.config.feishu ? 'feishu' : 'origin', recipient: this.config.feishu?.ownerOpenId ?? this.config.ownerId, text, status: 'pending', attempts: 0, createdAt: now(), runAfter: now() }); }

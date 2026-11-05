@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DomainError, digest, experienceDetailsSchema, pathAllowed, safeRelativePath, type Project, type SourceRevision } from './domain.js';
 import type { ParsedStructuredKnowledge, RepositoryReadRequest } from './knowledge-contract.js';
-import type { Store } from './store.js';
+import { isKnowledgeSnapshotFailure, type Store } from './store.js';
 
 function invalid():never {throw new DomainError('Invalid structured knowledge envelope.','invalid_structured_knowledge',400);}
 const text = z.string().min(1).refine(v=>Buffer.byteLength(v)<=10_000);
@@ -30,7 +30,32 @@ export function parseKnowledgeJson(content:string):unknown {
   }
   return value;
 }
-export function parseStructuredKnowledge(source:SourceRevision,project:Project):ParsedStructuredKnowledge|undefined {
+export type LocalRelationDeclarationV1={kind:'local-relations';schemaVersion:1;quote:string;records:{problem:string;files:string[];checks:string[]}[]};
+export function parseStructuredKnowledge(source:SourceRevision,project:Project,mode:'local-relations-v1'):LocalRelationDeclarationV1|undefined;
+export function parseStructuredKnowledge(source:SourceRevision,project:Project):ParsedStructuredKnowledge|undefined;
+export function parseStructuredKnowledge(source:SourceRevision,project:Project,mode?:'local-relations-v1'):ParsedStructuredKnowledge|LocalRelationDeclarationV1|undefined {
+  if(mode==='local-relations-v1'){
+    if(source.status!=='active'||source.projectId!==project.id||project.projectId!==project.id||source.domain!==project.domain)return undefined;
+    const start='@@experience-relations-v1\n',end='@@end-experience-relations-v1.',content=source.content;
+    if(!content.startsWith(start))return undefined;
+    const records:LocalRelationDeclarationV1['records']=[];let position=start.length;
+    while(position<=content.length){
+      const newline=content.indexOf('\n',position),lineEnd=newline<0?content.length:newline,line=content.slice(position,lineEnd);
+      if(line===end){
+        const quote=content.slice(0,lineEnd);
+        return records.length&&Buffer.byteLength(quote)<=10_000?{kind:'local-relations',schemaVersion:1,quote,records}:undefined;
+      }
+      if(newline<0||records.length>=32||Buffer.byteLength(content.slice(0,lineEnd))>10_000)return undefined;
+      let value:unknown;try{value=parseKnowledgeJson(line);}catch{return undefined;}
+      if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
+      const record=value as Record<string,unknown>,{problem,files,checks}=record;
+      const validText=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&Buffer.byteLength(v)<=10_000;
+      const validList=(v:unknown):v is string[]=>Array.isArray(v)&&v.length>=1&&v.length<=128&&v.every(validText)&&new Set(v).size===v.length;
+      if(!validText(problem)||!validList(files)||!validList(checks)||line!==JSON.stringify({problem,files,checks}))return undefined;
+      records.push({problem,files,checks});position=lineEnd+1;
+    }
+    return undefined;
+  }
   let value:unknown;
   try{value=parseKnowledgeJson(source.content);}catch{if(/^\s*\{[\s\S]*"(?:schemaVersion|repository-facts|details)"/.test(source.content))invalid();return undefined;}
   if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
@@ -69,6 +94,6 @@ export function structuredRepositoryRequest(store:Store,source:SourceRevision,pr
   const request:RepositoryReadRequest={repository:project.repository,headSha:input.headSha,checks:actual.kind==='repository-facts'?actual.input.checks:actual.input.checkIds.map(checkName=>({runId:actual.input.runId,jobId:actual.input.jobId,checkName})),filePaths:actual.kind==='experience'?[...actual.input.details.files]:[]};
   if(actual.kind==='repository-facts'&&actual.input.changeNumber!==undefined)request.changeNumber=actual.input.changeNumber;
   if(input.testReportPath)request.testReportPath=input.testReportPath;
-  if(actual.kind==='experience'&&actual.input.issueId){const issue=store.get('sources',actual.input.issueId);if(issue){try{assertKnowledgeSource(store,issue,project);request.issueSource={id:issue.id,revision:issue.revision};}catch{/* Relevance remains pending. */}}}
+  if(actual.kind==='experience'&&actual.input.issueId){const issue=store.get('sources',actual.input.issueId);if(issue){try{assertKnowledgeSource(store,issue,project);request.issueSource={id:issue.id,revision:issue.revision};}catch(error){if(isKnowledgeSnapshotFailure(error))throw error;/* Relevance remains pending. */}}}
   return request;
 }

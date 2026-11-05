@@ -5,7 +5,7 @@ import { observedProcessSchema } from '../knowledge-contract.js';
 import type { AtomicClaim, CiTestReportV1, HostObservation, ObservedFile, ReadbackProvenance, RepositoryReadback, RepositoryReadRequest, TestObservation } from '../knowledge-contract.js';
 import { knowledgePolicyHash, snapshotDigest, testDefinitionDigest } from '../knowledge-identity.js';
 import { assertKnowledgeSource, parseKnowledgeJson, parseStructuredKnowledge, structuredRepositoryRequest } from '../structured-knowledge.js';
-import type { Store } from '../store.js';
+import { isKnowledgeSnapshotFailure, type Store } from '../store.js';
 import { GitHubWriter } from './github.js';
 import { GitLabWriter } from './gitlab.js';
 
@@ -27,10 +27,14 @@ export function createRepositoryKnowledgeReader(github:GitHubWriter,gitlab:GitLa
     signal.throwIfAborted();receipt.assertCurrent();provenance.set(readback,receipt);return readback;
   }};
 }
-export function takeRepositoryReadback(readback:RepositoryReadback):ReadbackProvenance|undefined {
+export function takeRepositoryReadback(readback:RepositoryReadback,onConsumed?:()=>void):ReadbackProvenance|undefined {
   const receipt=provenance.get(readback);provenance.delete(readback);
-  if(!receipt||receipt.readbackHash!==digest(readback))return undefined;
-  try{receipt.assertCurrent();return structuredClone(receipt.provenance);}catch{return undefined;}
+  if(!receipt)return undefined;
+  // Identity proves only that a handoff was consumed, even if its body was changed.
+  // This fact can only deny a later read. It never supplies evidence authority.
+  onConsumed?.();
+  if(receipt.readbackHash!==digest(readback))return undefined;
+  try{receipt.assertCurrent();return structuredClone(receipt.provenance);}catch(error){if(isKnowledgeSnapshotFailure(error))throw error;return undefined;}
 }
 
 function invalid(message='Invalid authenticated repository response.'):never {throw new DomainError(message,'remote_invalid',503);}
@@ -232,7 +236,7 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
     }
     if(!available)result.gaps.push('comparable_attestation_unavailable');
   }
-  if(request.issueSource){const issue=store.get('sources',request.issueSource.id);if(issue&&issue.revision===request.issueSource.revision){try{assertKnowledgeSource(store,issue,project);result.resolution={sourceId:issue.id,revision:issue.revision,quote:issue.content,locator:issue.locator};}catch{result.gaps.push('resolution_source_unavailable');}}else result.gaps.push('resolution_source_unavailable');}
+  if(request.issueSource){const issue=store.get('sources',request.issueSource.id);if(issue&&issue.revision===request.issueSource.revision){try{assertKnowledgeSource(store,issue,project);result.resolution={sourceId:issue.id,revision:issue.revision,quote:issue.content,locator:issue.locator};}catch(error){if(isKnowledgeSnapshotFailure(error))throw error;result.gaps.push('resolution_source_unavailable');}}else result.gaps.push('resolution_source_unavailable');}
   signal.throwIfAborted();assertKnowledgeSource(store,source,project);
   completedReads.set(result,{provenance:{sourceHash:digest(source),policyHash:knowledgePolicyHash(project),requestHash:digest(request),request:structuredClone(request),attestedTests:attested},projectHash:digest(project),readbackHash:digest(result),assertCurrent:()=>assertKnowledgeSource(store,source,project)});
   return result;

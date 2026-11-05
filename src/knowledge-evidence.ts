@@ -1,5 +1,5 @@
 import { DomainError, digest, now, type Scope } from './domain.js';
-import type { AtomicClaim, CanonicalHostObservationPayload, CanonicalCiTestObservationPayload, HostObservation, KnowledgeEvidenceLink, RepositoryReadback, SourceRef } from './knowledge-contract.js';
+import type { AtomicClaim, CanonicalHostObservationPayload, CanonicalCiTestObservationPayload, HostObservation, KnowledgeEvidenceLink, RepositoryReadback, ReadbackProvenance, SourceRef } from './knowledge-contract.js';
 import { atomicClaimSchema } from './knowledge-contract.js';
 import { knowledgeCandidateHash, knowledgePolicyHash, snapshotDigest } from './knowledge-identity.js';
 import { canonicalCiTestObservationId, canonicalCiTestPayloadSchema, canonicalHostPayloadSchema, canonicalKnowledgePayloadSchema, hostObservationId, hostObservationSchema, isRetractedHostObservation, knowledgeRequestSourceRefs, knowledgeSourceRefs, readCanonicalHostRecord, readHostObservation } from './knowledge-records.js';
@@ -15,8 +15,11 @@ function temporary(store:Store,refs:SourceRef[]):boolean{return refs.some(r=>sto
 function sameScope(a:Scope,b:Scope):boolean{return a.projectId===b.projectId&&a.domain===b.domain;}
 
 /** Consume a concrete authenticated handoff before the final synchronous canonical transaction. */
-export function acceptRepositoryReadback(store:Store,sourceId:string,readback:RepositoryReadback):string[] {
- const provenance=takeRepositoryReadback(readback);if(!provenance)invalid();
+export function acceptRepositoryReadback(store:Store,sourceId:string,readback:RepositoryReadback,onConsumed?:()=>void):string[] {
+ const provenance=takeRepositoryReadback(readback,onConsumed);if(!provenance)invalid();
+ return store.transaction(()=>acceptRepositoryReadbackBody(store,sourceId,readback,provenance));
+}
+function acceptRepositoryReadbackBody(store:Store,sourceId:string,readback:RepositoryReadback,provenance:ReadbackProvenance):string[] {
  const source=store.get('sources',sourceId),project=source?store.get('projects',source.projectId):undefined;
  if(!source||!project||digest(source)!==provenance.sourceHash||knowledgePolicyHash(project)!==provenance.policyHash||digest(provenance.request)!==provenance.requestHash)invalid();
  assertKnowledgeSource(store,source,project);
@@ -51,7 +54,7 @@ export function acceptRepositoryReadback(store:Store,sourceId:string,readback:Re
   for(const p of rows){
    const o=p.observation;
    // Mutable PR state is separately timestamped. A running job can complete once; terminal outcomes cannot change.
-   if(o.claim.kind!=='change-head')for(const existing of store.list('actions').filter(a=>a.kind==='knowledge.host-observation'&&sameScope(a,project))){
+   if(o.claim.kind!=='change-head')for(const existing of store.hostObservationRootActions(project,o.origin.originalEventId)){
     if(isRetractedHostObservation(store,existing))continue;
     const previous=readCanonicalHostRecord(existing);if(!previous)invalid();const old=previous.observation;
     if(old.origin.originalEventId===o.origin.originalEventId&&old.claim.kind===o.claim.kind&&!equal(old.claim,o.claim)){
@@ -103,7 +106,8 @@ export function compareIndependentClaim(claim:AtomicClaim,observations:readonly 
  return false;
 }
 
-export function linkKnowledgeEvidence(store:Store,cardId:string,observationIds:string[]):KnowledgeEvidenceLink {
+export function linkKnowledgeEvidence(store:Store,cardId:string,observationIds:string[]):KnowledgeEvidenceLink {return store.transaction(()=>linkKnowledgeEvidenceBody(store,cardId,observationIds));}
+function linkKnowledgeEvidenceBody(store:Store,cardId:string,observationIds:string[]):KnowledgeEvidenceLink {
  const card=store.get('cards',cardId);if(!card||card.status!=='active'||!card.claim||card.pendingClaim||!atomicClaimSchema.safeParse(card.claim.claim).success||card.expiresAt&&Date.parse(card.expiresAt)<=Date.now()||!observationIds.length||observationIds.length>32||new Set(observationIds).size!==observationIds.length)invalid();
  const source=store.get('sources',card.sourceId),project=store.get('projects',card.projectId);if(!source||!project||source.revision!==card.sourceRevision||!source.content.includes(card.quote)||card.claim.quote!==card.quote)invalid();assertKnowledgeSource(store,source,project);
  let cardRefs=knowledgeSourceRefs(store,source.id,card);

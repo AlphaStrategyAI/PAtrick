@@ -1,3 +1,4 @@
+import { knowledgeReference } from './knowledge-use.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
@@ -5,13 +6,13 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { bodyLimit } from 'hono/body-limit';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { z, ZodError } from 'zod';
-import { DomainError, now, stableId, type AppConfig, type QuestionAnswer } from './domain.js';
+import { DomainError, digest, now, stableId, type AppConfig, type Project, type QuestionAnswer } from './domain.js';
 import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
 import { weeklyReport } from './reports.js';
 import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
-import type { Store } from './store.js';
+import { isKnowledgeSnapshotFailure, VaultSyncError, type Store } from './store.js';
 import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
 
@@ -60,6 +61,8 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     if(project.ownerId!==config.ownerId)throw new DomainError('Only the current project owner may access this project.','forbidden',403);
     return project;
   };
+  const sameProjects=(a:Project[],b:Project[])=>digest([...a].sort((x,y)=>x.id.localeCompare(y.id)))===digest([...b].sort((x,y)=>x.id.localeCompare(y.id)));
+  const assertProjects=(before:Project[],after:Project[])=>{if(!sameProjects(before,after))throw new DomainError('Project state changed; retry.','stale_project_state',409);};
   app.post('/api/reference-sources',async c=>{
     const data=z.object({projectId:z.string().min(1),domain:z.string().min(1),externalId:z.string().trim().min(1),revision:z.string().trim().min(1),title:z.string().trim().min(1).max(200),content:z.string().min(1).max(1_000_000).refine(text=>text.trim().length>0,'Reference text is required.'),retention:z.enum(['permanent','ephemeral']),locator:z.string().optional()}).strict().parse(await body(c));
     const project=ownedProject(data.projectId,data.domain);
@@ -83,16 +86,22 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     const requested=c.req.query('project'),project=requested?ownedProject(requested):undefined;
     const projects=project?[project]:store.list('projects').filter(p=>p.ownerId===config.ownerId);
     const billing=await engine.billingStatuses(projects);
-    const scopes=new Map(projects.map(p=>[p.id,p.domain]));
-    const scope=(v:{projectId:string;domain:string})=>scopes.get(v.projectId)===v.domain;
-    return c.json({mode:config.mode,projects,tasks:store.list('tasks').filter(scope).map(publicTask),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active'),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100).map(publicEvent),billing,readiness:readiness({...config,projects},billing)});
+    const data=store.readSnapshot(()=>{
+      const live=requested?[store.get('projects',requested)].filter((p):p is Project=>!!p&&p.ownerId===config.ownerId):store.list('projects').filter(p=>p.ownerId===config.ownerId);
+      assertProjects(projects,live);
+      const scopes=new Map(live.map(p=>[p.id,p.domain]));
+      const scope=(v:{projectId:string;domain:string})=>scopes.get(v.projectId)===v.domain;
+      return {mode:config.mode,projects:live,tasks:store.list('tasks').filter(scope).map(publicTask),questions:store.list('questions').filter(scope),cards:store.list('cards').filter(scope).filter(v=>v.status==='active').flatMap(card=>{const view=knowledgeReference(store,card,card,{usage:'browse'});return view?[view]:[];}),rules:store.list('rules').filter(scope),sources:store.list('sources').filter(scope).map(({content,...v})=>v),events:store.list('events').filter(scope).slice(-100).map(publicEvent),billing,readiness:readiness({...config,projects:live},billing)};
+    });
+    return c.json(data);
   });
   app.get('/api/tasks/:id',async c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);const project=ownedProject(task.projectId,task.domain),billing=await engine.billingStatuses([project]);return c.json({task:publicTask(task),billing:taskBillingStatus(task,config,billing),question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id).map(publicEvent),attempts:store.list('attempts').filter(a=>a.taskId===task.id).map(publicAttempt),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
   app.get('/api/lookup',c=>{
-    const project=store.get('projects',c.req.query('project')??'');
-    if(!project||project.domain!==c.req.query('domain'))return c.json({cards:[]});
-    ownedProject(project.id,project.domain);
-    return c.json({cards:store.searchCards((c.req.query('q')??'').slice(0,500),project,10)});
+    const data=store.readSnapshot(()=>{const project=store.get('projects',c.req.query('project')??'');
+      if(!project||project.domain!==c.req.query('domain'))return {cards:[]};
+      ownedProject(project.id,project.domain);
+      return {cards:store.searchCards((c.req.query('q')??'').slice(0,500),project,10)};
+    });return c.json(data);
   });
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
   app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);ownedProject(question.projectId,question.domain);return c.json({question});});
@@ -139,10 +148,27 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     store.save('projects',project);config.projects.push(project);return respond(c,{project,message:'项目已创建。外部连接可在连接设置中核对。'},`/?project=${id}`);
   });
   const pages:Record<string,string>={'/':'workbench','/knowledge':'knowledge','/standards':'standards','/sources':'sources','/activity':'activity','/settings':'settings'};
-  for(const [path,page] of Object.entries(pages))app.get(path,async c=>{const projects=store.list('projects').filter(p=>p.ownerId===config.ownerId),billing=await engine.billingStatuses(projects);return c.html(renderPage({page,store,config,url:new URL(c.req.url),projectId:c.req.query('project'),billing,readiness:readiness({...config,projects},billing)}));});
+  for(const [path,page] of Object.entries(pages))app.get(path,async c=>{
+    const projects=store.list('projects').filter(p=>p.ownerId===config.ownerId),billing=await engine.billingStatuses(projects);
+    if(page!=='knowledge')return c.html(renderPage({page,store,config,url:new URL(c.req.url),projectId:c.req.query('project'),billing,readiness:readiness({...config,projects},billing)}));
+    const rendered=store.readSnapshot(()=>{
+      const live=store.list('projects').filter(p=>p.ownerId===config.ownerId);assertProjects(projects,live);
+      const value=renderPage({page,store,config,url:new URL(c.req.url),projectId:c.req.query('project'),billing,readiness:readiness({...config,projects:live},billing)});
+      if(value&&typeof (value as {then?:unknown}).then==='function')throw new Error('Page rendering must be synchronous.');
+      return String(value);
+    });return c.html(rendered);
+  });
   app.get('/tasks/:id',async c=>{if(!store.get('tasks',c.req.param('id')))return c.notFound();return c.html(renderPage({page:'task',store,config,url:new URL(c.req.url),projectId:store.get('tasks',c.req.param('id'))?.projectId,billing:await engine.billingStatuses(store.list('projects').filter(p=>p.ownerId===config.ownerId))}));});
   app.notFound(c=>c.req.path.startsWith('/api/')?c.json({error:'没有找到这个资源。'},404):c.html('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PAtrick · 404</title><body><h1>没有找到这个页面</h1><a href="/">返回工作台</a></body></html>',404));
   app.onError(async(error,c)=>{
+    const syncFailure=error instanceof VaultSyncError,snapshotFailure=isKnowledgeSnapshotFailure(error);
+    if(syncFailure||snapshotFailure||error instanceof DomainError&&error.code==='stale_project_state'){
+      const code=syncFailure?'vault_sync_unavailable':snapshotFailure?'knowledge_snapshot_unavailable':'stale_project_state';
+      const safeMessage=syncFailure?'Changes may have been saved, but Vault synchronization failed; retry.':snapshotFailure?'Knowledge temporarily unavailable; retry.':'Project state changed; retry.';
+      const status=code==='stale_project_state'?409:503;
+      if(c.req.header('Accept')?.includes('text/html'))return c.html(`<!doctype html><html><head><meta charset="utf-8"><title>PAtrick</title></head><body><h1>${safeMessage}</h1></body></html>`,status as 400);
+      return c.json({error:safeMessage,code},status as 400);
+    }
     const status=error instanceof DomainError?error.status:error instanceof ZodError?400:500;
     const message=error instanceof DomainError?error.message:error instanceof ZodError?error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；'):'处理暂时失败，请稍后重试。';
     if(status!==403&&c.req.header('Accept')?.includes('text/html')) {

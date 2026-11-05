@@ -43,6 +43,8 @@ describe('structured experience host intake', () => {
       expect(await ingestStructuredExperience(f.store,undefined,f.source.id,new AbortController().signal)).toBe(false);
       expect(f.store.list('actions').find(a=>a.kind==='knowledge.structured-ingest')).toMatchObject({status:'pending',payload:{phase:'pending-readback',errorCode:'repository_reader_unavailable'}});
       expect(f.store.list('cards').find(c=>c.kind==='experience')?.experience?.solution).toBe('A reported fix');
+      expect(f.store.searchCards('problem',f.project)).toEqual([]);
+      expect(f.store.searchCards('problem',f.project,20,{usage:'browse'})).toMatchObject([{experienceState:{state:'pending'}}]);
       expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation'||a.kind==='knowledge.host-observation')).toEqual([]);
       expect(f.requests).toEqual([]);expect(f.store.list('attempts')).toEqual([]);
     }finally{f.close();}
@@ -78,7 +80,10 @@ describe('structured experience host intake', () => {
       expect(await ingestStructuredExperience(f.store,f.reader,f.source.id,new AbortController().signal)).toBe(true);
       const ci=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!;
       expect((ci.payload.observation as any).comparable).toBeUndefined();
-      expect(f.store.list('actions').filter(a=>a.kind==='experience.evidence-link')).toEqual([]);
+      const view=f.store.searchCards('problem',f.project).find(card=>card.kind==='experience');
+      expect(view?.experienceReference).toMatchObject({label:'historical-test-backed-reference',reportedSolution:{text:'A reported fix',status:'reported'},currentApplicability:{status:'unknown'},observed:[{checks:[{id:'gitlab-job:71',result:'success'}],snapshot:{revision:H,files:[{path:'docs/test.ts'}]},environment:{observed:{},unknown:['execution-environment']}}]});
+      expect(view?.experienceReference?.observed[0]?.checks[0]?.command).toBeUndefined();
+      expect(view?.experienceReference?.observed[0]?.checks[0]?.testFile).toBeUndefined();
       expect(f.store.list('actions').filter(a=>a.kind==='knowledge.host-observation').map(a=>(a.payload.observation as any).claim.kind)).not.toContain('test-result');
     }finally{f.close();}
   });
@@ -187,6 +192,7 @@ describe('structured experience host intake', () => {
       const directory=join(root,'vault',encodeURIComponent(project.id),encodeURIComponent(project.domain),'cards');
       if(mode==='retention-switch'){
         expect(store.searchCards('problem',project).length).toBeGreaterThan(0);
+        expect(store.searchCards('problem',project,20,{usage:'browse'}).length).toBeGreaterThan(0);
         const experience=cards.find(card=>card.kind==='experience')!;
         writeFileSync(join(directory,`${encodeURIComponent(experience.id)}.conflict-manual.md`),'A reported fix');
         store.save('sources',{...parent,retention:'ephemeral'});
@@ -207,6 +213,7 @@ describe('structured experience host intake', () => {
       expect(await ingestStructuredExperience(store,f.reader,f.source.id,new AbortController().signal)).toBe(true);
       const job=store.list('actions').find(a=>a.kind==='knowledge.structured-ingest')!,cards=store.list('cards').filter(c=>c.sourceId===f.source.id);
       expect(store.searchCards('problem',project).length).toBeGreaterThan(0);
+      expect(store.searchCards('problem',project,20,{usage:'browse'}).length).toBeGreaterThan(0);
       if(mode==='deleted')store.delete('actions',job.id);
       else store.save('actions',{...job,payload:mode==='malformed'?{...job.payload,sourceRefs:{unexpected:true}}:{retracted:true}});
       expect(store.searchCards('problem',project)).toEqual([]);store.close();

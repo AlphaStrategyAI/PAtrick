@@ -1,17 +1,106 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../../src/app.js';
 import { readConfig } from '../../src/config.js';
 import { Store } from '../../src/store.js';
 import { Workbench } from '../../src/orchestrator.js';
+import { configureDemo, DemoWorker, demoResearch, demoWriter } from '../../src/demo.js';
+import * as pages from '../../src/web/pages.js';
 
-const stores:Store[]=[];afterEach(()=>stores.splice(0).forEach(s=>s.close()));
-function setup(mode:'live'|'demo'='live') {
-  const config=readConfig({PATRICK_MODE:mode,PATRICK_TOKEN:'test-owner-token-at-least-32-characters'}),store=new Store(':memory:');stores.push(store);
+const stores:Store[]=[],roots:string[]=[];afterEach(()=>{stores.splice(0).forEach(s=>s.close());roots.splice(0).forEach(root=>rmSync(root,{recursive:true,force:true}));});
+function setup(mode:'live'|'demo'='live',providedStore?:Store) {
+  const config=readConfig({PATRICK_MODE:mode,PATRICK_TOKEN:'test-owner-token-at-least-32-characters'}),store=providedStore??new Store(':memory:');stores.push(store);
   const engine=new Workbench({store,config,workers:[],writer:{baseline:async()=>'',deliver:async()=>{throw Error('No remote proof');}},research:{research:async()=>{throw Error('No research');}}});
   return {app:createApp({store,config,engine}),store,config,engine};
 }
 describe('authenticated workbench HTTP',()=>{
   const validProject = { name: 'Budget regression', repository: 'owner/repo', prdPath: 'docs/PRD.md', allowedPaths: 'docs/PRD.md' };
+
+  it('reports unavailable feedback context after a delivered temporary conversation is replayed',async()=>{
+    const root=mkdtempSync(join(tmpdir(),'patrick-http-delivered-replay-'));roots.push(root);
+    const config=readConfig({PATRICK_MODE:'demo',PATRICK_DATA_DIR:root});configureDemo(config);
+    const workers=(['grok','dsh','codex'] as const).map(name=>new DemoWorker(name));let deliveries=0;
+    const writer={...demoWriter,async deliver(...args:Parameters<typeof demoWriter.deliver>){deliveries++;return demoWriter.deliver(...args);}};
+    let store=new Store(join(root,'db.sqlite'),join(root,'vault')),engine=new Workbench({store,config,workers,writer,research:demoResearch}),app=createApp({store,config,engine});
+    const payload={projectId:config.projects[0]!.id,domain:config.projects[0]!.domain,sessionId:'feedback',turnId:'1',revision:'r1',content:'保留草稿，以供恢复。',tool:'codex',retention:'ephemeral'};
+    const post=()=>app.request('/api/conversations',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(payload)});
+    try{
+      const initial=await (await post()).json(),id=initial.task.id;
+      for(let i=0;i<20&&store.get('tasks',id)?.stage!=='feedback';i++)await engine.tick();
+      const before=store.get('tasks',id)!;expect(before.stage).toBe('feedback');expect(deliveries).toBe(1);
+      await engine.shutdown();store.close();store=new Store(join(root,'db.sqlite'),join(root,'vault'));engine=new Workbench({store,config,workers,writer,research:demoResearch});app=createApp({store,config,engine});
+      const replay=await (await post()).json();expect(replay.task).toMatchObject({id,version:before.version,stage:'feedback',status:'blocked',receiptId:before.receiptId});
+      expect(replay.task.error).toContain('feedback context expired');
+      const response=await app.request(`/api/tasks/${id}/retry`,{method:'POST',headers:{Accept:'application/json'}});
+      expect(response.status).toBe(409);expect(await response.json()).toMatchObject({code:'feedback_context_unavailable',error:'Delivery completed, but feedback context expired; automatic recovery is unavailable.'});
+      for(let i=0;i<10;i++)await engine.tick();expect(deliveries).toBe(1);
+    }finally{await engine.shutdown();store.close();}
+  });
+
+  it.each(['application/json','text/html'] as const)('reports committed Vault synchronization failures safely as %s without database rereads',async accept=>{
+    const root=mkdtempSync(join(tmpdir(),'patrick-vault-http-'));roots.push(root);
+    const store=new Store(join(root,'db'),join(root,'vault')),{app}=setup('demo',store);
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    const state=store as unknown as {db:{inTransaction:boolean};vaultJobs:Map<string,unknown>;publish:(job:{table:string},startup?:boolean)=>void},publish=state.publish.bind(store);let failed=false;
+    const publication=vi.spyOn(state,'publish').mockImplementation((job,startup)=>{if(!state.db.inTransaction&&job.table==='sources'){failed=true;throw Object.assign(new Error('PRIVATE_SQLITE_MESSAGE'),{code:'SQLITE_BUSY'});}return publish(job,startup);});
+    const get=store.get.bind(store),getSpy=vi.spyOn(store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{if(failed)throw Error('unexpected database reread');return get(...args);}) as typeof store.get);
+    const list=store.list.bind(store),listSpy=vi.spyOn(store,'list').mockImplementation(((...args:Parameters<typeof list>)=>{if(failed)throw Error('unexpected database reread');return list(...args);}) as typeof store.list);
+    let response:Response;
+    try{response=await app.request('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json',Accept:accept},body:JSON.stringify({projectId:project.id,title:'Saved source',content:'SYNTHETIC_HTTP_SENTINEL'})});}
+    finally{publication.mockRestore();getSpy.mockRestore();listSpy.mockRestore();}
+    expect(failed).toBe(true);expect(response.status).toBe(503);const text=await response.text();
+    expect(text).toContain('Changes may have been saved, but Vault synchronization failed; retry.');expect(text).not.toContain('PRIVATE_SQLITE_MESSAGE');
+    if(accept==='application/json')expect(JSON.parse(text).code).toBe('vault_sync_unavailable');
+    expect(store.list('sources').some(source=>source.content==='SYNTHETIC_HTTP_SENTINEL')).toBe(true);expect(state.vaultJobs.size).toBeGreaterThan(0);
+  });
+
+  it.each(['application/json','text/html'] as const)('maps raw SQLite errors to safe %s without database rereads',async accept=>{
+    const {app,store,engine}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    let failed=false;const ingest=vi.spyOn(engine,'ingest').mockImplementation(()=>{failed=true;throw Object.assign(new Error('PRIVATE_RAW_SQLITE_MESSAGE'),{code:'SQLITE_LOCKED'});});
+    const get=store.get.bind(store),getSpy=vi.spyOn(store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{if(failed)throw Error('unexpected database reread');return get(...args);}) as typeof store.get);
+    const list=store.list.bind(store),listSpy=vi.spyOn(store,'list').mockImplementation(((...args:Parameters<typeof list>)=>{if(failed)throw Error('unexpected database reread');return list(...args);}) as typeof store.list);
+    let response:Response;
+    try{response=await app.request('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json',Accept:accept},body:JSON.stringify({projectId:project.id,title:'Source',content:'ordinary source'})});}
+    finally{ingest.mockRestore();getSpy.mockRestore();listSpy.mockRestore();}
+    expect(response.status).toBe(503);const text=await response.text();expect(text).toContain('Knowledge temporarily unavailable; retry.');expect(text).not.toContain('PRIVATE_RAW_SQLITE_MESSAGE');
+  });
+
+  it('renders the knowledge page inside one synchronous snapshot and rejects a thenable without leaking it',async()=>{
+    const {app,store}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    let depth=0;const render=vi.spyOn(pages,'renderPage').mockImplementationOnce(()=>{depth=(store as any).readDepth;return Promise.resolve('PRIVATE_ASYNC_PAGE') as never;});
+    try{
+      const response=await app.request(`/knowledge?project=${project.id}`,{headers:{Accept:'application/json'}});
+      expect(depth).toBe(1);expect(response.status).toBe(500);expect(await response.text()).not.toContain('PRIVATE_ASYNC_PAGE');
+    }finally{render.mockRestore();}
+    expect((store as any).operation).toBeUndefined();expect((await app.request(`/knowledge?project=${project.id}`)).status).toBe(200);
+  });
+  it('returns generic JSON and static HTML on knowledge contention without reading the Store again',async()=>{
+    const {app,store}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    let failed=false;
+    const lookup=vi.spyOn(store,'searchCards').mockImplementation(()=>{failed=true;throw new DomainError('Knowledge temporarily unavailable; retry.','knowledge_snapshot_unavailable',503);});
+    const get=store.get.bind(store),getSpy=vi.spyOn(store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{if(failed)throw Error('unexpected Store reread');return get(...args);}) as typeof store.get);
+    const list=store.list.bind(store),listSpy=vi.spyOn(store,'list').mockImplementation(((...args:Parameters<typeof list>)=>{if(failed)throw Error('unexpected Store reread');return list(...args);}) as typeof store.list);
+    try{
+      const url=`/api/lookup?project=${project.id}&domain=${project.domain}&q=term`;
+      const json=await app.request(url,{headers:{Accept:'application/json'}});expect(json.status).toBe(503);expect(await json.json()).toEqual({error:'Knowledge temporarily unavailable; retry.',code:'knowledge_snapshot_unavailable'});
+      failed=false;const html=await app.request(url,{headers:{Accept:'text/html'}});expect(html.status).toBe(503);expect(await html.text()).toContain('Knowledge temporarily unavailable; retry.');
+      failed=false;lookup.mockRestore();getSpy.mockRestore();listSpy.mockRestore();
+      expect((await app.request(url)).status).toBe(200);
+    }finally{lookup.mockRestore();getSpy.mockRestore();listSpy.mockRestore();}
+  });
+
+  it.each(['/api/state','/knowledge'])('returns stale_project_state when billing project inputs change before %s projection',async path=>{
+    const {app,store,engine}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    const billing=vi.spyOn(engine,'billingStatuses').mockImplementation(async()=>{store.save('projects',{...project,name:'Changed during billing'});return {};});
+    try{const response=await app.request(`${path}?project=${project.id}`,{headers:{Accept:path==='/knowledge'?'text/html':'application/json'}});expect(response.status).toBe(409);expect(await response.text()).toContain('Project state changed; retry.');}
+    finally{billing.mockRestore();}
+  });
 
   it.each(['task','conversation'] as const)('rejects internal refresh on %s intake without scheduling or GET',async kind=>{
     const {app,store,engine}=setup('demo');

@@ -7,8 +7,10 @@ if(existsSync('.env'))process.loadEnvFile('.env');
 const base=new URL(process.env.PATRICK_URL??'http://127.0.0.1:4317');
 if(base.protocol!=='https:'&&!(base.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(base.hostname)))throw Error('Use HTTPS or loopback for the PAtrick MCP connection.');
 const projectId=process.env.PATRICK_MCP_PROJECT??'',domain=process.env.PATRICK_MCP_DOMAIN??'',token=process.env.PATRICK_TOKEN??'';
+class KnowledgeSnapshotUnavailable extends Error {}
 async function api(path:string,body?:unknown):Promise<any> {
   const response=await fetch(new URL(path,base),{method:body?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(15000)});
+  if(response.status===503){const details=await response.json().catch(()=>undefined) as {code?:unknown}|undefined;if(details?.code==='knowledge_snapshot_unavailable')throw new KnowledgeSnapshotUnavailable('Knowledge temporarily unavailable; retry.');}
   if(!response.ok)throw Error(`PAtrick returned ${response.status}. Check the local host and scoped configuration.`);
   return response.json();
 }
@@ -17,7 +19,8 @@ function scoped(entity:{projectId:string;domain:string}|undefined):boolean{retur
 const server=new McpServer({name:'patrick',version:'0.1.0'});
 server.registerTool('lookup',{title:'Search current project evidence',description:'Returns current authorized knowledge with exact quotations and source revisions. Unknown projects return no memory.',inputSchema:{query:z.string().min(1).max(500)},annotations:{readOnlyHint:true}},async({query})=>{
   if(!projectId||!domain)return result({cards:[]});
-  return result(await api(`/api/lookup?project=${encodeURIComponent(projectId)}&domain=${encodeURIComponent(domain)}&q=${encodeURIComponent(query)}`));
+  try{return result(await api(`/api/lookup?project=${encodeURIComponent(projectId)}&domain=${encodeURIComponent(domain)}&q=${encodeURIComponent(query)}`));}
+  catch(error){if(error instanceof KnowledgeSnapshotUnavailable)return {isError:true,content:[{type:'text' as const,text:error.message}]};throw error;}
 });
 server.registerTool('ask',{title:'Ask PAtrick',description:'Persist a question in the bound project; PAtrick researches, decides or asks its owner. Poll get_task after reconnecting.',inputSchema:{title:z.string().min(1).max(200),question:z.string().min(1).max(100000)},annotations:{idempotentHint:false}},async({title,question})=>{
   if(!projectId||!domain)throw Error('Bind PATRICK_MCP_PROJECT and PATRICK_MCP_DOMAIN first.');

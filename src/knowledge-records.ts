@@ -1,7 +1,7 @@
 import { digest, pathAllowed, stableId, type Scope, type ActionRecord } from './domain.js';
-import type { Store } from './store.js';
+import { isKnowledgeSnapshotFailure, type Store } from './store.js';
 import { z } from 'zod';
-import { atomicClaimSchema, observedProcessSchema, type TestObservation, type HostObservation, type SourceRef, type RepositoryReadRequest, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload, type CanonicalCiTestObservationPayload } from './knowledge-contract.js';
+import { atomicClaimSchema, observedProcessSchema, type TestObservation, type HostObservation, type SourceRef, type RepositoryReadRequest, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload, type CanonicalCiTestObservationPayload, type ExperienceAssociation } from './knowledge-contract.js';
 import { snapshotDigest, knowledgePolicyHash } from './knowledge-identity.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 
@@ -10,18 +10,27 @@ export interface AcceptedLocalProvenance {
  inputHash:string;outputHash:string;planHash:string;artifactHash:string;runId:string;sourceHash:string;policyHash:string;
 }
 
+type RetainedTestObservation={observation:TestObservation;hosts:HostObservation[]};
+
 /** Read retained accepted facts, independently of the task's later workflow. */
-export function readTestObservation(store:Store,id:string,scope:Scope):TestObservation|undefined {
+function readRetainedTestObservation(store:Store,id:string,scope:Scope):RetainedTestObservation|undefined {
  const row=store.get('actions',id);
  if(!row||row.kind!=='experience.test-observation'||row.status!=='completed'||row.projectId!==scope.projectId||row.domain!==scope.domain)return undefined;
- const p=row.payload,o=p.observation as TestObservation|undefined,a=p.accepted as AcceptedLocalProvenance|undefined;
- if(p.schemaVersion!==1||!o||!a||o.schemaVersion!==1||o.id!==id||o.projectId!==scope.projectId||o.domain!==scope.domain||o.origin.kind!=='local'||p.digest!==digest(o)||p.acceptedDigest!==digest(a)||id!==stableId('local-test-observation',a.runId,digest(o.origin),digest({...o,id:''})))return undefined;
- const origin=o.origin;
+ if(isCiTestPayload(row.payload))return readCiTestObservation(store,row.payload,id,scope);
+ if(!isLocalTestPayload(row.payload))return undefined;
+ const p=row.payload,o=p.observation,a=p.accepted;
+ if(o.id!==id||o.projectId!==scope.projectId||o.domain!==scope.domain||p.digest!==digest(o)||p.acceptedDigest!==digest(a)||id!==stableId('local-test-observation',a.runId,digest(o.origin),digest({...o,id:''})))return undefined;
+ const origin=o.origin;if(origin.kind!=='local')return undefined;
  if(origin.attemptId!==a.attemptId||origin.taskId!==a.taskId||origin.taskVersion!==a.taskVersion||origin.inputHash!==a.inputHash||origin.planHash!==a.planHash||origin.artifactHash!==a.artifactHash||origin.runId!==a.runId||origin.role!==a.role)return undefined;
  const attempt=store.get('attempts',a.attemptId),source=store.get('sources',o.sourceId),project=store.get('projects',scope.projectId);
  if(!attempt||attempt.status!=='succeeded'||attempt.projectId!==scope.projectId||attempt.domain!==scope.domain||attempt.taskId!==a.taskId||attempt.taskVersion!==a.taskVersion||attempt.role!==a.role||attempt.runner!==a.runner||attempt.provider!==a.provider||attempt.model!==a.model||attempt.inputHash!==a.inputHash||!source||source.status!=='active'||source.revision!==o.sourceRevision||source.projectId!==scope.projectId||source.domain!==scope.domain||digest(source)!==a.sourceHash||!project||project.projectId!==scope.projectId||project.domain!==scope.domain||project.repository!==o.repository||knowledgePolicyHash(project)!==a.policyHash)return undefined;
- if(JSON.stringify(p.sourceRefs)!==JSON.stringify([{id:source.id,revision:source.revision}]))return undefined;
- return structuredClone(o);
+ if(JSON.stringify(p.sourceRefs)!==JSON.stringify([{id:source.id,revision:source.revision}])||!knowledgeSourceRefs(store,source.id,scope))return undefined;
+ return {observation:structuredClone(o),hosts:[]};
+}
+
+export function readTestObservation(store:Store,id:string,scope:Scope):TestObservation|undefined {return store.readSnapshot(()=>readTestObservationBody(store,id,scope));}
+function readTestObservationBody(store:Store,id:string,scope:Scope):TestObservation|undefined {
+ return readRetainedTestObservation(store,id,scope)?.observation;
 }
 
 // Canonical repository payload validation stays transport-free and Store is type-only.
@@ -61,6 +70,61 @@ export const canonicalCiTestPayloadSchema:z.ZodType<CanonicalCiTestObservationPa
 });
 const localTestObservation=ciTestObservation.extend({origin:z.object({kind:z.literal('local'),taskId:text,taskVersion:z.number().int(),attemptId:text,inputHash:hash,planHash:hash,artifactHash:hash,role:z.enum(['execute','check']),runId:text}).strict()}).strict();
 const localTestPayload=z.object({schemaVersion:z.literal(1),observation:localTestObservation,digest:hash,sourceRefs:refs,accepted:z.object({attemptId:text,taskId:text,taskVersion:z.number().int(),role:z.enum(['execute','check']),runner:text,provider:text,model:text,inputHash:hash,outputHash:hash,planHash:hash,artifactHash:hash,runId:text,sourceHash:hash,policyHash:hash}).strict(),acceptedDigest:hash}).strict();
+type LocalTestPayload=z.infer<typeof localTestPayload>;
+function isLocalTestPayload(value:unknown):value is LocalTestPayload{return localTestPayload.safeParse(value).success;}
+function isCiTestPayload(value:unknown):value is CanonicalCiTestObservationPayload{return canonicalCiTestPayloadSchema.safeParse(value).success;}
+export const experienceAssociationSchema:z.ZodType<ExperienceAssociation>=z.object({schemaVersion:z.literal(1),cardId:text,candidateHash:hash,sourceId:text,sourceRevision:text,observationId:text,observationHash:hash,
+ checkIds:z.array(text).min(1).max(128),files:z.array(file).min(1).max(128),subject:z.object({kind:z.enum(['task','issue']),id:text,revision:text}).strict(),
+ relevance:z.object({kind:z.enum(['named-regression','resolution-with-checks']),recordSourceId:text,recordRevision:text,quote:text,locator:text,interpretation:z.enum(['reported','inference'])}).strict(),
+ versionBinding:z.object({reported:z.literal('unknown'),observedRevision:text}).strict().optional()}).strict();
+export const canonicalExperiencePayloadSchema=z.object({schemaVersion:z.literal(1),association:experienceAssociationSchema,digest:hash,sourceRefs:refs}).strict();
+// A redacted link may retain only the candidate's normalization origin. It is never a link or observation.
+export const normalizationOriginPayloadSchema=z.object({retracted:z.literal(true),sourceIds:z.array(text).min(1),phase:z.literal('invalid').optional(),errorCode:z.literal('source_invalidated').optional(),
+ sourceRefs:refs,normalizationOrigin:z.object({cardId:text,candidateHash:hash,sourceId:text,sourceRevision:text,reported:z.literal('unknown'),observedRevision:text}).strict()}).strict();
+
+/** Revalidate the sole G5 retained CI row against its live host records and lineage. */
+function readCiTestObservation(store:Store,p:CanonicalCiTestObservationPayload,id:string,scope:Scope):RetainedTestObservation|undefined {
+ const o=p.observation,source=store.get('sources',o.sourceId),project=store.get('projects',scope.projectId);
+ if(!source||!project||o.origin.kind!=='ci'||o.id!==id||o.projectId!==scope.projectId||o.domain!==scope.domain||p.digest!==digest(o)||p.requestHash!==digest(p.request)||digest(source)!==p.sourceHash||knowledgePolicyHash(project)!==p.policyHash||project.projectId!==scope.projectId||project.domain!==scope.domain||o.repository!==project.repository||o.origin.provider!==project.repositoryProvider||o.snapshot.revision!==o.origin.headSha||id!==canonicalCiTestObservationId(o,p.sourceHash,p.policyHash,p.requestHash,p.hostObservationIds))return undefined;
+ if(digest(knowledgeRequestSourceRefs(store,source.id,scope,p.request)??[])!==digest(p.sourceRefs))return undefined;
+ if(p.request.issueSource){const issue=store.get('sources',p.request.issueSource.id);if(!issue||digest(issue)!==p.issueSourceHash)return undefined;}else if(p.issueSourceHash!==undefined)return undefined;
+ const records=p.hostObservationIds.map((hostId,index)=>{const host=readHostObservation(store,hostId,scope);return host&&digest(hostObservationSchema.parse(host))===p.hostObservationHashes[index]?host:undefined;});
+ if(records.some(record=>!record))return undefined;
+ const hosts=records.filter((record):record is HostObservation=>record!==undefined),origin=o.origin;
+ if(!o.checks.every(check=>hosts.some(host=>matchesCiTestCheck(host,o,check))))return undefined;
+ if(o.checks.some(check=>origin.provider==='gitlab'?check.id!==`gitlab-job:${origin.jobId}`:!/^github-check-run:[1-9][0-9]*$/.test(check.id)))return undefined;
+ if(o.snapshot.files.some(f=>!p.request.filePaths.includes(f.path))||new Set(o.snapshot.files.map(f=>f.path)).size!==o.snapshot.files.length)return undefined;
+ if(o.comparable&&(!hosts.some(host=>host.claim.kind==='test-result'&&host.claim.subject.snapshotDigest===o.comparable?.snapshotDigest&&host.claim.subject.testDefinitionDigest===o.comparable?.testDefinitionDigest)||snapshotDigest(o.snapshot)!==o.comparable.snapshotDigest))return undefined;
+ return {observation:structuredClone(o),hosts};
+}
+
+function matchesCiTestCheck(host:HostObservation,o:TestObservation,check:TestObservation['checks'][number]):boolean {
+ const origin=o.origin;if(origin.kind!=='ci'||host.claim.kind!=='ci-result')return false;
+ return host.origin.kind==='provider'&&host.origin.provider===origin.provider&&host.origin.producerId===origin.producerId&&host.responseDigest===origin.responseDigest&&host.locator===origin.url&&host.claim.subject.repository===o.repository&&host.claim.subject.headSha===origin.headSha&&host.claim.subject.runId===origin.runId&&host.claim.subject.jobId===origin.jobId&&host.claim.subject.checkName===check.name&&check.result===(host.claim.value.conclusion==='success'?'success':host.claim.value.conclusion==='failure'?'failure':'incomplete');
+}
+
+/** One synchronous read validates host bindings once and derives their execution times. */
+export function readTestObservationWithTimes(store:Store,id:string,scope:Scope):{observation:TestObservation;times:Map<string,string>}|undefined {return store.readSnapshot(()=>readTestObservationWithTimesBody(store,id,scope));}
+function readTestObservationWithTimesBody(store:Store,id:string,scope:Scope):{observation:TestObservation;times:Map<string,string>}|undefined {
+ const retained=readRetainedTestObservation(store,id,scope);if(!retained)return undefined;
+ const {observation,hosts}=retained,times=new Map<string,string>();
+ if(observation.origin.kind==='local'){
+  for(const check of observation.checks)if(check.process&&Date.parse(check.process.startedAt)<=Date.parse(check.process.finishedAt))times.set(check.id,check.process.finishedAt);
+  return {observation,times};
+ }
+ for(const check of observation.checks){
+  const matched=hosts.filter(host=>matchesCiTestCheck(host,observation,check));
+  if(matched.length===1&&matched[0]!.eventAt)times.set(check.id,matched[0]!.eventAt!);
+ }
+ return {observation,times};
+}
+
+export function testObservationExecutionTimes(store:Store,observation:TestObservation,scope:Scope):Map<string,string> {return store.readSnapshot(()=>testObservationExecutionTimesBody(store,observation,scope));}
+function testObservationExecutionTimesBody(store:Store,observation:TestObservation,scope:Scope):Map<string,string> {
+ const retained=readTestObservationWithTimes(store,observation.id,scope);
+ return retained&&digest(retained.observation)===digest(observation)?retained.times:new Map();
+}
+
 export function canonicalCiTestObservationId(observation:TestObservation,sourceHash:string,policyHash:string,requestHash:string,hostObservationIds:string[]):string {
  return stableId('canonical-ci-test-observation',{...observation,id:undefined,observedAt:undefined},sourceHash,policyHash,requestHash,hostObservationIds);
 }
@@ -92,12 +156,18 @@ export function knowledgeRequestSourceRefs(store:Store,sourceId:string,scope:Sco
  return refs;
 }
 export function knowledgeActionDependencies(action:ActionRecord):{refs:SourceRef[];unresolved:boolean} {
- if(!['knowledge.host-observation','knowledge.evidence-link','knowledge.structured-ingest','experience.test-observation'].includes(action.kind))return {refs:[],unresolved:false};
+ if(!['knowledge.host-observation','knowledge.evidence-link','knowledge.structured-ingest','experience.test-observation','experience.evidence-link'].includes(action.kind))return {refs:[],unresolved:false};
  if(!action.payload||typeof action.payload!=='object'||Array.isArray(action.payload))return {refs:[],unresolved:true};
  // A valid source ID is useful for privacy even when its revision cannot admit a fact.
  const payload=action.payload as Record<string,unknown>,candidates:unknown[]=[payload.sourceRefs];let unresolved=false;
  if(action.kind==='knowledge.structured-ingest'&&Object.keys(payload).some(key=>!['schemaVersion','sourceId','sourceRevision','sourceHash','sourceRefs','phase','tries','runAfter','errorCode'].includes(key)))unresolved=true;
  if(action.kind==='experience.test-observation'&&!canonicalCiTestPayloadSchema.safeParse(payload).success&&!localTestPayload.safeParse(payload).success)unresolved=true;
+ if(action.kind==='experience.evidence-link'){
+  const parsed=canonicalExperiencePayloadSchema.safeParse(payload),origin=normalizationOriginPayloadSchema.safeParse(payload);
+  if(parsed.success)candidates.push([{id:parsed.data.association.sourceId,revision:parsed.data.association.sourceRevision},{id:parsed.data.association.relevance.recordSourceId,revision:parsed.data.association.relevance.recordRevision}]);
+  else if(origin.success)candidates.push([{id:origin.data.normalizationOrigin.sourceId,revision:origin.data.normalizationOrigin.sourceRevision}]);
+  else unresolved=true;
+ }
  for(const key of ['observation','link'])if(key in payload && action.kind!=='experience.test-observation'){
   const value=payload[key];
   if(!value||typeof value!=='object'||Array.isArray(value)||!('sourceRefs' in value))unresolved=true;
@@ -114,7 +184,7 @@ export function knowledgeActionDependencies(action:ActionRecord):{refs:SourceRef
   if(!Array.isArray(raw)||!raw.length){unresolved=true;continue;}
   for(const value of raw){
    if(!value||typeof value!=='object'||Array.isArray(value)||!text.safeParse((value as Record<string,unknown>).id).success){unresolved=true;continue;}
-   const item=value as {id:string;revision?:unknown};if(['knowledge.structured-ingest','experience.test-observation'].includes(action.kind)&&!text.safeParse(item.revision).success)unresolved=true;known.push({id:item.id,revision:typeof item.revision==='string'?item.revision:''});
+   const item=value as {id:string;revision?:unknown};if(['knowledge.structured-ingest','experience.test-observation','experience.evidence-link'].includes(action.kind)&&!text.safeParse(item.revision).success)unresolved=true;known.push({id:item.id,revision:typeof item.revision==='string'?item.revision:''});
   }
  }
  return {refs:[...new Map(known.map(value=>[`${value.id}\0${value.revision}`,value])).values()],unresolved};
@@ -139,7 +209,8 @@ function respectsHistoricalExecutions(request:CanonicalHostObservationPayload['r
   (check.jobId!==execution.jobId||(check.runId===execution.runId&&request.headSha===execution.headSha&&check.checkName===execution.checkName))
  );
 }
-export function readHostObservation(store:Store,id:string,scope:Scope):HostObservation|undefined {
+export function readHostObservation(store:Store,id:string,scope:Scope):HostObservation|undefined {return store.readSnapshot(()=>readHostObservationBody(store,id,scope));}
+function readHostObservationBody(store:Store,id:string,scope:Scope):HostObservation|undefined {
  const row=store.get('actions',id);
  if(!row||row.kind!=='knowledge.host-observation'||row.status!=='completed'||row.projectId!==scope.projectId||row.domain!==scope.domain)return referenceExperienceObservation(store,id,scope);
  if(isRetractedHostObservation(store,row))return undefined;
@@ -160,7 +231,7 @@ export function readHostObservation(store:Store,id:string,scope:Scope):HostObser
     request.filePaths.some(path=>Buffer.byteLength(path)>1024||!pathAllowed(path,project.allowedPaths))||
     request.checks.some(c=>!project.trustedChecks.includes(c.checkName))||
     request.current?.checkNames.some(name=>!project.trustedChecks.includes(name)))return undefined;
- }catch{return undefined;}
+ }catch(error){if(isKnowledgeSnapshotFailure(error))throw error;return undefined;}
  const claim=o.claim,origin=o.origin,provider=project.repositoryProvider;
  const root=origin.originalEventId.match(new RegExp(`^${provider}:([1-9][0-9]*):(.*)$`));
  if(!root||!Number.isSafeInteger(Number(root[1]))||origin.kind!=='provider'||origin.provider!==provider||
@@ -182,7 +253,7 @@ export function readHostObservation(store:Store,id:string,scope:Scope):HostObser
    const historical=headSha===p.request.headSha&&p.request.checks.some(c=>c.runId===runId&&c.jobId===jobId&&c.checkName===checkName);
    if(!historical){
     if(!p.request.current?.checkNames.includes(checkName))return undefined;
-    const currentHead=store.list('actions').some(a=>{
+    const currentHead=store.hostObservationActions(scope,p.sourceHash,p.requestHash,'change-head').some(a=>{
      if(a.kind!=='knowledge.host-observation'||a.id===id||a.projectId!==scope.projectId||a.domain!==scope.domain)return false;
      const candidate=canonicalHostPayloadSchema.safeParse(a.payload);
      if(!candidate.success||candidate.data.sourceHash!==p.sourceHash||candidate.data.requestHash!==p.requestHash||candidate.data.observation.claim.kind!=='change-head')return false;
@@ -199,7 +270,7 @@ export function readHostObservation(store:Store,id:string,scope:Scope):HostObser
   const a=p.attestation;if(!a||a.producerId!==o.origin.producerId||a.originalEventId!==o.origin.originalEventId||a.snapshotDigest!==o.claim.subject.snapshotDigest||a.testDefinitionDigest!==o.claim.subject.testDefinitionDigest||a.reportPath!==p.request.testReportPath||o.responseDigest!==a.reportDigest)return undefined;
   if(provider!=='gitlab'||o.claim.value.result!=='success'||p.request.checks.length!==1)return undefined;
   const testedRevision=o.claim.subject.testedRevision;
-  const related=store.list('actions').flatMap(row=>{
+  const related=store.hostObservationActions(scope,p.sourceHash,p.requestHash,'ci-result',origin.originalEventId).flatMap(row=>{
    if(row.kind!=='knowledge.host-observation'||row.id===id||row.projectId!==scope.projectId||row.domain!==scope.domain)return [];
    const candidate=canonicalHostPayloadSchema.safeParse(row.payload);
    if(!candidate.success||candidate.data.sourceHash!==p.sourceHash||candidate.data.requestHash!==p.requestHash||candidate.data.observation.origin.originalEventId!==origin.originalEventId||candidate.data.observation.claim.kind!=='ci-result')return [];
@@ -210,7 +281,8 @@ export function readHostObservation(store:Store,id:string,scope:Scope):HostObser
  return structuredClone(o);
 }
 /** Project the same retained local run; never persist a second countable event. */
-export function referenceExperienceObservation(store:Store,observationId:string,requestedScope?:Scope):HostObservation|undefined {
+export function referenceExperienceObservation(store:Store,observationId:string,requestedScope?:Scope):HostObservation|undefined {return store.readSnapshot(()=>referenceExperienceObservationBody(store,observationId,requestedScope));}
+function referenceExperienceObservationBody(store:Store,observationId:string,requestedScope?:Scope):HostObservation|undefined {
  try{
   const row=store.get('actions',observationId);if(!row)return undefined;const scope={projectId:requestedScope?.projectId??row.projectId,domain:requestedScope?.domain??row.domain};
   const o=readTestObservation(store,observationId,scope),a=row.payload.accepted as AcceptedLocalProvenance|undefined,project=store.get('projects',scope.projectId);
@@ -220,5 +292,5 @@ export function referenceExperienceObservation(store:Store,observationId:string,
   return {...scope,schemaVersion:1,id:o.id,claim:{kind:'test-result',subject:{provider:project.repositoryProvider,repository:o.repository,testedRevision:o.snapshot.revision,...o.comparable},value:{result}},
    origin:{kind:'host-test',repository:o.repository,producerId:`${a.provider}:${a.runner}`,originalEventId:`local:${a.attemptId}:${a.runId}`,independentOrigin:`local:${a.provider}:${a.runner}`,derivedFrom:sourceRefs.filter(r=>r.id!==o.sourceId).map(r=>`source:${r.id}:${r.revision}`)},
    sourceRefs,responseDigest:digest(o),locator:`local-run:${a.runId}`,observedAt:o.observedAt,bindingHash:digest(a)};
- }catch{return undefined;}
+ }catch(error){if(isKnowledgeSnapshotFailure(error))throw error;return undefined;}
 }

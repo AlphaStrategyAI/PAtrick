@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { digest, now, stableId, type ActionRecord, type KnowledgeCard, type SourceRevision } from './domain.js';
+import { digest, now, stableId, type ActionRecord, type Attempt, type KnowledgeCard, type SourceRevision, type Task } from './domain.js';
 import type { SourceRef } from './knowledge-contract.js';
 import { knowledgeSourceRefs } from './knowledge-records.js';
 import type { Store } from './store.js';
@@ -8,6 +8,7 @@ export interface StructuredIngestJobV1 {
   schemaVersion: 1; sourceId: string; sourceRevision: string; sourceHash: string; sourceRefs: SourceRef[];
   phase: 'queued' | 'pending-readback' | 'ordinary' | 'processed' | 'invalid';
   tries: number; runAfter: string; errorCode?: string;
+  readHold?: {policyHash:string;sourceHashes:{id:string;revision:string;hash:string}[]};
 }
 const text = z.string().min(1).max(10000);
 export const structuredIngestJobSchema: z.ZodType<StructuredIngestJobV1> = z.object({
@@ -15,7 +16,28 @@ export const structuredIngestJobSchema: z.ZodType<StructuredIngestJobV1> = z.obj
   sourceRefs: z.array(z.object({ id: text, revision: text }).strict()).min(1).max(256),
   phase: z.enum(['queued', 'pending-readback', 'ordinary', 'processed', 'invalid']),
   tries: z.number().int().nonnegative(), runAfter: z.string().datetime({offset:true}), errorCode: text.optional(),
+  readHold:z.object({policyHash:z.string().regex(/^[a-f0-9]{64}$/),sourceHashes:z.array(z.object({id:text,revision:text,hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict()).min(1).max(256)}).strict().optional(),
 }).strict();
+
+/** A pending stage plus a succeeded attempt is negative evidence only. */
+export function consumedStageResult(store:Store,task:Task,attempts:Attempt[]=store.list('attempts')):boolean {
+  const id=stableId('stage-action',task.id,task.version,task.stage,task.repairCount),action=store.get('actions',id);
+  if(!action||action.status!=='pending'||action.kind!==task.stage||action.taskId!==task.id||action.projectId!==task.projectId||action.domain!==task.domain)return false;
+  const history=attempts.filter(attempt=>attempt.taskId===task.id),before=action.payload.attemptsBefore,prior=action.payload.priorSucceededAttemptIds;
+  const validBefore=typeof before==='number'&&Number.isSafeInteger(before)&&before>=0&&before<=task.attempts&&history.length<=task.attempts;
+  const ordinals=history.filter(attempt=>attempt.billing).map(attempt=>attempt.billing!.ordinal);
+  const validOrdinals=ordinals.every(ordinal=>Number.isSafeInteger(ordinal)&&ordinal>0&&ordinal<=task.attempts)&&new Set(ordinals).size===ordinals.length;
+  const post=validBefore&&validOrdinals?history.filter(attempt=>attempt.billing&&attempt.billing.ordinal>before):[];
+  // For older actions, only a complete billed suffix and ledger insertion order
+  // establish that an unbilled success belongs to a previous pass.
+  const suffixComplete=validBefore&&validOrdinals&&post.length===task.attempts-before&&post.length>0&&history.every(attempt=>attempt.projectId===task.projectId&&attempt.domain===task.domain);
+  return history.some(attempt=>{
+    if(attempt.projectId!==task.projectId||attempt.domain!==task.domain||attempt.taskVersion!==task.version||attempt.role!==task.stage||attempt.status!=='succeeded')return false;
+    if(action.payload.taskVersion!==task.version||action.payload.sourceRevision!==task.sourceRevision||!validBefore)return true;
+    if(attempt.billing)return !validOrdinals||attempt.billing.ordinal>before;
+    return !(Array.isArray(prior)&&prior.includes(attempt.id)||suffixComplete&&history.indexOf(attempt)<history.indexOf(post[0]!));
+  });
+}
 
 export function structuredKnowledgeJobId(source: SourceRevision): string {
   return stableId('knowledge.structured-ingest', source.id, source.revision, digest(source.content));
@@ -60,6 +82,7 @@ export function isReadyStructuredKnowledgeJob(store:Store,action:ActionRecord,at
     if (action.kind !== 'knowledge.structured-ingest' || action.status !== 'pending') return false;
     const parsed = structuredIngestJobSchema.safeParse(action.payload); if (!parsed.success) return false;
     const job = parsed.data, source = store.get('sources', job.sourceId), project = store.get('projects', action.projectId);
+    if(job.errorCode==='knowledge_read_inflight'||job.errorCode==='knowledge_snapshot_unavailable')return false;
     if (!source || !project || source.status !== 'active' || source.revision !== job.sourceRevision || digest(source.content) !== job.sourceHash ||
       source.projectId !== action.projectId || source.domain !== action.domain || project.id !== project.projectId || project.domain !== action.domain ||
       action.id !== structuredKnowledgeJobId(source) || Date.parse(job.runAfter) > Date.parse(at)) return false;

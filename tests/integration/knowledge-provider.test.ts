@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { GitHubWriter } from '../../src/integrations/github.js';
 import { GitLabWriter } from '../../src/integrations/gitlab.js';
@@ -192,6 +192,29 @@ describe('actual authenticated repository knowledge readers',()=>{
     const s=setup();const direct=await s.github.readKnowledge(s.project,s.source,s.request,new AbortController().signal);expect(takeRepositoryReadback(direct)).toBeUndefined();
     const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);r.observations[0]!.locator='tampered';expect(takeRepositoryReadback(r)).toBeUndefined();
     const next=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);s.store.save('sources',{...s.source,status:'withdrawn'});expect(takeRepositoryReadback(next)).toBeUndefined();
+  });
+  it.each(['SQLITE_BUSY_SNAPSHOT','SQLITE_LOCKED','SQLITE_SCHEMA'])('propagates %s from the consumed receipt current-source check',async code=>{
+    const s=setup(),readback=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);
+    const get=s.store.get.bind(s.store);
+    const spy=vi.spyOn(s.store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{
+      if(new Error().stack?.includes('takeRepositoryReadback'))throw Object.assign(new Error('injected SQLite failure'),{code});
+      return get(...args);
+    }) as typeof s.store.get);
+    expect(()=>takeRepositoryReadback(readback)).toThrowError(expect.objectContaining({code}));
+    spy.mockRestore();
+    expect(takeRepositoryReadback(readback)).toBeUndefined();
+  });
+  it.each(['SQLITE_BUSY','SQLITE_LOCKED','SQLITE_SCHEMA'])('propagates %s from repository issue-source validation after the read',async code=>{
+    const s=setup(),issue={...s.source,id:'issue',externalId:'issue',content:'Reported issue',locator:'issue:1'};s.store.save('sources',issue);
+    s.source.content=JSON.stringify({schemaVersion:1,quote:'Resolution report',details:{schemaVersion:1,problem:'cache misses',symptomAliases:['cache'],solution:'Clear cache',files:[measured.path],productId:s.project.id,codeVersion:H,environment:'reported',invalidationConditions:['changes']},repository:s.project.repository,headSha:H,runId:'52',jobId:'71',checkIds:['validate'],issueId:issue.id});
+    s.store.save('sources',s.source);const parsed=parseStructuredKnowledge(s.source,s.project)!;
+    const request=structuredRepositoryRequest(s.store,s.source,s.project,parsed),get=s.store.get.bind(s.store);let injected=false;
+    const spy=vi.spyOn(s.store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{
+      if(!injected&&s.requests.length>0&&args[0]==='sources'&&args[1]===issue.id&&new Error().stack?.includes('assertKnowledgeSource')){injected=true;throw Object.assign(new Error('injected SQLite failure'),{code});}
+      return get(...args);
+    }) as typeof s.store.get);
+    try{await expect(s.reader.read(s.project,s.source,request,new AbortController().signal)).rejects.toMatchObject({code});expect(injected).toBe(true);}finally{spy.mockRestore();}
+    const recovered=await s.reader.read(s.project,s.source,request,new AbortController().signal);expect(recovered.resolution).toMatchObject({sourceId:issue.id,revision:issue.revision});
   });
   it('rejects GitHub aggregate file bytes and per-page item overflow',async()=>{
     const s=setup(),large=Buffer.alloc(1_010_000,65);s.request.filePaths=[measured.path,'docs/second.ts'];

@@ -1,3 +1,4 @@
+import { linkAvailableExperienceEvidence } from './experience.js';
 import { digest, stableId, roleSchemas, type WorkerInput, type WorkerResult } from './domain.js';
 import type { Store } from './store.js';
 import type { TestObservation } from './knowledge-contract.js';
@@ -32,6 +33,7 @@ export function recordLocalTests(store:Store,attemptId:string,input:WorkerInput,
   if(prior)return prior.kind==='experience.test-observation'&&prior.payload.digest===hash?prior.id:undefined;
   if(store.list('actions').some(a=>a.kind==='experience.test-observation'&&(a.payload.observation as TestObservation|undefined)?.origin.kind==='local'&&((a.payload.observation as TestObservation).origin as typeof origin).runId===run.runId))return undefined;
   store.save('actions',{id:observation.id,projectId:task.projectId,domain:task.domain,taskId:task.id,kind:'experience.test-observation',status:'completed',payload:{schemaVersion:1,observation,digest:hash,accepted,acceptedDigest:digest(accepted),sourceRefs:[{id:source.id,revision:source.revision}]},updatedAt:run.observedAt});
+  linkAvailableExperienceEvidence(store,observation.id);
   return observation.id;
  });
 }

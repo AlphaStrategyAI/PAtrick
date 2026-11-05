@@ -1,15 +1,16 @@
 import { DomainError, digest, knowledgeOutputSchema, now, stableId, type KnowledgeCard, type SourceRevision } from './domain.js';
 import type { AtomicClaim, ParsedStructuredKnowledge, RequestedRepositoryClaim } from './knowledge-contract.js';
-import { knowledgeCandidateHash } from './knowledge-identity.js';
+import { knowledgeCandidateHash, knowledgePolicyHash } from './knowledge-identity.js';
+import { linkExperienceForCards } from './experience.js';
 import { acceptRepositoryReadback, linkKnowledgeEvidence } from './knowledge-evidence.js';
 import { enqueueStructuredKnowledge, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs, type StructuredIngestJobV1 } from './knowledge-jobs.js';
 import { knowledgeRequestSourceRefs, knowledgeSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
-import type { Store } from './store.js';
+import { isKnowledgeSnapshotFailure, VaultSyncError, type Store } from './store.js';
 
 export function publishKnowledge(store: Store, source: SourceRevision, output: unknown): KnowledgeCard[] {
-  return publish(store,source,output,false);
+  return store.transaction(()=>publish(store,source,output,false));
 }
 function publish(store:Store,source:SourceRevision,output:unknown,structured:boolean):KnowledgeCard[] {
   const parsed = knowledgeOutputSchema.parse(output);
@@ -26,6 +27,7 @@ function publish(store:Store,source:SourceRevision,output:unknown,structured:boo
     const existing=store.get('cards',card.id);
     if (!existing || structured&&existing.status==='withdrawn') store.save('cards',card);
   }
+  if(!structured)linkExperienceForCards(store,cards);
   return cards;
 }
 
@@ -82,6 +84,7 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
  let action=store.get('actions',id),job=action&&structuredIngestJobSchema.safeParse(action.payload);
  if(!refresh&&(!action||action.kind!=='knowledge.structured-ingest'||!job||!job.success))throw new DomainError('Structured ingest job is unavailable.','stale_source',409);
  if(!refresh&&job?.success&&(action!.projectId!==project.id||action!.domain!==project.domain||job.data.sourceId!==source.id||job.data.sourceRevision!==source.revision||job.data.sourceHash!==digest(source.content)||!validStructuredJobRefs(store,source,job.data.sourceRefs)))throw new DomainError('Structured ingest job changed.','stale_source',409);
+ if(!refresh&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??''))throw new DomainError('Knowledge temporarily unavailable; retry.','knowledge_snapshot_unavailable',503);
  if(!refresh&&action?.status==='completed'){
   if(job!.success&&job!.data.phase==='ordinary')return 'ordinary';
   if(job!.success&&job!.data.phase==='processed')return 'processed';
@@ -118,7 +121,7 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    if(!current||digest(current)!==digest(source)){
     store.save('actions',{...liveJob,status:'completed',payload:{phase:'invalid',errorCode:'source_invalidated',retracted:true,sourceIds:[source.id]},updatedAt:now()});return;
    }
-   updateJob(store,id,j=>({...j,phase:'pending-readback',tries:j.tries+1,runAfter:new Date(Date.now()+30_000).toISOString(),errorCode}),'pending');
+   updateJob(store,id,j=>{const {readHold:_hold,...rest}=j;return {...rest,phase:'pending-readback',tries:j.tries+1,runAfter:new Date(Date.now()+30_000).toISOString(),errorCode};},'pending');
   });
   return 'pending' as const;
  };
@@ -142,8 +145,20 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
   });
  });
  if(!reader)return pending(options.readbackUnavailableReason??'repository_reader_unavailable');
+ let consumed=false;
  try{
-  signal.throwIfAborted();const readback=await untilAborted(reader.read(project,source,request,signal),signal);signal.throwIfAborted();
+  signal.throwIfAborted();
+  // Persist a negative gate before I/O. A crash after consuming the one-use
+  // handoff cannot leave this job eligible for an automatic second read.
+  if(!refresh){
+   store.transaction(()=>{
+    const live=store.get('actions',id);if(!live||!action||digest(live)!==digest(action))throw new DomainError('Structured ingest job changed.','stale_source',409);
+    const sourceHashes=requestRefs.map(ref=>{const dependency=store.get('sources',ref.id);if(!dependency||dependency.retention==='ephemeral'&&!dependency.content)throw new DomainError('Knowledge dependencies changed.','stale_source',409);return {...ref,hash:digest(dependency.content)};});
+    updateJob(store,id,j=>({...j,phase:'pending-readback',errorCode:'knowledge_read_inflight',readHold:{policyHash:knowledgePolicyHash(project),sourceHashes}}),'pending');
+   });
+   action=store.get('actions',id);job=action&&structuredIngestJobSchema.safeParse(action.payload);
+  }
+  const readback=await untilAborted(reader.read(project,source,request,signal),signal);signal.throwIfAborted();
   store.transaction(()=>{
    assertKnowledgeSource(store,source,project);if(issue)assertKnowledgeSource(store,issue,project);
    const liveJob=store.get('actions',id);
@@ -151,13 +166,14 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    const reparsed=parseStructuredKnowledge(source,project);
    if(!reparsed||digest(reparsed)!==digest(selected)||digest(structuredRepositoryRequest(store,source,project,selected))!==digest({...request,current:undefined}))throw new DomainError('Knowledge request changed.','stale_source',409);
    for(const c of cards){const current=store.get('cards',c.id);if(!current||current.status!=='active'||knowledgeCandidateHash(current)!==c.hash)throw new DomainError('Knowledge candidate changed.','stale_source',409);}
-   const ids=acceptRepositoryReadback(store,source.id,readback);
+   const ids=acceptRepositoryReadback(store,source.id,readback,()=>{consumed=true;});
    const observations=ids.map(observationId=>readHostObservation(store,observationId,project)).filter(o=>o!==undefined);
    for(const c of cards){const current=store.get('cards',c.id)!;if(!current.pendingClaim)continue;const found=observations.find(o=>matches(current.pendingClaim!,o.claim));if(!found)continue;
     const next={...current,claim:{schemaVersion:1 as const,claim:found.claim,quote:current.quote,interpretation:'reported' as const}};delete next.pendingClaim;store.save('cards',next);linkKnowledgeEvidence(store,next.id,[found.id]);
    }
-   if(!refresh)updateJob(store,id,j=>({...j,phase:'processed',errorCode:undefined}),'completed');
+   if(!refresh)updateJob(store,id,j=>{const {readHold:_hold,...rest}=j;return {...rest,phase:'processed',errorCode:undefined};},'completed');
+   linkExperienceForCards(store,cards.map(candidate=>store.get('cards',candidate.id)!).filter(Boolean));
   });
   return 'processed';
- }catch{return pending('repository_readback_failed');}
+ }catch(error){if(error instanceof VaultSyncError||isKnowledgeSnapshotFailure(error))throw error;if(consumed&&!refresh)return 'pending';return pending('repository_readback_failed');}
 }

@@ -90,8 +90,8 @@ export interface ExperienceAssociation {
 export interface CurrentExperienceContext extends Scope {repository:string;revision?:string;environment:Record<string,string>;observedAt:string}
 export interface ExperienceReference {
   label:'historical-test-backed-reference';observationIds:string[];reportedSolution:{text:string;status:'reported'|'inference'};
-  observed:{checks:ObservedCheck[];snapshot:TestObservation['snapshot'];environment:TestEnvironment;relevance:ExperienceAssociation['relevance']}[];
-  invalidationConditions:string[];currentApplicability:{status:'unknown'|'needs-revalidation'|'checked';reasons:string[];evidenceIds:string[]};
+  observed:{checks:ObservedCheck[];snapshot:TestObservation['snapshot'];environment:TestEnvironment;relevance:ExperienceAssociation['relevance'];observationId?:string;observedAt?:string;eventAt?:string;timeBasis?:'provider-completion'|'local-process'|'unknown';checkTimes?:{checkId:string;eventAt?:string;timeBasis:'provider-completion'|'local-process'|'unknown'}[];evidenceLocator?:string}[];
+  invalidationConditions:string[];currentApplicability:{status:'unknown'|'needs-revalidation'|'checked';reasons:string[];evidenceIds:string[]};versionBinding?:ExperienceAssociation['versionBinding'];
   delivery?:{receiptId:string;headSha:string;mergeSha:string};
 }
 export type ExperienceGate = {eligible:false;state:'pending'|'invalidated';reason:string} | {eligible:true;state:'historical';reference:ExperienceReference};

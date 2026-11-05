@@ -8,6 +8,8 @@ import { LimaWorker, limaFailureEvidence, parseWorkerOutput, commandFor, guestSc
 import { bindSyntheticLimaBilling } from '../fixtures/billing.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { BillingAuthority, type HostDispatchPermit } from '../../src/billing.js';
+import { Workbench } from '../../src/orchestrator.js';
+import { Store } from '../../src/store.js';
 
 describe('worker protocols', () => {
   it('ships syntactically executable isolation, test and cleanup scripts', () => {
@@ -566,6 +568,58 @@ describe('strict ordinary control IPC2 finalization',()=>{
 
 
 describe('authentic accepted local observations',()=>{
+ it('instructs knowledge extraction to preserve a whole declared relation block without inventing evidence',async()=>{
+  const f=protocolFixture();try{
+   f.input.role='knowledge_extract';f.input.task.stage='knowledge_extract';f.input.task.status='extracting';
+   f.config.runnerPolicies[0]!.roles=['knowledge_extract'];f.store.save('tasks',f.input.task);
+   await new LimaWorker('grok',f.config,f.billing).run(f.input).catch(()=>undefined);
+   const prompt=readFileSync(join(f.root,'last-prompt'),'utf8');
+   expect(prompt).toContain('@@experience-relations-v1');
+   expect(prompt).toContain('entire declaration block byte-for-byte as the quote prefix');
+   expect(prompt).toContain('only contiguous source text');
+   expect(prompt).toContain('Do not invent slots, source text, check results, or claims of verification');
+  }finally{f.close();}
+ });
+ it.each((['execute','check'] as const).flatMap(role=>(['persisted','hold-write-unavailable'] as const).map(mode=>[role,mode] as const)))('holds a consumed %s identity across reopen and requires explicit retry (%s)',async(role,mode)=>{
+  const f=protocolFixture({role});let engine:Workbench|undefined,original:WorkerResult|undefined,reopened:Store|undefined;
+  vi.useFakeTimers({toFake:['Date']});
+  try{
+   const worker=new LimaWorker('grok',f.config,f.billing);
+   engine=new Workbench({store:f.store,config:f.config,billing:f.billing,workers:[{name:'grok',async run(input,signal,permit){original=await worker.run(input,signal,permit);return original;}}],writer:{async baseline(){return 'base';},async deliver(){throw Error('not used');}},research:{async research(){throw Error('not used');}}});
+   (engine as any).input=()=>f.input;
+   const transaction=f.store.transaction.bind(f.store);let injected=false;
+   const spy=vi.spyOn(f.store,'transaction').mockImplementation(((fn:()=>unknown)=>{
+    if(!injected&&new Error().stack?.includes('recordLocalTests')){injected=true;throw Object.assign(new Error('post-consumption contention'),{code:'SQLITE_BUSY_SNAPSHOT'});}
+    return transaction(fn);
+   }) as typeof f.store.transaction);
+   const save=f.store.save.bind(f.store);
+   const saveSpy=vi.spyOn(f.store,'save').mockImplementation(((...args:Parameters<typeof save>)=>{
+    if(mode==='hold-write-unavailable'&&new Error().stack?.includes('holdLocalTask'))throw Object.assign(new Error('hold unavailable'),{code:'SQLITE_BUSY'});
+    return save(...args);
+   }) as typeof f.store.save);
+   await engine.tick().catch(()=>undefined);spy.mockRestore();if(mode==='persisted')saveSpy.mockRestore();
+   expect(injected).toBe(true);expect(original).toBeDefined();expect(takeHostTestRun(original!)).toBeUndefined();
+   expect(f.store.list('attempts')).toMatchObject([{status:'succeeded'}]);expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);
+   for(let i=0;i<48;i++){vi.setSystemTime(new Date(Date.now()+750));await engine.tick().catch(()=>undefined);}
+   expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(1);
+   expect(f.store.list('attempts')).toHaveLength(1);
+   await engine.shutdown();
+   if(mode==='hold-write-unavailable')expect(f.store.get('tasks',f.input.task.id)?.status).toBe(role==='execute'?'executing':'checking');
+   const path=join(f.root,'held-local.sqlite');await f.store.backup(path);saveSpy.mockRestore();reopened=new Store(path);
+   const billing=new BillingAuthority(reopened,f.config,{async read(){return structuredClone(f.current);}},{proofRoot:f.proofRoot,now:()=>f.at});
+   const freshWorker=new LimaWorker('grok',f.config,billing);
+   engine=new Workbench({store:reopened,config:f.config,billing,workers:[freshWorker],writer:{async baseline(){return 'base';},async deliver(){throw Error('not used');}},research:{async research(){throw Error('not used');}}});
+   (engine as any).input=()=>({...f.input,task:reopened!.get('tasks',f.input.task.id)!});
+   for(let i=0;i<4;i++){vi.setSystemTime(new Date(Date.now()+750));await engine.tick();}
+   expect(reopened.list('attempts')).toHaveLength(1);expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(1);
+   expect(reopened.get('tasks',f.input.task.id)?.status).toBe('blocked');
+   engine.retry(f.input.task.id);await engine.tick();
+   expect(reopened.list('attempts').map(attempt=>attempt.status)).toEqual(['succeeded','succeeded']);
+   expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(2);
+   expect(reopened.list('actions').filter(action=>action.kind==='experience.test-observation')).toHaveLength(1);
+   await engine.shutdown();
+  }finally{vi.useRealTimers();await engine?.shutdown();reopened?.close();f.close();}
+ });
  it.each(['execute','check'] as const)('captures raw %s identity across Billing clone exactly once',async role=>{
   const f=protocolFixture({role});try{
    const worker=new LimaWorker('grok',f.config,f.billing);let original:WorkerResult|undefined,accepted:WorkerResult|undefined;
