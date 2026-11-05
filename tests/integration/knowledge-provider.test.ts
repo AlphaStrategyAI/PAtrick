@@ -41,7 +41,7 @@ function setup(provider:'github'|'gitlab'='github'){
     [`/repository/files/${encodeURIComponent(measured.path)}`]:{file_path:measured.path,blob_id:blob,commit_id:H,encoding:'base64',size:bytes.length,content_sha256:sha256},
     [`/repository/files/${encodeURIComponent(measured.path)}/raw`]:bytes,
   };
-  const report:CiTestReportV1={schemaVersion:1,repository:project.repository,headSha:H,runId:'52',jobId:'71',snapshot:{revision:H,files:[measured]},definitions:[{command:'validate',files:[measured]}],checks:[{id:'gitlab-job:71',name:'validate',command:'validate',testFile:measured.path,result:'success',outputDigest:'a'.repeat(64)}],environment:{observed:{node:'24'},unknown:['browser']}};
+  const report:CiTestReportV1={schemaVersion:1,repository:project.repository,headSha:H,runId:'52',jobId:'71',snapshot:{revision:H,files:[{...measured}]},definitions:[{command:'validate',files:[{...measured}]}],checks:[{id:'gitlab-job:71',name:'validate',command:'validate',testFile:measured.path,result:'success',outputDigest:'a'.repeat(64)}],environment:{observed:{node:'24'},unknown:['browser']}};
   routes[`/jobs/71/artifacts/${reportPath}`]=report;
   const requests:{url:URL;init:RequestInit}[]=[];
   let after:((path:string)=>void)|undefined, override:((path:string,value:any,url:URL)=>Response|undefined)|undefined;
@@ -289,4 +289,21 @@ describe('optional producer-attested comparable report',()=>{
     const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);expect(r.observations[2]?.claim.kind).toBe('ci-result');expect(r.tests[0]?.comparable).toBeUndefined();expect(takeRepositoryReadback(r)?.attestedTests).toEqual([]);expect(r.gaps).toContain('comparable_attestation_unavailable');
   });
   it('keeps GitHub ordinary CI when comparable report mapping is unsupported',async()=>{const s=setup();s.request.testReportPath=reportPath;const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);expect(r.gaps).toContain('comparable_attestation_unavailable');expect(r.tests[0]?.comparable).toBeUndefined();expect(takeRepositoryReadback(r)?.attestedTests).toEqual([]);});
+});
+
+
+describe('bounded optional captured process errors',()=>{
+ const processFacts={exitCode:0,signal:null,timedOut:false,startedAt:time,finishedAt:time};
+ it('accepts absent codes and only the five bounded codes in the single shared schema',async()=>{
+  const contract=await import('../../src/knowledge-contract.js');const schema=(contract as any).observedProcessSchema;expect(schema).toBeDefined();expect(schema.safeParse(processFacts).success).toBe(true);
+  for(const errorCode of ['ETIMEDOUT','ENOBUFS','ENOENT','EACCES','PROCESS_ERROR'])expect(schema.safeParse({...processFacts,errorCode}).success).toBe(true);
+  for(const errorCode of ['',null,'UNBOUNDED secret/path'])expect(schema.safeParse({...processFacts,errorCode}).success).toBe(false);expect(schema.safeParse({...processFacts,rawError:'private'}).success).toBe(false);
+ });
+ it('retains backwards-compatible comparable process facts with absent errorCode',async()=>{
+  const s=setup('gitlab');s.request.testReportPath=reportPath;s.report.checks[0]!.process=processFacts;const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);expect(r.tests[0]?.comparable).toBeDefined();expect(r.tests[0]?.checks[0]?.process).toEqual(processFacts);
+ });
+ it.each(['ETIMEDOUT','ENOBUFS','ENOENT','EACCES','PROCESS_ERROR','unknown-code','extra-key'])('preserves ordinary CI but refuses a success/error comparable report with %s',async code=>{
+  const s=setup('gitlab');s.request.testReportPath=reportPath;(s.report.checks[0] as any).process={...processFacts,...(code==='extra-key'?{rawError:'private exception'}:{errorCode:code})};
+  const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);expect(r.tests[0]?.comparable).toBeUndefined();expect(r.observations[2]?.claim).toMatchObject({kind:'ci-result',value:{conclusion:'success'}});expect(r.gaps).toContain('comparable_attestation_unavailable');expect(takeRepositoryReadback(r)?.attestedTests).toEqual([]);
+ });
 });

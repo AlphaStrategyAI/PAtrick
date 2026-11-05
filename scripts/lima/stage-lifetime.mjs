@@ -19,11 +19,27 @@ let raw='';process.stdin.on('data',c=>raw+=c);process.stdin.on('end',()=>{
  }catch(e){process.exitCode=78;}
 });`;
 const testsScript=String.raw`
-const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');let raw='';process.stdin.on('data',c=>raw+=c);process.stdin.on('end',()=>{
- try {const p=JSON.parse(raw),dir=process.argv[1];if(!/^\/var\/lib\/patrick-workspaces\/[a-f0-9]{32}\/work$/.test(dir))throw Error('Unsafe workspace');
- for(const f of p.files){const dest=path.resolve(dir,f.path);if(!dest.startsWith(dir+'/')||f.path.split('/').includes('.git'))throw Error('Unsafe file');fs.mkdirSync(path.dirname(dest),{recursive:true});fs.writeFileSync(dest,f.content);}
- const tests=p.commands.map(command=>{const r=cp.spawnSync('/bin/sh',['-c',command],{cwd:dir,timeout:60000,maxBuffer:256000,env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:dir}});return {command,passed:r.status===0&&!r.error,output:((r.stdout||'').toString()+(r.stderr||'').toString()).slice(-12000)||('exit '+r.status)};});process.stdout.write(JSON.stringify(tests));
- }catch(e){process.exitCode=78;}
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto'),os=require('node:os');
+const hash=v=>crypto.createHash('sha256').update(v).digest('hex'),safe=p=>typeof p==='string'&&p.length>0&&p.length<=1024&&!p.includes('\\')&&!p.includes('\0')&&!path.isAbsolute(p)&&p.split('/').every(x=>x&&x!=='.'&&x!=='..'&&x!=='.git');
+let raw='';process.stdin.on('data',c=>raw+=c);process.stdin.on('end',()=>{
+ try {
+  const p=JSON.parse(raw),dir=process.argv[1];if(!/^\/var\/lib\/patrick-workspaces\/[a-f0-9]{32}\/work$/.test(dir)||p.schemaVersion!==1||!/^[a-f0-9]{32}$/.test(p.nonce)||!Array.isArray(p.commands)||p.commands.length>20||!p.commands.length||p.commands.some(c=>typeof c!=='string'||!c.trim())||new Set(p.commands).size!==p.commands.length||!Array.isArray(p.measurement.paths)||p.measurement.paths.length>128||p.measurement.paths.some(x=>!safe(x))||new Set(p.measurement.paths).size!==p.measurement.paths.length||!Array.isArray(p.files))throw Error('Unsafe tests payload');
+  const parents=(rel,create=false)=>{let cur=dir;const facts=[];for(const part of ['',...rel.split('/').slice(0,-1)]){if(part)cur+='/'+part;if(create&&!fs.existsSync(cur))fs.mkdirSync(cur);const st=fs.lstatSync(cur);if(!st.isDirectory()||st.isSymbolicLink())throw Error('Unsafe parent');facts.push([cur,st.dev,st.ino]);}return facts;};
+  for(const f of p.files){if(!safe(f.path)||typeof f.content!=='string'||f.content.length>1000000)throw Error('Unsafe file');parents(f.path,true);const fd=fs.openSync(path.join(dir,f.path),fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_TRUNC|fs.constants.O_NOFOLLOW,0o644);try{if(!fs.fstatSync(fd).isFile())throw Error('Unsafe file');fs.writeFileSync(fd,f.content);}finally{fs.closeSync(fd);}}
+  const missing=new Set(),unstable=new Set();
+  const measure=()=>{const files=[];let total=0;for(const rel of p.measurement.paths){let fd;try{
+   const ancestors=parents(rel),dest=path.join(dir,rel),prior=fs.lstatSync(dest);if(!prior.isFile()||prior.isSymbolicLink())throw Error('Unsafe file');
+   fd=fs.openSync(dest,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const a=fs.fstatSync(fd);if(!a.isFile()||a.dev!==prior.dev||a.ino!==prior.ino||a.size>1000000||total+a.size>2000000)throw Error('File limit');
+   // Debit every successful read before later errors/stability checks can discard it.
+   const chunks=[];let count=0;while(count<a.size){const remaining=Math.min(65536,a.size-count,1000000-count,2000000-total);if(remaining<=0)throw Error('File limit');const b=Buffer.alloc(remaining),n=fs.readSync(fd,b,0,b.length,null);total+=n;count+=n;if(!n)break;chunks.push(b.subarray(0,n));}
+   const b=fs.fstatSync(fd),last=fs.lstatSync(dest);if(count!==a.size||a.dev!==b.dev||a.ino!==b.ino||a.size!==b.size||a.mtimeMs!==b.mtimeMs||a.ctimeMs!==b.ctimeMs||a.mode!==b.mode||last.dev!==a.dev||last.ino!==a.ino||last.isSymbolicLink()||ancestors.some(([p,d,i])=>{const st=fs.lstatSync(p);return st.isSymbolicLink()||!st.isDirectory()||st.dev!==d||st.ino!==i;})){unstable.add(rel);missing.add(rel);continue;}
+   files.push({path:rel,sha256:hash(Buffer.concat(chunks)),mode:(b.mode&0o111)?'100755':'100644'});
+  }catch{missing.add(rel);}finally{if(fd!==undefined)fs.closeSync(fd);}}return files;};
+  const before=measure(),tests=[],checks=[];
+  for(const command of p.commands){const startedAt=new Date().toISOString(),r=cp.spawnSync('/bin/sh',['-c',command],{cwd:dir,timeout:60000,maxBuffer:256000,env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:dir}}),finishedAt=new Date().toISOString();const tail=Buffer.concat([Buffer.from(r.stdout||''),Buffer.from(r.stderr||'')]).subarray(-12000),passed=r.status===0&&!r.signal&&!r.error,code=r.error?(['ETIMEDOUT','ENOBUFS','ENOENT','EACCES'].includes(r.error.code)?r.error.code:'PROCESS_ERROR'):undefined;tests.push({command,passed,outputBase64:tail.toString('base64')});checks.push({id:hash(JSON.stringify(['local-check',command])).slice(0,32),command,result:passed?'success':'failure',outputDigest:hash(tail),process:{exitCode:r.status??null,signal:r.signal??null,timedOut:r.error?.code==='ETIMEDOUT',startedAt,finishedAt,...(code?{errorCode:code}:{})}});}
+  const after=measure();for(const f of before){const a=after.find(v=>v.path===f.path);if(!a||a.sha256!==f.sha256||a.mode!==f.mode)unstable.add(f.path);}for(const f of after)if(!before.some(v=>v.path===f.path))unstable.add(f.path);
+  const frame={schemaVersion:1,kind:'patrick-tests',nonce:p.nonce,tests,measurement:{observedAt:new Date().toISOString(),before,after,missing:[...missing].sort(),unstable:[...unstable].sort(),checks,environment:{observed:{node:process.versions.node,platform:process.platform,arch:process.arch,osRelease:os.release()},unknown:['browserVersion','databaseVersion','serviceVersions','dependencyClosure']}}};const out=JSON.stringify(frame);if(Buffer.byteLength(out)>512000)throw Error('Frame limit');process.stdout.write(out);
+ }catch{process.exitCode=78;}
 });`;
 const readScript=String.raw`const fs=require('node:fs'),d=process.argv[1];if(!/^\/var\/lib\/patrick-workspaces\/[a-f0-9]{32}\/work$/.test(d))process.exit(78);process.stdout.write(fs.readFileSync(d+'/result.json','utf8'));`;
 const cleanupScript=String.raw`const fs=require('node:fs');const d=process.argv[1];if(!/^\/var\/lib\/patrick-workspaces\/[a-f0-9]{32}\/work$/.test(d))process.exit(78);fs.rmSync(d,{recursive:true,force:true});`;
@@ -50,6 +66,25 @@ const syntheticAssertions=stage=>String.raw`{
 }
 `;
 export const guestScripts=Object.freeze({prepare:taskGuard+syntheticAssertions('prepare')+prepareScript,tests:taskGuard+syntheticAssertions('tests')+testsScript,read:taskGuard+syntheticAssertions('read')+readScript,cleanup:taskGuard+syntheticAssertions('cleanup')+cleanupScript});
+
+// Pure wire decoder. The sole fixed writer emits compact JSON; requiring its
+// exact encoding also rejects duplicate keys, trailing frames and hidden data.
+export function parseTestsFrame(text,payload){
+ const bad=()=>{throw Error('Invalid private tests frame');},keys=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).length===k.length&&k.every(x=>Object.hasOwn(o,x)),sha=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s),date=s=>typeof s==='string'&&Number.isFinite(Date.parse(s));
+ if(typeof text!=='string'||Buffer.byteLength(text)>512000)return bad();
+ const f=JSON.parse(text);if(JSON.stringify(f)!==text||!keys(f,['schemaVersion','kind','nonce','tests','measurement'])||f.schemaVersion!==1||f.kind!=='patrick-tests'||f.nonce!==payload.nonce||!Array.isArray(f.tests)||f.tests.length!==payload.commands.length)return bad();
+ const m=f.measurement;if(!keys(m,['observedAt','before','after','missing','unstable','checks','environment'])||!date(m.observedAt)||!Array.isArray(m.checks)||m.checks.length!==payload.commands.length)return bad();
+ for(const name of ['before','after']){const rows=m[name];if(!Array.isArray(rows)||rows.length>128||new Set(rows.map(r=>r?.path)).size!==rows.length||rows.some(r=>!keys(r,['path','sha256','mode'])||!payload.measurement.paths.includes(r.path)||!sha(r.sha256)||!['100644','100755'].includes(r.mode)))return bad();}
+ for(const name of ['missing','unstable'])if(!Array.isArray(m[name])||new Set(m[name]).size!==m[name].length||m[name].some(p=>!payload.measurement.paths.includes(p)))return bad();
+ for(const path of payload.measurement.paths){const before=m.before.find(r=>r.path===path),after=m.after.find(r=>r.path===path);if((!before||!after)&&!m.missing.includes(path))return bad();if(before&&after&&(before.sha256!==after.sha256||before.mode!==after.mode)&&!m.unstable.includes(path))return bad();}
+ const e=m.environment;if(!keys(e,['observed','unknown'])||!keys(e.observed,['node','platform','arch','osRelease'])||Object.values(e.observed).some(v=>typeof v!=='string'||!v||v.length>1024)||JSON.stringify(e.unknown)!==JSON.stringify(['browserVersion','databaseVersion','serviceVersions','dependencyClosure']))return bad();
+ for(let i=0;i<payload.commands.length;i++){
+  const command=payload.commands[i],t=f.tests[i],c=m.checks[i];if(!keys(t,['command','passed','outputBase64'])||t.command!==command||typeof t.passed!=='boolean'||typeof t.outputBase64!=='string'||t.outputBase64.length>16000||Buffer.from(t.outputBase64,'base64').length>12000||Buffer.from(t.outputBase64,'base64').toString('base64')!==t.outputBase64||!keys(c,['id','command','result','outputDigest','process'])||c.command!==command||c.id!==createHash('sha256').update(JSON.stringify(['local-check',command])).digest('hex').slice(0,32)||!sha(c.outputDigest)||c.outputDigest!==createHash('sha256').update(Buffer.from(t.outputBase64,'base64')).digest('hex'))return bad();
+  const p=c.process;if(!keys(p,p?.errorCode===undefined?['exitCode','signal','timedOut','startedAt','finishedAt']:['exitCode','signal','timedOut','startedAt','finishedAt','errorCode'])||p.errorCode!==undefined&&!['ETIMEDOUT','ENOBUFS','ENOENT','EACCES','PROCESS_ERROR'].includes(p.errorCode)||p.exitCode!==null&&(!Number.isInteger(p.exitCode)||p.exitCode<0||p.exitCode>255)||p.signal!==null&&(typeof p.signal!=='string'||!/^SIG[A-Z0-9]{1,16}$/.test(p.signal))||typeof p.timedOut!=='boolean'||!date(p.startedAt)||!date(p.finishedAt)||Date.parse(p.startedAt)>Date.parse(p.finishedAt)||Date.parse(p.finishedAt)>Date.parse(m.observedAt)||p.timedOut!==(p.errorCode==='ETIMEDOUT'))return bad();
+  const passed=p.exitCode===0&&p.signal===null&&!p.timedOut&&!p.errorCode;if(t.passed!==passed||c.result!==(passed?'success':'failure'))return bad();
+ }
+ return f;
+}
 
 export const cliWrapper='cd "$1" && shift && exec "$@"';
 export const releaseLine='patrick-stage-release\n';

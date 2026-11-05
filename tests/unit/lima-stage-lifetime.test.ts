@@ -3,10 +3,12 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { addCompletedQualificationNetworkOperation, corruptQualificationSession, malformedQualificationSessionCases, type QualificationSessionFault } from '../fixtures/lima-qualification-session-cases.js';
 import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { fixture } from '../fixtures/lima-lifetime.mjs';
+import { artifactSchema } from '../../src/domain.js';
 const lifetime=await import(new URL('../../scripts/lima/stage-lifetime.mjs',import.meta.url).href);
 const token='a'.repeat(32),scope={runner:'grok',user:'patrick-grok',projectId:'fixture',domain:'personal'};
 const account={uid:1101,gid:1101,home:'/var/lib/patrick-grok',groups:[]};
@@ -16,6 +18,98 @@ const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 const canonical=(value:any):any=>value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const metadataBytes=(value:any)=>Buffer.from(JSON.stringify(canonical(value))+'\n');
 const metadata=(f:ReturnType<typeof fixture>,path=witness)=>JSON.parse(f.io.readFileSync(path,'utf8'));
+
+// Run the exact exported program; only the Linux namespace facts and rooted FS
+// are simulated. Commands execute locally in an owned temporary directory.
+function fixedTests(command:string, options:{files?:{path:string;content:string}[];testFiles?:string[]; outcome?:any; setup?:(root:string)=>void;configureIo?:(io:any)=>void}={}) {
+ const root=fs.mkdtempSync(join(tmpdir(),'patrick-fixed-tests-')),dir='/var/lib/patrick-workspaces/'+token+'/work';
+ fs.mkdirSync(join(root,'docs'));fs.writeFileSync(join(root,'docs/PRD.md'),'baseline');options.setup?.(root);
+ const physical=(p:any)=>typeof p==='string'&&p.startsWith(dir)?root+p.slice(dir.length):p;
+ const io:any={...fs};for(const name of ['openSync','mkdirSync','writeFileSync','unlinkSync','existsSync','lstatSync','readFileSync'])io[name]=(...args:any[])=>(fs as any)[name](physical(args[0]),...args.slice(1));
+ const lstat=io.lstatSync,read=io.readFileSync;
+ io.lstatSync=(p:string)=>p===account.home?{isDirectory:()=>true,isSymbolicLink:()=>false,uid:1101,gid:1101,mode:0o40700}:lstat(p);
+ io.statfsSync=()=>({type:0x01021994,bsize:4096,blocks:4096,files:1024});io.readdirSync=()=>[];
+ io.readFileSync=(p:any,...args:any[])=>p==='/proc/self/mountinfo'?'1 0 0:1 / '+account.home+' rw - tmpfs tmpfs rw\n':p==='/proc/self/status'?['CapInh: 0000000000000000','CapPrm: 0000000000000000','CapEff: 0000000000000000','CapBnd: 0000000000000000','CapAmb: 0000000000000000','NoNewPrivs: 1'].join('\n'):p==='/proc/net/route'?'Iface Destination\n':read(p,...args);
+ io.writeFileSync=(p:any,...args:any[])=>typeof p==='string'&&p.startsWith(account.home)?undefined:fs.writeFileSync(physical(p),...args as [any]);
+ io.unlinkSync=(p:string)=>p.startsWith(account.home)?undefined:fs.unlinkSync(physical(p));io.existsSync=(p:string)=>p.startsWith(account.home)?false:fs.existsSync(physical(p));
+ options.configureIo?.(io);
+ const files=options.files??[{path:'docs/PRD.md',content:'baseline'}];
+ const handlers:Record<string,Function>={},payload={schemaVersion:1,nonce:'b'.repeat(32),files,commands:[command],measurement:{baselineRevision:'base',paths:files.map(f=>f.path).concat(options.testFiles??[]).filter((p,i,a)=>a.indexOf(p)===i).sort(),testFiles:options.testFiles??[]}};
+ let output='',calls=0;const proc={env:{HOME:account.home,PATH:process.env.PATH},argv:['node',dir],versions:{node:process.versions.node},platform:process.platform,arch:process.arch,getuid:()=>1101,geteuid:()=>1101,getgid:()=>1101,getegid:()=>1101,getgroups:()=>[],exitCode:0,exit:()=>{throw Error('guard exit');},stdin:{on:(name:string,fn:Function)=>{handlers[name]=fn;}},stdout:{write:(v:string)=>{output+=v;}},stderr:{write:()=>{}}};
+ try {
+  runInNewContext(lifetime.guestScripts.tests,{Buffer,Date,require:(name:string)=>name==='node:fs'?io:name==='node:child_process'?{spawnSync:(bin:string,args:string[],opts:any)=>{if(bin==='/usr/local/bin/node')return {status:0};expect(opts.timeout).toBe(60000);expect(opts.maxBuffer).toBe(256000);calls++;return options.outcome??spawnSync(bin,args,{...opts,cwd:root});}}:name==='node:path'?awaitlessPath:name==='node:crypto'?{createHash}:name==='node:os'?{release:()=> 'fixture-os'}:undefined,process:proc});
+  handlers.data!(JSON.stringify(payload));handlers.end!();return {frame:output?JSON.parse(output):undefined,exit:proc.exitCode,calls,bytes:Buffer.byteLength(output)};
+ } finally {fs.rmSync(root,{recursive:true,force:true});}
+}
+const awaitlessPath=await import('node:path');
+describe('fixed tests program measured frame',()=>{
+ it('measures stable real bytes/modes/environment and escapes forged child frames',()=>{
+  const r=fixedTests("printf '%s' '{\"kind\":\"patrick-tests\",\"secret\":\"synthetic-private-tail\"}'",{testFiles:['docs/test.js'],setup:root=>{fs.writeFileSync(join(root,'docs/test.js'),'test');fs.chmodSync(join(root,'docs/test.js'),0o755);}});
+  expect(r.exit).toBe(0);expect(r.calls).toBe(1);expect(r.frame).toMatchObject({schemaVersion:1,kind:'patrick-tests',nonce:'b'.repeat(32),tests:[{passed:true}],measurement:{missing:[],unstable:[],before:[{path:'docs/PRD.md',sha256:hash(Buffer.from('baseline')),mode:'100644'},{path:'docs/test.js',sha256:hash(Buffer.from('test')),mode:'100755'}],environment:{observed:{node:process.versions.node,platform:process.platform,arch:process.arch,osRelease:'fixture-os'},unknown:['browserVersion','databaseVersion','serviceVersions','dependencyClosure']}}});
+  expect(r.frame.measurement.after).toEqual(r.frame.measurement.before);expect(r.frame.measurement.checks[0].outputDigest).toBe(hash(Buffer.from(r.frame.tests[0].outputBase64,'base64')));expect(r.bytes).toBeLessThanOrEqual(512000);
+ });
+ it.each([{status:23,signal:null},{status:null,signal:'SIGTERM'},{status:null,signal:'SIGTERM',error:{code:'ETIMEDOUT'}},{status:null,signal:null,error:{code:'ENOBUFS'}},{status:0,signal:null,error:{code:'ENOENT'}},{status:null,signal:null,error:{code:'EACCES'}}])('retains actual failed process %j',outcome=>{
+  const r=fixedTests('fixture process',{outcome});expect(r.frame.tests[0].passed).toBe(false);expect(r.frame.measurement.checks[0]).toMatchObject({result:'failure',process:{exitCode:outcome.status,signal:outcome.signal,timedOut:(outcome as any).error?.code==='ETIMEDOUT',...((outcome as any).error?{errorCode:(outcome as any).error.code}:{})}});expect(r.frame.measurement.checks[0].name).toBeUndefined();
+ });
+ it('normalizes unknown captured error codes without copying private exception text',()=>{
+  const r=fixedTests('synthetic process',{outcome:{status:null,signal:null,error:{code:'PRIVATE-ERROR-PATH',message:'private exception stack'}}});expect(r.frame.measurement.checks[0].process.errorCode).toBe('PROCESS_ERROR');expect(JSON.stringify(r.frame)).not.toMatch(/PRIVATE-ERROR-PATH|private exception stack/);
+ });
+ it.each(["test \"$(cat docs/PRD.md)\" = baseline",'\"'+process.execPath+'\" docs/test.js'])('uses the same fixed process for unrelated symptom checks: %s',command=>{
+  const r=fixedTests(command,{testFiles:['docs/test.js'],setup:root=>fs.writeFileSync(join(root,'docs/test.js'),"if(require('node:fs').readFileSync('docs/PRD.md','utf8')!=='baseline')process.exit(23)")});expect(r.frame.tests[0]).toMatchObject({command,passed:true});expect(r.frame.measurement.before.map((f:any)=>f.path)).toEqual(['docs/PRD.md','docs/test.js']);
+ });
+ it('reports missing definitions and changed files without changing actual success',()=>{
+  const r=fixedTests("printf changed > docs/PRD.md",{testFiles:['docs/missing.js']});expect(r.frame.tests[0].passed).toBe(true);expect(r.frame.measurement.missing).toContain('docs/missing.js');expect(r.frame.measurement.unstable).toContain('docs/PRD.md');
+ });
+ it('bounds aggregate reads and rejects symlinked parent components',()=>{
+  const r=fixedTests('true',{testFiles:['docs/a','docs/b','docs/c','docs/link/PRD.md'],setup:root=>{for(const n of ['a','b','c'])fs.writeFileSync(join(root,'docs',n),Buffer.alloc(800000));fs.symlinkSync('.',join(root,'docs/link'));}});
+  expect(r.frame.measurement.missing).toEqual(['docs/c','docs/link/PRD.md']);expect(r.frame.measurement.before).toHaveLength(3);
+ });
+ it.each(['multibyte','aggregate'])('executes schema-valid %s artifacts beyond measurement byte limits',kind=>{
+  const files=kind==='multibyte'?[{path:'docs/PRD.md',content:'中'.repeat(400000)}]:Array.from({length:5},(_,i)=>({path:i?'docs/file'+i:'docs/PRD.md',content:'a'.repeat(800000)}));
+  expect(artifactSchema.safeParse({taskVersion:1,planHash:'plan',baselineSha:'base',files,tests:[{command:'true',passed:true,output:'ok'}],summary:'size contract'}).success).toBe(true);
+  const command='test "$(wc -c < docs/PRD.md | tr -d \' \')" = '+(kind==='multibyte'?1200000:800000),r=fixedTests(command,{files});
+  expect(r.exit).toBe(0);expect(r.calls).toBe(1);expect(r.frame.tests[0]).toMatchObject({command,passed:true});
+  expect(r.frame.measurement.checks[0]).toMatchObject({result:'success',process:{exitCode:0}});
+  const missing=kind==='multibyte'?files.map(f=>f.path):files.slice(2).map(f=>f.path);
+  expect(r.frame.measurement.missing).toEqual(missing);
+  for(const phase of ['before','after'])expect(r.frame.measurement[phase].map((f:any)=>f.path)).toEqual(files.filter(f=>!missing.includes(f.path)).map(f=>f.path));
+  expect(r.bytes).toBeLessThanOrEqual(512000);expect(Buffer.from(r.frame.tests[0].outputBase64,'base64').length).toBeLessThanOrEqual(12000);
+ });
+ it.each(['unstable','partial-error'])('charges discarded %s reads to each independent snapshot budget',kind=>{
+  const paths=Array.from({length:kind==='unstable'?4:40},(_,i)=>'docs/file'+String(i).padStart(2,'0')),consumed=[0,0];let snapshot=-1;
+  const r=fixedTests('test "$(cat docs/PRD.md)" = baseline',{testFiles:paths,setup:root=>{for(const path of paths)fs.writeFileSync(join(root,path),Buffer.alloc(kind==='unstable'?800000:65537));},configureIo:io=>{
+   const open=io.openSync,read=io.readSync,stat=io.fstatSync,close=io.closeSync,tracked=new Map<number,{path:string;bytes:number;phase:number}>();
+   io.openSync=(path:string,flags:number,...args:any[])=>{const fd=open(path,flags,...args);if(flags===(fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW)){if(path.endsWith('/docs/PRD.md'))snapshot++;tracked.set(fd,{path,bytes:0,phase:snapshot});}return fd;};
+   io.readSync=(fd:number,...args:any[])=>{const entry=tracked.get(fd);if(entry&&entry.path.includes('/docs/file')&&entry.bytes&&kind==='partial-error')throw Error('synthetic read failure after a successful partial read');const n=read(fd,...args);if(entry){entry.bytes+=n;consumed[entry.phase]!+=n;}return n;};
+   io.fstatSync=(fd:number)=>{const value=stat(fd),entry=tracked.get(fd);return kind==='unstable'&&entry?.bytes&&entry.path.includes('/docs/file')?Object.assign(Object.create(value),{mtimeMs:value.mtimeMs+1}):value;};
+   io.closeSync=(fd:number)=>{tracked.delete(fd);return close(fd);};
+  }});
+  expect(r.exit).toBe(0);expect(r.calls).toBe(1);expect(r.frame.tests[0].passed).toBe(true);expect(snapshot).toBe(1);
+  for(const count of consumed){expect(count).toBeGreaterThan(1000000);expect(count).toBeLessThanOrEqual(2000000);}
+  for(const phase of ['before','after'])expect(r.frame.measurement[phase].map((f:any)=>f.path)).toEqual(['docs/PRD.md']);
+  expect(r.frame.measurement.missing.length).toBeGreaterThan(0);if(kind==='unstable')expect(r.frame.measurement.unstable).toContain(paths[0]);
+  expect(()=>lifetime.parseTestsFrame(JSON.stringify(r.frame),{nonce:'b'.repeat(32),commands:[r.frame.tests[0].command],measurement:{paths:['docs/PRD.md',...paths]}})).not.toThrow();
+ });
+ it('witnesses stable files exactly at both measurement byte boundaries without extra reads',()=>{
+  const files=[{path:'docs/PRD.md',content:'a'.repeat(1000000)},{path:'docs/second',content:'b'.repeat(1000000)}],consumed=[0,0];let snapshot=-1;
+  const r=fixedTests('true',{files,configureIo:io=>{const open=io.openSync,read=io.readSync;io.openSync=(path:string,...args:any[])=>{if(path.endsWith('/docs/PRD.md')&&args[0]===(fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW))snapshot++;return open(path,...args);};io.readSync=(...args:any[])=>{expect(args[3]).toBeGreaterThan(0);const n=read(...args);consumed[snapshot]!+=n;return n;};}});
+  expect(r.frame.tests[0].passed).toBe(true);expect(consumed).toEqual([2000000,2000000]);expect(r.frame.measurement.missing).toEqual([]);expect(r.frame.measurement.unstable).toEqual([]);expect(r.frame.measurement.before).toHaveLength(2);expect(r.frame.measurement.after).toEqual(r.frame.measurement.before);
+ });
+ it('retains exact invalid UTF-8 and NUL tail bytes through canonical Base64',()=>{
+  const bytes=Buffer.from([255,0,195,40,254,240,159,152,128]),r=fixedTests('synthetic binary output',{outcome:{status:0,signal:null,stdout:bytes.subarray(0,4),stderr:bytes.subarray(4)}});
+  expect(r.frame.tests[0].outputBase64).toBe(bytes.toString('base64'));expect(r.frame.tests[0].output).toBeUndefined();expect(r.frame.measurement.checks[0].outputDigest).toBe(hash(bytes));
+ });
+ it('truncates multibyte stdout/stderr by bytes without lossy UTF-8 decoding',()=>{
+  const bytes=Buffer.concat([Buffer.from('😀'.repeat(3001)),Buffer.from('x')]),tail=bytes.subarray(-12000),r=fixedTests('synthetic multibyte output',{outcome:{status:0,signal:null,stdout:bytes.subarray(0,-1),stderr:bytes.subarray(-1)}});
+  expect(Buffer.from(r.frame.tests[0].outputBase64,'base64')).toEqual(tail);expect(r.frame.measurement.checks[0].outputDigest).toBe(hash(tail));expect(Buffer.from(tail.toString('utf8'))).not.toEqual(tail);
+ });
+ it('hashes only the bounded combined stdout/stderr tail',()=>{
+  const r=fixedTests('synthetic bounded output',{outcome:{status:0,signal:null,stdout:Buffer.alloc(20000,97),stderr:Buffer.alloc(3000,98)}});expect(Buffer.from(r.frame.tests[0].outputBase64,'base64').length).toBe(12000);expect(Buffer.from(r.frame.tests[0].outputBase64,'base64').subarray(-3000).equals(Buffer.alloc(3000,98))).toBe(true);expect(r.frame.measurement.checks[0].outputDigest).toBe(hash(Buffer.from(r.frame.tests[0].outputBase64,'base64')));
+ });
+ it.each(['symlink','overflow'])('does not witness a %s definition',kind=>{
+  const r=fixedTests('true',{testFiles:['docs/test.js'],setup:root=>kind==='symlink'?fs.symlinkSync('PRD.md',join(root,'docs/test.js')):fs.writeFileSync(join(root,'docs/test.js'),Buffer.alloc(1000001))});expect(r.frame.measurement.missing).toContain('docs/test.js');expect(r.frame.measurement.before.some((f:any)=>f.path==='docs/test.js')).toBe(false);
+ });
+});
 function privateSessionFixture(f:ReturnType<typeof fixture>,network=false):any {
  const names=['.patrick-synthetic-auth','.patrick-synthetic-config'];for(const name of names)f.io.writeFileSync(account.home+'/'+name,'synthetic',{mode:0o444});fs.mkdirSync(f.physical('/etc/patrick-worker'),{recursive:true,mode:0o700});
  const session:any={version:2,registry:f.seedAuthority(),phase:'active',generation:'9'.repeat(32),artifactHash:'d'.repeat(64),policyHash:'c'.repeat(64),inventoryHash:'e'.repeat(64),records:[],codeHashes:Object.fromEntries(['worker-enter.mjs','policy.mjs','connect-proxy.mjs','address-policy.mjs','tls-clienthello.mjs','install-guest.mjs','probe-guest.mjs','stage-lifetime.mjs','synthetic-worker.mjs','synthetic-network.mjs','installed-network.mjs','entry','probe'].map(name=>[name,'f'.repeat(64)])),bindings:['grok','codex','dsh'].map((runner,index)=>({...scope,runner,user:'patrick-'+runner,uid:1101+index,gid:1101+index,home:'/var/lib/patrick-'+runner,proxyPort:18743+index,baseline:'0'.repeat(64),homeIno:f.io.lstatSync(account.home).ino,markers:names.map(name=>({name,ino:f.io.lstatSync(account.home+'/'+name).ino,hash:hash(Buffer.from('synthetic')),removeIntended:false,removed:false}))}))};
@@ -290,6 +384,14 @@ describe('finite stage profiles and envelopes',()=>{
  });
  it('requires exact fixed scripts/workspace and rejects caller profile injection before spawn',()=>using(async f=>{
   for(const req of [{...f.request(),command:['node','-e','arbitrary']},{...f.request(),lifetime:{...f.request().lifetime,profile:'authenticated-client'}},{...f.request(),command:['node','-e',lifetime.guestScripts.prepare,'/tmp/foreign']}])await expect(lifetime.executeStage(req,f.deps)).rejects.toThrow();expect(f.submissions).toEqual([]);
+ }));
+ it.each(['modified','foreign','profile','fixed'])('enforces the new tests script boundary: %s',kind=>using(async f=>{
+  await f.run();await f.run('cli');const req=f.request('tests');
+  if(kind==='modified')req.command[2]+=' ';
+  if(kind==='foreign')req.command[3]='/tmp/foreign';
+  if(kind==='profile')req.lifetime.profile='authenticated-client';
+  if(kind==='fixed')await expect(lifetime.executeStage(req,f.deps)).resolves.toMatchObject({code:0});
+  else await expect(lifetime.executeStage(req,f.deps)).rejects.toThrow();
  }));
  it('keeps tests HOME private and receives a bound argv workspace instead of JSON dir',()=>{
   expect(lifetime.guestScripts.tests).toContain('HOME:process.env.HOME');expect(lifetime.guestScripts.tests).toContain('process.argv[1]');expect(lifetime.guestScripts.tests).not.toContain('p.dir');expect(lifetime.guestScripts.prepare).not.toContain('mkdtemp');

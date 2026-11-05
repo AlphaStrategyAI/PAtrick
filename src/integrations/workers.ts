@@ -1,12 +1,24 @@
-import { randomBytes } from 'node:crypto';
-import { guestScripts,cliWrapper,profileFor,type Stage,type LifetimeContext,type ReconcileResult } from '../../scripts/lima/stage-lifetime.mjs';
+import { createHash, randomBytes } from 'node:crypto';
+import { guestScripts,cliWrapper,profileFor,parseTestsFrame,type TestsPayloadV1,type Stage,type LifetimeContext,type ReconcileResult } from '../../scripts/lima/stage-lifetime.mjs';
 export { guestScripts } from '../../scripts/lima/stage-lifetime.mjs';
 import { spawn } from 'node:child_process';
 import { Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import { assertBillingAuthorityConfig, type BillingAuthority, type HostDispatchPermit } from '../billing.js';
-import { DomainError, WorkerUnavailable, roleSchemas, safeRelativePath, type AppConfig, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerInput, type WorkerResult } from '../domain.js';
+import { DomainError, WorkerUnavailable, roleSchemas, safeRelativePath, digest, stableId, pathAllowed, type AppConfig, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerInput, type WorkerResult } from '../domain.js';
+
+import type { TestObservation, ObservedCheck, TestEnvironment, ComparableTestIdentity } from '../knowledge-contract.js';
+import { snapshotDigest, testDefinitionDigest } from '../knowledge-identity.js';
+
+export interface HostTestRun {
+ readonly runner:Runner;inputHash:string;outputHash:string;runId:string;observedAt:string;
+ snapshot:TestObservation['snapshot'];checks:ObservedCheck[];environment:TestEnvironment;comparable?:ComparableTestIdentity;
+}
+const hostTestRuns=new WeakMap<WorkerResult,Readonly<HostTestRun>>();
+export function takeHostTestRun(result:WorkerResult):HostTestRun|undefined {
+ const value=hostTestRuns.get(result);hostTestRuns.delete(result);return value;
+}
 
 // Evidence is issued only at the ordinary adapter failure site. Error properties
 // supplied by a caller cannot mint or alter it; no payload or control secrets escape.
@@ -84,7 +96,7 @@ export class LimaWorker implements WorkerAdapter {
     for (const file of baseline) safeRelativePath(file.path);
     const invocation=randomBytes(16).toString('hex'),dir=`/var/lib/patrick-workspaces/${invocation}/work`;
     const lifetime=(stage:Stage,operation:'exec'|'stop'|'reconcile'='exec'):LifetimeContext=>Object.freeze({invocation,stage,profile:profileFor(stage),operation});
-    let primaryFailure:unknown;
+    let primaryFailure:unknown,result:WorkerResult|undefined,hostRun:HostTestRun|undefined;
     try {
       const prepared=JSON.parse(await collect(context,lifetime('prepare'),['node','-e',prepareScript,dir],JSON.stringify({schema,prompt,files:baseline}),combined));
       if (prepared.dir!==dir) throw new WorkerUnavailable('Runtime did not attest a private task workspace.');
@@ -103,10 +115,23 @@ export class LimaWorker implements WorkerAdapter {
         const files=input.role==='execute'?output.files:(input.artifact??input.task.artifact)?.files;
         if (!files?.length || plan.tests.length>20) throw new DomainError('No safe bounded artifact to test.','artifact_invalid');
         for (const file of files) safeRelativePath(file.path);
-        output.tests=JSON.parse(await collect(context,lifetime('tests'),['node','-e',testsScript,dir],JSON.stringify({files,commands:plan.tests}),combined));
+        const paths=[...new Set([...baseline.map(f=>f.path),...files.map((f:{path:string})=>f.path),...plan.paths,...(plan.testFiles??[])])].filter(path=>pathAllowed(path,input.project.allowedPaths)).sort();
+        if(paths.length>128||plan.tests.length!==new Set(plan.tests).size||[...plan.paths,...(plan.testFiles??[]),...files.map((f:{path:string})=>f.path)].some(path=>!pathAllowed(path,input.project.allowedPaths)))throw new DomainError('No safe bounded measurement scope.','artifact_invalid');
+        const payload:TestsPayloadV1={schemaVersion:1,nonce:randomBytes(16).toString('hex'),files,commands:plan.tests,measurement:{baselineRevision:plan.baselineSha,paths,...(plan.testFiles===undefined?{}:{testFiles:plan.testFiles})}};
+        const text=await collect(context,lifetime('tests'),['node','-e',testsScript,dir],JSON.stringify(payload),combined);
+        let frame;try{frame=parseTestsFrame(text,payload);}catch{throw failure(new WorkerUnavailable('Isolated tests returned an invalid private frame.'),'tests','malformed-output');}
+        const m=frame.measurement,incomplete=m.missing.length>0||m.unstable.length>0;
+        // Hash the bounded private tail independently, then retain only process facts.
+        const checks=m.checks.map((check,i):ObservedCheck=>({...check,id:stableId('local-check',plan.tests[i]),outputDigest:createHash('sha256').update(Buffer.from(frame.tests[i]!.outputBase64,'base64')).digest('hex'),result:check.result==='failure'?'failure':incomplete?'incomplete':'success'}));
+        output.tests=frame.tests.map((test,i)=>({command:test.command,passed:test.passed,output:`exit ${checks[i]!.process!.exitCode??'unknown'}; signal ${checks[i]!.process!.signal??'none'}; timeout ${checks[i]!.process!.timedOut}; ${checks[i]!.process!.errorCode??'no process error'}; sha256 ${checks[i]!.outputDigest}; bounded tail 12000 bytes; measurement ${incomplete?'incomplete':'stable'}`}));
         output=roleSchemas[input.role].parse(output);
+        const known=baseline.length>0&&paths.every(path=>baseline.some(f=>f.path===path)),changed=m.before.filter(file=>{const base=baseline.find(f=>f.path===file.path);return !base||digest(base.content)!==file.sha256||file.mode!=='100644';});
+        // Even zero overlay has an explicit identity; insufficient baseline stays unknown.
+        const snapshot:TestObservation['snapshot']={revision:plan.baselineSha,overlayHash:digest({state:known?'measured':'unknown-baseline',files:changed}),files:m.before};
+        const comparable=!incomplete&&known&&checks.every(c=>!c.process?.errorCode)&&plan.testFiles!==undefined&&plan.testFiles.every(path=>m.before.some(f=>f.path===path))?{snapshotDigest:snapshotDigest(snapshot),testDefinitionDigest:testDefinitionDigest(plan.tests.map(command=>({command,files:m.before.filter(f=>plan.testFiles!.includes(f.path))})))}:undefined;
+        hostRun={runner,inputHash:digest(input),outputHash:digest(output),runId:invocation,observedAt:m.observedAt,snapshot,checks,environment:{observed:m.environment.observed,unknown:[...m.environment.unknown,...(known?[]:['baselineIdentity']),...(incomplete?['fileMeasurement']:[])]},...(comparable?{comparable}:{})};
       }
-      return {output,costUsd:policy.costPerRunUsd,model:policy.model,provider:policy.provider};
+      result={output,costUsd:policy.costPerRunUsd,model:policy.model,provider:policy.provider};
     } catch(error) { primaryFailure=error;throw error; }
     finally {
       let unconfirmed=false,stoppedKind:ReconcileResult['kind']|undefined;
@@ -126,6 +151,10 @@ export class LimaWorker implements WorkerAdapter {
       } catch {unconfirmed=true;}
       if(unconfirmed){const error=new DomainError('Isolated worker cleanup could not be confirmed.','worker_cleanup_unconfirmed',503);if(primaryFailure!==undefined)error.cause=primaryFailure;throw error;}
     }
+    if(combined.aborted)throw new WorkerUnavailable('Isolated worker timed out or was cancelled.');
+    if(!result)throw new WorkerUnavailable('Isolated worker produced no accepted result.');
+    if(hostRun)hostTestRuns.set(result,Object.freeze(hostRun));
+    return result;
   }
   private async acpRun(context:GuestContext,lifetime:LifetimeContext,command:string,args:string[],dir:string,prompt:string,signal:AbortSignal):Promise<string> {
     const child=runStage(context,lifetime,[command,...args],signal);

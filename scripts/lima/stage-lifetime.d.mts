@@ -1,4 +1,16 @@
 import type { Stats, Dir } from 'node:fs';
+import type { ObservedFile, ObservedCheck, TestEnvironment } from '../../src/knowledge-contract.js';
+export interface TestsPayloadV1 {
+ schemaVersion:1;nonce:string;files:{path:string;content:string}[];commands:string[];
+ measurement:{baselineRevision:string;paths:string[];testFiles?:string[]};
+}
+export interface TestsFrameV1 {
+ schemaVersion:1;kind:'patrick-tests';nonce:string;
+ /** Canonical Base64 of at most 12000 captured stdout/stderr tail bytes. */
+ tests:{command:string;passed:boolean;outputBase64:string}[];
+ measurement:{observedAt:string;before:ObservedFile[];after:ObservedFile[];missing:string[];unstable:string[];checks:ObservedCheck[];environment:TestEnvironment};
+}
+export function parseTestsFrame(text:string,payload:TestsPayloadV1):TestsFrameV1;
 import type { Account, Entry, GuestContext } from './policy.mjs';
 export type Stage='prepare'|'cli'|'read'|'tests'|'cleanup'|'acp';
 export type StageProfile='task-only'|'authenticated-client';

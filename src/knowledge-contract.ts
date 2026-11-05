@@ -19,8 +19,14 @@ export interface TestEnvironment { observed: Record<string, string>; unknown: st
 export interface ObservedCheck {
   id: string; name?: string; command?: string; testFile?: string;
   result: 'success' | 'failure' | 'incomplete'; outputDigest: string;
-  process?: { exitCode: number | null; signal: string | null; timedOut: boolean; startedAt: string; finishedAt: string };
+  process?: { exitCode: number | null; signal: string | null; timedOut: boolean; startedAt: string; finishedAt: string; errorCode?:'ETIMEDOUT'|'ENOBUFS'|'ENOENT'|'EACCES'|'PROCESS_ERROR' };
 }
+/** Shared bounded process facts; raw exception text is never part of evidence. */
+export const observedProcessSchema:z.ZodType<NonNullable<ObservedCheck['process']>>=z.object({
+ exitCode:z.number().int().nullable(),signal:z.string().min(1).max(10000).nullable(),timedOut:z.boolean(),
+ startedAt:z.string().datetime({offset:true}),finishedAt:z.string().datetime({offset:true}),
+ errorCode:z.enum(['ETIMEDOUT','ENOBUFS','ENOENT','EACCES','PROCESS_ERROR']).optional(),
+}).strict();
 export interface ComparableTestIdentity { snapshotDigest: string; testDefinitionDigest: string }
 export interface TestObservation extends Scope {
   schemaVersion: 1; id: string; sourceId: string; sourceRevision: string; repository: string; observedAt: string;

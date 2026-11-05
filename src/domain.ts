@@ -130,7 +130,7 @@ export type Decision = z.infer<typeof decisionSchema> & { grounds?: DecisionGrou
 export const executionPlanSchema = z.object({
   taskVersion: z.number().int().positive(), sourceRevision: z.string(), baselineSha: z.string().min(1),
   summary: z.string().min(1), paths: z.array(z.string()).min(1), steps: z.array(z.string()).min(1),
-  tests: z.array(z.string()).min(1), stopConditions: z.array(z.string()).min(1),
+  tests: z.array(z.string()).min(1), testFiles: z.array(z.string()).max(128).superRefine((paths,ctx)=>{if(new Set(paths).size!==paths.length)ctx.addIssue({code:'custom',message:'Test files must be unique.'});for(const path of paths)try{safeRelativePath(path);}catch{ctx.addIssue({code:'custom',message:'Test files must be safe repository paths.'});}}).optional(), stopConditions: z.array(z.string()).min(1),
 });
 export type ExecutionPlan = z.infer<typeof executionPlanSchema>;
 export const artifactSchema = z.object({

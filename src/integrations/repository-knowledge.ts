@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, digest, now, pathAllowed, stableId, type AppConfig, type Project, type SourceRevision } from '../domain.js';
+import { observedProcessSchema } from '../knowledge-contract.js';
 import type { AtomicClaim, CiTestReportV1, HostObservation, ObservedFile, ReadbackProvenance, RepositoryReadback, RepositoryReadRequest, TestObservation } from '../knowledge-contract.js';
 import { knowledgePolicyHash, snapshotDigest, testDefinitionDigest } from '../knowledge-identity.js';
 import { assertKnowledgeSource, parseKnowledgeJson, parseStructuredKnowledge, structuredRepositoryRequest } from '../structured-knowledge.js';
@@ -40,7 +41,7 @@ const timestamp=z.string().datetime({offset:true});
 const optionalTime=timestamp.nullable().optional();
 const file=z.object({path:text.refine(v=>Buffer.byteLength(v)<=1024),sha256:hash,mode:z.enum(['100644','100755'])}).strict();
 const check=z.object({id:text,name:text.optional(),command:text.optional(),testFile:text.optional(),result:z.enum(['success','failure','incomplete']),outputDigest:hash,
-  process:z.object({exitCode:z.number().int().nullable(),signal:text.nullable(),timedOut:z.boolean(),startedAt:timestamp,finishedAt:timestamp}).strict().optional()}).strict();
+  process:observedProcessSchema.optional()}).strict();
 const reportSchema:z.ZodType<CiTestReportV1>=z.object({schemaVersion:z.literal(1),repository:text,headSha:sha,runId:id,jobId:id,
   snapshot:z.object({revision:sha,overlayHash:hash.optional(),files:z.array(file).min(1).max(128)}).strict(),
   definitions:z.array(z.object({command:text,files:z.array(file).min(1).max(128)}).strict()).min(1).max(128),checks:z.array(check).min(1).max(128),
@@ -220,7 +221,7 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
         if(new Set(report.snapshot.files.map(f=>f.path)).size!==report.snapshot.files.length||new Set(report.definitions.map(d=>d.command)).size!==report.definitions.length||report.checks.length!==1||report.definitions.length!==1)invalid();
         const c=report.checks[0]!,definition=report.definitions[0]!;
         if(c.id!==e.canonicalId||c.name!==e.name||definition.command!==c.command||c.result!=='success'||!c.testFile||!definition.files.some(f=>f.path===c.testFile)||new Set(definition.files.map(f=>f.path)).size!==definition.files.length)invalid();
-        if(c.process&&(c.process.exitCode!==0||c.process.signal!==null||c.process.timedOut||c.process.finishedAt<c.process.startedAt))invalid();
+        if(c.process&&(c.process.exitCode!==0||c.process.signal!==null||c.process.timedOut||c.process.errorCode!==undefined||c.process.finishedAt<c.process.startedAt))invalid();
         for(const f of [...report.snapshot.files,...definition.files]){if(!request.filePaths.includes(f.path)||digest(await measuredFile(f.path))!==digest(f))invalid();}
         if(report.snapshot.files.length!==request.filePaths.length||definition.files.some(f=>!report.snapshot.files.some(s=>digest(s)===digest(f))))invalid();
         const test=result.tests.find(t=>t.origin.kind==='ci'&&t.origin.runId===e.run&&t.origin.jobId===e.job)!;

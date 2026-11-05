@@ -1,5 +1,7 @@
+import { recordLocalTests } from './experience-observations.js';
+import { takeHostTestRun } from './integrations/workers.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, now, stableId, type AppConfig, type Attempt, type Project, type Role, type Runner, type Task, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, now, stableId, type AppConfig, type Attempt, type Project, type Role, type Runner, type Task, type WorkerAdapter, type WorkerInput, type WorkerResult } from './domain.js';
 import { Store } from './store.js';
 import { assertBillingAuthorityBinding, billingSwitchInputHash, BillingAuthority } from './billing.js';
 
@@ -58,9 +60,12 @@ export class Scheduler {
         throw cause;
       }
       const attempt = reserved.attempt;
+      let originalResult:WorkerResult|undefined;
       try {
         const worker = this.workers.get(policy.runner) ?? { name: policy.runner, async run() { throw new WorkerUnavailable('No configured worker adapter.'); } };
-        const result = await this.billing.dispatch(reserved, structuredClone(frozen), worker);
+        const capturingWorker:WorkerAdapter={name:worker.name,async run(activeInput,signal,permit){const result=await worker.run(activeInput,signal,permit);originalResult=result;return result;}};
+        const result = await this.billing.dispatch(reserved, structuredClone(frozen), capturingWorker);
+        if(originalResult)recordLocalTests(this.store,reserved.attempt.id,frozen,originalResult,result.output);
         return result.output;
       } catch (cause) {
         if (cause instanceof WorkerUnavailable || (cause instanceof SubscriptionAccessError && cause.observation.disposition === 'verified-no-charge-refusal')) {
@@ -70,7 +75,7 @@ export class Scheduler {
           continue;
         }
         throw cause;
-      }
+      } finally {if(originalResult)takeHostTestRun(originalResult);}
     }
     this.block(task, `No admitted ${input.role} runner is currently available. ${reason}`, 'workers_unavailable');
     return undefined;

@@ -1,3 +1,4 @@
+import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
 import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
@@ -300,22 +301,10 @@ export class Workbench {
     this.enqueue(task, stableId('question-notice', question.id), `${question.title}\n${question.context}\nA · ${q.A.label}: ${q.A.description}\n依据：${q.A.rationale}\n代价：${q.A.tradeoff}\n${q.A.evidenceUrls.join('\n')}\nB · ${q.B.label}: ${q.B.description}\n依据：${q.B.rationale}\n代价：${q.B.tradeoff}\n${q.B.evidenceUrls.join('\n')}\nC · 我自己决定（自由输入）\n问题 ${question.id} · 版本 ${question.version}`);
   }
 
-  private validatePlan(task: Task, project: Project): void {
-    const plan = executionPlanSchema.parse(task.plan);
-    if (plan.taskVersion !== task.version || plan.sourceRevision !== task.sourceRevision || plan.paths.some(path => !pathAllowed(path, project.allowedPaths)) || new Set(plan.paths).size !== plan.paths.length || !plan.paths.includes(project.prdPath)) throw new DomainError('The plan does not match the current task, source revision or allowed repository paths.', 'invalid_plan', 403);
-    if (new Set(plan.tests).size !== plan.tests.length || plan.tests.some(command => !command.trim())) throw new DomainError('The plan must name unique executable validation commands.', 'invalid_plan');
-  }
-
-  private validateArtifact(task: Task, project: Project, value: unknown): void {
-    const artifact = artifactSchema.parse(value); const plan = task.plan;
-    if (!plan || artifact.taskVersion !== task.version || artifact.planHash !== digest(plan) || artifact.baselineSha !== plan.baselineSha || artifact.files.some(file => !plan.paths.includes(file.path) || !pathAllowed(file.path, project.allowedPaths)) || new Set(artifact.files.map(file => file.path)).size !== artifact.files.length || !artifact.files.some(file => file.path === project.prdPath)) throw new DomainError('The artifact is not bound to the current plan and authorized paths.', 'invalid_artifact', 403);
-    if (!this.testsRecorded(plan.tests, artifact.tests)) throw new DomainError('The artifact lacks actual results for the planned tests.', 'missing_test_evidence');
-  }
-
+  private validatePlan(task: Task, project: Project): void { assertPlanBinding(task,project); }
+  private validateArtifact(task: Task, project: Project, value: unknown): void { assertArtifactBinding(task,project,value); }
   private validateReview(task: Task, value: unknown): void {
-    const review = reviewSchema.parse(value);
-    if (!task.plan || !task.artifact || review.taskVersion !== task.version || review.planHash !== digest(task.plan) || review.artifactHash !== digest(task.artifact)) throw new DomainError('The independent review does not match the current task, plan and actual artifact.', 'invalid_review');
-    if (!this.testsRecorded(task.plan.tests, review.tests)) throw new DomainError('The independent reviewer did not run all planned tests.', 'missing_test_evidence');
+    assertReviewBinding(task,value);
     const attempts = this.store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.status === 'succeeded');
     const execute = attempts.filter(a => a.role === 'execute').at(-1); const check = attempts.filter(a => a.role === 'check').at(-1);
     if (!execute || !check || execute.runner === check.runner && !this.config.runnerPolicies.some(p => p.runner === check.runner && p.admitted && p.independentReview && p.roles.includes('check') && p.domains.includes(task.domain))) throw new DomainError('The check lacks an admitted independent execution context.', 'nonindependent_review');
@@ -328,8 +317,7 @@ export class Workbench {
     if (!project.autoMerge || !project.trustedChecks.length || !project.trustedAppIds.length || !Array.isArray(receipt.checks) || project.trustedChecks.some(name => !receipt.checks.some(check => check.name === name && check.conclusion === 'success' && check.headSha === receipt.headSha && project.trustedAppIds.includes(check.appId) && !!check.url))) throw new DomainError('The merged head lacks every required trusted successful check.', 'invalid_receipt');
   }
 
-  private testsRecorded(commands: string[], tests: { command: string; passed: boolean; output: string }[]): boolean { return commands.every(command => tests.filter(test => test.command === command).length === 1 && tests.some(test => test.command === command && !!test.output.trim())); }
-  private testsPassed(commands: string[], tests: { command: string; passed: boolean; output: string }[]): boolean { return this.testsRecorded(commands, tests) && tests.every(test => test.passed); }
+  private testsPassed(commands: string[], tests: { command: string; passed: boolean; output: string }[]): boolean { return testsRecorded(commands, tests) && tests.every(test => test.passed); }
   private repair(task: Task, review: Task['review']): void {
     if (task.repairCount >= 2) { this.fail(task, new DomainError('Two repair rounds have been exhausted; no unverified change was published.', 'repairs_exhausted')); return; }
     this.advance(task, 'execute', { review, repairCount: task.repairCount + 1, error: 'Independent tests or review requested repair.' });

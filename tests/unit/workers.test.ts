@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixture as lifetimeFixture } from '../fixtures/lima-lifetime.mjs';
 import { describe, expect, it, vi } from 'vitest';
-import { DomainError, SubscriptionAccessError, type AppConfig, type WorkerInput, type WorkerResult } from '../../src/domain.js';
-import { LimaWorker, limaFailureEvidence, parseWorkerOutput, commandFor, guestScripts } from '../../src/integrations/workers.js';
+import { DomainError, SubscriptionAccessError, digest, stableId, type AppConfig, type WorkerInput, type WorkerResult } from '../../src/domain.js';
+import { LimaWorker, limaFailureEvidence, parseWorkerOutput, commandFor, guestScripts, takeHostTestRun } from '../../src/integrations/workers.js';
 import { bindSyntheticLimaBilling } from '../fixtures/billing.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { BillingAuthority, type HostDispatchPermit } from '../../src/billing.js';
@@ -137,18 +137,22 @@ function waitForAcpInputEof(f:{events:(complete?:boolean)=>any[]},run:Promise<un
   if(signal.aborted)aborted();else queueMicrotask(inspect);
  });
 }
-type FixtureOptions={controlReceipt?:unknown;runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'unrelated-early'|'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
+const fixtureFrame=String.raw`const crypto=require('node:crypto'),os=require('node:os'),at=new Date().toISOString(),hash=v=>crypto.createHash('sha256').update(v).digest('hex');const outputBytes=typeof options!=='undefined'&&options.largeTail?Buffer.alloc(12000,171):typeof options!=='undefined'&&options.binaryTail?Buffer.from([255,0,195,40,254,240,159,152,128]):Buffer.from('actual synthetic test SYNTHETIC_PRIVATE_STDOUT_SENTINEL');const measured=p.measurement.paths.filter(path=>p.files.some(f=>f.path===path)).map(path=>({path,sha256:hash(p.files.find(f=>f.path===path).content),mode:'100644'}));const frame={schemaVersion:1,kind:'patrick-tests',nonce:p.nonce,tests:p.commands.map(command=>({command,passed:true,outputBase64:outputBytes.toString('base64')})),measurement:{observedAt:at,before:measured,after:measured,missing:p.measurement.paths.filter(path=>!measured.some(f=>f.path===path)),unstable:[],checks:p.commands.map(command=>({id:hash(JSON.stringify(['local-check',command])).slice(0,32),command,result:'success',outputDigest:hash(outputBytes),process:{exitCode:0,signal:null,timedOut:false,startedAt:at,finishedAt:at}})),environment:{observed:{node:process.versions.node,platform:process.platform,arch:process.arch,osRelease:os.release()},unknown:['browserVersion','databaseVersion','serviceVersions','dependencyClosure']}}};if(typeof options!=='undefined'&&options.capturedError){for(const t of frame.tests)t.passed=false;for(const c of frame.measurement.checks){c.result='failure';c.process.exitCode=null;c.process.errorCode=options.capturedError;}}if(typeof options!=='undefined'&&options.frameFault){if(options.frameFault==='nonce')frame.nonce='0'.repeat(32);if(options.frameFault==='id')frame.measurement.checks[0].id='0'.repeat(32);if(options.frameFault==='oversized')frame.tests[0].outputBase64='x'.repeat(512001);if(options.frameFault==='encoding')frame.tests[0].outputBase64='???';if(options.frameFault==='padding')frame.tests[0].outputBase64='Zh==';if(options.frameFault==='whitespace')frame.tests[0].outputBase64='Zg==\n';if(options.frameFault==='legacy'){frame.tests[0].output='legacy ambiguous text';delete frame.tests[0].outputBase64;}if(options.frameFault==='tail')frame.tests[0].outputBase64=Buffer.alloc(12001).toString('base64');if(['encoding','padding','whitespace','tail'].includes(options.frameFault))frame.measurement.checks[0].outputDigest=hash(Buffer.from(frame.tests[0].outputBase64,'base64'));if(options.frameFault==='digest')frame.measurement.checks[0].outputDigest='0'.repeat(64);if(options.frameFault==='malformed'){process.stdout.write('{');}else if(options.frameFault==='trailing')process.stdout.write(JSON.stringify(frame)+'{}');else if(options.frameFault==='duplicate')process.stdout.write(JSON.stringify(frame).replace('\"schemaVersion\":1','\"schemaVersion\":1,\"schemaVersion\":1'));else process.stdout.write(JSON.stringify(frame));}else process.stdout.write(JSON.stringify(frame));`;
+type FixtureOptions={largeTail?:boolean;binaryTail?:boolean;baselineContent?:string;testFiles?:string[];bindingMismatch?:'plan'|'artifact';capturedError?:'ENOBUFS';stopDelayMs?:number;frameFault?:'nonce'|'malformed'|'trailing'|'duplicate'|'id'|'oversized'|'encoding'|'padding'|'whitespace'|'legacy'|'tail'|'digest';controlReceipt?:unknown;runner?:'grok'|'codex'|'dsh';role?:'feedback'|'execute'|'check';fail?:string;holdCli?:boolean;cleanupFailure?:boolean;acpBehavior?:'unrelated-early'|'early'|'non-end-turn'|'permission'|'stdout-overflow'|'stderr-overflow'|'abort'};
 function protocolFixture(options:FixtureOptions={}) {
   const root=mkdtempSync(join(tmpdir(),'patrick-identity-protocol-')),bin=join(root,'bin'),eventsPath=join(root,'events');mkdirSync(bin);
   const runner=options.runner??'grok',role=options.role??'feedback',createdAt='2026-01-01T00:00:00.000Z';
   const project:WorkerInput['project']={id:'bound-project',projectId:'bound-project',domain:'私人领域',name:'Fixture',description:'',repository:'fixture/repo',repositoryProvider:'github',prdPath:'docs/PRD.md',allowedPaths:['docs/'],trustedChecks:[],trustedAppIds:[],ownerId:'owner',autoMerge:false,budgetUsd:0,createdAt};
-  const source:WorkerInput['source']={id:'source',projectId:project.id,domain:project.domain,kind:'manual',externalId:'fixture',revision:'revision',title:'fixture',content:'',locator:'fixture',authorId:'owner',retention:'ephemeral',status:'active',createdAt};
+  const source:WorkerInput['source']={id:'source',projectId:project.id,domain:project.domain,kind:'manual',externalId:'fixture',revision:'revision',title:'fixture',content:'',locator:'fixture',authorId:'owner',retention:'permanent',status:'active',createdAt};
   const task:WorkerInput['task']={id:'task',projectId:project.id,domain:project.domain,sourceId:source.id,sourceRevision:source.revision,title:'fixture',description:'',status:'feedback',version:1,createdAt,updatedAt:createdAt,runAfter:createdAt,attempts:0,repairCount:0,budgetUsd:0,spentUsd:0,stage:role};
   const literal='fixture-model;$(touch /tmp/never-executed)';
   const config:AppConfig={mode:'test',host:'localhost',port:1,dataDir:root,vaultDir:root,ownerId:'owner',authToken:'',sessionSecret:'',projects:[project],scanIntervalMs:1000,workers:{[runner]:{command:`fixture-${runner}`,args:['literal;$(id)'],isolation:'lima',instance:'fixture-instance',guestUser:'patrick-dedicated',timeoutMs:5000}},runnerPolicies:[{runner,roles:[role],domains:[project.domain],provider:'fixture',model:literal,admitted:true,costPerRunUsd:0,independentReview:false}]};
   const input:WorkerInput={task,project,source,role,cards:[],rules:[],...(['execute','check'].includes(role)?{plan:{taskVersion:1,sourceRevision:'revision',baselineSha:'base',summary:'fixture',paths:['docs/PRD.md'],steps:['write'],tests:['literal test;$(id)'],stopConditions:['stop']}}:{})};
+  if(input.plan){input.task.plan=input.plan;input.plan.testFiles=options.testFiles??[];input.baselineFiles=[{path:'docs/PRD.md',content:options.baselineContent??'fixture'}];}
   const output=role==='check'?{taskVersion:1,planHash:'hash',artifactHash:'artifact',verdict:'pass',summary:'fixture',issues:[],tests:[{command:'declared',passed:false,output:'untrusted'}]}:role==='execute'?{taskVersion:1,planHash:'hash',baselineSha:'base',files:[{path:'docs/PRD.md',content:'fixture'}],tests:[{command:'declared',passed:false,output:'untrusted'}],summary:'fixture'}:{summary:'fixture',observations:[]};
   if(role==='check')input.artifact={taskVersion:1,planHash:'hash',baselineSha:'base',files:[{path:'docs/PRD.md',content:'fixture'}],tests:[{command:'declared',passed:false,output:'untrusted'}],summary:'fixture'};
+  if(input.plan){output.planHash=digest(input.plan);if(input.artifact){input.artifact.tests=input.plan.tests.map(command=>({command,passed:true,output:'accepted earlier process status'}));input.artifact.planHash=digest(input.plan);input.task.artifact=input.artifact;output.artifactHash=digest(input.artifact);}input.task.status=role==='check'?'checking':'executing';}
+  if(options.bindingMismatch==='plan'&&input.plan)output.planHash='mismatched-plan';if(options.bindingMismatch==='artifact'&&role==='check')output.artifactHash='mismatched-artifact';
   const prefix=['/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-enter','--runner',runner,'--user','patrick-dedicated','--project',project.projectId,'--domain',project.domain,'--'];
   writeFileSync(join(bin,'limactl'),`#!${process.execPath}
 const fs=require('node:fs'),readline=require('node:readline');
@@ -158,7 +162,7 @@ if(JSON.stringify(argv.slice(0,3))!==JSON.stringify(['shell','fixture-instance',
 let stage=operation!=='exec'?operation:args[0]==='node'?(args[2]===scripts.prepare?'prepare':args[2]===scripts.tests?'tests':args[2]===scripts.read?'read':args[2]===scripts.cleanup?'cleanup':'invalid'):args[0]==='sh'?'cli':args[0]==='fixture-dsh'?'acp':'invalid';
 fs.appendFileSync(${JSON.stringify(eventsPath)},JSON.stringify({stage,prefix,args,invocation,profile:['cli','acp'].includes(argv[18])?'authenticated-client':'task-only',purpose:argv[18],operation})+'\\n');
 if(stage===options.fail||(stage==='cleanup'&&options.cleanupFailure))process.exit(78);
-if(stage==='stop'||stage==='reconcile'){process.stdout.write(JSON.stringify(Object.hasOwn(options,'controlReceipt')?options.controlReceipt:{version:2,kind:'registered',closure:stage==='stop'?'none':'workspace-cleaned',state:stage==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:stage==='reconcile',privateMountsAbsent:true,invocationClosed:stage==='reconcile',reason:'ok'}));}
+if(stage==='stop'||stage==='reconcile'){const receipt=JSON.stringify(Object.hasOwn(options,'controlReceipt')?options.controlReceipt:{version:2,kind:'registered',closure:stage==='stop'?'none':'workspace-cleaned',state:stage==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:stage==='reconcile',privateMountsAbsent:true,invocationClosed:stage==='reconcile',reason:'ok'});if(stage==='stop'&&options.stopDelayMs)setTimeout(()=>process.stdout.write(receipt),options.stopDelayMs);else process.stdout.write(receipt);}
 else if(stage==='cli'&&options.holdCli){setInterval(()=>{},1000);process.stdin.resume();}
 else if(stage==='acp') {
  if(options.acpBehavior==='early')process.exit(0);
@@ -179,10 +183,10 @@ else if(stage==='acp') {
  else process.exit(78);
  send({jsonrpc:'2.0',id:message.id,result});});
 } else {let input='';process.stdin.on('data',chunk=>input+=chunk);process.stdin.on('end',()=>{
- if(stage==='prepare'){const payload=JSON.parse(input);if(JSON.stringify(Object.keys(payload).sort())!==JSON.stringify(['files','prompt','schema'])||/synthetic-(account|workspace|route|evidence)|noChargeEvidenceDigest|[\"]permit[\"]/.test(payload.prompt))process.exit(78);process.stdout.write(JSON.stringify({dir}));}
+ if(stage==='prepare'){const payload=JSON.parse(input);if(JSON.stringify(Object.keys(payload).sort())!==JSON.stringify(['files','prompt','schema'])||/synthetic-(account|workspace|route|evidence)|noChargeEvidenceDigest|[\"]permit[\"]/.test(payload.prompt))process.exit(78);fs.writeFileSync(${JSON.stringify(join(root,'last-prompt'))},payload.prompt);process.stdout.write(JSON.stringify({dir}));}
  else if(stage==='cli'){if(!args.includes(${JSON.stringify(literal)})||!args.includes('literal;$(id)'))process.exit(78);process.stdout.write(JSON.stringify(output));}
  else if(stage==='read')process.stdout.write(JSON.stringify(output));
- else if(stage==='tests'){const payload=JSON.parse(input);if(payload.commands[0]!=='literal test;$(id)')process.exit(78);process.stdout.write(JSON.stringify([{command:payload.commands[0],passed:true,output:'actual synthetic test'}]));}
+ else if(stage==='tests'){const payload=JSON.parse(input);if(payload.commands[0]!=='literal test;$(id)')process.exit(78);const p=payload;${fixtureFrame}}
  else if(stage!=='cleanup')process.exit(78);
  });}
 `,{mode:0o700});
@@ -244,7 +248,7 @@ lines.on('close',()=>{log('input-eof');const interval=setInterval(()=>{if(fs.exi
    }else{
     let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{
      if(spec.stage==='prepare'){const p=JSON.parse(input);if(!p.prompt.includes('FROZEN INPUT:'))throw Error('lost prompt');process.stdout.write(JSON.stringify({dir:spec.workspace}));}
-     if(spec.stage==='tests'){const p=JSON.parse(input);process.stdout.write(JSON.stringify(p.commands.map(command=>({command,passed:true,output:'actual synthetic test'}))));}
+     if(spec.stage==='tests'){const p=JSON.parse(input);${fixtureFrame}}
      done.resolve({code:0});
     });process.stdin.resume();
    }
@@ -262,7 +266,7 @@ function assertAcpTerminal(f:ReturnType<typeof lifecycleProtocolFixture>,result:
  const confirmed=events.findIndex(e=>e.stage==='acp'&&e.event==='helper-confirmed'),tests=events.findIndex(e=>e.stage==='tests'&&e.event==='request');
  expect(events.some(e=>e.event==='tests-before-confirmation'),'Tests started before ACP helper confirmation').toBe(false);
  expect(endTurn).toBeGreaterThan(-1);expect(eof).toBeGreaterThan(endTurn);expect(exit).toBeGreaterThan(eof);expect(confirmed).toBeGreaterThan(exit);expect(tests).toBeGreaterThan(confirmed);
- expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:'actual synthetic test'}]}});
+ expect(result).toMatchObject({costUsd:0,output:{tests:[{passed:true,output:expect.stringContaining('exit 0')}]}});
  const token=readdirSync(f.controller.physical('/var/lib/patrick-worker/invocations')).find(name=>/^[a-f0-9]{32}\.json$/.test(name)&&f.controller.record(name.slice(0,32)).kind==='registered')!.slice(0,32);
  expect(f.controller.record(token)).toMatchObject({state:'closed',payloadSealed:true});
 }
@@ -362,7 +366,7 @@ describe('enforced guest identity across adapter stages',()=>{
       expect(result.costUsd).toBe(0);
       const events=fixture.events();expect(events.map(event=>event.stage)).toEqual(scenario.stages);
       expect(new Set(events.map(event=>JSON.stringify(event.prefix))).size).toBe(1);expect(new Set(events.map(event=>event.invocation)).size).toBe(1);
-      if(scenario.role==='execute')expect((result.output as any).tests[0].output).toBe('actual synthetic test');
+      if(scenario.role==='execute')expect((result.output as any).tests[0].output).toContain('exit 0');
     } finally {fixture.close();}
   });
   it.each(['prepare','cli','read','tests','acp'])('fails closed at %s and cleans known workspaces using the original tuple',async fail=>{
@@ -555,4 +559,101 @@ describe('strict ordinary control IPC2 finalization',()=>{
    expect(f.controller.record(token)).toMatchObject({kind:'denial-only',state:'denied'});
   }finally{abort.abort();f.release();await run;f.close();}
  });
+});
+
+
+describe('authentic accepted local observations',()=>{
+ it.each(['execute','check'] as const)('captures raw %s identity across Billing clone exactly once',async role=>{
+  const f=protocolFixture({role});try{
+   const worker=new LimaWorker('grok',f.config,f.billing);let original:WorkerResult|undefined,accepted:WorkerResult|undefined;
+   const dispatch=f.billing.dispatch.bind(f.billing);vi.spyOn(f.billing,'dispatch').mockImplementation(async(...args)=>{accepted=await dispatch(...args);expect(takeHostTestRun(accepted)).toBeUndefined();return accepted;});
+   const scheduler=new Scheduler(f.store,f.config,[{name:'grok',async run(input,signal,permit){original=await worker.run(input,signal,permit);expect(takeHostTestRun({...original})).toBeUndefined();return original;}}],f.billing);
+   const output=await scheduler.run(f.input.task,f.input.project,f.input);
+   const actions=f.store.list('actions').filter(a=>a.kind==='experience.test-observation');expect(actions).toHaveLength(1);
+   const observation=actions[0]!.payload.observation as any,attempt=f.store.list('attempts')[0]!;
+   expect(accepted).not.toBe(original);expect(output).not.toBe(original!.output);expect(takeHostTestRun(original!)).toBeUndefined();expect(takeHostTestRun({...original!})).toBeUndefined();
+   expect(observation.origin).toMatchObject({kind:'local',role,taskId:f.input.task.id,attemptId:attempt.id,inputHash:attempt.inputHash,planHash:digest(f.input.plan!),artifactHash:digest(role==='check'?f.input.artifact! :output as object)});
+   expect(observation.snapshot).toMatchObject({revision:'base',overlayHash:digest({state:'measured',files:[]}),files:[{path:'docs/PRD.md',mode:'100644'}]});expect(observation.checks[0].id).toBe(stableId('local-check',f.input.plan!.tests[0]));
+   expect(attempt).toMatchObject({status:'succeeded',costUsd:0});expect(f.store.list('attempts')).toHaveLength(1);expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(1);
+   const {readTestObservation}=await import('../../src/knowledge-records.js');expect(readTestObservation(f.store,observation.id,f.input.project)).toEqual(observation);
+   f.store.save('tasks',{...f.store.get('tasks',f.input.task.id)!,version:2,stage:'delivery',status:'publishing'});expect(readTestObservation(f.store,observation.id,f.input.project)).toEqual(observation);
+  }finally{f.close();}
+ });
+});
+
+
+describe('local observation fail-closed boundaries',()=>{
+ it.each(['nonce','malformed','trailing','duplicate','id','oversized','encoding','padding','whitespace','legacy','tail','digest'] as const)('rejects %s private frames without canonical evidence',async frameFault=>{
+  const f=protocolFixture({role:'execute',frameFault});try{await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input);expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);expect(f.events().slice(-3).map(e=>e.stage)).toEqual(['stop','cleanup','reconcile']);}finally{f.close();}
+ });
+ const kinds=['stale','cancelled','source','project','output','binding','billing-stop','latest'] as const;
+ it.each(kinds.flatMap(kind=>['before-settlement','after-settlement'].map(at=>({kind,at}))))('consumes then rejects $kind $at',async({kind,at})=>{
+  const f=protocolFixture({role:'execute'});let original:WorkerResult|undefined;
+  const mutate=(result:WorkerResult)=>{const task=f.store.get('tasks',f.input.task.id)!;
+   if(kind==='stale')f.store.save('tasks',{...task,version:2});
+   if(kind==='cancelled')f.store.save('tasks',{...task,status:'cancelled'});
+   if(kind==='source')f.store.save('sources',{...f.input.source,content:'edited after test completion'});
+   if(kind==='project')f.store.save('projects',{...f.input.project,allowedPaths:['docs/','other/']});
+   if(kind==='output')(result.output as any).summary='changed after private frame';
+   if(kind==='binding')(result.output as any).planHash='unbound';
+   if(kind==='billing-stop')f.store.save('tasks',{...task,billingStop:{code:'subscription_auth',at:new Date().toISOString()}});
+   if(kind==='latest'){const attempt=f.store.list('attempts').at(-1)!;f.store.save('attempts',{...attempt,id:'later-attempt'});}
+  };
+  if(at==='after-settlement'){const dispatch=f.billing.dispatch.bind(f.billing);vi.spyOn(f.billing,'dispatch').mockImplementation(async(...args)=>{const result=await dispatch(...args);mutate(result);return result;});}
+  const worker=new LimaWorker('grok',f.config,f.billing),scheduler=new Scheduler(f.store,f.config,[{name:'grok',async run(input,signal,permit){original=await worker.run(input,signal,permit);if(at==='before-settlement')mutate(original);return original;}}],f.billing);
+  try{await scheduler.run(f.input.task,f.input.project,f.input).catch(()=>undefined);expect(original).toBeDefined();expect(takeHostTestRun(original!)).toBeUndefined();expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(1);}finally{f.close();}
+ });
+ it.each(['cleanup','reconcile','timeout'] as const)('never admits a passing frame with unconfirmed %s',async kind=>{
+  const f=protocolFixture({role:'execute',...(kind==='cleanup'?{cleanupFailure:true}:kind==='reconcile'?{fail:'reconcile'}:{holdCli:true})});if(kind==='timeout')f.config.workers.grok!.timeoutMs=200;
+  try{await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input).catch(()=>undefined);expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);}finally{f.close();}
+ });
+ it('discards the private tail before result, canonical rows, restart and later prompt',async()=>{
+  const f=protocolFixture({role:'execute'});try{const scheduler=new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing),output=await scheduler.run(f.input.task,f.input.project,f.input);
+   const action=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!,observation=action.payload.observation as any;expect(observation.comparable).toBeDefined();
+   const retainedText=JSON.stringify(output)+JSON.stringify(f.store.list('actions'));expect(retainedText).not.toContain('SYNTHETIC_PRIVATE_STDOUT_SENTINEL');expect(retainedText).not.toContain(Buffer.from('actual synthetic test SYNTHETIC_PRIVATE_STDOUT_SENTINEL').toString('base64'));expect(retainedText).not.toContain('outputBase64');
+   const {Store}=await import('../../src/store.js'),db=join(f.root,'retained.sqlite');let retained=new Store(db);for(const table of ['projects','sources','tasks','attempts','actions'] as const)for(const row of f.store.list(table))retained.save(table,row as any);retained.close();retained=new Store(db);
+   try{const {readTestObservation}=await import('../../src/knowledge-records.js');expect(readTestObservation(retained,observation.id,f.input.project)).toEqual(observation);retained.save('sources',{...f.input.source,status:'withdrawn'});expect(readTestObservation(retained,observation.id,f.input.project)).toBeUndefined();}finally{retained.close();}
+   await scheduler.run(f.input.task,f.input.project,{...f.input,artifact:output as any});expect(readFileSync(join(f.root,'last-prompt'),'utf8')).not.toContain('SYNTHETIC_PRIVATE_STDOUT_SENTINEL');
+  }finally{f.close();}
+ });
+});
+
+
+it('consumes private evidence when accepted attempt runner is changed after settlement',async()=>{
+ const f=protocolFixture({role:'execute'});let original:WorkerResult|undefined;const dispatch=f.billing.dispatch.bind(f.billing);
+ vi.spyOn(f.billing,'dispatch').mockImplementation(async(...args)=>{const result=await dispatch(...args),attempt=f.store.list('attempts').at(-1)!;f.store.save('attempts',{...attempt,runner:'codex'});return result;});
+ try{const worker=new LimaWorker('grok',f.config,f.billing);await new Scheduler(f.store,f.config,[{name:'grok',async run(input,signal,permit){original=await worker.run(input,signal,permit);return original;}}],f.billing).run(f.input.task,f.input.project,f.input);expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);expect(takeHostTestRun(original!)).toBeUndefined();}finally{f.close();}
+});
+
+
+it('does not publish private provenance when global timeout expires during successful finalization',async()=>{
+ const f=protocolFixture({role:'execute',stopDelayMs:2800});f.config.workers.grok!.timeoutMs=2500;
+ try{await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input).catch(()=>undefined);expect(f.events().filter(e=>e.stage==='tests')).toHaveLength(1);expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);}finally{f.close();}
+});
+
+
+it('retains captured process failure without comparable identity or error-code-as-name',async()=>{
+ const f=protocolFixture({role:'execute',capturedError:'ENOBUFS'});try{const output:any=await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input),o:any=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!.payload.observation;expect(output.tests[0].passed).toBe(false);expect(o.comparable).toBeUndefined();expect(o.checks[0]).toMatchObject({result:'failure',process:{errorCode:'ENOBUFS'}});expect(o.checks[0].name).toBeUndefined();}finally{f.close();}
+});
+
+
+it.each([{role:'execute',bindingMismatch:'plan'},{role:'check',bindingMismatch:'artifact'}] as const)('rejects actual model structural $bindingMismatch mismatch before canonical admission',async options=>{
+ const f=protocolFixture(options);let original:WorkerResult|undefined;try{const worker=new LimaWorker('grok',f.config,f.billing),output:any=await new Scheduler(f.store,f.config,[{name:'grok',async run(input,signal,permit){original=await worker.run(input,signal,permit);return original;}}],f.billing).run(f.input.task,f.input.project,f.input);expect(output.tests[0].passed).toBe(true);expect(f.store.list('attempts')[0]?.status).toBe('succeeded');expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toEqual([]);expect(takeHostTestRun(original!)).toBeUndefined();}finally{f.close();}
+});
+
+
+it.each([{testFiles:['docs/missing-test.js'],baselineContent:'fixture',incomplete:true},{testFiles:[],baselineContent:'earlier baseline',incomplete:false}])('retains actual process outcome with bounded measurement limits %j',async options=>{
+ const f=protocolFixture({role:'execute',...options});try{const output:any=await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input),o:any=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!.payload.observation;expect(output.tests[0].passed).toBe(true);expect(o.checks[0].result).toBe(options.incomplete?'incomplete':'success');
+  if(options.incomplete){expect(o.comparable).toBeUndefined();expect(o.environment.unknown).toContain('fileMeasurement');}else{expect(o.comparable).toBeDefined();expect(o.snapshot.overlayHash).toBe(digest({state:'measured',files:o.snapshot.files}));expect(o.snapshot.overlayHash).not.toBe(digest({state:'measured',files:[]}));}
+ }finally{f.close();}
+});
+
+
+it('recomputes exact binary output SHA on the host and discards the private Base64 carrier',async()=>{
+ const f=protocolFixture({role:'execute',binaryTail:true});try{const output=await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input),action=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!,o:any=action.payload.observation,bytes=Buffer.from([255,0,195,40,254,240,159,152,128]),{createHash}=await import('node:crypto');expect(o.checks[0].outputDigest).toBe(createHash('sha256').update(bytes).digest('hex'));expect(JSON.stringify(output)+JSON.stringify(action)).not.toContain(bytes.toString('base64'));expect(JSON.stringify(output)+JSON.stringify(action)).not.toContain('outputBase64');}finally{f.close();}
+});
+
+
+it('accepts exactly12000 decoded private bytes at the host boundary',async()=>{
+ const f=protocolFixture({role:'execute',largeTail:true});try{await new Scheduler(f.store,f.config,[new LimaWorker('grok',f.config,f.billing)],f.billing).run(f.input.task,f.input.project,f.input);const o:any=f.store.list('actions').find(a=>a.kind==='experience.test-observation')!.payload.observation,{createHash}=await import('node:crypto');expect(o.checks[0].outputDigest).toBe(createHash('sha256').update(Buffer.alloc(12000,171)).digest('hex'));}finally{f.close();}
 });
