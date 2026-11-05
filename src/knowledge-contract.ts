@@ -105,7 +105,7 @@ export interface RepositoryReadRequest {
 }
 export interface RepositoryReadback {observations:HostObservation[];files:ObservedFile[];tests:TestObservation[];resolution?:{sourceId:string;revision:string;quote:string;locator:string};gaps:string[]}
 export interface ReadbackProvenance {
-  sourceHash:string;policyHash:string;requestHash:string;
+  sourceHash:string;policyHash:string;requestHash:string;request:RepositoryReadRequest;
   attestedTests:{observationId:string;producerId:string;originalEventId:string;reportPath:string;reportDigest:string;snapshotDigest:string;testDefinitionDigest:string}[];
 }
 export interface CiTestReportV1 {
@@ -132,3 +132,11 @@ export const requestedRepositoryClaimSchema:z.ZodType<RequestedRepositoryClaim> 
   z.object({kind:z.literal('commit-exists'),repository:text,sha}).strict(),
   z.object({kind:z.literal('ci-result'),repository:text,headSha:sha,runId:id,jobId:id,checkName:text}).strict(),
 ]);
+
+/** Private canonical action payloads; never accepted as a provider admission receipt. */
+export interface CanonicalHostObservationPayload {
+ schemaVersion:1;observation:HostObservation;digest:string;sourceHash:string;policyHash:string;
+ request:RepositoryReadRequest;requestHash:string;sourceRefs:SourceRef[];
+ attestation?:ReadbackProvenance['attestedTests'][number];
+}
+export interface CanonicalKnowledgeEvidencePayload {schemaVersion:1;link:KnowledgeEvidenceLink;digest:string;sourceRefs:SourceRef[]}

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
+import { knowledgeActionDependencies } from './knowledge-records.js';
 import { ingestSource, redactWithdrawnEvidence } from './intake.js';
 
 const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
@@ -23,6 +24,8 @@ export class Store {
     this.db = new Database(databasePath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // Source retention changes must not leave removed private canonical bytes in free pages.
+    this.db.pragma('secure_delete = ON');
     this.db.pragma('busy_timeout = 5000');
     for (const table of tables) this.db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, domain TEXT NOT NULL, data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_scope ON ${table}(project_id, domain)`);
     this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, project_id UNINDEXED, domain UNINDEXED, terms, tokenize='unicode61')");
@@ -58,10 +61,12 @@ export class Store {
     if (table === 'sources' && (value as Entities['sources']).retention === 'ephemeral') {
       this.temporary.set(key, value);
       this.write(table, { ...value, content: '', title: 'Temporary source' } as Entities[K]);
+      this.protectTemporaryKnowledgeActions();
       return;
     }
     if (this.isTemporaryDerived(table, value)) {
       this.temporary.set(key, value);
+      if(table === 'actions')this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);
       return;
     }
     if (this.isTemporaryTaskEntity(table, value)) {
@@ -74,6 +79,7 @@ export class Store {
     if (table === 'cards') this.indexCard(value as KnowledgeCard);
     if (table === 'sources') {
       const source = value as Entities['sources'];
+      this.protectTemporaryKnowledgeActions();
       if (source.status !== 'active') this.db.prepare('DELETE FROM cards_fts WHERE id IN (SELECT json_extract(data, \'$.id\') FROM cards WHERE json_extract(data, \'$.sourceId\') = ?)').run(source.id);
     }
     if (vaultTables.has(table)) {
@@ -147,10 +153,25 @@ export class Store {
     return card.status === 'active' && card.projectId === scope.projectId && card.domain === scope.domain && (!card.expiresAt || Date.parse(card.expiresAt) > Date.now()) && source?.status === 'active' && source.revision === card.sourceRevision && source.projectId === card.projectId && source.domain === card.domain;
   }
   private isTemporaryDerived(table: Table, entity: Entities[Table]): boolean {
+    if (table === 'actions') return this.temporaryKnowledgeAction(entity as Entities['actions']);
     if (!['cards', 'rules', 'cases'].includes(table)) return false;
     if ('sourceId' in entity) return this.get('sources', entity.sourceId)?.retention === 'ephemeral';
     if ('citations' in entity) return entity.citations.some(c => this.get('sources', c.sourceId)?.retention === 'ephemeral');
     return false;
+  }
+  private temporaryKnowledgeAction(action:Entities['actions']):boolean {
+    const dependencies=knowledgeActionDependencies(action);
+    return dependencies.unresolved||dependencies.refs.some(ref=>this.temporarySourceDependency(ref.id));
+  }
+  private protectTemporaryKnowledgeActions():void {
+    for(const action of this.list('actions'))if(this.temporaryKnowledgeAction(action)){
+      this.temporary.set(`actions:${action.id}`,action);this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+    }
+  }
+  private temporarySourceDependency(id:string, seen=new Set<string>()):boolean {
+    if(seen.has(id))return true;seen.add(id);const source=this.get('sources',id);
+    const temporary=!source||source.retention==='ephemeral'||!!source.parentSources?.some(ref=>this.temporarySourceDependency(ref.id,seen));
+    seen.delete(id);return temporary;
   }
   private isTemporaryTaskEntity(table: Table, entity: Entities[Table]): boolean {
     const task = table === 'tasks' ? entity as Entities['tasks'] : 'taskId' in entity && entity.taskId ? this.get('tasks', entity.taskId) : undefined;

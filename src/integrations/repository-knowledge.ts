@@ -118,7 +118,7 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
   const bindingHash=digest({source:digest(source),policy:knowledgePolicyHash(project),request});
   function observe(claim:AtomicClaim,response:object,locator:string,producerId:string,originalEventId:string,eventAt?:string):void{
     const responseDigest=digest(response),observation:HostObservation={...scope,schemaVersion:1,id:stableId('repository-observation',originalEventId,claim,responseDigest,bindingHash),claim,
-      origin:{kind:'provider',provider,repository:project.repository,producerId,originalEventId,independentOrigin:originalEventId,derivedFrom:[]},sourceRefs:[{id:source.id,revision:source.revision}],responseDigest,locator,observedAt,bindingHash};
+      origin:{kind:'provider',provider,repository:project.repository,producerId,originalEventId,independentOrigin:`${provider}:${repositoryId}:producer:${producerId}`,derivedFrom:[]},sourceRefs:[{id:source.id,revision:source.revision}],responseDigest,locator,observedAt,bindingHash};
     if(eventAt)observation.eventAt=eventAt;if(!result.observations.some(o=>o.id===observation.id))result.observations.push(observation);
   }
   const subject={provider,repository:project.repository};
@@ -217,7 +217,7 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
       try{
         const raw=await session.bytes(`${root}/jobs/${e.job}/artifacts/${request.testReportPath.split('/').map(encodeURIComponent).join('/')}`,512_000,true,true);
         if(raw===undefined)throw new Error('missing');const report=parse(reportSchema,parseKnowledgeJson(new TextDecoder('utf-8',{fatal:true}).decode(raw)));
-        if(report.repository!==project.repository||report.headSha!==e.head||report.runId!==e.run||report.jobId!==e.job||report.snapshot.revision!==e.head||report.snapshot.overlayHash!==undefined)invalid();
+        if(report.repository!==project.repository||report.headSha!==e.head||report.runId!==e.run||report.jobId!==e.job||report.snapshot.revision!==e.head||(report.snapshot.overlayHash!==undefined&&report.snapshot.overlayHash!==digest({state:'measured',files:[]})))invalid();
         if(new Set(report.snapshot.files.map(f=>f.path)).size!==report.snapshot.files.length||new Set(report.definitions.map(d=>d.command)).size!==report.definitions.length||report.checks.length!==1||report.definitions.length!==1)invalid();
         const c=report.checks[0]!,definition=report.definitions[0]!;
         if(c.id!==e.canonicalId||c.name!==e.name||definition.command!==c.command||c.result!=='success'||!c.testFile||!definition.files.some(f=>f.path===c.testFile)||new Set(definition.files.map(f=>f.path)).size!==definition.files.length)invalid();
@@ -234,6 +234,6 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
   }
   if(request.issueSource){const issue=store.get('sources',request.issueSource.id);if(issue&&issue.revision===request.issueSource.revision){try{assertKnowledgeSource(store,issue,project);result.resolution={sourceId:issue.id,revision:issue.revision,quote:issue.content,locator:issue.locator};}catch{result.gaps.push('resolution_source_unavailable');}}else result.gaps.push('resolution_source_unavailable');}
   signal.throwIfAborted();assertKnowledgeSource(store,source,project);
-  completedReads.set(result,{provenance:{sourceHash:digest(source),policyHash:knowledgePolicyHash(project),requestHash:digest(request),attestedTests:attested},projectHash:digest(project),readbackHash:digest(result),assertCurrent:()=>assertKnowledgeSource(store,source,project)});
+  completedReads.set(result,{provenance:{sourceHash:digest(source),policyHash:knowledgePolicyHash(project),requestHash:digest(request),request:structuredClone(request),attestedTests:attested},projectHash:digest(project),readbackHash:digest(result),assertCurrent:()=>assertKnowledgeSource(store,source,project)});
   return result;
 }

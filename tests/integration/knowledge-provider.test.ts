@@ -9,55 +9,9 @@ import { Store } from '../../src/store.js';
 import type { AppConfig, Project, SourceRevision } from '../../src/domain.js';
 import type { CiTestReportV1, RepositoryReadRequest } from '../../src/knowledge-contract.js';
 
-const H='b'.repeat(40),H2='c'.repeat(40),blob='d'.repeat(40),time='2026-11-04T12:00:00Z';
-const bytes=Buffer.from('measured bytes\n'),sha256=createHash('sha256').update(bytes).digest('hex');
-const measured={path:'docs/test.ts',sha256,mode:'100644'},reportPath='docs/patrick-test-observation-v1.json';
+import { repositoryKnowledgeFixture, H, H2, blob, time, bytes, sha256, measured, reportPath } from '../fixtures/repository-knowledge.js';
 const stores:Store[]=[];afterEach(()=>stores.splice(0).forEach(s=>s.close()));
-function setup(provider:'github'|'gitlab'='github'){
-  const store=new Store(':memory:');stores.push(store);
-  const project:Project={id:'p',projectId:'p',domain:'personal',name:'P',description:'',repository:'owner/repo',repositoryProvider:provider,prdPath:'docs/PRD.md',allowedPaths:['docs/'],trustedChecks:['validate'],trustedAppIds:[provider==='github'?15368:731],ownerId:'owner',autoMerge:false,budgetUsd:0,createdAt:''};
-  const source:SourceRevision={id:'s',projectId:'p',domain:'personal',kind:'manual',externalId:'note',revision:'r1',title:'Read',content:JSON.stringify({schemaVersion:1,kind:'repository-facts',quote:'Requested check',repository:project.repository,headSha:H,changeNumber:17,checks:[{runId:'52',jobId:'71',checkName:'validate'}],testReportPath:reportPath}),locator:'note',authorId:'owner',status:'active',retention:'permanent',createdAt:''};
-  store.save('projects',project);store.save('sources',source);
-  const config={githubToken:'fixture-gh',gitlabUrl:'https://gitlab.test',gitlabToken:'fixture-gl'} as AppConfig;
-  const root=provider==='github'?'/repos/owner/repo':'/api/v4/projects/owner%2Frepo';
-  const web=provider==='github'?'https://github.com/owner/repo':'https://gitlab.test/owner/repo';
-  const routes:Record<string,any>=provider==='github'?{
-    '':{id:42,full_name:'owner/repo'},
-    '/pulls/17':{number:17,state:'open',merged:false,head:{sha:H2,repo:{id:42,full_name:'owner/repo'}},base:{repo:{id:42,full_name:'owner/repo'}},html_url:web+'/pull/17',updated_at:time},
-    [`/commits/${H}`]:{sha:H,commit:{committer:{date:time},tree:{sha:'e'.repeat(40)}}},
-    '/actions/runs/52':{id:52,head_sha:H,repository:{id:42,full_name:'owner/repo'},status:'completed',conclusion:'success',html_url:web+'/actions/runs/52',updated_at:time},
-    '/actions/runs/52/jobs':{total_count:1,jobs:[{id:71,run_id:52,head_sha:H,name:'validate',status:'completed',conclusion:'success',completed_at:time,check_run_url:'https://api.github.com/repos/owner/repo/check-runs/99',html_url:web+'/actions/runs/52/job/71'}]},
-    '/check-runs/99':{id:99,head_sha:H,name:'validate',status:'completed',conclusion:'success',app:{id:15368},completed_at:time,html_url:web+'/runs/99'},
-    [`/git/trees/${H}`]:{sha:'e'.repeat(40),truncated:false,tree:[{path:measured.path,mode:'100644',type:'blob',sha:blob}]},
-    [`/git/blobs/${blob}`]:{sha:blob,encoding:'base64',size:bytes.length,content:bytes.toString('base64')},
-  }:{
-    '':{id:42,path_with_namespace:'owner/repo'},
-    '/merge_requests/17':{iid:17,project_id:42,source_project_id:42,target_project_id:42,state:'opened',sha:H2,web_url:web+'/-/merge_requests/17',updated_at:time},
-    [`/repository/commits/${H}`]:{id:H,committed_date:time},
-    '/pipelines/52':{id:52,project_id:42,sha:H,status:'success',source:'merge_request_event',user:{id:731},finished_at:time,web_url:web+'/-/pipelines/52'},
-    '/jobs/71':{id:71,project_id:42,name:'validate',status:'success',pipeline:{id:52,project_id:42,sha:H},commit:{id:H},finished_at:time,web_url:web+'/-/jobs/71'},
-    '/pipelines/52/jobs':[{id:71,name:'validate',pipeline:{id:52,project_id:42,sha:H},commit:{id:H}}],
-    '/repository/tree':[{id:blob,path:measured.path,name:'test.ts',mode:'100644',type:'blob'}],
-    [`/repository/files/${encodeURIComponent(measured.path)}`]:{file_path:measured.path,blob_id:blob,commit_id:H,encoding:'base64',size:bytes.length,content_sha256:sha256},
-    [`/repository/files/${encodeURIComponent(measured.path)}/raw`]:bytes,
-  };
-  const report:CiTestReportV1={schemaVersion:1,repository:project.repository,headSha:H,runId:'52',jobId:'71',snapshot:{revision:H,files:[{...measured}]},definitions:[{command:'validate',files:[{...measured}]}],checks:[{id:'gitlab-job:71',name:'validate',command:'validate',testFile:measured.path,result:'success',outputDigest:'a'.repeat(64)}],environment:{observed:{node:'24'},unknown:['browser']}};
-  routes[`/jobs/71/artifacts/${reportPath}`]=report;
-  const requests:{url:URL;init:RequestInit}[]=[];
-  let after:((path:string)=>void)|undefined, override:((path:string,value:any,url:URL)=>Response|undefined)|undefined;
-  const fetcher:typeof fetch=async(input,init)=>{
-    const url=new URL(String(input)),path=url.pathname.slice(root.length);requests.push({url,init:init!});
-    expect(init?.method).toBe('GET');expect(init?.redirect).toBe('error');expect(init?.signal).toBeInstanceOf(AbortSignal);
-    expect(url.origin).toBe(provider==='github'?'https://api.github.com':'https://gitlab.test');expect(url.username+url.password).toBe('');
-    expect(new Headers(init?.headers).get(provider==='github'?'Authorization':'PRIVATE-TOKEN')).toBe(provider==='github'?'Bearer fixture-gh':'fixture-gl');
-    const value=routes[path];if(value===undefined)throw new Error('Unexpected fixture route: '+path);
-    const response=override?.(path,value,url)??new Response(value instanceof Uint8Array?Uint8Array.from(value).buffer:JSON.stringify(value),{headers:{'content-type':'application/json'}});
-    after?.(path);return response;
-  };
-  const github=new GitHubWriter(store,config,fetcher),gitlab=new GitLabWriter(store,config,fetcher);
-  const request:RepositoryReadRequest={repository:project.repository,headSha:H,changeNumber:17,checks:[{runId:'52',jobId:'71',checkName:'validate'}],filePaths:[measured.path]};
-  return {store,config,fetcher,project,source,request,routes,report,requests,github,gitlab,reader:createRepositoryKnowledgeReader(github,gitlab),setAfter:(f:typeof after)=>{after=f;},setOverride:(f:typeof override)=>{override=f;}};
-}
+function setup(provider:'github'|'gitlab'='github'){const s=repositoryKnowledgeFixture(provider);stores.push(s.store);return s;}
 
 function retainedRetry(s:ReturnType<typeof setup>,provider:'github'|'gitlab') {
   s.request.current={changeNumber:17,checkNames:['validate']};
@@ -305,5 +259,22 @@ describe('bounded optional captured process errors',()=>{
  it.each(['ETIMEDOUT','ENOBUFS','ENOENT','EACCES','PROCESS_ERROR','unknown-code','extra-key'])('preserves ordinary CI but refuses a success/error comparable report with %s',async code=>{
   const s=setup('gitlab');s.request.testReportPath=reportPath;(s.report.checks[0] as any).process={...processFacts,...(code==='extra-key'?{rawError:'private exception'}:{errorCode:code})};
   const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);expect(r.tests[0]?.comparable).toBeUndefined();expect(r.observations[2]?.claim).toMatchObject({kind:'ci-result',value:{conclusion:'success'}});expect(r.gaps).toContain('comparable_attestation_unavailable');expect(takeRepositoryReadback(r)?.attestedTests).toEqual([]);
+ });
+});
+
+describe('G4 measured empty overlay attestation',()=>{
+ it.each(['absent','measured-empty','arbitrary','unknown-baseline','changed'] as const)('preserves explicit overlay identity for %s',async kind=>{
+  const s=setup('gitlab');s.request.testReportPath=reportPath;
+  const {digest}=await import('../../src/domain.js');
+  if(kind==='measured-empty')s.report.snapshot.overlayHash=digest({state:'measured',files:[]});
+  if(kind==='arbitrary')s.report.snapshot.overlayHash='e'.repeat(64);
+  if(kind==='unknown-baseline')s.report.snapshot.overlayHash=digest({state:'unknown-baseline',files:[]});
+  if(kind==='changed')s.report.snapshot.overlayHash=digest({state:'measured',files:s.report.snapshot.files});
+  const r=await s.reader.read(s.project,s.source,s.request,new AbortController().signal);
+  expect(!!r.tests[0]?.comparable).toBe(['absent','measured-empty'].includes(kind));
+  if(kind==='measured-empty'){
+   expect(r.tests[0]!.snapshot.overlayHash).toBe(s.report.snapshot.overlayHash);
+   expect(r.tests[0]!.comparable!.snapshotDigest).not.toBe(snapshotDigest({...r.tests[0]!.snapshot,overlayHash:undefined}));
+  }
  });
 });
