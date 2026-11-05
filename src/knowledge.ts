@@ -1,8 +1,9 @@
 import { DomainError, digest, knowledgeOutputSchema, now, stableId, type KnowledgeCard, type SourceRevision } from './domain.js';
+import { structuredClaimBody } from './knowledge-contract.js';
 import type { AtomicClaim, ParsedStructuredKnowledge, RequestedRepositoryClaim } from './knowledge-contract.js';
 import { knowledgeCandidateHash, knowledgePolicyHash } from './knowledge-identity.js';
 import { linkExperienceForCards } from './experience.js';
-import { acceptRepositoryReadback, linkKnowledgeEvidence } from './knowledge-evidence.js';
+import { acceptRepositoryReadbackWithReceipt, linkKnowledgeEvidence } from './knowledge-evidence.js';
 import { enqueueStructuredKnowledge, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs, type StructuredIngestJobV1 } from './knowledge-jobs.js';
 import { knowledgeRequestSourceRefs, knowledgeSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
@@ -34,6 +35,8 @@ function publish(store:Store,source:SourceRevision,output:unknown,structured:boo
 export interface StructuredKnowledgeProcessOptions {
   refresh?: 'current';
   readbackUnavailableReason?: 'repository_reader_unavailable' | 'host_egress_unavailable';
+  /** Internal host dispatch only; invoked after the admission transaction commits. */
+  onCurrentReceipt?: (receipt:StructuredCurrentReceipt)=>void;
 }
 type Candidate = {title:string;body:string;quote:string;aliases:string[];verification:'reported';kind:'fact'|'experience';experience?:Extract<ParsedStructuredKnowledge,{kind:'experience'}>['input']['details'];pendingClaim?:RequestedRepositoryClaim};
 
@@ -71,6 +74,7 @@ function untilAborted<T>(operation:Promise<T>,signal:AbortSignal):Promise<T> {
 }
 
 /** One host-only processor; the authenticated readback never crosses a synchronous transaction. */
+export interface StructuredCurrentReceipt {status:'current';observedAt:string;observations:{id:string;hash:string}[]}
 export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKnowledgeReader|undefined,sourceId:string,signal:AbortSignal,options:StructuredKnowledgeProcessOptions={}):Promise<'ordinary'|'processed'|'pending'> {
  const source=store.get('sources',sourceId),project=source&&store.get('projects',source.projectId);
  if(!source||!project)throw new DomainError('Knowledge source is unavailable.','stale_source',409);
@@ -140,7 +144,8 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    if(c.pendingClaim){
     if(actual.pendingClaim&&digest(actual.pendingClaim)!==digest(c.pendingClaim)||actual.claim&&!matches(c.pendingClaim,actual.claim.claim)||!actual.pendingClaim&&!actual.claim)throw new DomainError('Knowledge candidate changed.','stale_source',409);
    }else if(actual.pendingClaim||actual.claim)throw new DomainError('Knowledge candidate changed.','stale_source',409);
-   if(knowledgeCandidateHash({...actual,claim:undefined,pendingClaim:c.pendingClaim})!==knowledgeCandidateHash(c))throw new DomainError('Knowledge candidate changed.','stale_source',409);
+   if(actual.body!==c.body&&(!actual.claim||actual.body!==structuredClaimBody(actual.claim.claim,actual.quote)))throw new DomainError('Knowledge candidate changed.','stale_source',409);
+   if(knowledgeCandidateHash({...actual,body:c.body,claim:undefined,pendingClaim:c.pendingClaim})!==knowledgeCandidateHash(c))throw new DomainError('Knowledge candidate changed.','stale_source',409);
    store.save('cards',actual);return {id:actual.id,hash:knowledgeCandidateHash(actual)};
   });
  });
@@ -159,6 +164,7 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    action=store.get('actions',id);job=action&&structuredIngestJobSchema.safeParse(action.payload);
   }
   const readback=await untilAborted(reader.read(project,source,request,signal),signal);signal.throwIfAborted();
+  let receipt:StructuredCurrentReceipt|undefined;
   store.transaction(()=>{
    assertKnowledgeSource(store,source,project);if(issue)assertKnowledgeSource(store,issue,project);
    const liveJob=store.get('actions',id);
@@ -166,14 +172,21 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    const reparsed=parseStructuredKnowledge(source,project);
    if(!reparsed||digest(reparsed)!==digest(selected)||digest(structuredRepositoryRequest(store,source,project,selected))!==digest({...request,current:undefined}))throw new DomainError('Knowledge request changed.','stale_source',409);
    for(const c of cards){const current=store.get('cards',c.id);if(!current||current.status!=='active'||knowledgeCandidateHash(current)!==c.hash)throw new DomainError('Knowledge candidate changed.','stale_source',409);}
-   const ids=acceptRepositoryReadback(store,source.id,readback,()=>{consumed=true;});
-   const observations=ids.map(observationId=>readHostObservation(store,observationId,project)).filter(o=>o!==undefined);
-   for(const c of cards){const current=store.get('cards',c.id)!;if(!current.pendingClaim)continue;const found=observations.find(o=>matches(current.pendingClaim!,o.claim));if(!found)continue;
-    const next={...current,claim:{schemaVersion:1 as const,claim:found.claim,quote:current.quote,interpretation:'reported' as const}};delete next.pendingClaim;store.save('cards',next);linkKnowledgeEvidence(store,next.id,[found.id]);
+   const admission=acceptRepositoryReadbackWithReceipt(store,source.id,readback,()=>{consumed=true;});
+   if(refresh&&admission.current)receipt={status:'current',...admission.current};
+   const observations=admission.ids.map(observationId=>readHostObservation(store,observationId,project)).filter(o=>o!==undefined);
+   for(const c of cards){const current=store.get('cards',c.id)!;
+    if(current.pendingClaim){const found=observations.find(o=>matches(current.pendingClaim!,o.claim));if(!found)continue;
+     const next={...current,body:structuredClaimBody(found.claim,current.quote),claim:{schemaVersion:1 as const,claim:found.claim,quote:current.quote,interpretation:'reported' as const}};delete next.pendingClaim;store.save('cards',next);linkKnowledgeEvidence(store,next.id,[found.id]);
+    }else if(refresh&&current.claim){
+     const found=observations.find(o=>admission.current?.observations.some(selected=>selected.id===o.id)&&digest(o.claim)===digest(current.claim!.claim));
+     if(found)linkKnowledgeEvidence(store,current.id,[found.id]);
+    }
    }
    if(!refresh)updateJob(store,id,j=>{const {readHold:_hold,...rest}=j;return {...rest,phase:'processed',errorCode:undefined};},'completed');
    linkExperienceForCards(store,cards.map(candidate=>store.get('cards',candidate.id)!).filter(Boolean));
   });
+  if(receipt)options.onCurrentReceipt?.(receipt);
   return 'processed';
  }catch(error){if(error instanceof VaultSyncError||isKnowledgeSnapshotFailure(error))throw error;if(consumed&&!refresh)return 'pending';return pending('repository_readback_failed');}
 }

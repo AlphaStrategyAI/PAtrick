@@ -2,11 +2,12 @@ import { DomainError, digest, now, type Scope } from './domain.js';
 import type { AtomicClaim, CanonicalHostObservationPayload, CanonicalCiTestObservationPayload, HostObservation, KnowledgeEvidenceLink, RepositoryReadback, ReadbackProvenance, SourceRef } from './knowledge-contract.js';
 import { atomicClaimSchema } from './knowledge-contract.js';
 import { knowledgeCandidateHash, knowledgePolicyHash, snapshotDigest } from './knowledge-identity.js';
-import { canonicalCiTestObservationId, canonicalCiTestPayloadSchema, canonicalHostPayloadSchema, canonicalKnowledgePayloadSchema, hostObservationId, hostObservationSchema, isRetractedHostObservation, knowledgeRequestSourceRefs, knowledgeSourceRefs, readCanonicalHostRecord, readHostObservation } from './knowledge-records.js';
+import { canonicalCiTestObservationId, canonicalCiTestPayloadSchema, canonicalHostPayloadSchema, canonicalKnowledgePayloadSchema, compareIndependentClaim, hostObservationId, hostObservationSchema, isRetractedHostObservation, knowledgeRequestSourceRefs, knowledgeSourceRefs, readCanonicalHostRecord, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import { isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { takeRepositoryReadback } from './integrations/repository-knowledge.js';
 import type { Store } from './store.js';
+export { compareIndependentClaim } from './knowledge-records.js';
 
 function invalid():never {throw new DomainError('Knowledge evidence is unavailable or incompatible.','invalid_knowledge_evidence',409);}
 const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
@@ -15,11 +16,15 @@ function temporary(store:Store,refs:SourceRef[]):boolean{return refs.some(r=>sto
 function sameScope(a:Scope,b:Scope):boolean{return a.projectId===b.projectId&&a.domain===b.domain;}
 
 /** Consume a concrete authenticated handoff before the final synchronous canonical transaction. */
+export interface AdmittedRepositoryReadback {ids:string[];current?:{observedAt:string;observations:{id:string;hash:string}[]}}
 export function acceptRepositoryReadback(store:Store,sourceId:string,readback:RepositoryReadback,onConsumed?:()=>void):string[] {
+ return acceptRepositoryReadbackWithReceipt(store,sourceId,readback,onConsumed).ids;
+}
+export function acceptRepositoryReadbackWithReceipt(store:Store,sourceId:string,readback:RepositoryReadback,onConsumed?:()=>void):AdmittedRepositoryReadback {
  const provenance=takeRepositoryReadback(readback,onConsumed);if(!provenance)invalid();
  return store.transaction(()=>acceptRepositoryReadbackBody(store,sourceId,readback,provenance));
 }
-function acceptRepositoryReadbackBody(store:Store,sourceId:string,readback:RepositoryReadback,provenance:ReadbackProvenance):string[] {
+function acceptRepositoryReadbackBody(store:Store,sourceId:string,readback:RepositoryReadback,provenance:ReadbackProvenance):AdmittedRepositoryReadback {
  const source=store.get('sources',sourceId),project=source?store.get('projects',source.projectId):undefined;
  if(!source||!project||digest(source)!==provenance.sourceHash||knowledgePolicyHash(project)!==provenance.policyHash||digest(provenance.request)!==provenance.requestHash)invalid();
  assertKnowledgeSource(store,source,project);
@@ -35,12 +40,12 @@ function acceptRepositoryReadbackBody(store:Store,sourceId:string,readback:Repos
  const rawBindingHash=digest({source:provenance.sourceHash,policy:provenance.policyHash,request});
  const bindingHash=issueSourceHash?digest({source:provenance.sourceHash,policy:provenance.policyHash,request,issueSourceHash}):rawBindingHash;
  const ancestry=sourceRefs.filter(r=>r.id!==source.id).map(r=>`source:${r.id}:${r.revision}`);
- const rows:CanonicalHostObservationPayload[]=[];
+ const rows:CanonicalHostObservationPayload[]=[],rawToCanonical=new Map<string,string>();
  const add=(raw:HostObservation,attestation?:CanonicalHostObservationPayload['attestation'])=>{
   if(!hostObservationSchema.safeParse(raw).success||!sameScope(raw,project)||raw.bindingHash!==rawBindingHash||raw.origin.repository!==project.repository||raw.claim.subject.repository!==project.repository||raw.claim.subject.provider!==project.repositoryProvider||!equal(raw.sourceRefs,[{id:source.id,revision:source.revision}]))invalid();
   const observation={...structuredClone(raw),bindingHash,sourceRefs,origin:{...raw.origin,derivedFrom:ancestry}};observation.id=hostObservationId(observation);
   const payload:CanonicalHostObservationPayload={schemaVersion:1,observation,digest:digest(observation),sourceHash:provenance.sourceHash,policyHash:provenance.policyHash,...(issueSourceHash?{issueSourceHash}:{}),request,requestHash:provenance.requestHash,sourceRefs,...(attestation?{attestation}:{})};
-  if(!canonicalHostPayloadSchema.safeParse(payload).success)invalid();rows.push(payload);
+  if(!canonicalHostPayloadSchema.safeParse(payload).success)invalid();rows.push(payload);rawToCanonical.set(raw.id,observation.id);
  };
  for(const o of readback.observations){if(o.origin.kind!=='provider'||o.claim.kind==='test-result')invalid();add(o);}
  for(const t of readback.tests){
@@ -87,23 +92,12 @@ function acceptRepositoryReadbackBody(store:Store,sourceId:string,readback:Repos
    if(old){const parsed=canonicalCiTestPayloadSchema.safeParse(old.payload),previous=old.payload as unknown as CanonicalCiTestObservationPayload;if(old.kind!=='experience.test-observation'||old.status!=='completed'||!sameScope(old,project)||!parsed.success||previous.digest!==digest(previous.observation)||!equal({...previous.observation,observedAt:observation.observedAt},observation)||!equal({...previous,observation:payload.observation,digest:payload.digest},payload))invalid();continue;}
    store.save('actions',{id:observation.id,projectId:project.id,domain:project.domain,kind:'experience.test-observation',status:'completed',payload:payload as unknown as Record<string,unknown>,updatedAt:now()});
   }
-  return rows.map(p=>p.observation.id);
+  const ids=rows.map(p=>p.observation.id);
+  if(!provenance.current)return {ids};
+  if(!request.current||!provenance.current.rawObservationIds.length||new Set(provenance.current.rawObservationIds).size!==provenance.current.rawObservationIds.length)invalid();
+  const selected=provenance.current.rawObservationIds.map(id=>{const canonicalId=rawToCanonical.get(id),action=canonicalId&&store.get('actions',canonicalId),record=action&&readCanonicalHostRecord(action);if(!record)invalid();return {id:record.observation.id,hash:digest(record.observation)};});
+  return {ids,current:{observedAt:provenance.current.observedAt,observations:selected}};
  });
-}
-
-/** Pure bounded comparison of retained observations; no supplied object can admit canonical authority. */
-export function compareIndependentClaim(claim:AtomicClaim,observations:readonly HostObservation[]):boolean {
- if(claim.kind!=='test-result'||!atomicClaimSchema.safeParse(claim).success||observations.length<2||observations.length>32)return false;
- if(observations.some(o=>!hostObservationSchema.safeParse(o).success||!equal(o.claim,claim)||!sameScope(o,observations[0]!)||o.origin.repository!==claim.subject.repository||o.origin.derivedFrom.some(v=>v.startsWith('unknown')||v===o.id||v===o.origin.originalEventId)))return false;
- // Any contradiction or unsupported atom in the supplied set fails closed, even if another pair would agree.
- for(let i=0;i<observations.length;i++)for(let j=i+1;j<observations.length;j++){
-  const a=observations[i]!,b=observations[j]!,ar=new Set([a.id,a.origin.originalEventId,...a.origin.derivedFrom]),br=new Set([b.id,b.origin.originalEventId,...b.origin.derivedFrom]);
-  const aSources=new Set(a.sourceRefs.map(r=>`source:${r.id}:${r.revision}`)),bSources=new Set(b.sourceRefs.map(r=>`source:${r.id}:${r.revision}`));
-  if(a.origin.derivedFrom.some(r=>bSources.has(r))||b.origin.derivedFrom.some(r=>aSources.has(r)))continue;
-  if(a.id===b.id||a.origin.originalEventId===b.origin.originalEventId||a.origin.independentOrigin===b.origin.independentOrigin||[...ar].some(r=>br.has(r)))continue;
-  return true;
- }
- return false;
 }
 
 export function linkKnowledgeEvidence(store:Store,cardId:string,observationIds:string[]):KnowledgeEvidenceLink {return store.transaction(()=>linkKnowledgeEvidenceBody(store,cardId,observationIds));}

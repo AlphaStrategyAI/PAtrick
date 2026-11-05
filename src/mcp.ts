@@ -17,7 +17,7 @@ async function api(path:string,body?:unknown):Promise<any> {
 function result(value:unknown){return {content:[{type:'text' as const,text:JSON.stringify(value)}]};}
 function scoped(entity:{projectId:string;domain:string}|undefined):boolean{return !!projectId&&!!domain&&entity?.projectId===projectId&&entity.domain===domain;}
 const server=new McpServer({name:'patrick',version:'0.1.0'});
-server.registerTool('lookup',{title:'Search current project evidence',description:'Returns current authorized knowledge with exact quotations and source revisions. Unknown projects return no memory.',inputSchema:{query:z.string().min(1).max(500)},annotations:{readOnlyHint:true}},async({query})=>{
+server.registerTool('lookup',{title:'Search project evidence',description:'Returns scoped source reports and labeled historical observations with exact quotations and source revisions. Current state requires fresh host readback.',inputSchema:{query:z.string().min(1).max(500)},annotations:{readOnlyHint:true}},async({query})=>{
   if(!projectId||!domain)return result({cards:[]});
   try{return result(await api(`/api/lookup?project=${encodeURIComponent(projectId)}&domain=${encodeURIComponent(domain)}&q=${encodeURIComponent(query)}`));}
   catch(error){if(error instanceof KnowledgeSnapshotUnavailable)return {isError:true,content:[{type:'text' as const,text:error.message}]};throw error;}

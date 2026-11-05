@@ -89,7 +89,7 @@ process.stdin.on('end', () => {
       const task: WorkerInput['task'] = { id: 'fixture-task', projectId: project.id, domain: project.domain, sourceId: source.id, sourceRevision: source.revision, title: source.title, description: source.content, status: 'feedback', version: 1, createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: 1, spentUsd: 0, stage: 'feedback' };
       const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: root, vaultDir: root, ownerId: project.ownerId, authToken: 'synthetic-auth', sessionSecret: 'synthetic-session', projects: [project], scanIntervalMs: 1000, workers: { grok: { command: 'fixture-grok', args: [], timeoutMs: 5000, isolation: 'lima', instance: 'fixture-instance' } }, runnerPolicies: [{ runner: 'grok', roles: ['feedback'], domains: [project.domain], provider: 'fixture-provider', model: 'fixture-model', admitted: true, costPerRunUsd: 0, independentReview: false }] };
 
-      const input: WorkerInput = { task, project, source, role: 'feedback', cards: [], rules: [] };
+      const input: WorkerInput = { task, project, source, role: 'feedback', cards: [], facts: [], rules: [] };
       bound = bindSyntheticLimaBilling(config, input);
       const run = new LimaWorker('grok', config, bound.billing).run(input).catch(error => {
         if (existsSync(failurePath)) error.message += ` ${readFileSync(failurePath, 'utf8')}`;
@@ -151,7 +151,7 @@ function protocolFixture(options:FixtureOptions={}) {
   const task:WorkerInput['task']={id:'task',projectId:project.id,domain:project.domain,sourceId:source.id,sourceRevision:source.revision,title:'fixture',description:'',status:'feedback',version:1,createdAt,updatedAt:createdAt,runAfter:createdAt,attempts:0,repairCount:0,budgetUsd:0,spentUsd:0,stage:role};
   const literal='fixture-model;$(touch /tmp/never-executed)';
   const config:AppConfig={mode:'test',host:'localhost',port:1,dataDir:root,vaultDir:root,ownerId:'owner',authToken:'',sessionSecret:'',projects:[project],scanIntervalMs:1000,workers:{[runner]:{command:`fixture-${runner}`,args:['literal;$(id)'],isolation:'lima',instance:'fixture-instance',guestUser:'patrick-dedicated',timeoutMs:5000}},runnerPolicies:[{runner,roles:[role],domains:[project.domain],provider:'fixture',model:literal,admitted:true,costPerRunUsd:0,independentReview:false}]};
-  const input:WorkerInput={task,project,source,role,cards:[],rules:[],...(['execute','check'].includes(role)?{plan:{taskVersion:1,sourceRevision:'revision',baselineSha:'base',summary:'fixture',paths:['docs/PRD.md'],steps:['write'],tests:['literal test;$(id)'],stopConditions:['stop']}}:{})};
+  const input:WorkerInput={task,project,source,role,cards:[],facts:[],rules:[],...(['execute','check'].includes(role)?{plan:{taskVersion:1,sourceRevision:'revision',baselineSha:'base',summary:'fixture',paths:['docs/PRD.md'],steps:['write'],tests:['literal test;$(id)'],stopConditions:['stop']}}:{})};
   if(input.plan){input.task.plan=input.plan;input.plan.testFiles=options.testFiles??(options.comparableRepository?['docs/PRD.md']:[]);input.baselineFiles=[{path:'docs/PRD.md',content:options.baselineContent??'fixture'}];}
   const output=role==='check'?{taskVersion:1,planHash:'hash',artifactHash:'artifact',verdict:'pass',summary:'fixture',issues:[],tests:[{command:'declared',passed:false,output:'untrusted'}]}:role==='execute'?{taskVersion:1,planHash:'hash',baselineSha:'base',files:[{path:'docs/PRD.md',content:'fixture'}],tests:[{command:'declared',passed:false,output:'untrusted'}],summary:'fixture'}:{summary:'fixture',observations:[]};
   if(role==='check')input.artifact={taskVersion:1,planHash:'hash',baselineSha:'base',files:[{path:'docs/PRD.md',content:'fixture'}],tests:[{command:'declared',passed:false,output:'untrusted'}],summary:'fixture'};
@@ -566,6 +566,25 @@ describe('strict ordinary control IPC2 finalization',()=>{
  });
 });
 
+
+describe('G7-FIX1 decision transport',()=>{
+ it('serializes host-owned labels and prompt instructions for a stored legacy decision',async()=>{
+  const f=protocolFixture();
+  try{
+   f.input.task.decision={action:'proceed',summary:'Prior interpretation',rationale:'Prior reasoning',expectedOutcome:'Predicted change',citations:[],ruleIds:[]};
+   f.store.save('tasks',f.input.task);
+   (f.input as any).decisionInterpretation={summary:'source-fact',rationale:'source-fact',expectedOutcome:'observed-result'};
+   await new LimaWorker('grok',f.config,f.billing).run(f.input);
+   const prompt=readFileSync(join(f.root,'last-prompt'),'utf8');
+   expect(prompt).toContain('prior task.decision summary and rationale as assistant interpretations and expectedOutcome as an assistant prediction');
+   expect(prompt).toContain('question option rationales are assistant interpretations and their tradeoffs are predictions');
+   const serialized=JSON.parse(prompt.split('FROZEN INPUT:\n')[1]!);
+   expect(serialized.task.decision).toMatchObject({summary:'Prior interpretation',rationale:'Prior reasoning',expectedOutcome:'Predicted change'});
+   expect(serialized.task.decision.grounds).toBeUndefined();
+   expect(serialized.decisionInterpretation).toEqual({summary:'assistant-inference',rationale:'assistant-inference',expectedOutcome:'assistant-prediction'});
+  }finally{f.close();}
+ });
+});
 
 describe('authentic accepted local observations',()=>{
  it('instructs knowledge extraction to preserve a whole declared relation block without inventing evidence',async()=>{

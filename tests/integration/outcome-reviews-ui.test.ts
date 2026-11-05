@@ -20,7 +20,7 @@ function setup() {
   function judgment(projectId = 'p', title = '原始判断 <img src=x onerror="judgment()">') {
     const p = config.projects.find(p => p.id === projectId)!;
     const task = engine.ingest({ projectId, externalId: `idea-${projectId}`, revision: 'v1', title, content: 'Synthetic original source', retention: 'permanent' })!;
-    const input = { task, source: store.get('sources', task.sourceId)!, project: p, role: 'decide', cards: [], rules: [] } as WorkerInput;
+    const input = { task, source: store.get('sources', task.sourceId)!, project: p, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
     store.save('attempts', { id: `attempt-${projectId}`, projectId, domain: p.domain, taskId: task.id, taskVersion: task.version, role: 'decide', runner: 'grok', model: 'local-test', provider: 'local-test', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
     return { task, snapshot: recordDecisionSnapshot(store, task, input, { action: 'proceed', summary: '当时初判 <script>judgment()</script>', rationale: '当时依据', expectedOutcome: '预期仍需验证', citations: [], ruleIds: [] }) };
   }
@@ -67,7 +67,7 @@ describe('outcome reviews on real HTTP pages', () => {
     const f = setup();
     const firstAttempt = f.store.get('attempts', 'attempt-p')!;
     f.store.save('attempts', { ...firstAttempt, id: 'second-decide-attempt' });
-    const input = { task: f.task, source: f.store.get('sources', f.task.sourceId)!, project: f.project, role: 'decide', cards: [], rules: [] } as WorkerInput;
+    const input = { task: f.task, source: f.store.get('sources', f.task.sourceId)!, project: f.project, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
     const second = recordDecisionSnapshot(f.store, f.task, input, f.snapshot.decision);
     expect(second.id).not.toBe(f.snapshot.id);
     const html = reviewRegion(await f.page());

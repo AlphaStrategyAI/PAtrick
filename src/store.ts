@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { DomainError, digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
-import { canonicalExperiencePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, normalizationOriginPayloadSchema } from './knowledge-records.js';
+import { canonicalExperiencePayloadSchema, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, normalizationOriginPayloadSchema, validFactualContextTombstoneTransition } from './knowledge-records.js';
 import { ingestSource, redactWithdrawnEvidence } from './intake.js';
 import { enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
@@ -15,10 +15,10 @@ type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Tab
 type TemporaryEntry = { entity: Entities[Table]; privacyInvalidated?: true; missingJobCardId?: string; normalizationTransient?: true };
 type ExperienceActionQuery = {scope?:Scope;cardId?:string;observationId?:string;revision?:string;after?:string;file?:string};
 type IdGroups={keys:Map<string,Set<string>>;byId:Map<string,string[]>};
-type OperationGroups={hosts:Map<string,IdGroups>;observations:Map<string,IdGroups>;temporary?:IdGroups};
-type MutationFrame={hostScopes:Set<string>;observationScopes:Set<string>;temporary:boolean};
+type OperationGroups={hosts:Map<string,IdGroups>;observations:Map<string,IdGroups>;knowledgeLinks:Map<string,IdGroups>;temporary?:IdGroups};
+type MutationFrame={hostScopes:Set<string>;observationScopes:Set<string>;knowledgeLinkScopes:Set<string>;temporary:boolean};
 const newGroups=():IdGroups=>({keys:new Map(),byId:new Map()});
-const newOperation=():OperationGroups=>({hosts:new Map(),observations:new Map()});
+const newOperation=():OperationGroups=>({hosts:new Map(),observations:new Map(),knowledgeLinks:new Map()});
 const groupKey=(...parts:unknown[])=>JSON.stringify(parts);
 function updateGroups(groups:IdGroups,id:string,keys:string[]):void {
   for(const key of groups.byId.get(id)??[]){const ids=groups.keys.get(key);ids?.delete(id);if(!ids?.size)groups.keys.delete(key);}
@@ -134,7 +134,7 @@ export class Store {
   private scopeKey(scope:Scope):string {return groupKey(scope.projectId,scope.domain);}
   private actionKeys(action:Entities['actions'],scope:Scope=action):string[] {
     const scoped=this.scopeKey(scope),kind=action.kind,keys=[groupKey('kind',kind),groupKey('kind-scope',kind,scoped)];
-    const payload=action.payload as {sourceHash?:unknown;requestHash?:unknown;association?:{cardId?:unknown;observationId?:unknown};normalizationOrigin?:{cardId?:unknown};observation?:{claim?:{kind?:unknown};snapshot?:{files?:unknown;revision?:unknown};observedAt?:unknown}}|null;
+    const payload=action.payload as {sourceHash?:unknown;requestHash?:unknown;association?:{cardId?:unknown;observationId?:unknown};link?:{cardId?:unknown};normalizationOrigin?:{cardId?:unknown};observation?:{claim?:{kind?:unknown};snapshot?:{files?:unknown;revision?:unknown};observedAt?:unknown}}|null;
     if(kind==='knowledge.host-observation'){
       const root=hostRoot(action);
       keys.push(identifiableHostRoot(root)?groupKey('host-root',scoped,root):groupKey('host-unrooted',scoped));
@@ -144,6 +144,7 @@ export class Store {
         if(identifiableHostRoot(root))keys.push(groupKey('host-binding-root',...binding,root));
       }
     }
+    if(kind==='knowledge.evidence-link'&&typeof payload?.link?.cardId==='string')keys.push(groupKey('knowledge-link-card',scoped,payload.link.cardId));
     if(kind==='experience.evidence-link'){
       const cardId=payload?.association?.cardId??payload?.normalizationOrigin?.cardId;
       if(typeof cardId==='string')keys.push(groupKey('link-card',scoped,cardId));
@@ -186,9 +187,9 @@ export class Store {
     const frame=this.mutationFrames.at(-1);if(frame&&this.temporary.has(key))frame.temporary=true;
     this.temporary.delete(key);
   }
-  private scopedActionGroups(kind:'knowledge.host-observation'|'experience.test-observation',scope:Scope):IdGroups {
+  private scopedActionGroups(kind:'knowledge.host-observation'|'experience.test-observation'|'knowledge.evidence-link',scope:Scope):IdGroups {
     const operation=this.operation;if(!operation)throw new Error('Discovery requires an operation.');
-    const scopeKey=this.scopeKey(scope),scopes=kind==='knowledge.host-observation'?operation.hosts:operation.observations;
+    const scopeKey=this.scopeKey(scope),scopes=kind==='knowledge.host-observation'?operation.hosts:kind==='knowledge.evidence-link'?operation.knowledgeLinks:operation.observations;
     let groups=scopes.get(scopeKey);if(groups)return groups;
     groups=newGroups();
     const sql="SELECT id, project_id, domain, data FROM actions WHERE json_extract(data,'$.kind') = ? AND project_id = ? AND domain = ? ORDER BY rowid";
@@ -233,6 +234,10 @@ export class Store {
       const durable=this.scopedActionGroups('knowledge.host-observation',scope),temporary=this.temporaryGroups();
       return [...keys.flatMap(key=>this.selectedActions(durable,key)),...keys.flatMap(key=>this.selectedActions(temporary,key,true))].map(item=>item.row);
     });
+  }
+  /** Resolve only links for this card, within the current coherent Store operation. */
+  knowledgeEvidenceActions(scope:Scope,cardId:string):Entities['actions'][] {
+    return this.readSnapshot(()=>{const key=groupKey('knowledge-link-card',this.scopeKey(scope),cardId);return [...this.selectedActions(this.scopedActionGroups('knowledge.evidence-link',scope),key),...this.selectedActions(this.temporaryGroups(),key,true)].map(item=>item.row);});
   }
   /** Indexed, scoped candidates; temporary entries overlay persisted rows just as in get/list. */
   experienceActions(kind:'experience.evidence-link'|'experience.test-observation',query:ExperienceActionQuery={}):Entities['actions'][] {
@@ -361,9 +366,13 @@ export class Store {
         this.setTemporary(key,{entity:value});this.deleteAction(entity.id);return;
       }
     }
-    // A sanitized origin inherits the prior row's temporary lifetime even after old refs disappear.
-    if(table==='actions'&&this.temporary.has(key)&&normalizationOriginPayloadSchema.safeParse((value as Entities['actions']).payload).success){
-      this.setTemporary(key,{entity:value});this.deleteAction(entity.id);return;
+    // Sanitized metadata inherits the prior row's temporary lifetime.
+    if(table==='actions'){
+      const action=value as Entities['actions'],audit=action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload).success;
+      if((this.temporary.has(key)&&normalizationOriginPayloadSchema.safeParse(action.payload).success)||
+        (audit&&(this.temporary.has(key)||!validFactualContextTombstoneTransition(previous as Entities['actions']|undefined,action)))){
+        this.setTemporary(key,{entity:value});this.deleteAction(entity.id);return;
+      }
     }
     let card=structured?value as KnowledgeCard:undefined;
     if(card?.status==='active'&&previous&&(previous as KnowledgeCard).status==='withdrawn'){
@@ -473,7 +482,7 @@ export class Store {
     if(outer&&this.db.inTransaction)throw new Error('Untracked Store transaction.');
     if(outer)this.operation=newOperation();
     const previousJobs = new Map(this.vaultJobs); const previousTemporary = new Map(this.temporary);
-    const frame:MutationFrame={hostScopes:new Set(),observationScopes:new Set(),temporary:false};this.mutationFrames.push(frame);
+    const frame:MutationFrame={hostScopes:new Set(),observationScopes:new Set(),knowledgeLinkScopes:new Set(),temporary:false};this.mutationFrames.push(frame);
     this.depth++;
     let result: T;
     try {
@@ -487,12 +496,12 @@ export class Store {
       this.mutationFrames.pop();
       this.vaultJobs = previousJobs; this.temporary = previousTemporary;
       if(outer)this.operation=undefined;
-      else if(this.operation){for(const scope of frame.hostScopes)this.operation.hosts.delete(scope);for(const scope of frame.observationScopes)this.operation.observations.delete(scope);if(frame.temporary)this.operation.temporary=undefined;}
+      else if(this.operation){for(const scope of frame.hostScopes)this.operation.hosts.delete(scope);for(const scope of frame.observationScopes)this.operation.observations.delete(scope);for(const scope of frame.knowledgeLinkScopes)this.operation.knowledgeLinks.delete(scope);if(frame.temporary)this.operation.temporary=undefined;}
       throw preserveRawError?error:snapshotError(error);
     }
     this.depth--;
     this.mutationFrames.pop();
-    const parent=this.mutationFrames.at(-1);if(parent){for(const scope of frame.hostScopes)parent.hostScopes.add(scope);for(const scope of frame.observationScopes)parent.observationScopes.add(scope);parent.temporary||=frame.temporary;}
+    const parent=this.mutationFrames.at(-1);if(parent){for(const scope of frame.hostScopes)parent.hostScopes.add(scope);for(const scope of frame.observationScopes)parent.observationScopes.add(scope);for(const scope of frame.knowledgeLinkScopes)parent.knowledgeLinkScopes.add(scope);parent.temporary||=frame.temporary;}
     if(outer)this.operation=undefined;
     if (!this.depth) this.flushVault();
     return result;
@@ -549,11 +558,13 @@ export class Store {
       const scope=this.scopeKey(action),kind=action.kind;
       if(kind==='knowledge.host-observation')frame?.hostScopes.add(scope);
       if(kind==='experience.test-observation')frame?.observationScopes.add(scope);
+      if(kind==='knowledge.evidence-link')frame?.knowledgeLinkScopes.add(scope);
     }
-    for(const groups of [...operation.hosts.values(),...operation.observations.values()])if(previous)updateGroups(groups,previous.id,[]);
+    for(const groups of [...operation.hosts.values(),...operation.observations.values(),...operation.knowledgeLinks.values()])if(previous)updateGroups(groups,previous.id,[]);
     if(next){const scope=this.scopeKey(next);
       if(next.kind==='knowledge.host-observation'){const groups=operation.hosts.get(scope);if(groups)updateGroups(groups,next.id,this.actionKeys(next));}
       if(next.kind==='experience.test-observation'){const groups=operation.observations.get(scope);if(groups)updateGroups(groups,next.id,this.actionKeys(next));}
+      if(next.kind==='knowledge.evidence-link'){const groups=operation.knowledgeLinks.get(scope);if(groups)updateGroups(groups,next.id,this.actionKeys(next));}
     }
   }
   private deleteAction(id:string):void {
@@ -580,7 +591,7 @@ export class Store {
     return false;
   }
   private temporaryKnowledgeAction(action:Entities['actions']):boolean {
-    const dependencies=knowledgeActionDependencies(action);
+    const dependencies=knowledgeActionDependencies(action,this);
     return dependencies.unresolved||dependencies.refs.some(ref=>this.temporarySourceDependency(ref.id));
   }
   /** Retain only the bounded denial needed to prevent replay, never a read result. */

@@ -19,7 +19,7 @@ function setup(temporary = false) {
   const config = readConfig({ PATRICK_MODE: 'test', PATRICK_DATA_DIR: root, PATRICK_TOKEN: 'synthetic-owner-token-at-least-32-characters' });
   configureDemo(config); const project = { ...config.projects[0]!, reviewIntervalDays: 1 }; config.projects = [project];
   const task = ingestSource(store, config, { projectId: project.id, externalId: 'subject', title: 'Subject', content: 'Original judgment', retention: temporary ? 'ephemeral' : 'permanent' })!;
-  const input = { task, source: store.get('sources', task.sourceId)!, project, role: 'decide', cards: [], rules: [] } as WorkerInput;
+  const input = { task, source: store.get('sources', task.sourceId)!, project, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
   store.save('attempts', { id: 'deciding', projectId: project.id, domain: project.domain, taskId: task.id, taskVersion: task.version, role: 'decide', runner: 'grok', model: 'local', provider: 'local', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
   const snapshot = recordDecisionSnapshot(store, task, input, { action: 'proceed', summary: 'Judgment', rationale: 'Reason', citations: [], ruleIds: [] });
   return { root, db, vault, store, config, project, task, snapshot };
@@ -159,7 +159,7 @@ it('records accepted execution failures while ignoring unplanned results and iso
   expect(JSON.stringify(observations)).not.toContain('UNPLANNED_SENTINEL');
   const later = { ...task, version: 2, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined };
   f.store.save('tasks', later);
-  const input = { task: later, source: f.store.get('sources', later.sourceId)!, project: f.project, role: 'decide', cards: [], rules: [] } as WorkerInput;
+  const input = { task: later, source: f.store.get('sources', later.sourceId)!, project: f.project, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
   f.store.save('attempts', { id: 'later-deciding', projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: 2, role: 'decide', runner: 'grok', model: 'local', provider: 'local', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
   const second = recordDecisionSnapshot(f.store, later, input, { action: 'proceed', summary: 'Later judgment', rationale: 'New version', citations: [], ruleIds: [] });
   f.store.save('tasks', { ...later, decisionSnapshotId: second.id });

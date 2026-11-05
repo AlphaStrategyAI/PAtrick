@@ -27,7 +27,7 @@ export function makeBillingFixture(options: { maxAttemptsPerTask?: number; persi
   const proofPath = join(root, 'synthetic-proof.json');
   const writeProof = (value: unknown = proof) => writeFileSync(proofPath, JSON.stringify(value), { mode: 0o600 });
   writeProof();
-  const input: WorkerInput = { task, project, source, role: 'knowledge_extract', cards: [], rules: [] };
+  const input: WorkerInput = { task, project, source, role: 'knowledge_extract', cards: [], facts: [], rules: [] };
   return { root, proofRoot: root, proofPath, get store() { return store; }, reopen() { if (!options.persistent) throw Error('Persistent fixture required'); store.close(); store = new Store(databasePath); return store; }, config, project, source, task, input, included, proof, current, get at() { return at; }, now: () => at, setTime: (value: Date) => { at = value; }, currentProvider: { async read() { return structuredClone(current); } }, writeProof, dispose() { store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 

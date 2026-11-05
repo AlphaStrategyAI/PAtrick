@@ -120,27 +120,27 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
   const repositoryId=repository.id,result:RepositoryReadback={observations:[],files:[],tests:[],gaps:[]};
   const attested:ReadbackProvenance['attestedTests']=[],scope={projectId:project.id,domain:project.domain},observedAt=now();
   const bindingHash=digest({source:digest(source),policy:knowledgePolicyHash(project),request});
-  function observe(claim:AtomicClaim,response:object,locator:string,producerId:string,originalEventId:string,eventAt?:string):void{
+  function observe(claim:AtomicClaim,response:object,locator:string,producerId:string,originalEventId:string,eventAt?:string):string{
     const responseDigest=digest(response),observation:HostObservation={...scope,schemaVersion:1,id:stableId('repository-observation',originalEventId,claim,responseDigest,bindingHash),claim,
       origin:{kind:'provider',provider,repository:project.repository,producerId,originalEventId,independentOrigin:`${provider}:${repositoryId}:producer:${producerId}`,derivedFrom:[]},sourceRefs:[{id:source.id,revision:source.revision}],responseDigest,locator,observedAt,bindingHash};
-    if(eventAt)observation.eventAt=eventAt;if(!result.observations.some(o=>o.id===observation.id))result.observations.push(observation);
+    if(eventAt)observation.eventAt=eventAt;if(!result.observations.some(o=>o.id===observation.id))result.observations.push(observation);return observation.id;
   }
   const subject={provider,repository:project.repository};
-  async function change(number:number):Promise<string>{
+  async function change(number:number):Promise<{head:string;id:string}>{
     if(provider==='github'){
       const pr=parse(z.object({number:numeric,state:z.enum(['open','closed']),merged:z.boolean(),head:z.object({sha,repo:z.object({id:numeric,full_name:text})}),base:z.object({repo:z.object({id:numeric,full_name:text})}),html_url:text,updated_at:optionalTime}),await session.json(`${root}/pulls/${number}`));
       if(pr.number!==number||pr.head.repo.id!==repositoryId||pr.base.repo.id!==repositoryId||pr.head.repo.full_name!==project.repository||pr.base.repo.full_name!==project.repository)invalid();
-      observe({kind:'change-head',subject:{...subject,number},value:{headSha:pr.head.sha,state:pr.merged?'merged':pr.state}},pr,session.url(pr.html_url),'repository',`github:${repositoryId}:pull:${number}`,pr.updated_at??undefined);return pr.head.sha;
+      const id=observe({kind:'change-head',subject:{...subject,number},value:{headSha:pr.head.sha,state:pr.merged?'merged':pr.state}},pr,session.url(pr.html_url),'repository',`github:${repositoryId}:pull:${number}`,pr.updated_at??undefined);return {head:pr.head.sha,id};
     }
     const mr=parse(z.object({iid:numeric,project_id:numeric,source_project_id:numeric,target_project_id:numeric,state:z.enum(['opened','closed','merged','locked']),sha,web_url:text,updated_at:optionalTime}),await session.json(`${root}/merge_requests/${number}`));
     if(mr.iid!==number||mr.project_id!==repositoryId||mr.source_project_id!==repositoryId||mr.target_project_id!==repositoryId)invalid();
-    observe({kind:'change-head',subject:{...subject,number},value:{headSha:mr.sha,state:mr.state==='opened'||mr.state==='locked'?'open':mr.state}},mr,session.url(mr.web_url),'repository',`gitlab:${repositoryId}:mr:${number}`,mr.updated_at??undefined);return mr.sha;
+    const id=observe({kind:'change-head',subject:{...subject,number},value:{headSha:mr.sha,state:mr.state==='opened'||mr.state==='locked'?'open':mr.state}},mr,session.url(mr.web_url),'repository',`gitlab:${repositoryId}:mr:${number}`,mr.updated_at??undefined);return {head:mr.sha,id};
   }
-  let observedHead:string|undefined;if(request.changeNumber!==undefined)observedHead=await change(request.changeNumber);
+  const observedChange=request.changeNumber!==undefined?await change(request.changeNumber):undefined,observedHead=observedChange?.head;
   if(observedHead&&observedHead!==request.headSha)result.gaps.push('requested_head_differs_from_change_head');
   const commit=provider==='github'?parse(z.object({sha,commit:z.object({committer:z.object({date:optionalTime}).nullable().optional(),tree:z.object({sha}).optional()}).optional()}),await session.json(`${root}/commits/${request.headSha}`)):parse(z.object({id:sha,committed_date:optionalTime}),await session.json(`${root}/repository/commits/${request.headSha}`));
   if(('sha' in commit?commit.sha:commit.id)!==request.headSha)invalid();
-  observe({kind:'commit-exists',subject:{...subject,sha:request.headSha},value:{exists:true}},commit,provider==='github'?`https://github.com/${project.repository}/commit/${request.headSha}`:`${base}/${project.repository}/-/commit/${request.headSha}`,'repository',`${provider}:${repositoryId}:commit:${request.headSha}`);
+  const commitObservationId=observe({kind:'commit-exists',subject:{...subject,sha:request.headSha},value:{exists:true}},commit,provider==='github'?`https://github.com/${project.repository}/commit/${request.headSha}`:`${base}/${project.repository}/-/commit/${request.headSha}`,'repository',`${provider}:${repositoryId}:commit:${request.headSha}`);
 
   const ghJob=z.object({id:numeric,run_id:numeric,head_sha:sha,name:text,status:text,conclusion:text.nullable(),completed_at:optionalTime,check_run_url:text,html_url:text});
   const glJob=z.object({id:numeric,project_id:numeric.optional(),name:text,status:text,pipeline:z.object({id:numeric,project_id:numeric,sha}),commit:z.object({id:sha}),finished_at:optionalTime,web_url:text});
@@ -190,18 +190,20 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
   }
   for(const path of request.filePaths)result.files.push(await measuredFile(path));
   const executions:Execution[]=[];
-  function addExecution(e:Execution):TestObservation{
-    observe({kind:'ci-result',subject:{...subject,headSha:e.head,runId:e.run,jobId:e.job,checkName:e.name},value:{conclusion:e.conclusion}},e.response,e.url,e.producer,e.root,e.eventAt);
+  function addExecution(e:Execution):string{
+    const observationId=observe({kind:'ci-result',subject:{...subject,headSha:e.head,runId:e.run,jobId:e.job,checkName:e.name},value:{conclusion:e.conclusion}},e.response,e.url,e.producer,e.root,e.eventAt);
     const observation:TestObservation={...scope,schemaVersion:1,id:'',sourceId:source.id,sourceRevision:source.revision,repository:project.repository,observedAt,
       snapshot:{revision:e.head,files:e.head===request.headSha?[...result.files]:[]},checks:[{id:e.canonicalId,name:e.name,result:e.conclusion==='success'?'success':e.conclusion==='failure'?'failure':'incomplete',outputDigest:digest(e.response)}],environment:{observed:{},unknown:['execution-environment']},
       origin:{kind:'ci',provider,runId:e.run,jobId:e.job,producerId:e.producer,headSha:e.head,url:e.url,responseDigest:digest(e.response)}};
     observation.id=stableId('ci-test',e.root,{...observation,id:undefined,observedAt:undefined});
-    const existing=result.tests.find(t=>t.id===observation.id);if(existing)return existing;result.tests.push(observation);return observation;
+    if(!result.tests.some(t=>t.id===observation.id))result.tests.push(observation);return observationId;
   }
   for(const check of request.checks){const e=await execution(request.headSha,check.runId,check.jobId,check.checkName);executions.push(e);addExecution(e);}
 
+  const currentIds:string[]=[];
   if(request.current){
-    const head=request.current.changeNumber===request.changeNumber?observedHead!:await change(request.current.changeNumber);
+    const selectedChange=request.current.changeNumber===request.changeNumber?observedChange!:await change(request.current.changeNumber);
+    const head=selectedChange.head;currentIds.push(selectedChange.id);if(head===request.headSha)currentIds.push(commitObservationId);
     for(const name of request.current.checkNames){
       let selected:{run:string;job:string}[]=[];
       if(provider==='github'){
@@ -212,7 +214,7 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
         for(const value of pipelines){const p=parse(z.object({id:numeric,sha}),value);if(p.sha!==head)continue;const jobs=await session.pages(`${root}/pipelines/${p.id}/jobs?include_retried=false`);selected.push(...jobs.filter(j=>j.name===name).map(j=>({run:String(p.id),job:String(parse(numeric,j.id))})));}
       }
       if(selected.length!==1){result.gaps.push(`current_check_identity_unavailable:${name}`);continue;}
-      const e=await execution(head,selected[0]!.run,selected[0]!.job,name);addExecution(e);
+      const e=await execution(head,selected[0]!.run,selected[0]!.job,name);currentIds.push(addExecution(e));
     }
   }
   if(request.testReportPath){
@@ -238,6 +240,6 @@ export async function readAuthenticatedRepositoryKnowledge(provider:'github'|'gi
   }
   if(request.issueSource){const issue=store.get('sources',request.issueSource.id);if(issue&&issue.revision===request.issueSource.revision){try{assertKnowledgeSource(store,issue,project);result.resolution={sourceId:issue.id,revision:issue.revision,quote:issue.content,locator:issue.locator};}catch(error){if(isKnowledgeSnapshotFailure(error))throw error;result.gaps.push('resolution_source_unavailable');}}else result.gaps.push('resolution_source_unavailable');}
   signal.throwIfAborted();assertKnowledgeSource(store,source,project);
-  completedReads.set(result,{provenance:{sourceHash:digest(source),policyHash:knowledgePolicyHash(project),requestHash:digest(request),request:structuredClone(request),attestedTests:attested},projectHash:digest(project),readbackHash:digest(result),assertCurrent:()=>assertKnowledgeSource(store,source,project)});
+  completedReads.set(result,{provenance:{sourceHash:digest(source),policyHash:knowledgePolicyHash(project),requestHash:digest(request),request:structuredClone(request),attestedTests:attested,...(request.current?{current:{observedAt,rawObservationIds:[...new Set(currentIds)]}}:{})},projectHash:digest(project),readbackHash:digest(result),assertCurrent:()=>assertKnowledgeSource(store,source,project)});
   return result;
 }

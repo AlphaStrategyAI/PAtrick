@@ -20,7 +20,7 @@ function setup() {
   function judgment(projectId = 'p') {
     const p = config.projects.find(p => p.id === projectId)!;
     const task = engine.ingest({ projectId, externalId: `idea-${projectId}`, revision: 'v1', title: 'Test judgment', content: 'Synthetic original source', retention: 'permanent' })!;
-    const input = { task, source: store.get('sources', task.sourceId)!, project: p, role: 'decide', cards: [], rules: [] } as WorkerInput;
+    const input = { task, source: store.get('sources', task.sourceId)!, project: p, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
     store.save('attempts', { id: `attempt-${projectId}`, projectId, domain: p.domain, taskId: task.id, taskVersion: task.version, role: 'decide', runner: 'grok', model: 'local-test', provider: 'local-test', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
     return recordDecisionSnapshot(store, task, input, { action: 'archive', summary: 'Synthetic judgment', rationale: 'Test fixture', citations: [], ruleIds: [] });
   }

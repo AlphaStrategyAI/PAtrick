@@ -56,6 +56,16 @@ export type AtomicClaim =
   | {kind:'commit-exists';subject:RepositorySubject & {sha:string};value:{exists:true}}
   | {kind:'ci-result';subject:RepositorySubject & {headSha:string;runId:string;jobId:string;checkName:string};value:{conclusion:'success'|'failure'|'pending'|'cancelled'}}
   | {kind:'test-result';subject:RepositorySubject & {testedRevision:string;snapshotDigest:string;testDefinitionDigest:string};value:{result:'success'|'failure'|'incomplete'}};
+/** Deterministic wording for a bounded observation, never arbitrary surrounding prose. */
+export function atomicClaimText(claim:AtomicClaim):string {
+ switch(claim.kind){
+  case 'change-head': return `${claim.subject.provider} ${claim.subject.repository} change ${claim.subject.number} was ${claim.value.state} at head ${claim.value.headSha}.`;
+  case 'commit-exists': return `${claim.subject.provider} ${claim.subject.repository} recorded commit ${claim.subject.sha}.`;
+  case 'ci-result': return `${claim.subject.provider} ${claim.subject.repository} job ${claim.subject.jobId} in run ${claim.subject.runId} (${claim.subject.checkName}) reported ${claim.value.conclusion} at ${claim.subject.headSha}.`;
+  case 'test-result': return `The test at ${claim.subject.testedRevision}, snapshot ${claim.subject.snapshotDigest}, definition ${claim.subject.testDefinitionDigest}, reported ${claim.value.result}.`;
+ }
+}
+export function structuredClaimBody(claim:AtomicClaim,quote:string):string {return `${atomicClaimText(claim)}\n\nSource quote: ${quote}`;}
 export interface ClaimCandidate {schemaVersion:1;claim:AtomicClaim;quote:string;interpretation:'reported'|'inference'}
 export interface HostObservation extends Scope {
   schemaVersion:1;id:string;claim:AtomicClaim;
@@ -73,7 +83,7 @@ export interface FactualContext extends Scope {
 }
 export interface CanonicalFact extends Scope {
   ref:FactRef;claim:AtomicClaim;text:string;basis:KnowledgeEvidenceLink['basis'];observationIds:string[];sourceRefs:SourceRef[];
-  observedAt:string[];eventAt:(string|null)[];temporal:'historical'|'current';limitations:string[];
+  observedAt:string[];eventAt:(string|null)[];temporal:'historical'|'current';currentReadAt?:string;limitations:string[];
 }
 export type FactGate =
   | {eligible:false;reason:'unverified'|'unsupported-claim'|'stale-source'|'out-of-scope'|'withdrawn'|'expired'|'needs-current-readback'|'conflicting-evidence'|'missing-authority'}
@@ -96,7 +106,7 @@ export interface ExperienceReference {
 }
 export type ExperienceGate = {eligible:false;state:'pending'|'invalidated';reason:string} | {eligible:true;state:'historical';reference:ExperienceReference};
 export type KnowledgeView = KnowledgeCard & {
-  experienceReference?:ExperienceReference;experienceState?:{state:'pending'|'invalidated';reason:string};factual?:FactGate;reportedStatement?:{text:string;status:'reported'|'inference'};
+  experienceReference?:ExperienceReference;experienceState?:{state:'pending'|'invalidated';reason:string};factual?:FactGate;currentEvidenceGap?:'needs-current-readback';reportedAuthor?:{id:string;authenticated:boolean};reportedStatement?:{text:string;status:'reported'};description?:{text:string;status:'host-observation'|'reported-summary'|'inference'};
 };
 export interface KnowledgeReferenceOptions {usage?:'reference'|'browse';request?:FactRequest;context?:FactualContext;current?:CurrentExperienceContext}
 export interface RepositoryReadRequest {
@@ -108,6 +118,7 @@ export type CiReadback = Pick<RepositoryReadback,'tests'|'resolution'>;
 export interface ReadbackProvenance {
   sourceHash:string;policyHash:string;requestHash:string;request:RepositoryReadRequest;
   attestedTests:{observationId:string;producerId:string;originalEventId:string;reportPath:string;reportDigest:string;snapshotDigest:string;testDefinitionDigest:string}[];
+  current?:{observedAt:string;rawObservationIds:string[]};
 }
 export interface CiTestReportV1 {
   schemaVersion:1;repository:string;headSha:string;runId:string;jobId:string;snapshot:TestObservation['snapshot'];
@@ -128,6 +139,17 @@ export const atomicClaimSchema:z.ZodType<AtomicClaim> = z.discriminatedUnion('ki
   z.object({kind:z.literal('test-result'),subject:subject.extend({testedRevision:sha,snapshotDigest:hash,testDefinitionDigest:hash}).strict(),value:z.object({result:z.enum(['success','failure','incomplete'])}).strict()}).strict(),
 ]);
 export const claimCandidateSchema:z.ZodType<ClaimCandidate> = z.object({schemaVersion:z.literal(1),claim:atomicClaimSchema,quote:text,interpretation:z.enum(['reported','inference'])}).strict();
+const citationUseSchema = z.object({sourceId:text,revision:text,quote:text,locator:text}).strict();
+export const factRequestSchema:z.ZodType<FactRequest> = z.discriminatedUnion('temporal',[
+  z.object({temporal:z.literal('historical')}).strict(),
+  z.object({temporal:z.literal('current'),contextId:text}).strict(),
+]);
+export const factRefSchema:z.ZodType<FactRef> = z.object({cardId:text,claimHash:hash,request:factRequestSchema}).strict();
+export const decisionGroundsSchema:z.ZodType<DecisionGrounds> = z.object({
+  statements:z.array(z.object({citation:citationUseSchema,purpose:z.enum(['requirement','author-statement']),binding:z.enum(['task-request','accepted-owner-answer','source-statement'])}).strict()).max(64),
+  facts:z.array(factRefSchema).max(64),
+  unresolved:z.array(z.object({text,citation:citationUseSchema.optional(),status:z.enum(['reported','inference'])}).strict()).max(64),
+}).strict();
 export const requestedRepositoryClaimSchema:z.ZodType<RequestedRepositoryClaim> = z.discriminatedUnion('kind',[
   z.object({kind:z.literal('change-head'),repository:text,number}).strict(),
   z.object({kind:z.literal('commit-exists'),repository:text,sha}).strict(),

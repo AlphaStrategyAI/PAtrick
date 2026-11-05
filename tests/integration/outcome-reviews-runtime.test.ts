@@ -20,7 +20,7 @@ async function open(c: ReturnType<typeof config>) { const r = await createRuntim
 function judgment(r: Awaited<ReturnType<typeof createRuntime>>, projectId = 'p') {
   const project = r.config.projects.find(p => p.id === projectId)!;
   const task = r.engine.ingest({ projectId, externalId: `idea-${projectId}`, title: 'Test judgment', content: 'Synthetic source', revision: 'v1', retention: 'permanent' })!;
-  const input = { task, source: r.store.get('sources', task.sourceId)!, project, role: 'decide', cards: [], rules: [] } as WorkerInput;
+  const input = { task, source: r.store.get('sources', task.sourceId)!, project, role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
   r.store.save('attempts', { id: `attempt-${projectId}`, projectId, domain: project.domain, taskId: task.id, taskVersion: task.version, role: 'decide', runner: 'grok', model: 'local-test', provider: 'local-test', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
   return recordDecisionSnapshot(r.store, task, input, { action: 'archive', summary: 'Synthetic judgment', rationale: 'Test fixture', citations: [], ruleIds: [] });
 }

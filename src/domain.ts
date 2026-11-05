@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { HostDispatchPermit } from './billing.js';
-import { claimCandidateSchema, requestedRepositoryClaimSchema, type ClaimCandidate, type DecisionGrounds, type ExperienceDetails, type RequestedRepositoryClaim } from './knowledge-contract.js';
+import { claimCandidateSchema, decisionGroundsSchema, requestedRepositoryClaimSchema, type CanonicalFact, type ClaimCandidate, type DecisionGrounds, type ExperienceDetails, type FactualContext, type FactualUseView, type KnowledgeView, type RequestedRepositoryClaim } from './knowledge-contract.js';
 export type { ExperienceDetails } from './knowledge-contract.js';
 
 export type BillingBoundary = 'included-only' | 'metered-only';
@@ -68,7 +68,7 @@ export interface DecisionCase extends Scope {
 export interface DecisionSnapshot extends Scope {
   schemaVersion: 1; id: string; taskId: string; taskVersion: number; attemptId: string; inputHash: string;
   sourceId: string; sourceRevision: string; goal: { title: string; description: string };
-  decision: Decision; rules: Rule[]; sourceRefs: { id: string; revision: string }[];
+  decision: Decision; factualUse?: FactualUseView; rules: Rule[]; sourceRefs: { id: string; revision: string }[];
   reviewAt?: string; reviewIntervalDays?: number; expectedOutcome: string | null; research?: ResearchRecord; recordedAt: string;
 }
 export interface CaseOutcome { id: string; receiptId: string; recordedAt: string; summary: string }
@@ -120,13 +120,13 @@ export const citationSchema = z.object({ sourceId: z.string(), revision: z.strin
 export const suggestionSchema = z.object({ label: z.string().min(1), description: z.string().min(1), rationale: z.string().min(1), tradeoff: z.string().min(1), evidenceUrls: z.array(z.string().url()).min(1) });
 export const decisionSchema = z.object({
   action: z.enum(['proceed', 'ask', 'archive']), summary: z.string().min(1), rationale: z.string().min(1),
-  citations: z.array(citationSchema), ruleIds: z.array(z.string()),
+  citations: z.array(citationSchema.strict()), ruleIds: z.array(z.string()), grounds: decisionGroundsSchema,
   expectedOutcome: z.string().min(1).nullable().optional(),
   question: z.object({ title: z.string().min(1), context: z.string(), A: suggestionSchema, B: suggestionSchema }).optional(),
-}).superRefine((v, ctx) => {
+}).strict().superRefine((v, ctx) => {
   if (v.action === 'ask' && !v.question) ctx.addIssue({ code: 'custom', message: 'A question with exactly two recommendations is required.' });
 });
-export type Decision = z.infer<typeof decisionSchema> & { grounds?: DecisionGrounds };
+export type Decision = Omit<z.infer<typeof decisionSchema>, 'grounds'> & { grounds?: DecisionGrounds };
 export const executionPlanSchema = z.object({
   taskVersion: z.number().int().positive(), sourceRevision: z.string(), baselineSha: z.string().min(1),
   summary: z.string().min(1), paths: z.array(z.string()).min(1), steps: z.array(z.string()).min(1),
@@ -178,8 +178,13 @@ export const questionAnswerSchema = z.object({
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
 
 export interface WorkerInput {
-  task: Task; project: Project; role: Role; source: SourceRevision; cards: KnowledgeCard[]; rules: Rule[];
+  task: Task; project: Project; role: Role; source: SourceRevision; cards: KnowledgeView[]; facts: CanonicalFact[]; factualContext?: FactualContext; rules: Rule[];
   answer?: string; research?: ResearchRecord; receipt?: DeliveryReceipt; plan?: ExecutionPlan; artifact?: Artifact; baselineSha?: string; baselineFiles?: {path:string;content:string}[];
+  decisionInterpretation?: {summary:'assistant-inference';rationale:'assistant-inference';expectedOutcome:'assistant-prediction'};
+}
+/** A host-authored transport label, also applied to decisions stored before factual-use views existed. */
+export function decisionInterpretationFor(task:Task):WorkerInput['decisionInterpretation'] {
+  return task.decision?{summary:'assistant-inference',rationale:'assistant-inference',expectedOutcome:'assistant-prediction'}:undefined;
 }
 export interface WorkerResult { output: unknown; costUsd: number; model: string; provider: string }
 export interface WorkerAdapter { name: Runner; run(input: WorkerInput, signal?: AbortSignal, permit?: HostDispatchPermit): Promise<WorkerResult> }

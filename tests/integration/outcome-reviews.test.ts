@@ -18,7 +18,7 @@ function fixture(temporary = false) {
     const config = { projects: [{ ...p, reviewIntervalDays: 2 }], ownerId: 'owner' } as AppConfig;
     const task = ingestSource(store, config, { projectId: 'p', externalId: 'idea', title: 'Idea', content: 'Original judgment source', retention: temporary ? 'ephemeral' : 'permanent' })!;
     const source = store.get('sources', task.sourceId)!;
-    const input = { task, source, project: config.projects[0], role: 'decide', cards: [], rules: [] } as WorkerInput;
+    const input = { task, source, project: config.projects[0], role: 'decide', cards: [], facts: [], rules: [] } as WorkerInput;
     store.save('attempts', { id: 'attempt', projectId: 'p', domain: 'personal', taskId: task.id, taskVersion: task.version, role: 'decide', runner: 'grok', model: 'local', provider: 'local', inputHash: digest(input), status: 'succeeded', costUsd: 0, startedAt: new Date().toISOString() });
     const snapshot = recordDecisionSnapshot(store, task, input, { action: 'proceed', summary: 'Judgment', rationale: 'Reason', citations: [], ruleIds: [] });
     return { store, config, task, snapshot, db };
@@ -210,7 +210,7 @@ it.each([' ', '\t', '\n'] as const)('rejects blank source or attribution quote %
 it('associates an owner answer only with its actual snapshot on a rejudged task', async () => {
     const {recordOwnerDecision}=await import('../../src/standards.js');const {runOutcomeReviews,outcomeReviewViews}=await api();const f=fixture();
     const taskB={...f.task,version:2};f.store.save('tasks',taskB);
-    const input={task:taskB,source:f.store.get('sources',taskB.sourceId)!,project:f.config.projects[0],role:'decide',cards:[],rules:[]} as WorkerInput;
+    const input={task:taskB,source:f.store.get('sources',taskB.sourceId)!,project:f.config.projects[0],role:'decide',cards:[],facts:[],rules:[]} as WorkerInput;
     f.store.save('attempts',{...f.store.get('attempts','attempt')!,id:'attempt-B',taskVersion:2,inputHash:digest(input)});
     const snapshotB=recordDecisionSnapshot(f.store,taskB,input,{action:'proceed',summary:'Judgment B',rationale:'New judgment',citations:[],ruleIds:[]});
     const option={label:'Retain',description:'Retain a draft',rationale:'Recovery',tradeoff:'Storage',evidenceUrls:['https://example.com/source']};

@@ -682,7 +682,8 @@ describe('card-specific retained experience',()=>{
       expect(f.store.get('cards',card.id)).not.toHaveProperty('experienceReference');expect(f.store.get('cards',card.id)).not.toHaveProperty('success');
       const view=f.store.searchCards('cache misses',f.project,20,{usage:'browse'})[0];
       expect(view).toBeDefined();expect(view).not.toHaveProperty('experienceReference');expect(view).not.toHaveProperty('factual');
-      expect(view?.reportedStatement).toEqual({text:card.body,status:'reported'});
+      expect(view?.reportedStatement).toEqual({text:card.quote,status:'reported'});
+      expect(view?.description).toEqual({text:card.body,status:'reported-summary'});
       expect(f.store.searchCards('cache misses',f.project)).toEqual([]);
     }finally{f.store.close();}
   });

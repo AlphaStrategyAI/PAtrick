@@ -1,7 +1,7 @@
 import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
 import type { Store } from './store.js';
 import { consumedStageResult, enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
-import { canonicalExperiencePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs } from './knowledge-records.js';
+import { canonicalExperiencePayloadSchema, factualContextTombstone, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs } from './knowledge-records.js';
 
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
@@ -43,10 +43,16 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: 'source.withdrawn', message: 'Evidence retracted.', createdAt: changed, data: { sourceId } });
     return;
   }
-  const dependentCards=new Set(store.list('actions').filter(action=>action.kind==='knowledge.structured-ingest'&&knowledgeActionSourceRefs(action).some(ref=>ref.id===sourceId)).map(action=>action.payload.sourceId).filter((id):id is string=>typeof id==='string'));
+  const actions=store.list('actions');
+  const dependentCards=new Set(actions.filter(action=>action.kind==='knowledge.structured-ingest'&&knowledgeActionSourceRefs(action).some(ref=>ref.id===sourceId)).map(action=>action.payload.sourceId).filter((id):id is string=>typeof id==='string'));
+  const contexts=new Map(actions.flatMap(action=>{
+    const payload=factualContextTombstone(store,action,sourceId);return payload?[[action.id,payload] as const]:[];
+  }));
   store.save('sources', { ...source, status });
-  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','experience.test-observation','experience.evidence-link'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
-    const payload=normalizationTombstone(store,action,new Set([sourceId]),{ phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] });
+  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','knowledge.factual-context','experience.test-observation','experience.evidence-link'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
+    // A previously sanitized context stays tied to its first invalidation.
+    if(action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload).success&&!knowledgeActionDependencies(action,store).unresolved)continue;
+    const payload=contexts.get(action.id)??normalizationTombstone(store,action,new Set([sourceId]),{ phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] });
     store.save('actions', { ...action, status: 'completed', payload, updatedAt: changed });
   }
   // Copies retain their originating revision, including secondary/historical Vault edits.

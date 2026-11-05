@@ -1,13 +1,14 @@
 import { linkRetainedExperienceEvidence } from './experience.js';
-import { knowledgeReference } from './knowledge-use.js';
+import { expandFactRefs, factualEligibility, knowledgeReference } from './knowledge-use.js';
+import type { FactualContext, FactualUseView } from './knowledge-contract.js';
 import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
-import { ingestStructuredKnowledge, publishKnowledge } from './knowledge.js';
+import { ingestStructuredKnowledge, publishKnowledge, type StructuredCurrentReceipt } from './knowledge.js';
 import { consumedStageResult, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { knowledgePolicyHash } from './knowledge-identity.js';
-import { knowledgeRequestSourceRefs } from './knowledge-records.js';
+import { canonicalFactualContextPayloadSchema, knowledgeRequestSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
@@ -23,6 +24,30 @@ export interface WorkbenchOptions {
   repositoryKnowledgeReader?: RepositoryKnowledgeReader;
   billing?: BillingAuthority;
 }
+/** Refresh outside SQLite; only the admitted one-use selection can create a dispatch context. */
+export async function prepareFactualContext(store:Store,reader:RepositoryKnowledgeReader|undefined,task:Task,signal:AbortSignal):Promise<FactualContext|undefined> {
+ if(!reader||signal.aborted)return undefined;
+ const source=store.get('sources',task.sourceId),project=store.get('projects',task.projectId),live=store.get('tasks',task.id);
+ if(!source||!project||!live||live.version!==task.version||live.sourceId!==task.sourceId||source.revision!==task.sourceRevision)return undefined;
+ let parsed:ReturnType<typeof parseStructuredKnowledge>;
+ try{assertKnowledgeSource(store,source,project);parsed=parseStructuredKnowledge(source,project);}catch(error){if(isKnowledgeSnapshotFailure(error))throw error;return undefined;}
+ if(parsed?.kind!=='repository-facts'||parsed.input.changeNumber===undefined)return undefined;
+ const receipts:StructuredCurrentReceipt[]=[];
+ const result=await ingestStructuredKnowledge(store,reader,source.id,signal,{refresh:'current',onCurrentReceipt:receipt=>{receipts.push(receipt);}});
+ const receipt=receipts[0];if(result!=='processed'||!receipt||signal.aborted||!receipt.observations.length)return undefined;
+ return store.transaction(()=>{
+  const current=store.get('tasks',task.id),currentSource=store.get('sources',source.id),currentProject=store.get('projects',project.id);
+  if(!current||current.version!==task.version||current.sourceId!==source.id||current.sourceRevision!==source.revision||!currentSource||digest(currentSource)!==digest(source)||!currentProject||knowledgePolicyHash(currentProject)!==knowledgePolicyHash(project))return undefined;
+  const request=structuredRepositoryRequest(store,source,project,parsed!);request.current={changeNumber:parsed!.input.changeNumber!,checkNames:[...project.trustedChecks]};
+  const sourceRefs=knowledgeRequestSourceRefs(store,source.id,project,request);if(!sourceRefs)return undefined;
+  if(receipt.observations.some(entry=>{const observation=readHostObservation(store,entry.id,project);return !observation||digest(observation)!==entry.hash;}))return undefined;
+  const context:FactualContext={id:stableId('factual-context',randomUUID()),projectId:project.id,domain:project.domain,observedAt:receipt.observedAt,projectPolicyHash:knowledgePolicyHash(project),source:{id:source.id,revision:source.revision},sourceHash:digest(source),task:{id:task.id,version:task.version},observations:receipt.observations};
+  const payload={schemaVersion:1 as const,context,digest:digest(context),sourceRefs};if(!canonicalFactualContextPayloadSchema.safeParse(payload).success)return undefined;
+  store.save('actions',{id:context.id,projectId:project.id,domain:project.domain,taskId:task.id,kind:'knowledge.factual-context',status:'completed',payload,updatedAt:now()});
+  return context;
+ });
+}
+
 const stageStatus: Record<Task['stage'], TaskStatus> = { knowledge_extract: 'extracting', case_extract: 'extracting', decide: 'deciding', research: 'researching', plan: 'planning', execute: 'executing', check: 'checking', delivery: 'publishing', feedback: 'feedback' };
 const stopped = new Set<TaskStatus>(['awaiting_answer', 'delivered', 'archived', 'cancelled']);
 
@@ -192,20 +217,21 @@ export class Workbench {
     });
   }
 
-  async tick(): Promise<void> {
+  async tick(preferredTaskId?:string): Promise<void> {
     if (this.stopping || this.pauseDepth>0) return;
     if(this.busy){
       // A different ready task can preempt a host read; an ordinary self-tick cannot.
-      if(this.hostAbort&&this.readyTask(this.hostPreferredTaskId)){
+      const preferred=this.hostAbort?this.readyTask(this.hostPreferredTaskId):undefined;
+      if(this.hostAbort&&preferred){
         this.hostAbort.abort();await new Promise<void>(resolve=>this.idleWaiters.push(resolve));
-        if(!this.stopping&&this.pauseDepth===0)await this.tick();
+        if(!this.stopping&&this.pauseDepth===0)await this.tick(preferred.id);
       }
       return;
     }
     this.busy = true;
     try {
       this.store.reconcileVault();
-      const ready = this.readyTask();
+      const ready = (preferredTaskId?this.readyTask(undefined,preferredTaskId):undefined)??this.readyTask();
       const source = ready?.stage==='knowledge_extract' ? this.store.get('sources',ready.sourceId) : undefined;
       if(source)enqueueStructuredKnowledge(this.store,source);
       const preferred=source?await this.drainHostJobs(1,structuredKnowledgeJobId(source),true,ready?.id):{count:0,aborted:false};
@@ -227,7 +253,7 @@ export class Workbench {
             if(job.data.phase==='processed'){this.beginAction(task);this.store.transaction(()=>this.advance(task,'case_extract'));handled=true;}
             if(job.data.phase!=='ordinary')handled=true;
           }
-          if(!handled){this.beginAction(task);this.localRetryOnce.delete(this.actionId(task));await this.process(task, project);}
+          if(!handled){this.beginAction(task);this.localRetryOnce.delete(this.actionId(task));if(await this.process(task, project)==='preempted')return;}
         } catch (error) {
           if(isKnowledgeSnapshotFailure(error)||error instanceof VaultSyncError){this.holdLocalTask(task);throw error;}
           const latest = this.store.get('tasks', task.id);
@@ -298,17 +324,25 @@ export class Workbench {
     if (this.readyTask()||readyStructuredKnowledgeJobs(this.store,now(),1).length) throw new DomainError('The workbench step limit was reached; inspect the active task.', 'step_limit');
   }
 
-  private async process(task: Task, project: Project): Promise<void> {
+  private async process(task: Task, project: Project): Promise<void|'preempted'> {
     if (task.stage === 'research') return this.performResearch(task, project);
     if (task.stage === 'delivery') return this.deliver(task, project);
-    let input = this.input(task, project, task.stage);
+    let context:FactualContext|undefined;
+    if(this.repositoryKnowledgeReader&&(!this.canRun||this.canRun(project))){
+      const controller=new AbortController();this.hostAbort=controller;this.hostPreferredTaskId=task.id;
+      try{context=await prepareFactualContext(this.store,this.repositoryKnowledgeReader,task,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]));}
+      finally{if(this.hostAbort===controller){this.hostAbort=undefined;this.hostPreferredTaskId=undefined;}}
+      if(controller.signal.aborted||this.stopping||this.pauseDepth>0)return 'preempted';
+      this.current(task);
+    }
+    let input = this.input(task, project, task.stage,context);
     if (task.stage === 'plan') {
       const baselineSha = await this.writer.baseline(project); this.current(task);
       if (!baselineSha) throw new DomainError('The writer could not establish a repository baseline.', 'baseline_unavailable');
       const baselineFiles = this.writer.readBaseline ? await this.writer.readBaseline(project, baselineSha) : undefined;
       this.current(task);
       this.store.save('tasks', { ...this.task(task.id), baselineFiles });
-      input = { ...this.input(task, project, task.stage), baselineSha, baselineFiles };
+      input = { ...this.input(task, project, task.stage,context), baselineSha, baselineFiles };
     }
     if (['execute', 'check'].includes(task.stage)) {
       this.validatePlan(this.task(task.id), project);
@@ -324,8 +358,8 @@ export class Workbench {
       } else if (task.stage === 'case_extract') {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
-        const decision = decisionSchema.parse(output); this.validateDecision(task, decision);
-        const snapshot = recordDecisionSnapshot(this.store, task, input, decision);
+        const decision = decisionSchema.parse(output); const factualUse=this.validateDecision(task, decision, input);
+        const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
         if (decision.action === 'archive') this.advance(task, 'decide', { status: 'archived', decision, decisionSnapshotId: snapshot.id });
         else if (decision.action === 'proceed') this.advance(task, 'plan', { decision, decisionSnapshotId: snapshot.id });
         else if (!input.research) this.advance(task, 'research', { decision, decisionSnapshotId: snapshot.id });
@@ -380,18 +414,21 @@ export class Workbench {
     });
   }
 
-  private input(task: Task, project: Project, role: Role): WorkerInput {return this.store.readSnapshot(()=>{const live=this.store.get('projects',project.id);if(!live||digest(live)!==digest(project))throw new DomainError('Project state changed; retry.','stale_project_state',409);return this.inputBody(task,live,role);});}
-  private inputBody(task: Task, project: Project, role: Role): WorkerInput {
+  private input(task: Task, project: Project, role: Role, context?: FactualContext): WorkerInput {return this.store.readSnapshot(()=>{const live=this.store.get('projects',project.id);if(!live||digest(live)!==digest(project))throw new DomainError('Project state changed; retry.','stale_project_state',409);return this.inputBody(task,live,role,context);});}
+  private inputBody(task: Task, project: Project, role: Role, context?: FactualContext): WorkerInput {
     const current = this.task(task.id); const source = this.store.get('sources', task.sourceId)!;
     const question = current.questionId ? this.store.get('questions', current.questionId) : undefined;
     const completedResearch = this.store.list('actions').find(a => a.taskId === task.id && a.kind === 'research' && a.status === 'completed' && a.payload.taskVersion === task.version && a.payload.sourceRevision === task.sourceRevision)?.payload.research as ResearchRecord | undefined;
     const activeCards = this.store.list('cards').filter(card=>card.sourceId===source.id).flatMap(card=>{const view=knowledgeReference(this.store,card,project);return view?[view]:[];});
     const relevant=this.store.searchCards(`${current.title}\n${current.description}`,project,30);
     const cards=[...new Map([...activeCards,...relevant].map(card=>[card.id,card])).values()].slice(0,30);
-    return { task: current, project, role, source, cards, rules: applicableRules(this.store, current), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
+    const facts=cards.flatMap(card=>{const historical=card.factual?.eligible?[card.factual.fact]:[];const current=context?factualEligibility(this.store,card,project,{temporal:'current',contextId:context.id},context):undefined;return current?.eligible?[...historical,current.fact]:historical;});
+    return { task: current, project, role, source, cards, facts, ...(context?{factualContext:context}:{}), ...(current.decision?{decisionInterpretation:decisionInterpretationFor(current)}:{}), rules: applicableRules(this.store, current), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
   }
 
-  private validateDecision(task: Task, decision: ReturnType<typeof decisionSchema.parse>): void {
+  private validateDecision(task: Task, decision: ReturnType<typeof decisionSchema.parse>, input:WorkerInput): FactualUseView {
+    const liveTask=this.store.get('tasks',task.id),liveSource=this.store.get('sources',task.sourceId),liveProject=this.store.get('projects',task.projectId);
+    if(!liveTask||!liveSource||!liveProject||liveTask.id!==input.task.id||liveTask.version!==input.task.version||liveTask.sourceId!==input.task.sourceId||liveTask.sourceRevision!==input.task.sourceRevision||liveTask.title!==input.task.title||liveTask.description!==input.task.description||digest(liveSource)!==digest(input.source)||knowledgePolicyHash(liveProject)!==knowledgePolicyHash(input.project))throw new DomainError('The frozen decision input changed.','stale_frozen_input',409);
     if (decision.action === 'proceed' && !decision.citations.length) throw new DomainError('Proceed requires at least one current authorized source quotation or bound owner-answer quotation.', 'missing_evidence');
     const temporaryTask = this.store.get('sources', task.sourceId)?.retention === 'ephemeral';
     for (const citation of decision.citations) {
@@ -400,6 +437,25 @@ export class Workbench {
     }
     const rules = new Set(applicableRules(this.store, task).map(rule => rule.id));
     if (decision.ruleIds.some(id => !rules.has(id))) throw new DomainError('Decision cites a rule outside its current authorized scope.', 'invalid_rule', 403);
+    const hasCitation=(citation:typeof decision.citations[number])=>decision.citations.some(item=>digest(item)===digest(citation));
+    for(const statement of decision.grounds.statements){
+      if(!hasCitation(statement.citation))throw new DomainError('A statement must cite authorized source words.','invalid_ground',403);
+      if(statement.binding==='task-request'){
+        if(statement.purpose!=='requirement'||statement.citation.sourceId!==task.sourceId||statement.citation.revision!==task.sourceRevision)throw new DomainError('Requirement does not bind the current task.','invalid_ground',403);
+      }else if(statement.binding==='accepted-owner-answer'){
+        const q=task.questionId?this.store.get('questions',task.questionId):undefined,project=this.store.get('projects',task.projectId);
+        const answerSource=q?this.store.get('sources',stableId('owner-answer',q.id)):undefined;
+        const answerCase=q?this.store.get('cases',stableId('decision-case',q.id)):undefined;
+        const answerEvent=q?.answer?this.store.get('cursors',stableId('answer-event',task.projectId,task.domain,q.answer.eventId)):undefined;
+        if(statement.purpose!=='requirement'||!q||q.status!=='answered'||q.taskId!==task.id||q.projectId!==task.projectId||q.domain!==task.domain||q.taskVersion+1!==task.version||!q.answer||q.answer.actorId!==q.ownerId||q.ownerId!==project?.ownerId||answerSource?.id!==statement.citation.sourceId||answerSource.kind!=='conversation'||answerSource.externalId!==`answer:${q.id}`||answerSource.authorId!==q.ownerId||answerSource.revision!==digest(q.answer.text)||answerSource.content!==q.answer.text||answerSource.locator!==`question:${q.id}@${q.version}`||answerEvent?.value!==digest({questionId:q.id,choice:q.answer.choice,words:q.answer.text})||!answerCase||answerCase.status!=='active'||answerCase.taskId!==task.id||answerCase.questionId!==q.id||answerCase.sourceId!==answerSource.id||answerCase.actorId!==q.ownerId||answerCase.originalWords!==q.answer.text)throw new DomainError('Requirement does not bind the accepted owner answer.','invalid_ground',403);
+      }else if(statement.purpose!=='author-statement')throw new DomainError('A source statement cannot create a requirement.','invalid_ground',403);
+    }
+    if(decision.grounds.unresolved.some(item=>item.citation&&!hasCitation(item.citation)))throw new DomainError('An unresolved statement cites unavailable words.','invalid_ground',403);
+    const facts=expandFactRefs(this.store,decision.grounds.facts,task,input.factualContext);
+    if(facts.some(f=>!input.facts.some(original=>digest(original)===digest(f))))throw new DomainError('Fact was not in the frozen host input.','invalid_fact',403);
+    if(!temporaryTask&&facts.some(f=>f.sourceRefs.some(ref=>this.store.get('sources',ref.id)?.retention==='ephemeral')))throw new DomainError('Temporary evidence cannot be persisted through this task.','invalid_fact',403);
+    if(decision.action==='proceed'&&!decision.grounds.statements.length&&!facts.length)throw new DomainError('Proceed requires an authorized statement or fact.','missing_evidence');
+    return {facts,statements:structuredClone(decision.grounds.statements),unresolved:structuredClone(decision.grounds.unresolved),interpretationLabel:'assistant-inference'};
   }
 
   private validateResearch(record: ResearchRecord): void {
@@ -494,11 +550,11 @@ export class Workbench {
     });
   }
 
-  private readyTask(excludeId?:string): Task | undefined {
+  private readyTask(excludeId?:string,preferredId?:string): Task | undefined {
     if (this.stopping) return undefined;
     const attempts=this.store.list('attempts');
     return this.store.list('tasks').filter(task => {
-      if (task.id===excludeId || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if (task.id===excludeId || preferredId!==undefined&&task.id!==preferredId || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
       const project = this.store.get('projects', task.projectId);
       const feedbackSource=task.stage==='feedback'?this.store.get('sources',task.sourceId):undefined;
       if(task.stage==='feedback'&&project&&(!feedbackSource||!this.feedbackContextAvailable(task,feedbackSource,project))){

@@ -1,3 +1,4 @@
+import type { FactualUseView } from './knowledge-contract.js';
 import { DomainError, caseOutputSchema, digest, now, stableId, type Decision, type DecisionCase, type DecisionSnapshot, type DeliveryReceipt, type Question, type QuestionAnswer, type Rule, type SourceRevision, type Task, type WorkerInput } from './domain.js';
 import { Store } from './store.js';
 
@@ -19,7 +20,7 @@ export function frozenAnswer(question: Question, answer: QuestionAnswer): string
 }
 
 /** Keep the successful attempt's inputs, rather than resolving mutable rule IDs later. */
-export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerInput, decision: Decision): DecisionSnapshot {
+export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerInput, decision: Decision, factualUse?: FactualUseView): DecisionSnapshot {
   const attempt = store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.role === 'decide' && a.status === 'succeeded').at(-1);
   if (!attempt || attempt.inputHash !== digest(input)) throw new DomainError('The judgment has no matching successful frozen attempt.', 'invalid_decision_snapshot', 409);
   const rules = [...new Set(decision.ruleIds)].map(id => {
@@ -27,7 +28,7 @@ export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerIn
     if (!frozen || !current || digest(frozen) !== digest(current)) throw new DomainError('A used rule changed during judgment. Re-evaluate the current rules.', 'stale_rule', 409);
     return structuredClone(frozen);
   });
-  const sourceRefs = [...new Map([{ id: input.source.id, revision: input.source.revision }, ...decision.citations.map(c => ({ id: c.sourceId, revision: c.revision })), ...rules.flatMap(r => r.citations.map(c => ({ id: c.sourceId, revision: c.revision })))].map(ref => [ref.id, ref])).values()];
+  const sourceRefs = [...new Map([{ id: input.source.id, revision: input.source.revision }, ...decision.citations.map(c => ({ id: c.sourceId, revision: c.revision })), ...rules.flatMap(r => r.citations.map(c => ({ id: c.sourceId, revision: c.revision }))), ...(factualUse?.facts.flatMap(f=>f.sourceRefs)??[])].map(ref => [ref.id, ref])).values()];
   const id = stableId('decision-snapshot', task.id, task.version, attempt.id);
   const existing = store.get('actions', id);
   if (existing) {
@@ -37,7 +38,7 @@ export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerIn
   }
   const recordedAt = now(), reviewIntervalDays = input.project.reviewIntervalDays ?? 7;
   if (!Number.isInteger(reviewIntervalDays) || reviewIntervalDays < 1 || reviewIntervalDays > 365) throw new DomainError('Invalid project review interval.');
-  const snapshot: DecisionSnapshot = { schemaVersion: 1, id, projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, sourceId: input.source.id, sourceRevision: input.source.revision, goal: { title: task.title, description: task.description }, decision: structuredClone(decision), rules, sourceRefs, expectedOutcome: decision.expectedOutcome ?? null, ...(input.research ? { research: structuredClone(input.research) } : {}), recordedAt, reviewIntervalDays, reviewAt: new Date(Date.parse(recordedAt) + reviewIntervalDays * 86400_000).toISOString() };
+  const snapshot: DecisionSnapshot = { schemaVersion: 1, id, projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, sourceId: input.source.id, sourceRevision: input.source.revision, goal: { title: task.title, description: task.description }, decision: structuredClone(decision), ...(factualUse?{factualUse:structuredClone(factualUse)}:{}), rules, sourceRefs, expectedOutcome: decision.expectedOutcome ?? null, ...(input.research ? { research: structuredClone(input.research) } : {}), recordedAt, reviewIntervalDays, reviewAt: new Date(Date.parse(recordedAt) + reviewIntervalDays * 86400_000).toISOString() };
   store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.snapshot', status: 'completed', payload: { snapshot }, updatedAt: snapshot.recordedAt });
   return snapshot;
 }

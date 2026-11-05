@@ -1,7 +1,7 @@
 import { digest, pathAllowed, stableId, type Scope, type ActionRecord } from './domain.js';
 import { isKnowledgeSnapshotFailure, type Store } from './store.js';
 import { z } from 'zod';
-import { atomicClaimSchema, observedProcessSchema, type TestObservation, type HostObservation, type SourceRef, type RepositoryReadRequest, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload, type CanonicalCiTestObservationPayload, type ExperienceAssociation } from './knowledge-contract.js';
+import { atomicClaimSchema, observedProcessSchema, type TestObservation, type HostObservation, type SourceRef, type RepositoryReadRequest, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload, type CanonicalCiTestObservationPayload, type AtomicClaim, type ExperienceAssociation } from './knowledge-contract.js';
 import { snapshotDigest, knowledgePolicyHash } from './knowledge-identity.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 
@@ -41,6 +41,21 @@ const scope={projectId:text,domain:text};
 export const hostObservationSchema:z.ZodType<HostObservation>=z.object({schemaVersion:z.literal(1),id:text,...scope,claim:atomicClaimSchema,
  origin:z.object({kind:z.enum(['provider','host-test']),provider:z.enum(['github','gitlab']).optional(),repository:text,producerId:text,originalEventId:text,independentOrigin:text,derivedFrom:z.array(text).max(256)}).strict(),
  sourceRefs:refs,responseDigest:hash,locator:text,observedAt:time,eventAt:time.optional(),bindingHash:hash}).strict();
+/** Pure bounded comparison of retained observations; no supplied object can admit canonical authority. */
+export function compareIndependentClaim(claim:AtomicClaim,observations:readonly HostObservation[]):boolean {
+ if(claim.kind!=='test-result'||!atomicClaimSchema.safeParse(claim).success||observations.length<2||observations.length>32)return false;
+ if(observations.some(o=>!hostObservationSchema.safeParse(o).success||JSON.stringify(o.claim)!==JSON.stringify(claim)||(o.projectId!==observations[0]!.projectId||o.domain!==observations[0]!.domain)||o.origin.repository!==claim.subject.repository||o.origin.derivedFrom.some(v=>v.startsWith('unknown')||v===o.id||v===o.origin.originalEventId)))return false;
+ // Any contradiction or unsupported atom in the supplied set fails closed, even if another pair would agree.
+ for(let i=0;i<observations.length;i++)for(let j=i+1;j<observations.length;j++){
+  const a=observations[i]!,b=observations[j]!,ar=new Set([a.id,a.origin.originalEventId,...a.origin.derivedFrom]),br=new Set([b.id,b.origin.originalEventId,...b.origin.derivedFrom]);
+  const aSources=new Set(a.sourceRefs.map(r=>`source:${r.id}:${r.revision}`)),bSources=new Set(b.sourceRefs.map(r=>`source:${r.id}:${r.revision}`));
+  if(a.origin.derivedFrom.some(r=>bSources.has(r))||b.origin.derivedFrom.some(r=>aSources.has(r)))continue;
+  if(a.id===b.id||a.origin.originalEventId===b.origin.originalEventId||a.origin.independentOrigin===b.origin.independentOrigin||[...ar].some(r=>br.has(r)))continue;
+  return true;
+ }
+ return false;
+}
+
 const checkRequest=z.object({runId:z.string().regex(/^[1-9][0-9]*$/).max(32),jobId:z.string().regex(/^[1-9][0-9]*$/).max(32),checkName:text}).strict();
 const request=z.object({repository:text,headSha:z.string().regex(/^[a-f0-9]{40}$/),changeNumber:z.number().int().positive().safe().optional(),checks:z.array(checkRequest).max(20),filePaths:z.array(text).max(128),issueSource:ref.optional(),testReportPath:text.optional(),current:z.object({changeNumber:z.number().int().positive().safe(),checkNames:z.array(text).max(20)}).strict().optional()}).strict();
 const attestation=z.object({observationId:text,producerId:text,originalEventId:text,reportPath:text,reportDigest:hash,snapshotDigest:hash,testDefinitionDigest:hash}).strict();
@@ -55,6 +70,77 @@ export function isRetractedHostObservation(store:Store,row:ActionRecord):boolean
  const parsed=retractedHostPayloadSchema.safeParse(row.payload);if(!parsed.success)return false;
  const ids=parsed.data.sourceIds;if(new Set(ids).size!==ids.length)return false;
  return ids.every(id=>{const source=store.get('sources',id);return !!source&&source.projectId===row.projectId&&source.domain===row.domain&&source.status!=='active';});
+}
+const factualContext=z.object({id:text,...scope,observedAt:time,projectPolicyHash:hash,source:ref,sourceHash:hash,task:z.object({id:text,version:z.number().int().positive()}).strict(),observations:z.array(z.object({id:text,hash}).strict()).min(1).max(32)}).strict();
+export const canonicalFactualContextPayloadSchema=z.object({schemaVersion:z.literal(1),context:factualContext,digest:hash,sourceRefs:refs}).strict().superRefine((value,ctx)=>{if(new Set(value.context.observations.map(item=>item.id)).size!==value.context.observations.length||new Set(value.sourceRefs.map(item=>item.id)).size!==value.sourceRefs.length||!value.sourceRefs.some(ref=>ref.id===value.context.source.id&&ref.revision===value.context.source.revision))ctx.addIssue({code:'custom',message:'Current context bindings must be unique and include the source.'});});
+// A context audit contains only identity, hashes and revocation metadata.
+const auditRef=z.object({id:text,revisionHash:hash}).strict();
+export const factualContextTombstonePayloadSchema=z.object({
+ schemaVersion:z.literal(1),phase:z.literal('invalid'),errorCode:z.literal('source_invalidated'),retracted:z.literal(true),
+ sourceIds:z.tuple([text]),primarySourceId:text,taskVersion:z.number().int().positive().safe(),contextHash:hash,
+ sourceRefs:z.array(auditRef).min(1).max(256),auditHash:hash,
+}).strict().superRefine((value,ctx)=>{
+ if(new Set(value.sourceRefs.map(ref=>ref.id)).size!==value.sourceRefs.length||
+   !value.sourceRefs.some(ref=>ref.id===value.primarySourceId)||!value.sourceRefs.some(ref=>ref.id===value.sourceIds[0]))
+  ctx.addIssue({code:'custom',message:'Audit references must uniquely include the primary and invalidated source.'});
+});
+type FactualContextTombstone=z.infer<typeof factualContextTombstonePayloadSchema>;
+export function factualContextAuditDigest(action:ActionRecord,payload:Record<string,unknown>):string {
+ const {auditHash:_auditHash,...body}=payload;
+ return digest({id:action.id,projectId:action.projectId,domain:action.domain,taskId:action.taskId,payload:body});
+}
+/** Validate every referenced source and its complete scoped parent closure. */
+function validAuditRefs(store:Store,action:ActionRecord,p:FactualContextTombstone,revoked:boolean):boolean {
+ if(action.kind!=='knowledge.factual-context'||action.status!=='completed'||!action.taskId||!/^[a-f0-9]{32}$/.test(action.id)||
+   p.auditHash!==factualContextAuditDigest(action,p))return false;
+ const task=store.get('tasks',action.taskId);
+ if(!task||task.projectId!==action.projectId||task.domain!==action.domain||task.sourceId!==p.primarySourceId||task.version<p.taskVersion)return false;
+ const indexed=new Map(p.sourceRefs.map(ref=>[ref.id,ref.revisionHash])),visiting=new Set<string>(),visited=new Set<string>();
+ const visit=(id:string):boolean=>{
+  if(visiting.has(id))return false;if(visited.has(id))return true;
+  const source=store.get('sources',id);
+  if(!source||source.projectId!==action.projectId||source.domain!==action.domain||indexed.get(id)!==digest(source.revision))return false;
+  visiting.add(id);
+  if(!(source.parentSources??[]).every(parent=>indexed.get(parent.id)===digest(parent.revision)&&visit(parent.id)))return false;
+  visiting.delete(id);visited.add(id);return true;
+ };
+ if(!p.sourceRefs.every(ref=>visit(ref.id)))return false;
+ const invalidated=store.get('sources',p.sourceIds[0]);
+ return !!invalidated&&(!revoked||invalidated.status==='superseded');
+}
+/** Build only from the prior canonical action while its source bindings still exist. */
+export function factualContextTombstone(store:Store,action:ActionRecord,sourceId:string):Record<string,unknown>|undefined {
+ if(action.kind!=='knowledge.factual-context'||action.status!=='completed')return undefined;
+ const parsed=canonicalFactualContextPayloadSchema.safeParse(action.payload);if(!parsed.success)return undefined;
+ const p=parsed.data,c=p.context;
+ if(c.id!==action.id||c.projectId!==action.projectId||c.domain!==action.domain||c.task.id!==action.taskId||
+   p.digest!==digest(c)||!p.sourceRefs.some(ref=>ref.id===sourceId))return undefined;
+ const indexed=new Map(p.sourceRefs.map(ref=>[ref.id,ref.revision]));
+ if(c.observations.some(entry=>{
+  const row=store.get('actions',entry.id),record=row&&readCanonicalHostRecord(row);
+  return !record||row!.projectId!==action.projectId||row!.domain!==action.domain||digest(record.observation)!==entry.hash||
+   record.sourceRefs.some(ref=>indexed.get(ref.id)!==ref.revision);
+ }))return undefined;
+ const payload={schemaVersion:1 as const,phase:'invalid' as const,errorCode:'source_invalidated' as const,retracted:true as const,
+  sourceIds:[sourceId] as [string],primarySourceId:c.source.id,taskVersion:c.task.version,contextHash:p.digest,
+  sourceRefs:p.sourceRefs.map(ref=>({id:ref.id,revisionHash:digest(ref.revision)})),auditHash:''};
+ payload.auditHash=factualContextAuditDigest(action,payload);
+ if(!factualContextTombstonePayloadSchema.safeParse(payload).success||!validAuditRefs(store,action,payload,false))return undefined;
+ return payload;
+}
+/** Only a canonical-to-audit transition or an identical audit rewrite can persist. */
+export function validFactualContextTombstoneTransition(previous:ActionRecord|undefined,action:ActionRecord):boolean {
+ const next=factualContextTombstonePayloadSchema.safeParse(action.payload);if(!previous||!next.success||
+  previous.id!==action.id||previous.projectId!==action.projectId||previous.domain!==action.domain||previous.taskId!==action.taskId||
+  previous.kind!==action.kind||previous.status!=='completed')return false;
+ const oldAudit=factualContextTombstonePayloadSchema.safeParse(previous.payload);
+ if(oldAudit.success)return digest(previous.payload)===digest(action.payload);
+ const old=canonicalFactualContextPayloadSchema.safeParse(previous.payload);if(!old.success)return false;
+ const c=old.data.context,p=next.data;
+ return c.id===action.id&&c.task.id===action.taskId&&c.projectId===action.projectId&&c.domain===action.domain&&
+  old.data.digest===digest(c)&&p.contextHash===old.data.digest&&p.primarySourceId===c.source.id&&p.taskVersion===c.task.version&&
+  digest(p.sourceRefs)===digest(old.data.sourceRefs.map(ref=>({id:ref.id,revisionHash:digest(ref.revision)})))&&
+  p.auditHash===factualContextAuditDigest(action,p);
 }
 const link=z.object({schemaVersion:z.literal(1),...scope,cardId:text,candidateHash:hash,claimHash:hash,observationIds:z.array(text).min(1).max(32),observationHashes:z.array(hash).min(1).max(32),basis:z.enum(['authoritative-record','independent-corroboration']),sourceRefs:refs,createdAt:time}).strict();
 export const canonicalKnowledgePayloadSchema:z.ZodType<CanonicalKnowledgeEvidencePayload>=z.object({schemaVersion:z.literal(1),link,digest:hash,sourceRefs:refs}).strict();
@@ -155,11 +241,17 @@ export function knowledgeRequestSourceRefs(store:Store,sourceId:string,scope:Sco
  if(!options.allowExpired&&refs.some(ref=>{const source=store.get('sources',ref.id);return source?.retention==='ephemeral'&&!source.content;}))return undefined;
  return refs;
 }
-export function knowledgeActionDependencies(action:ActionRecord):{refs:SourceRef[];unresolved:boolean} {
- if(!['knowledge.host-observation','knowledge.evidence-link','knowledge.structured-ingest','experience.test-observation','experience.evidence-link'].includes(action.kind))return {refs:[],unresolved:false};
+export function knowledgeActionDependencies(action:ActionRecord,store?:Store):{refs:SourceRef[];unresolved:boolean} {
+ const tombstone=action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload);
+ if(tombstone&&tombstone.success){
+  return {refs:tombstone.data.sourceRefs.map(ref=>({id:ref.id,revision:''})),
+   unresolved:!store||!validAuditRefs(store,action,tombstone.data,true)};
+ }
+ if(!['knowledge.host-observation','knowledge.evidence-link','knowledge.structured-ingest','knowledge.factual-context','experience.test-observation','experience.evidence-link'].includes(action.kind))return {refs:[],unresolved:false};
  if(!action.payload||typeof action.payload!=='object'||Array.isArray(action.payload))return {refs:[],unresolved:true};
  // A valid source ID is useful for privacy even when its revision cannot admit a fact.
  const payload=action.payload as Record<string,unknown>,candidates:unknown[]=[payload.sourceRefs];let unresolved=false;
+ if(action.kind==='knowledge.factual-context'&&!canonicalFactualContextPayloadSchema.safeParse(payload).success)unresolved=true;
  if(action.kind==='knowledge.structured-ingest'&&Object.keys(payload).some(key=>!['schemaVersion','sourceId','sourceRevision','sourceHash','sourceRefs','phase','tries','runAfter','errorCode'].includes(key)))unresolved=true;
  if(action.kind==='experience.test-observation'&&!canonicalCiTestPayloadSchema.safeParse(payload).success&&!localTestPayload.safeParse(payload).success)unresolved=true;
  if(action.kind==='experience.evidence-link'){

@@ -30,7 +30,7 @@ function setup(options: Options = {}) {
     let output: unknown;
     if (input.role === 'knowledge_extract') output = { cards: [] };
     if (input.role === 'case_extract') output = { observations: [] };
-    if (input.role === 'decide') output = { action: 'proceed', summary: 'Update PRD', rationale: 'Drafts should be retained', citations: [], ruleIds: [] };
+    if (input.role === 'decide') output = { action: 'proceed', summary: 'Update PRD', rationale: 'Drafts should be retained', citations: [{sourceId:input.source.id,revision:input.source.revision,quote:input.source.content,locator:input.source.locator}], ruleIds: [], grounds:{statements:[{citation:{sourceId:input.source.id,revision:input.source.revision,quote:input.source.content,locator:input.source.locator},purpose:'requirement',binding:'task-request'}],facts:[],unresolved:[]} };
     if (input.role === 'plan') output = input.task.plan;
     if (input.role === 'execute') output = { taskVersion: input.task.version, planHash: digest(input.plan!), baselineSha: input.plan!.baselineSha, files: [{ path: 'docs/PRD.md', content: '# PRD\nKeep drafts.' }], tests: [{ command: 'validate', passed: true, output: '1 passed' }], summary: 'Updated' };
     if (input.role === 'check') output = { taskVersion: input.task.version, planHash: digest(input.plan!), artifactHash: digest(input.artifact!), verdict: 'pass', summary: 'Independent checks passed', issues: [], tests: [{ command: 'validate', passed: true, output: '1 passed' }] };
@@ -41,7 +41,7 @@ function setup(options: Options = {}) {
   const run = async (role: Role) => {
     const task: Task = { ...store.get('tasks', initialTask.id)!, stage: role, status: role === 'check' ? 'checking' : 'executing' };
     store.save('tasks', task);
-    const input: WorkerInput = { task, project, source, role, cards: [], rules: [], plan: task.plan, artifact: task.artifact };
+    const input: WorkerInput = { task, project, source, role, cards: [], facts: [], rules: [], plan: task.plan, artifact: task.artifact };
     const output = await scheduler.run(task, project, input);
     if (role === 'execute' && output) store.save('tasks', { ...store.get('tasks', task.id)!, artifact: output as NonNullable<Task['artifact']> });
     return output;
