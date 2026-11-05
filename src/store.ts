@@ -2,17 +2,22 @@ import Database from 'better-sqlite3';
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
-import { knowledgeActionDependencies } from './knowledge-records.js';
+import { knowledgeActionDependencies, knowledgeRequestSourceRefs } from './knowledge-records.js';
 import { ingestSource, redactWithdrawnEvidence } from './intake.js';
+import { enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
+import { parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 
 const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
 const vaultTables = new Set<Table>(['sources', 'cards', 'rules', 'cases']);
-type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Table] };
+type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Table]; redactStructuredCard?: boolean };
+type TemporaryEntry = { entity: Entities[Table]; privacyInvalidated?: true; missingJobCardId?: string };
+const cardExpired=(card:KnowledgeCard):boolean=>!!card.expiresAt&&!(Date.parse(card.expiresAt)>Date.now());
+const expiryIntentLocator='withheld:expiry-intent';
 
 /** SQLite owns business state; the Vault and FTS are recoverable, scoped projections. */
 export class Store {
   private readonly db: Database.Database;
-  private temporary = new Map<string, Entities[Table]>();
+  private temporary = new Map<string, TemporaryEntry>();
   private vaultJobs = new Map<string, VaultJob>();
   private depth = 0;
   private closed = false;
@@ -31,6 +36,8 @@ export class Store {
     this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, project_id UNINDEXED, domain UNINDEXED, terms, tokenize='unicode61')");
     // Read the Vault before projecting SQLite, so an independent edit is never overwritten at startup.
     this.recoverVault();
+    this.protectTemporaryStructuredCards();
+    this.flushVault();
     this.transaction(() => { for (const source of this.list('sources')) if (source.status === 'withdrawn') redactWithdrawnEvidence(this, source.id); });
     if (vaultDir) for (const table of vaultTables) for (const entity of this.list(table)) this.publish({ table, entity }, true);
     this.rebuildIndex();
@@ -39,47 +46,81 @@ export class Store {
   get<K extends Table>(table: K, id: string): Entities[K] | undefined {
     this.assertTable(table);
     const temporary = this.temporary.get(`${table}:${id}`);
-    if (temporary) return structuredClone(temporary) as Entities[K];
+    if (temporary) return this.visible(table,structuredClone(temporary.entity)) as Entities[K];
     const row = this.db.prepare(`SELECT data FROM ${table} WHERE id = ?`).get(id) as { data: string } | undefined;
-    return row ? JSON.parse(row.data) as Entities[K] : undefined;
+    return row ? this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K] : undefined;
   }
 
   list<K extends Table>(table: K): Entities[K][] {
     this.assertTable(table);
     const rows = this.db.prepare(`SELECT data FROM ${table} ORDER BY rowid`).all() as { data: string }[];
-    const result = new Map(rows.map(row => { const entity = JSON.parse(row.data) as Entities[K]; return [entity.id, entity]; }));
-    for (const [key, entity] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entity.id, structuredClone(entity) as Entities[K]);
+    const result = new Map(rows.map(row => { const entity = this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K]; return [entity.id, entity]; }));
+    for (const [key, entry] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entry.entity.id, this.visible(table,structuredClone(entry.entity)) as Entities[K]);
     return [...result.values()];
   }
 
   save<K extends Table>(table: K, entity: Entities[K]): void {
     this.assertTable(table);
     const previous = this.get(table, entity.id);
-    const value = structuredClone(entity);
+    let value = structuredClone(entity);
+    const key = `${table}:${entity.id}`,structured=table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard);
+    let card=structured?value as KnowledgeCard:undefined;
+    if(card?.status==='active'&&previous&&(previous as KnowledgeCard).status==='withdrawn'){
+      const existing=previous as KnowledgeCard,entry=this.temporary.get(key),source=this.get('sources',card.sourceId);
+      if(cardExpired(existing)||!existing.expiresAt||!(entry?.missingJobCardId===card.id||this.isStructuredCardExpiryIntent(existing))||
+        existing.sourceId!==card.sourceId||existing.sourceRevision!==card.sourceRevision||existing.projectId!==card.projectId||existing.domain!==card.domain||
+        card.id!==structuredKnowledgeCardId(card)||card.verification!=='reported'||card.claim||!source?.content.includes(card.quote)||this.structuredCardDependencyState(card)==='unknown')return;
+      card={...card,expiresAt:existing.expiresAt};value=card as Entities[K];
+      this.temporary.delete(key);
+      for(const [actionKey,action] of this.temporary)if(action.missingJobCardId===card.id)this.temporary.delete(actionKey);
+    }
+    const inactive=!!card&&(card.status==='withdrawn'||cardExpired(card));
+    const unknown=!!card&&this.structuredCardDependencyState(card)==='unknown',source=card&&this.get('sources',card.sourceId);
+    const missingJobCard=unknown&&!inactive&&!!source&&source.status==='active'&&!this.get('actions',structuredKnowledgeJobId(source));
+    if(card&&inactive)value=this.structuredCardTombstone(card) as Entities[K];
+    else if(card&&unknown)value=this.redactStructuredCard(card) as Entities[K];
     if (table === 'cards' && !this.cardActive(value as KnowledgeCard, value)) delete (value as KnowledgeCard).experience;
-    const key = `${table}:${entity.id}`;
     if (table === 'sources' && (value as Entities['sources']).retention === 'ephemeral') {
-      this.temporary.set(key, value);
+      this.temporary.set(key, {entity:value});
       this.write(table, { ...value, content: '', title: 'Temporary source' } as Entities[K]);
       this.protectTemporaryKnowledgeActions();
+      this.protectTemporaryStructuredCards();
+      if (!this.depth) this.flushVault();
       return;
     }
     if (this.isTemporaryDerived(table, value)) {
-      this.temporary.set(key, value);
-      if(table === 'actions')this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);
+      const prior=this.temporary.get(key);
+      this.temporary.set(key, {entity:value,...(unknown&&!inactive?{privacyInvalidated:true as const}:{}),...(missingJobCard?{missingJobCardId:entity.id}:{})});
+      if(table === 'actions'){
+        this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);
+        if((value as Entities['actions']).kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
+      }
+      if(table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard)){
+        if(inactive)this.write('cards',this.structuredCardTombstone(entity as KnowledgeCard));
+        else if(card?.expiresAt&&Number.isFinite(Date.parse(card.expiresAt))){
+          const recoverable=!unknown||missingJobCard||prior?.missingJobCardId===entity.id;
+          this.write('cards',recoverable?this.structuredCardExpiryIntent(card):this.structuredCardTombstone(card));
+        }
+        else this.db.prepare('DELETE FROM cards WHERE id = ?').run(entity.id);
+        this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(entity.id);
+        this.queueStructuredCardRedaction(value as KnowledgeCard);
+        if(!this.depth)this.flushVault();
+      }
       return;
     }
     if (this.isTemporaryTaskEntity(table, value)) {
-      this.temporary.set(key, value);
+      this.temporary.set(key, {entity:value});
       this.write(table, this.redactTemporary(table, value) as Entities[K]);
       return;
     }
     this.temporary.delete(key);
     this.write(table, value);
+    if(table==='actions'&&((value as Entities['actions']).kind==='knowledge.structured-ingest'||(previous as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest')){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
     if (table === 'cards') this.indexCard(value as KnowledgeCard);
     if (table === 'sources') {
       const source = value as Entities['sources'];
       this.protectTemporaryKnowledgeActions();
+      this.protectTemporaryStructuredCards();
       if (source.status !== 'active') this.db.prepare('DELETE FROM cards_fts WHERE id IN (SELECT json_extract(data, \'$.id\') FROM cards WHERE json_extract(data, \'$.sourceId\') = ?)').run(source.id);
     }
     if (vaultTables.has(table)) {
@@ -92,6 +133,7 @@ export class Store {
     this.assertTable(table); const entity = this.get(table, id);
     this.temporary.delete(`${table}:${id}`);
     this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    if(table==='actions'&&(entity as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
     if (table === 'cards') this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(id);
     if (entity && this.vaultDir && vaultTables.has(table)) {
       const path = this.vaultPath(table, entity);
@@ -131,7 +173,7 @@ export class Store {
 
   indexCard(card: KnowledgeCard): void {
     this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);
-    if (!this.cardActive(card, card) || this.get('sources', card.sourceId)?.retention === 'ephemeral') return;
+    if (!this.cardActive(card, card) || this.isTemporaryDerived('cards',card)) return;
     this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, tokenize([card.title, card.aliases.join(' '), card.experience?.problem ?? '', card.experience?.symptomAliases.join(' ') ?? '', card.body, card.quote].join(' ')));
   }
 
@@ -148,12 +190,20 @@ export class Store {
     this.db.prepare(`INSERT INTO ${table}(id, project_id, domain, data) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, domain = excluded.domain, data = excluded.data`).run(entity.id, entity.projectId, entity.domain, JSON.stringify(entity));
   }
   private assertTable(table: string): void { if (!tables.includes(table as Table)) throw new Error('Unknown entity table.'); }
+  private visible(table:Table,entity:Entities[Table]):Entities[Table] {
+    if(table==='cards'){
+      const card=entity as KnowledgeCard;
+      if(isStructuredKnowledgeCard(card)&&cardExpired(card))return this.structuredCardTombstone(card);
+    }
+    return entity;
+  }
   private cardActive(card: KnowledgeCard, scope: Scope): boolean {
     const source = this.get('sources', card.sourceId);
     return card.status === 'active' && card.projectId === scope.projectId && card.domain === scope.domain && (!card.expiresAt || Date.parse(card.expiresAt) > Date.now()) && source?.status === 'active' && source.revision === card.sourceRevision && source.projectId === card.projectId && source.domain === card.domain;
   }
   private isTemporaryDerived(table: Table, entity: Entities[Table]): boolean {
     if (table === 'actions') return this.temporaryKnowledgeAction(entity as Entities['actions']);
+    if (table === 'cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard)) return this.temporaryStructuredCard(entity as KnowledgeCard);
     if (!['cards', 'rules', 'cases'].includes(table)) return false;
     if ('sourceId' in entity) return this.get('sources', entity.sourceId)?.retention === 'ephemeral';
     if ('citations' in entity) return entity.citations.some(c => this.get('sources', c.sourceId)?.retention === 'ephemeral');
@@ -165,7 +215,65 @@ export class Store {
   }
   private protectTemporaryKnowledgeActions():void {
     for(const action of this.list('actions'))if(this.temporaryKnowledgeAction(action)){
-      this.temporary.set(`actions:${action.id}`,action);this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+      this.temporary.set(`actions:${action.id}`,{entity:action});this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+    }
+  }
+  private structuredCardDependencyState(card:KnowledgeCard):'unknown'|'temporary'|'permanent' {
+    const source=this.get('sources',card.sourceId);if(!source||source.revision!==card.sourceRevision)return 'unknown';
+    const action=this.get('actions',structuredKnowledgeJobId(source)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+    if(!action||action.kind!=='knowledge.structured-ingest'||!job?.success||action.projectId!==card.projectId||action.domain!==card.domain||job.data.sourceId!==source.id||job.data.sourceRevision!==source.revision||job.data.sourceHash!==digest(source.content)||!validStructuredJobRefs(this,source,job.data.sourceRefs))return 'unknown';
+    if(job.data.sourceRefs.some(ref=>{const dependency=this.get('sources',ref.id),hash=this.get('cursors',stableId('source-hash',ref.id))?.value;return !dependency||!!hash&&hash!==digest(dependency.content);}))return 'unknown';
+    if(!(action.status==='pending'&&['queued','pending-readback'].includes(job.data.phase)||action.status==='completed'&&job.data.phase==='processed'))return 'unknown';
+    const project=this.get('projects',card.projectId);if(!project)return 'unknown';
+    try{
+      const parsed=parseStructuredKnowledge(source,project);if(!parsed)return 'unknown';
+      if(parsed.kind==='experience'&&parsed.input.issueId){const issue=this.get('sources',parsed.input.issueId);if(issue&&(issue.status!=='active'||issue.projectId!==source.projectId||issue.domain!==source.domain||issue.retention==='ephemeral'&&!issue.content))return 'unknown';}
+      const request=structuredRepositoryRequest(this,source,project,parsed),expected=knowledgeRequestSourceRefs(this,source.id,project,request);
+      if(!expected||digest(expected)!==digest(job.data.sourceRefs))return 'unknown';
+    }catch{return 'unknown';}
+    return job.data.sourceRefs.some(ref=>this.temporarySourceDependency(ref.id))?'temporary':'permanent';
+  }
+  private temporaryStructuredCard(card:KnowledgeCard):boolean {return this.structuredCardDependencyState(card)!=='permanent';}
+  private redactStructuredCard(card:KnowledgeCard):KnowledgeCard {return {...card,status:'withdrawn',title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`};}
+  private structuredCardTombstone(card:KnowledgeCard):KnowledgeCard {
+    const expiry=card.expiresAt?Date.parse(card.expiresAt):NaN;
+    return {id:card.id,projectId:card.projectId,domain:card.domain,sourceId:card.sourceId,sourceRevision:card.sourceRevision,status:'withdrawn',kind:'fact',verification:'reported',title:'',body:'',quote:'',locator:'',aliases:[],createdAt:'',...(Number.isFinite(expiry)&&card.expiresAt?{expiresAt:card.expiresAt}:{})};
+  }
+  private structuredCardExpiryIntent(card:KnowledgeCard):KnowledgeCard {return {...this.structuredCardTombstone(card),locator:expiryIntentLocator};}
+  private isStructuredCardExpiryIntent(card:KnowledgeCard):boolean {
+    return card.status==='withdrawn'&&card.locator===expiryIntentLocator&&!!card.expiresAt&&Number.isFinite(Date.parse(card.expiresAt))&&card.kind==='fact'&&card.verification==='reported'&&!card.title&&!card.body&&!card.quote&&!card.createdAt&&!card.aliases.length&&!card.experience&&!card.claim&&!card.pendingClaim;
+  }
+  private queueStructuredCardRedaction(card:KnowledgeCard):void {
+    if(!this.vaultDir)return;
+    const path=this.vaultPath('cards',card),directory=dirname(path),prefix=path.slice(path.lastIndexOf('/')+1).replace(/\.md$/,'.conflict-');
+    if(existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.vaultJobs.set(`cards:${card.id}`,{table:'cards',entity:card,redactStructuredCard:true});
+  }
+  private protectTemporaryStructuredCards():void {
+    for(const card of this.list('cards'))if(isStructuredKnowledgeCard(card)){
+      const key=`cards:${card.id}`,entry=this.temporary.get(key),state=this.structuredCardDependencyState(card),unknown=state==='unknown',expired=cardExpired(card),intent=this.isStructuredCardExpiryIntent(card);
+      if(!unknown&&!expired&&entry?.missingJobCardId===card.id){
+        if(card.expiresAt)continue;
+        // Drop only automatically invalidated placeholders. A fresh processor must rebuild
+        // the description and perform a new authenticated read before it can link facts.
+        this.temporary.delete(key);
+        for(const [actionKey,action] of this.temporary)if(action.missingJobCardId===card.id)this.temporary.delete(actionKey);
+        continue;
+      }
+      if(state==='permanent'&&!expired)continue;
+      const source=this.get('sources',card.sourceId),missing=!!source&&!this.get('actions',structuredKnowledgeJobId(source));
+      const automatic=!!entry?.privacyInvalidated||intent||card.status==='active'&&!expired;
+      let validIssue=true;
+      if(source){const project=this.get('projects',source.projectId);try{const parsed=project&&parseStructuredKnowledge(source,project);if(parsed?.kind==='experience'&&parsed.input.issueId){const issue=this.get('sources',parsed.input.issueId);validIssue=!issue||issue.status==='active'&&issue.projectId===source.projectId&&issue.domain===source.domain&&!(issue.retention==='ephemeral'&&!issue.content);}}catch{validIssue=false;}}
+      const recoverable=unknown&&automatic&&!expired&&source?.status==='active'&&validIssue&&(entry?.privacyInvalidated?entry.missingJobCardId===card.id:intent||missing);
+      const redacted=unknown?this.redactStructuredCard(card):card;
+      this.temporary.set(key,{entity:redacted,...(unknown&&automatic?{privacyInvalidated:true as const}:{}),...(recoverable?{missingJobCardId:card.id}:{})});
+      if((recoverable||state==='temporary'&&card.status==='active'&&!expired)&&card.expiresAt&&Number.isFinite(Date.parse(card.expiresAt)))this.write('cards',this.structuredCardExpiryIntent(card));
+      else if(card.expiresAt||!automatic&&card.status==='withdrawn'||intent&&!recoverable)this.write('cards',this.structuredCardTombstone(card));
+      else this.db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
+      this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);this.queueStructuredCardRedaction(card);
+      for(const action of this.list('actions'))if(action.kind==='knowledge.evidence-link'&&(action.payload.link as {cardId?:unknown}|undefined)?.cardId===card.id){
+        this.temporary.set(`actions:${action.id}`,{entity:unknown?{...action,status:'completed',payload:{retracted:true,sourceIds:[card.sourceId]}}:action,...(unknown&&recoverable?{missingJobCardId:card.id}:{})});this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+      }
     }
   }
   private temporarySourceDependency(id:string, seen=new Set<string>()):boolean {
@@ -223,9 +331,11 @@ export class Store {
     return `${meta.join('\n')}\n# ${title}\n\n${body}\n`;
   }
   private publish(job: VaultJob, startup = false): void {
-    if (!this.vaultDir || this.isTemporaryDerived(job.table, job.entity) || job.table === 'sources' && (job.entity as Entities['sources']).retention === 'ephemeral') return;
-    const path = this.vaultPath(job.table, job.entity); const body = this.markdown(job.table, job.entity);
-    const effective = this.vaultEntity(job.table, job.entity);
+    if (!this.vaultDir || !job.redactStructuredCard && (this.isTemporaryDerived(job.table, job.entity) || job.table === 'sources' && (job.entity as Entities['sources']).retention === 'ephemeral')) return;
+    const card=job.entity as KnowledgeCard;
+    const entity=job.redactStructuredCard?{...card,status:'withdrawn' as const,title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`} : job.entity;
+    const path = this.vaultPath(job.table, entity); const body = this.markdown(job.table, entity);
+    const effective = this.vaultEntity(job.table, entity);
     const inactive = 'status' in effective && effective.status !== 'active';
     if (startup && !inactive && this.preserveVaultPaths.has(path)) return;
     mkdirSync(dirname(path), { recursive: true });
@@ -369,8 +479,15 @@ export class Store {
         if (!Array.isArray(r.citations) || !r.citations.length || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision || s.projectId !== r.projectId || s.domain !== r.domain || !s.content.includes(c.quote); })) continue;
         if (r.kind === 'principle' && (!Array.isArray(r.caseIds) || !r.caseIds.length || r.caseIds.some(id => this.get('cases', id)?.status !== 'active'))) continue;
       }
-      if (!existing) this.write(table, entity);
+      if (!existing) {
+        if(table==='cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard))this.save('cards',entity as KnowledgeCard);
+        else this.write(table, entity);
+      }
       if (sourceEdited ?? text !== this.markdown(table, entity)) { this.preserveVaultPaths.add(path); edits.push(record); }
+    }
+    for (const record of records) if (record.table === 'sources') {
+      const source = this.get('sources', record.entity.id), project = source && this.get('projects', source.projectId);
+      if (source && project && source.status === 'active' && source.domain === project.domain) enqueueStructuredKnowledge(this, source);
     }
     for (const record of edits) {
       if (!this.get('projects', record.entity.projectId)) continue;

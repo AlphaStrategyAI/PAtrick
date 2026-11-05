@@ -5,7 +5,8 @@ vi.mock('node:fs', async importOriginal => { const actual = await importOriginal
 import { join } from 'node:path';
 import { BillingAuthority, billingSwitchInputHash, evaluateBilling, loadIncludedAdmission, type HostDispatchPermit, type CurrentBillingContext, type IncludedAdmission } from '../../src/billing.js';
 import { ingestSource } from '../../src/intake.js';
-import { digest, DomainError, roles, SubscriptionAccessError, WorkerUnavailable, type HostSubscriptionObservation, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerResult } from '../../src/domain.js';
+import { digest, stableId, DomainError, roles, SubscriptionAccessError, WorkerUnavailable, type HostSubscriptionObservation, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerResult } from '../../src/domain.js';
+import { structuredKnowledgeJobId } from '../../src/knowledge-jobs.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { Store } from '../../src/store.js';
 import { makeBillingFixture } from '../fixtures/billing.js';
@@ -13,6 +14,23 @@ const fixtures: ReturnType<typeof makeBillingFixture>[] = [];
 function fixture() { const f = makeBillingFixture(); fixtures.push(f); return f; }
 afterEach(() => { vi.restoreAllMocks(); for (const f of fixtures.splice(0)) f.dispose(); });
 function evaluate(f: ReturnType<typeof fixture>) { return evaluateBilling(f.included, f.task, f.project, f.proof, f.current, f.at); }
+function financialActions(store:Store){return store.list('actions').filter(row=>row.kind==='billing_hold'||row.kind==='billing_profile_unavailable');}
+function oneFinancialAction(store:Store,kind:'billing_hold'|'billing_profile_unavailable'){
+  const rows=financialActions(store);expect(rows).toHaveLength(1);const row=rows[0]!;expect(row.kind).toBe(kind);
+  const p=row.payload;expect(p.attemptId).toEqual(expect.any(String));
+  expect(row.id).toBe(kind==='billing_profile_unavailable'?stableId('billing-profile-refusal',row.projectId,row.domain,p.profileHash,p.attemptId):p.profileHash?stableId('billing-hold',row.projectId,row.domain,p.profileHash):stableId('billing-admission-hold',row.projectId,row.domain,p.admissionId));
+  return row;
+}
+function expectIndependentJob(f:ReturnType<typeof fixture>,financialKind?:'billing_hold'|'billing_profile_unavailable'){
+  const financial=financialKind?[oneFinancialAction(f.store,financialKind)]:[];
+  const job=expect.objectContaining({id:structuredKnowledgeJobId(f.source),kind:'knowledge.structured-ingest',projectId:f.source.projectId,domain:f.source.domain,status:'pending',payload:expect.objectContaining({schemaVersion:1,sourceId:f.source.id,sourceRevision:f.source.revision,sourceHash:digest(f.source.content),sourceRefs:[{id:f.source.id,revision:f.source.revision}],phase:'queued',tries:0})});
+  const actions=f.store.list('actions');expect(actions).toHaveLength(1+financial.length);expect(actions).toEqual(expect.arrayContaining([job,...financial]));
+}
+
+it('rejects an unexpected authority row when checking the complete action population',()=>{
+  const f=fixture();f.store.save('actions',{id:'unexpected-link',projectId:f.project.id,domain:f.project.domain,kind:'knowledge.evidence-link',status:'completed',payload:{unexpected:true},updatedAt:f.at.toISOString()});
+  expect(()=>expectIndependentJob(f)).toThrow();
+});
 
 describe('bounded billing decision', () => {
   it('permits strict included zero with independent matching proof/current context', () => { expect(evaluate(fixture())).toEqual({ allowed: true, reserveUsd: 0, mode: 'included-subscription' }); });
@@ -341,7 +359,7 @@ describe('Store-backed one-use billing authority', () => {
     await expect(a.dispatch(r, f.input, adapter(f, async () => { if (kind === 'mutation') f.input.answer = 'changed'; if (kind === 'stale') f.store.save('tasks', { ...f.store.get('tasks', f.task.id)!, status: 'cancelled', version: 2 }); return { ...result(f, 3), ...(kind === 'malformed' ? { output: {} } : {}), ...(kind === 'provider' ? { provider: 'wrong' } : {}) }; }))).rejects.toMatchObject({ code: 'billing_policy_violation' });
     expect(f.store.get('tasks', f.task.id)).toMatchObject({ spentUsd: 3, billingStop: { code: 'billing_policy_violation' }, ...(kind === 'stale' ? { status: 'cancelled' } : {}) });
     expect(f.store.get('attempts', r.attempt.id)).toMatchObject({ costUsd: 3, status: 'failed', error: 'billing_policy_violation' });
-    expect(f.store.list('actions').filter(x => x.kind === 'billing_hold')).toHaveLength(1); expect(f.store.list('actions')[0]?.taskId).toBeUndefined();
+    expect(oneFinancialAction(f.store,'billing_hold').taskId).toBeUndefined();
     expect(f.store.list('outbox')).toHaveLength(1); expect(f.store.list('outbox')[0]?.taskId).toBeUndefined(); expect(JSON.stringify(f.store.list('outbox'))).not.toContain('synthetic-account');
     await expect(a.dispatch(r, f.input, adapter(f))).rejects.toMatchObject({ code: 'billing_permit_invalid' }); expect(f.store.get('tasks', f.task.id)?.spentUsd).toBe(3);
     expect(f.store.list('outbox')).toHaveLength(1);
@@ -400,7 +418,7 @@ describe('Store-backed one-use billing authority', () => {
       await expect(a.dispatch(r, input, adapter(f, async () => result(f, .5)))).rejects.toMatchObject({ code: 'billing_policy_violation' });
       db.close(); db = new Store(path);
       expect(db.get('tasks', task.id)).toMatchObject({ spentUsd: .5, billingStop: { code: 'billing_policy_violation' } });
-      expect(db.list('actions')[0]).toMatchObject({ kind: 'billing_hold', status: 'pending' }); expect(db.list('actions')[0]?.taskId).toBeUndefined();
+      const hold=oneFinancialAction(db,'billing_hold');expect(hold).toMatchObject({ kind: 'billing_hold', status: 'pending' });expect(hold.taskId).toBeUndefined();
       expect(db.list('outbox')[0]).toMatchObject({ status: 'pending' }); expect(db.list('outbox')[0]?.taskId).toBeUndefined(); expect(db.list('outbox')[0]?.text).toContain('billing boundary violation');
       expect(JSON.stringify([db.list('tasks'), db.list('attempts'), db.list('actions'), db.list('outbox')])).not.toContain('EPHEMERAL_BILLING_SECRET');
     } finally { db.close(); }
@@ -414,7 +432,7 @@ describe('included Scheduler fallback and host-only observations', () => {
     f.config.runnerPolicies.push({ ...f.included, runner: 'dsh', costPerRunUsd: 1, billing: { mode: 'metered-api' } }); let metered = 0;
     const s = new Scheduler(f.store, f.config, [{ name: 'grok', async run() { throw new WorkerUnavailable('offline'); } }, { name: 'dsh', async run() { metered++; return result(f, 1); } }], authority(f));
     expect(await s.run(f.task, f.project, f.input)).toBeUndefined(); expect(metered).toBe(0); expect(f.store.list('attempts')).toHaveLength(1);
-    expect(f.store.get('tasks', f.task.id)?.spentUsd).toBe(0); expect(f.store.list('actions')).toEqual([]); expect(f.store.list('outbox').some(x => x.text.includes('已继续'))).toBe(false);
+    expect(f.store.get('tasks', f.task.id)?.spentUsd).toBe(0); expect(financialActions(f.store)).toEqual([]);expectIndependentJob(f); expect(f.store.list('outbox').some(x => x.text.includes('已继续'))).toBe(false);
   });
   for (const reason of ['quota', 'persistent-rate-limit', 'expired-credential', 'invalid-credential', 'provider-refusal'] as const) {
     it.each([0, 100])(`quarantines verified no-charge ${reason} and uses one independently included backup at cap %s`, async budget => {
@@ -424,7 +442,7 @@ describe('included Scheduler fallback and host-only observations', () => {
       const s = new Scheduler(f.store, f.config, [{ name: 'grok', async run() { calls.push('grok'); throw refusal(f, reason); } }, { name: 'dsh', async run() { calls.push('metered'); return result(f, 1); } }, { name: 'codex', async run() { calls.push('codex'); return result(f); } }], a);
       expect(await s.run(f.task, f.project, f.input)).toEqual({ cards: [] }); expect(calls).toEqual(['grok', 'codex']);
       expect(f.store.list('attempts').map(x => [x.billing?.ordinal, x.status])).toEqual([[1, 'unavailable'], [2, 'succeeded']]); expect(f.store.get('tasks', f.task.id)?.billingStop).toBeUndefined();
-      const quarantine = f.store.list('actions')[0]!; expect(quarantine).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending', payload: { reason } }); expect(quarantine.taskId).toBeUndefined();
+      const quarantine = oneFinancialAction(f.store,'billing_profile_unavailable'); expect(quarantine).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending', payload: { reason } }); expect(quarantine.taskId).toBeUndefined();expectIndependentJob(f,'billing_profile_unavailable');
       expect(f.store.list('outbox').filter(x => x.text.includes('已继续'))).toHaveLength(1);
     });
   }
@@ -442,11 +460,11 @@ describe('included Scheduler fallback and host-only observations', () => {
     f.setTime(new Date(f.at.getTime() + 1000)); vi.spyOn(Date, 'now').mockImplementation(() => f.at.getTime()); const fresh = f.at.toISOString(); f.current.checkedAt = f.current.principalVerifiedAt = fresh;
     f.writeProof({ ...f.proof, verifiedAt: fresh, allowance: { ...f.proof.allowance, checkedAt: fresh, evidenceDigest: 'synthetic-restored' }, evidenceDigest: 'synthetic-restoration' });
     const next = await a.reserve(f.input, 'codex'); await a.dispatch(next, f.input, adapter(f)); expect(next.attempt.billing?.ordinal).toBe(2);
-    expect(f.store.list('actions')[0]).toMatchObject({ status: 'completed', payload: { restoredAt: fresh, restorationEvidenceDigest: 'synthetic-restoration', reason: 'quota' } });
+    expect(oneFinancialAction(f.store,'billing_profile_unavailable')).toMatchObject({ status: 'completed', payload: { restoredAt: fresh, restorationEvidenceDigest: 'synthetic-restoration', reason: 'quota' } });expectIndependentJob(f,'billing_profile_unavailable');
   });
   it('rejects a completed quarantine record without the required newer restoration evidence', async () => {
     const f = fixture(), a = authority(f), r = await a.reserve(f.input, 'codex'); await expect(a.dispatch(r, f.input, adapter(f, async () => { throw refusal(f); }))).rejects.toMatchObject({ code: 'subscription_unavailable' });
-    const row = f.store.list('actions')[0]!; f.store.save('actions', { ...row, status: 'completed' });
+    const row = oneFinancialAction(f.store,'billing_profile_unavailable'); f.store.save('actions', { ...row, status: 'completed' });expectIndependentJob(f,'billing_profile_unavailable');
     await expect(a.reserve(f.input, 'codex')).rejects.toMatchObject({ code: 'billing_policy_violation' }); expect(f.store.list('attempts')).toHaveLength(1);
   });
   it.each(['paid-route-used', 'extra-credit-used', 'no-charge-boundary-breached', 'charge-danger-unknown'] as const)('hard-stops all candidates after %s and never clears from fresh availability', async reason => {
@@ -454,24 +472,24 @@ describe('included Scheduler fallback and host-only observations', () => {
     const s = new Scheduler(f.store, f.config, [{ name: 'grok', async run() { throw new SubscriptionAccessError({ disposition: 'billing-incident', reason, observedAt: f.at.toISOString(), evidenceDigest: 'synthetic-incident' }, 'private marker'); } }, { name: 'codex', async run() { backupCalls++; return result(f); } }], a);
     await expect(s.run(f.task, f.project, f.input)).rejects.toMatchObject({ code: 'billing_policy_violation' }); expect(backupCalls).toBe(0);
     f.current.checkedAt = f.current.principalVerifiedAt = f.at.toISOString(); await expect(a.reserve(f.input, 'codex')).rejects.toMatchObject({ code: 'billing_policy_violation' });
-    expect(f.store.list('actions')[0]).toMatchObject({ kind: 'billing_hold', payload: { reason } }); expect(f.store.list('outbox')).toHaveLength(1);
+    expect(oneFinancialAction(f.store,'billing_hold')).toMatchObject({ kind: 'billing_hold', payload: { reason } });expectIndependentJob(f,'billing_hold'); expect(f.store.list('outbox')).toHaveLength(1);
   });
   it.each([{ disposition: 'verified-no-charge-refusal', reason: 'quota' }, { disposition: 'verified-no-charge-refusal', reason: 'quota', observedAt: 'bad', evidenceDigest: 'x', noChargeEvidenceDigest: 'x' }])('treats malformed host observations as unknown charge danger', async observation => {
     const f = fixture(), a = authority(f), r = await a.reserve(f.input, 'codex');
     await expect(a.dispatch(r, f.input, adapter(f, async () => { throw new SubscriptionAccessError(observation as HostSubscriptionObservation, 'Synthetic'); }))).rejects.toMatchObject({ code: 'billing_policy_violation' });
-    expect(f.store.list('actions')[0]?.payload.reason).toBe('charge-danger-unknown');
+    expect(oneFinancialAction(f.store,'billing_hold').payload.reason).toBe('charge-danger-unknown');expectIndependentJob(f,'billing_hold');
   });
   it('model JSON and bare quota labels cannot establish a no-charge refusal', async () => {
     const f = fixture(), a = authority(f), r = await a.reserve(f.input, 'codex');
     await expect(a.dispatch(r, f.input, adapter(f, async () => ({ ...result(f), output: { cards: [], observation: { disposition: 'verified-no-charge-refusal', reason: 'quota' } } })))).rejects.toMatchObject({ code: 'invalid_worker_output' });
-    expect(f.store.list('actions')).toEqual([]);
+    expect(financialActions(f.store)).toEqual([]);expectIndependentJob(f);
     const next = await a.reserve(f.input, 'codex'); await expect(a.dispatch(next, f.input, adapter(f, async () => { throw Object.assign(new Error('quota'), { code: 'subscription_quota' }); }))).rejects.toThrow('quota');
-    expect(f.store.list('actions')).toEqual([]);
+    expect(financialActions(f.store)).toEqual([]);expectIndependentJob(f);
   });
   it('a bare subscription_unavailable DomainError cannot select the safe-refusal fallback branch', async () => {
     const f = fixture(), b = backup(f), a = new BillingAuthority(f.store, f.config, b.provider, { proofRoot: f.root, now: f.now }); let backupCalls = 0;
     const s = new Scheduler(f.store, f.config, [{ name: 'grok', async run() { throw new DomainError('Synthetic quota', 'subscription_unavailable'); } }, { name: 'codex', async run() { backupCalls++; return result(f); } }], a);
-    await expect(s.run(f.task, f.project, f.input)).rejects.toMatchObject({ code: 'subscription_unavailable' }); expect(backupCalls).toBe(0); expect(f.store.list('actions')).toEqual([]);
+    await expect(s.run(f.task, f.project, f.input)).rejects.toMatchObject({ code: 'subscription_unavailable' }); expect(backupCalls).toBe(0); expect(financialActions(f.store)).toEqual([]);expectIndependentJob(f);
   });
   it.each(['missing', 'expired'])('skips %s proof for a healthy included backup without allocating the preferred candidate', async state => {
     const f = fixture(), b = backup(f); if (state === 'missing') rmSync(f.proofPath); else f.writeProof({ ...f.proof, runner: 'grok', expiresAt: new Date(0).toISOString() }); let calls = 0;

@@ -1,7 +1,7 @@
 import { digest, pathAllowed, stableId, type Scope, type ActionRecord } from './domain.js';
 import type { Store } from './store.js';
 import { z } from 'zod';
-import { atomicClaimSchema, type TestObservation, type HostObservation, type SourceRef, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload } from './knowledge-contract.js';
+import { atomicClaimSchema, observedProcessSchema, type TestObservation, type HostObservation, type SourceRef, type RepositoryReadRequest, type CanonicalHostObservationPayload, type CanonicalKnowledgeEvidencePayload, type CanonicalCiTestObservationPayload } from './knowledge-contract.js';
 import { snapshotDigest, knowledgePolicyHash } from './knowledge-identity.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 
@@ -35,9 +35,35 @@ export const hostObservationSchema:z.ZodType<HostObservation>=z.object({schemaVe
 const checkRequest=z.object({runId:z.string().regex(/^[1-9][0-9]*$/).max(32),jobId:z.string().regex(/^[1-9][0-9]*$/).max(32),checkName:text}).strict();
 const request=z.object({repository:text,headSha:z.string().regex(/^[a-f0-9]{40}$/),changeNumber:z.number().int().positive().safe().optional(),checks:z.array(checkRequest).max(20),filePaths:z.array(text).max(128),issueSource:ref.optional(),testReportPath:text.optional(),current:z.object({changeNumber:z.number().int().positive().safe(),checkNames:z.array(text).max(20)}).strict().optional()}).strict();
 const attestation=z.object({observationId:text,producerId:text,originalEventId:text,reportPath:text,reportDigest:hash,snapshotDigest:hash,testDefinitionDigest:hash}).strict();
-export const canonicalHostPayloadSchema:z.ZodType<CanonicalHostObservationPayload>=z.object({schemaVersion:z.literal(1),observation:hostObservationSchema,digest:hash,sourceHash:hash,policyHash:hash,request,requestHash:hash,sourceRefs:refs,attestation:attestation.optional()}).strict();
+export const canonicalHostPayloadSchema:z.ZodType<CanonicalHostObservationPayload>=z.object({schemaVersion:z.literal(1),observation:hostObservationSchema,digest:hash,sourceHash:hash,policyHash:hash,issueSourceHash:hash.optional(),request,requestHash:hash,sourceRefs:refs,attestation:attestation.optional()}).strict();
+const retractedHostPayloadSchema=z.union([
+ z.object({retracted:z.literal(true),sourceIds:z.array(text).min(1)}).strict(),
+ z.object({phase:z.literal('invalid'),errorCode:z.literal('source_invalidated'),retracted:z.literal(true),sourceIds:z.tuple([text])}).strict(),
+]);
+/** Recognize only the host's privacy tombstones, backed by revoked same-scope sources. */
+export function isRetractedHostObservation(store:Store,row:ActionRecord):boolean {
+ if(row.kind!=='knowledge.host-observation'||row.status!=='completed')return false;
+ const parsed=retractedHostPayloadSchema.safeParse(row.payload);if(!parsed.success)return false;
+ const ids=parsed.data.sourceIds;if(new Set(ids).size!==ids.length)return false;
+ return ids.every(id=>{const source=store.get('sources',id);return !!source&&source.projectId===row.projectId&&source.domain===row.domain&&source.status!=='active';});
+}
 const link=z.object({schemaVersion:z.literal(1),...scope,cardId:text,candidateHash:hash,claimHash:hash,observationIds:z.array(text).min(1).max(32),observationHashes:z.array(hash).min(1).max(32),basis:z.enum(['authoritative-record','independent-corroboration']),sourceRefs:refs,createdAt:time}).strict();
 export const canonicalKnowledgePayloadSchema:z.ZodType<CanonicalKnowledgeEvidencePayload>=z.object({schemaVersion:z.literal(1),link,digest:hash,sourceRefs:refs}).strict();
+const file=z.object({path:text,sha256:hash,mode:text}).strict();
+const observedCheck=z.object({id:text,name:text.optional(),command:text.optional(),testFile:text.optional(),result:z.enum(['success','failure','incomplete']),outputDigest:hash,process:observedProcessSchema.optional()}).strict();
+const ciTestObservation=z.object({schemaVersion:z.literal(1),id:text,...scope,sourceId:text,sourceRevision:text,repository:text,observedAt:time,
+ snapshot:z.object({revision:text,overlayHash:hash.optional(),files:z.array(file).max(128)}).strict(),checks:z.array(observedCheck).min(1).max(128),
+ environment:z.object({observed:z.record(z.string(),text),unknown:z.array(text).max(128)}).strict(),comparable:z.object({snapshotDigest:hash,testDefinitionDigest:hash}).strict().optional(),
+ origin:z.object({kind:z.literal('ci'),provider:z.enum(['github','gitlab']),runId:text,jobId:text,producerId:text,headSha:text,url:text,responseDigest:hash,receiptId:text.optional()}).strict()}).strict();
+export const canonicalCiTestPayloadSchema:z.ZodType<CanonicalCiTestObservationPayload>=z.object({schemaVersion:z.literal(1),observation:ciTestObservation,digest:hash,sourceHash:hash,policyHash:hash,issueSourceHash:hash.optional(),request,requestHash:hash,sourceRefs:refs,hostObservationIds:z.array(text).min(1).max(32),hostObservationHashes:z.array(hash).min(1).max(32)}).strict().superRefine((value,ctx)=>{
+ if(value.hostObservationIds.length!==value.hostObservationHashes.length||new Set(value.hostObservationIds).size!==value.hostObservationIds.length||value.hostObservationIds.some((id,i)=>i>0&&value.hostObservationIds[i-1]!>id))ctx.addIssue({code:'custom',message:'Canonical host observation bindings must be unique, ordered and paired.'});
+ if(!!value.request.issueSource!==!!value.issueSourceHash||!value.sourceRefs.some(ref=>ref.id===value.observation.sourceId&&ref.revision===value.observation.sourceRevision)||value.request.issueSource&&!value.sourceRefs.some(ref=>ref.id===value.request.issueSource!.id&&ref.revision===value.request.issueSource!.revision))ctx.addIssue({code:'custom',message:'Canonical source bindings must include the primary and requested issue revisions.'});
+});
+const localTestObservation=ciTestObservation.extend({origin:z.object({kind:z.literal('local'),taskId:text,taskVersion:z.number().int(),attemptId:text,inputHash:hash,planHash:hash,artifactHash:hash,role:z.enum(['execute','check']),runId:text}).strict()}).strict();
+const localTestPayload=z.object({schemaVersion:z.literal(1),observation:localTestObservation,digest:hash,sourceRefs:refs,accepted:z.object({attemptId:text,taskId:text,taskVersion:z.number().int(),role:z.enum(['execute','check']),runner:text,provider:text,model:text,inputHash:hash,outputHash:hash,planHash:hash,artifactHash:hash,runId:text,sourceHash:hash,policyHash:hash}).strict(),acceptedDigest:hash}).strict();
+export function canonicalCiTestObservationId(observation:TestObservation,sourceHash:string,policyHash:string,requestHash:string,hostObservationIds:string[]):string {
+ return stableId('canonical-ci-test-observation',{...observation,id:undefined,observedAt:undefined},sourceHash,policyHash,requestHash,hostObservationIds);
+}
 
 /** Resolve and validate current host-recorded lineage. Common request/source is not an evidence root. */
 export function knowledgeSourceRefs(store:Store,sourceId:string,scope:Scope):SourceRef[]|undefined {
@@ -50,22 +76,45 @@ export function knowledgeSourceRefs(store:Store,sourceId:string,scope:Scope):Sou
  };
  return visit(sourceId)?[...all.values()].sort((a,b)=>a.id.localeCompare(b.id)):undefined;
 }
+/** Bind a read to both the primary source and any authorized issue used by its request. */
+export function knowledgeRequestSourceRefs(store:Store,sourceId:string,scope:Scope,request:RepositoryReadRequest,options:{allowExpired?:boolean}={}):SourceRef[]|undefined {
+ const primary=knowledgeSourceRefs(store,sourceId,scope);if(!primary)return undefined;
+ let issue:SourceRef[]=[];
+ if(request.issueSource){
+  const source=store.get('sources',request.issueSource.id);
+  if(!source||source.revision!==request.issueSource.revision)return undefined;
+  const lineage=knowledgeSourceRefs(store,source.id,scope);if(!lineage)return undefined;issue=lineage;
+ }
+ const all=new Map<string,SourceRef>();
+ for(const ref of [...primary,...issue]){const old=all.get(ref.id);if(old&&old.revision!==ref.revision)return undefined;all.set(ref.id,ref);}
+ const refs=[...all.values()].sort((a,b)=>a.id.localeCompare(b.id));
+ if(!options.allowExpired&&refs.some(ref=>{const source=store.get('sources',ref.id);return source?.retention==='ephemeral'&&!source.content;}))return undefined;
+ return refs;
+}
 export function knowledgeActionDependencies(action:ActionRecord):{refs:SourceRef[];unresolved:boolean} {
- if(action.kind!=='knowledge.host-observation'&&action.kind!=='knowledge.evidence-link')return {refs:[],unresolved:false};
+ if(!['knowledge.host-observation','knowledge.evidence-link','knowledge.structured-ingest','experience.test-observation'].includes(action.kind))return {refs:[],unresolved:false};
  if(!action.payload||typeof action.payload!=='object'||Array.isArray(action.payload))return {refs:[],unresolved:true};
  // A valid source ID is useful for privacy even when its revision cannot admit a fact.
  const payload=action.payload as Record<string,unknown>,candidates:unknown[]=[payload.sourceRefs];let unresolved=false;
- for(const key of ['observation','link'])if(key in payload){
+ if(action.kind==='knowledge.structured-ingest'&&Object.keys(payload).some(key=>!['schemaVersion','sourceId','sourceRevision','sourceHash','sourceRefs','phase','tries','runAfter','errorCode'].includes(key)))unresolved=true;
+ if(action.kind==='experience.test-observation'&&!canonicalCiTestPayloadSchema.safeParse(payload).success&&!localTestPayload.safeParse(payload).success)unresolved=true;
+ for(const key of ['observation','link'])if(key in payload && action.kind!=='experience.test-observation'){
   const value=payload[key];
   if(!value||typeof value!=='object'||Array.isArray(value)||!('sourceRefs' in value))unresolved=true;
   else candidates.push((value as Record<string,unknown>).sourceRefs);
+ }
+ if(action.kind==='knowledge.structured-ingest')candidates.push([{id:payload.sourceId,revision:payload.sourceRevision}]);
+ if(action.kind==='experience.test-observation'){
+  const o=payload.observation;
+  if(!o||typeof o!=='object'||Array.isArray(o))unresolved=true;
+  else {const v=o as Record<string,unknown>;candidates.push([{id:v.sourceId,revision:v.sourceRevision}]);}
  }
  const known:SourceRef[]=[];
  for(const raw of candidates){
   if(!Array.isArray(raw)||!raw.length){unresolved=true;continue;}
   for(const value of raw){
    if(!value||typeof value!=='object'||Array.isArray(value)||!text.safeParse((value as Record<string,unknown>).id).success){unresolved=true;continue;}
-   const item=value as {id:string;revision?:unknown};known.push({id:item.id,revision:typeof item.revision==='string'?item.revision:''});
+   const item=value as {id:string;revision?:unknown};if(['knowledge.structured-ingest','experience.test-observation'].includes(action.kind)&&!text.safeParse(item.revision).success)unresolved=true;known.push({id:item.id,revision:typeof item.revision==='string'?item.revision:''});
   }
  }
  return {refs:[...new Map(known.map(value=>[`${value.id}\0${value.revision}`,value])).values()],unresolved};
@@ -74,6 +123,15 @@ export function knowledgeActionSourceRefs(action:ActionRecord):SourceRef[] {retu
 /** Bind all normalized facts and origin metadata; repeated read timestamps do not mint executions. */
 export function hostObservationId(o:HostObservation):string {
  return stableId('canonical-host-observation',o.origin.originalEventId,{...o,id:undefined,observedAt:undefined});
+}
+/** Validate the retained envelope without relying on current policy or source liveness. */
+export function readCanonicalHostRecord(row:ActionRecord):CanonicalHostObservationPayload|undefined {
+ if(row.kind!=='knowledge.host-observation'||row.status!=='completed')return undefined;
+ const parsed=canonicalHostPayloadSchema.safeParse(row.payload);if(!parsed.success)return undefined;
+ // Hashes bind the serialized producer object; schema parsing may reorder keys.
+ const p=row.payload as unknown as CanonicalHostObservationPayload,o=p.observation;
+ if(o.id!==row.id||hostObservationId(o)!==row.id||o.projectId!==row.projectId||o.domain!==row.domain||p.digest!==digest(o)||p.requestHash!==digest(p.request)||digest(o.sourceRefs)!==digest(p.sourceRefs)||o.bindingHash!==digest({source:p.sourceHash,policy:p.policyHash,request:p.request,...(p.issueSourceHash?{issueSourceHash:p.issueSourceHash}:{})}))return undefined;
+ return p;
 }
 function respectsHistoricalExecutions(request:CanonicalHostObservationPayload['request'],execution:{headSha:string;runId:string;jobId:string;checkName:string}):boolean {
  return request.checks.every(check=>
@@ -84,10 +142,13 @@ function respectsHistoricalExecutions(request:CanonicalHostObservationPayload['r
 export function readHostObservation(store:Store,id:string,scope:Scope):HostObservation|undefined {
  const row=store.get('actions',id);
  if(!row||row.kind!=='knowledge.host-observation'||row.status!=='completed'||row.projectId!==scope.projectId||row.domain!==scope.domain)return referenceExperienceObservation(store,id,scope);
- const parsed=canonicalHostPayloadSchema.safeParse(row.payload);if(!parsed.success)return undefined;
- const p=row.payload as unknown as CanonicalHostObservationPayload,o=p.observation,sourceId=p.sourceRefs.find(r=>digest({source:p.sourceHash,policy:p.policyHash,request:p.request})===o.bindingHash&&store.get('sources',r.id)&&digest(store.get('sources',r.id)!)===p.sourceHash)?.id;
+ if(isRetractedHostObservation(store,row))return undefined;
+ const p=readCanonicalHostRecord(row);if(!p)return undefined;
+ const o=p.observation,sourceId=p.sourceRefs.find(r=>digest({source:p.sourceHash,policy:p.policyHash,request:p.request,...(p.issueSourceHash?{issueSourceHash:p.issueSourceHash}:{})})===o.bindingHash&&store.get('sources',r.id)&&digest(store.get('sources',r.id)!)===p.sourceHash)?.id;
  const source=sourceId?store.get('sources',sourceId):undefined,project=store.get('projects',scope.projectId);
- if(!source||!project||project.projectId!==scope.projectId||project.domain!==scope.domain||o.projectId!==scope.projectId||o.domain!==scope.domain||o.id!==id||id!==hostObservationId(o)||p.digest!==digest(o)||p.requestHash!==digest(p.request)||knowledgePolicyHash(project)!==p.policyHash||o.origin.repository!==project.repository||o.claim.subject.repository!==project.repository||o.claim.subject.provider!==project.repositoryProvider||digest(o.sourceRefs)!==digest(p.sourceRefs)||digest(knowledgeSourceRefs(store,source.id,scope)??[])!==digest(p.sourceRefs))return undefined;
+ if(!source||!project||project.projectId!==scope.projectId||project.domain!==scope.domain||o.projectId!==scope.projectId||o.domain!==scope.domain||o.id!==id||id!==hostObservationId(o)||p.digest!==digest(o)||p.requestHash!==digest(p.request)||knowledgePolicyHash(project)!==p.policyHash||o.origin.repository!==project.repository||o.claim.subject.repository!==project.repository||o.claim.subject.provider!==project.repositoryProvider||digest(o.sourceRefs)!==digest(p.sourceRefs)||digest(knowledgeRequestSourceRefs(store,source.id,scope,p.request)??[])!==digest(p.sourceRefs))return undefined;
+ if(p.request.issueSource){const issue=store.get('sources',p.request.issueSource.id);if(!issue||!p.issueSourceHash||digest(issue)!==p.issueSourceHash)return undefined;}
+ else if(p.issueSourceHash!==undefined)return undefined;
  try{
   assertKnowledgeSource(store,source,project);
   const parsedSource=parseStructuredKnowledge(source,project);if(!parsedSource)return undefined;

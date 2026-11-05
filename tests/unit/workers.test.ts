@@ -681,7 +681,11 @@ describe('G4 independent actual local and repository producer paths',()=>{
    expect(linkKnowledgeEvidence(f.store,'independent',[local.id,external.id]).basis).toBe('independent-corroboration');
    f.store.save('tasks',{...f.store.get('tasks',f.input.task.id)!,version:2,stage:'feedback'});expect(referenceExperienceObservation(f.store,action.id)).toEqual(local);
    const repeat=acceptRepositoryReadback(f.store,ci.source.id,await ci.reader.read(ci.project,ci.source,ci.request,new AbortController().signal));expect(compareIndependentClaim(local.claim,[external,readHostObservation(f.store,repeat.at(-1)!,f.input.project)!])).toBe(false);
-   expect(f.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);expect(f.store.list('actions').filter(a=>a.kind==='knowledge.host-observation'&&(a.payload.observation as any).origin.kind==='host-test')).toHaveLength(0);
+   const observations=f.store.list('actions').filter(a=>a.kind==='experience.test-observation');expect(observations).toHaveLength(2);
+   const localRows=observations.filter(a=>(a.payload.observation as any).origin.kind==='local'),ciRows=observations.filter(a=>(a.payload.observation as any).origin.kind==='ci');
+   expect(localRows).toHaveLength(1);expect(localRows[0]!.id).toBe(action.id);expect(ciRows).toHaveLength(1);
+   expect(ciRows[0]!.payload).toMatchObject({sourceHash:digest(ci.source),sourceRefs:[{id:ci.source.id,revision:ci.source.revision}],observation:{sourceId:ci.source.id,sourceRevision:ci.source.revision,origin:{kind:'ci',runId:'52',jobId:'71'},checks:[{result:'success'}]}});
+   expect((ciRows[0]!.payload.hostObservationIds as string[])).toContain(external.id);expect(f.store.list('actions').filter(a=>a.kind==='knowledge.host-observation'&&(a.payload.observation as any).origin.kind==='host-test')).toHaveLength(0);
    ci.close();
   }finally{f.close();}
  });

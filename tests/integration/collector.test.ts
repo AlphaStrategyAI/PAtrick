@@ -13,8 +13,8 @@ it('recovers a missed file event and withdraws a deleted source after complete s
   const engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch});const collector=new SourceCollector(store,config,engine);
   try{
     writeFileSync(join(root,'idea.md'),'# 草稿恢复\n导出失败后应恢复草稿。');
-    await collector.scan();await collector.scan();expect(store.list('tasks')).toHaveLength(1);
-    writeFileSync(join(root,'missed.md'),'# 漏通知\n由全量补扫恢复。');await collector.scan();expect(store.list('tasks')).toHaveLength(2);
+    await collector.scan();await collector.scan();expect(store.list('tasks')).toHaveLength(1);expect(store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest')).toHaveLength(1);
+    writeFileSync(join(root,'missed.md'),'# 漏通知\n由全量补扫恢复。');await collector.scan();expect(store.list('tasks')).toHaveLength(2);expect(store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest')).toHaveLength(2);
     const source=store.list('sources').find(s=>s.title==='草稿恢复')!;unlinkSync(join(root,'idea.md'));await collector.scan();expect(store.get('sources',source.id)?.status).toBe('withdrawn');
     writeFileSync(join(root,'idea.md'),'# 草稿恢复\n导出失败后应恢复草稿。');await collector.scan();
     expect(store.list('sources').filter(s=>s.externalId==='file:idea.md')).toHaveLength(2);

@@ -40,12 +40,14 @@ it.each(['task', undefined] as const)('keeps imported references non-executable 
   expect(runtime.store.list('tasks')).toHaveLength(0);
   const edits = runtime.store.list('sources').filter(s => s.externalId.startsWith('vault:'));
   expect(edits).toHaveLength(1); expect(edits[0]).toMatchObject({ purpose: 'reference', status: 'active' });
+  expect(runtime.store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest'&&a.payload.sourceId===edits[0]!.id)).toHaveLength(1);
   edit(path, purpose, 'Second independent edit.');
   await runtime.close();
   const next = await createRuntime(config); runtimes.push(next);
   expect(next.store.list('tasks')).toHaveLength(0);
   expect(next.store.list('sources').filter(s => s.externalId.startsWith('vault:'))).toHaveLength(2);
   expect(next.store.list('sources').every(s => s.purpose === 'reference')).toBe(true);
+  for(const recovered of next.store.list('sources').filter(s=>s.status==='active'))expect(next.store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest'&&a.payload.sourceId===recovered.id)).toHaveLength(1);
   await next.collector.scan(); await next.collector.scan();
   expect(next.store.list('tasks')).toHaveLength(0);
   const before = next.store.list('sources'); await next.close();

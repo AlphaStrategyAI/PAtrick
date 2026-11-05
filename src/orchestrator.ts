@@ -2,7 +2,9 @@ import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRec
 import { randomUUID } from 'node:crypto';
 import { DomainError, artifactSchema, decisionSchema, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
-import { publishKnowledge } from './knowledge.js';
+import { ingestStructuredKnowledge, publishKnowledge } from './knowledge.js';
+import { enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
+import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
@@ -13,6 +15,7 @@ export interface WorkbenchOptions {
   store: Store; config: AppConfig; workers: WorkerAdapter[] | Partial<Record<Runner, WorkerAdapter>>;
   writer: DeliveryWriter; research: ResearchAdapter; notifier?: NotificationAdapter;
   canRun?: (project: Project) => boolean;
+  repositoryKnowledgeReader?: RepositoryKnowledgeReader;
   billing?: BillingAuthority;
 }
 const stageStatus: Record<Task['stage'], TaskStatus> = { knowledge_extract: 'extracting', case_extract: 'extracting', decide: 'deciding', research: 'researching', plan: 'planning', execute: 'executing', check: 'checking', delivery: 'publishing', feedback: 'feedback' };
@@ -28,14 +31,26 @@ export class Workbench {
   private readonly scheduler: Scheduler;
   private readonly billing: BillingAuthority;
   private readonly canRun?: (project: Project) => boolean;
+  private readonly repositoryKnowledgeReader?: RepositoryKnowledgeReader;
   private busy = false;
   private stopping = false;
   private pauseDepth = 0;
   private idleWaiters: (() => void)[] = [];
+  private hostAbort?: AbortController;
+  private hostPreferredTaskId?: string;
+  private activeHostReads = 0;
 
   constructor(options: WorkbenchOptions) {
     this.store = options.store; this.config = options.config; this.writer = options.writer; this.research = options.research; this.notifier = options.notifier;
     this.canRun = options.canRun;
+    const reader=options.repositoryKnowledgeReader;
+    this.repositoryKnowledgeReader = reader && {read:(project,source,request,signal)=>{
+      // An adapter may ignore abort; its I/O still occupies a host-read slot until it settles.
+      if(this.activeHostReads>=4)return Promise.reject(new DomainError('Host read capacity is occupied.','host_read_capacity',409));
+      this.activeHostReads++;
+      try{return Promise.resolve(reader.read(project,source,request,signal)).finally(()=>{this.activeHostReads--;});}
+      catch(error){this.activeHostReads--;throw error;}
+    }};
     this.billing = options.billing ?? new BillingAuthority(this.store, this.config, { async read() { return undefined; } });
     this.scheduler = new Scheduler(this.store, this.config, options.workers, this.billing);
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
@@ -124,10 +139,22 @@ export class Workbench {
   }
 
   async tick(): Promise<void> {
-    if (this.busy || this.stopping || this.pauseDepth>0) return;
+    if (this.stopping || this.pauseDepth>0) return;
+    if(this.busy){
+      // A different ready task can preempt a host read; an ordinary self-tick cannot.
+      if(this.hostAbort&&this.readyTask(this.hostPreferredTaskId)){
+        this.hostAbort.abort();await new Promise<void>(resolve=>this.idleWaiters.push(resolve));
+        if(!this.stopping&&this.pauseDepth===0)await this.tick();
+      }
+      return;
+    }
     this.busy = true;
     try {
       const ready = this.readyTask();
+      const source = ready?.stage==='knowledge_extract' ? this.store.get('sources',ready.sourceId) : undefined;
+      if(source)enqueueStructuredKnowledge(this.store,source);
+      const preferred=source?await this.drainHostJobs(1,structuredKnowledgeJobId(source),true,ready?.id):{count:0,aborted:false};
+      if(preferred.aborted||this.stopping||this.pauseDepth>0)return;
       if (ready) {
         let task = ready;
         try {
@@ -136,8 +163,16 @@ export class Workbench {
           const source = this.store.get('sources', task.sourceId)!;
           if (source.retention === 'ephemeral' && !source.content) throw new DomainError('Temporary source content expired with the previous process. Re-ingest the authorized revision to resume.', 'ephemeral_expired');
           if (task.status !== stageStatus[task.stage]) { task = { ...task, status: stageStatus[task.stage], updatedAt: now() }; this.store.save('tasks', task); }
-          this.beginAction(task);
-          await this.process(task, project);
+          let handled=false;
+          if(task.stage==='knowledge_extract'){
+            const action=this.store.get('actions',structuredKnowledgeJobId(source)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+            if(!action||!job?.success)throw new DomainError('Structured knowledge job is invalid.','invalid_structured_knowledge',400);
+            if(action.status==='pending')handled=true;
+            if(job.data.phase==='invalid')throw new DomainError('Invalid structured knowledge envelope.','invalid_structured_knowledge',400);
+            if(job.data.phase==='processed'){this.beginAction(task);this.store.transaction(()=>this.advance(task,'case_extract'));handled=true;}
+            if(job.data.phase!=='ordinary')handled=true;
+          }
+          if(!handled){this.beginAction(task);await this.process(task, project);}
         } catch (error) {
           const latest = this.store.get('tasks', task.id);
           // Cancellation/revocation and a newer attempt own their own transition.
@@ -147,6 +182,7 @@ export class Workbench {
           }
         }
       }
+      if(!this.stopping&&this.pauseDepth===0)await this.drainHostJobs(4-preferred.count);
       await this.flushOutbox();
     } finally {
       this.busy = false;
@@ -154,19 +190,50 @@ export class Workbench {
     }
   }
 
+  private async drainHostJobs(limit:number,preferredId?:string,onlyPreferred=false,preferredTaskId?:string):Promise<{count:number;aborted:boolean}>{
+    const at=now(),bounded=Math.max(0,Math.min(4,Math.floor(limit)));
+    if(!Number.isFinite(bounded)||!bounded)return {count:0,aborted:false};
+    const preferred=preferredId&&this.store.get('actions',preferredId);
+    const first=preferred&&isReadyStructuredKnowledgeJob(this.store,preferred,at)?[preferred]:[];
+    const jobs=[...first,...(onlyPreferred?[]:readyStructuredKnowledgeJobs(this.store,at,4).filter(j=>j.id!==preferredId))].slice(0,bounded);
+    if(!jobs.length)return {count:0,aborted:false};
+    const controller=new AbortController();this.hostAbort=controller;this.hostPreferredTaskId=preferredTaskId;
+    try{await Promise.all(jobs.map(async job=>{
+      const payload=structuredIngestJobSchema.safeParse(job.payload),project=this.store.get('projects',job.projectId);
+      if(!payload.success||!project||project.domain!==job.domain)return;
+      const denied=!!this.canRun&&!this.canRun(project);
+      try{await ingestStructuredKnowledge(this.store,denied?undefined:this.repositoryKnowledgeReader,payload.data.sourceId,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]),denied?{readbackUnavailableReason:'host_egress_unavailable'}:{});}catch{
+        // An unexpected pre-read failure must not leave a ready job in a tight retry loop.
+        const current=this.store.get('actions',job.id),state=current&&structuredIngestJobSchema.safeParse(current.payload);
+        if(current?.status==='pending'&&state?.success&&isReadyStructuredKnowledgeJob(this.store,current,now()))this.store.save('actions',{...current,payload:{...state.data,phase:'pending-readback',tries:state.data.tries+1,runAfter:new Date(Date.now()+30_000).toISOString(),errorCode:'knowledge_processing_failed'},updatedAt:now()});
+      }
+    }));}finally{if(this.hostAbort===controller){this.hostAbort=undefined;this.hostPreferredTaskId=undefined;}}
+    return {count:jobs.length,aborted:controller.signal.aborted};
+  }
+
+  async drainStructuredKnowledge(limit=4):Promise<number>{
+    if(this.busy||this.stopping||this.pauseDepth>0)return 0;
+    this.busy=true;
+    try{return (await this.drainHostJobs(limit)).count;}finally{this.busy=false;for(const resolve of this.idleWaiters.splice(0))resolve();}
+  }
+
   /** Retain writer ownership until the current stage and its notification flush have settled. */
   async shutdown(): Promise<void> {
     this.stopping = true;
+    this.hostAbort?.abort();
     if (this.busy) await new Promise<void>(resolve => this.idleWaiters.push(resolve));
   }
-  async pause():Promise<()=>void>{this.pauseDepth++;if(this.busy)await new Promise<void>(resolve=>this.idleWaiters.push(resolve));let resumed=false;return ()=>{if(!resumed){resumed=true;this.pauseDepth--;}};}
+  async pause():Promise<()=>void>{this.pauseDepth++;this.hostAbort?.abort();if(this.busy)await new Promise<void>(resolve=>this.idleWaiters.push(resolve));let resumed=false;return ()=>{if(!resumed){resumed=true;this.pauseDepth--;}};}
 
   async runUntilIdle(maxSteps = 100): Promise<void> {
     for (let step = 0; step < maxSteps; step++) {
-      const ready = !!this.readyTask(); await this.tick();
-      if (!ready || !this.readyTask()) return;
+      if(this.busy||this.stopping||this.pauseDepth>0)return;
+      const ready = !!this.readyTask() || readyStructuredKnowledgeJobs(this.store,now(),1).length>0;
+      if(!ready)return;
+      await this.tick();
+      if(!this.readyTask()&&!readyStructuredKnowledgeJobs(this.store,now(),1).length)return;
     }
-    if (this.readyTask()) throw new DomainError('The workbench step limit was reached; inspect the active task.', 'step_limit');
+    if (this.readyTask()||readyStructuredKnowledgeJobs(this.store,now(),1).length) throw new DomainError('The workbench step limit was reached; inspect the active task.', 'step_limit');
   }
 
   private async process(task: Task, project: Project): Promise<void> {
@@ -355,10 +422,17 @@ export class Workbench {
     });
   }
 
-  private readyTask(): Task | undefined {
+  private readyTask(excludeId?:string): Task | undefined {
     if (this.stopping) return undefined;
     return this.store.list('tasks').filter(task => {
-      if (task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if (task.id===excludeId || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if(task.stage==='knowledge_extract'){
+        const source=this.store.get('sources',task.sourceId),action=source&&this.store.get('actions',structuredKnowledgeJobId(source));
+        const job=action&&structuredIngestJobSchema.safeParse(action.payload);
+        if(action&&!job?.success&&task.status==='blocked')return false;
+        if(action?.status==='pending'&&job?.success&&!isReadyStructuredKnowledgeJob(this.store,action,now()))return false;
+        if(action?.status==='completed'&&job?.success&&job.data.phase==='invalid'&&task.status==='blocked')return false;
+      }
       const project = this.store.get('projects', task.projectId);
       return !!project && project.domain === task.domain && (!this.canRun || this.canRun(project));
     }).sort((a, b) => a.runAfter.localeCompare(b.runAfter) || a.createdAt.localeCompare(b.createdAt))[0];

@@ -1,5 +1,7 @@
 import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
 import type { Store } from './store.js';
+import { enqueueStructuredKnowledge, isStructuredKnowledgeCard } from './knowledge-jobs.js';
+import { knowledgeActionSourceRefs } from './knowledge-records.js';
 
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
@@ -20,11 +22,18 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: 'source.withdrawn', message: 'Evidence retracted.', createdAt: changed, data: { sourceId } });
     return;
   }
+  const dependentCards=new Set(store.list('actions').filter(action=>action.kind==='knowledge.structured-ingest'&&knowledgeActionSourceRefs(action).some(ref=>ref.id===sourceId)).map(action=>action.payload.sourceId).filter((id):id is string=>typeof id==='string'));
   store.save('sources', { ...source, status });
+  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','experience.test-observation'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
+    store.save('actions', { ...action, status: 'completed', payload: { phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] }, updatedAt: changed });
+  }
   // Copies retain their originating revision, including secondary/historical Vault edits.
   for (const child of store.list('sources')) if (child.projectId === source.projectId && child.domain === source.domain && child.parentSources?.some(ref => ref.id === sourceId)) invalidateSource(store, child.id, status);
   const invalidRules = new Set<string>();
-  for (const card of store.list('cards')) if (card.sourceId === sourceId) store.save('cards', { ...card, status: 'withdrawn', body: '', quote: '' });
+  for (const card of store.list('cards')) {
+    if(isStructuredKnowledgeCard(card)&&(card.sourceId===sourceId||dependentCards.has(card.sourceId)))store.save('cards',{...card,status:'withdrawn',title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`});
+    else if(card.sourceId===sourceId)store.save('cards',{...card,status:'withdrawn',body:'',quote:''});
+  }
   for (const rule of store.list('rules')) if (rule.citations.some(c => c.sourceId === sourceId)) {
     invalidRules.add(rule.id);
     store.save('rules', { ...rule, status: 'suspended' });
@@ -70,14 +79,15 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
     }
     for (const q of questions) if (taskIds.has(q.taskId)) { const id = stableId('owner-answer', q.id); if (sources.some(s => s.id === id)) sourceIds.add(id); }
   }
-  const cardIds = new Set(cards.filter(c => sourceIds.has(c.sourceId)).map(c => c.id));
+  const dependentCards=new Set(store.list('actions').filter(action=>scoped(action)&&action.kind==='knowledge.structured-ingest'&&knowledgeActionSourceRefs(action).some(ref=>sourceIds.has(ref.id))).map(action=>action.payload.sourceId).filter((id):id is string=>typeof id==='string'));
+  const cardIds = new Set(cards.filter(c => sourceIds.has(c.sourceId)||dependentCards.has(c.sourceId)&&isStructuredKnowledgeCard(c)).map(c => c.id));
   const ids = new Set([...sourceIds, ...taskIds, ...ruleIds, ...caseIds, ...cardIds, ...questions.filter(q => taskIds.has(q.taskId)).map(q => q.id)]);
   const fragments = [...sources.filter(s => sourceIds.has(s.id)).flatMap(s => [s.content, s.title]), ...cards.filter(c => cardIds.has(c.id)).flatMap(c => [c.body, c.quote, c.title]), ...rules.filter(r => ruleIds.has(r.id)).flatMap(r => [r.statement, r.title])].filter(text => text.length >= 8);
   const refers = (value: unknown): boolean => typeof value === 'string' ? ids.has(value) : Array.isArray(value) ? value.some(refers) : !!value && typeof value === 'object' && Object.values(value).some(refers);
   const mentions = (value: unknown): boolean => typeof value === 'string' ? fragments.some(fragment => value.includes(fragment)) : Array.isArray(value) ? value.some(mentions) : !!value && typeof value === 'object' && Object.values(value).some(mentions);
   const write = <K extends Table>(table: K, entity: Entities[K]) => { if (JSON.stringify(store.get(table, entity.id)) !== JSON.stringify(entity)) store.save(table, entity); };
   for (const source of sources) if (sourceIds.has(source.id)) write('sources', { ...source, status: 'withdrawn', title: '[withdrawn]', content: '', locator: `withdrawn:${source.id}` });
-  for (const card of cards) if (cardIds.has(card.id)) write('cards', { ...card, title: '[withdrawn]', body: '', quote: '', aliases: [], locator: `withdrawn:${card.sourceId}`, status: 'withdrawn' });
+  for (const card of cards) if (cardIds.has(card.id)) write('cards', { ...card, title: '[withdrawn]', body: '', quote: '', aliases: [], ...(isStructuredKnowledgeCard(card)?{experience:undefined,claim:undefined,pendingClaim:undefined}:{}),locator: `withdrawn:${card.sourceId}`, status: 'withdrawn' });
   for (const rule of rules) if (ruleIds.has(rule.id)) write('rules', { ...rule, title: '[withdrawn]', statement: '[Evidence withdrawn]', conditions: '[withdrawn]', exceptions: '[withdrawn]', status: 'suspended', citations: rule.citations.map(c => ({ ...c, quote: '[withdrawn]', locator: `withdrawn:${c.sourceId}` })) });
   for (const c of cases) if (caseIds.has(c.id)) write('cases', { ...c, originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, decisionSnapshot: undefined, outcomes: undefined, status: 'withdrawn' });
   const option = { label: '[withdrawn]', description: '[withdrawn]', rationale: '[withdrawn]', tradeoff: '[withdrawn]', evidenceUrls: [] };
@@ -128,13 +138,16 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
       if (existing.status !== 'active') throw new DomainError('A revoked source revision cannot be reused. Send a new revision.', 'revoked_revision', 409);
       const task = purpose === 'reference' ? undefined : store.list('tasks').find(t => t.sourceId === id);
       if (existing.retention === 'ephemeral' && !existing.content) {
-        store.save('sources', { ...existing, title: input.title, content: input.content });
+        const restored = { ...existing, title: input.title, content: input.content };
+        store.save('sources', restored);
+        enqueueStructuredKnowledge(store, restored);
         if (task && !finished.has(task.status)) {
           for (const question of store.list('questions')) if (question.taskId === task.id) store.save('questions', { ...question, status: 'stale' });
           const reconstructed: Task = { ...task, title: input.title, version: task.version + 1, status: 'queued', stage: 'knowledge_extract', runAfter: now(), updatedAt: now(), repairCount: 0, decision: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, feedback: undefined, baselineFiles: undefined, error: undefined };
           store.save('tasks', reconstructed); return reconstructed;
         }
       }
+      enqueueStructuredKnowledge(store, store.get('sources', id)!);
       return task;
     }
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
@@ -142,6 +155,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
     store.save('sources', source);
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
+    enqueueStructuredKnowledge(store, source);
     if (purpose === 'reference') {
       store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention, purpose } });
       return undefined;

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { readConfig } from '../../src/config.js';
 import { Store } from '../../src/store.js';
@@ -8,10 +8,30 @@ const stores:Store[]=[];afterEach(()=>stores.splice(0).forEach(s=>s.close()));
 function setup(mode:'live'|'demo'='live') {
   const config=readConfig({PATRICK_MODE:mode,PATRICK_TOKEN:'test-owner-token-at-least-32-characters'}),store=new Store(':memory:');stores.push(store);
   const engine=new Workbench({store,config,workers:[],writer:{baseline:async()=>'',deliver:async()=>{throw Error('No remote proof');}},research:{research:async()=>{throw Error('No research');}}});
-  return {app:createApp({store,config,engine}),store,config};
+  return {app:createApp({store,config,engine}),store,config,engine};
 }
 describe('authenticated workbench HTTP',()=>{
   const validProject = { name: 'Budget regression', repository: 'owner/repo', prdPath: 'docs/PRD.md', allowedPaths: 'docs/PRD.md' };
+
+  it.each(['task','conversation'] as const)('rejects internal refresh on %s intake without scheduling or GET',async kind=>{
+    const {app,store,engine}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)});
+    const {project}=await created.json(),before={tasks:store.list('tasks'),sources:store.list('sources'),actions:store.list('actions'),attempts:store.list('attempts')};
+    const payload=kind==='task'?{projectId:project.id,title:'Task',content:'source',refresh:'current'}:{projectId:project.id,domain:project.domain,sessionId:'session',turnId:'turn',revision:'r1',content:'source',tool:'codex',retention:'permanent',refresh:'current'};
+    const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{throw new Error('unexpected provider GET');});
+    try{
+      const response=await app.request(kind==='task'?'/api/tasks':'/api/conversations',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(payload)});
+      expect(response.status).toBe(400);await engine.runUntilIdle();
+      expect(store.list('tasks')).toEqual(before.tasks);expect(store.list('sources')).toEqual(before.sources);expect(store.list('actions')).toEqual(before.actions);expect(store.list('attempts')).toEqual(before.attempts);expect(fetch).not.toHaveBeenCalled();
+    }finally{fetch.mockRestore();}
+  });
+
+  it('accepts the existing manual task form with its fixed kind field',async()=>{
+    const {app,store}=setup('demo');
+    const created=await app.request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(validProject)}),{project}=await created.json();
+    const response=await app.request('/api/tasks',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:new URLSearchParams({projectId:project.id,kind:'manual',title:'Task',content:'source'})});
+    expect(response.status).toBe(200);expect(store.list('tasks')).toHaveLength(1);expect(store.list('sources')[0]?.kind).toBe('manual');
+  });
 
   for (const encoding of ['json', 'form'] as const) {
     it.each([

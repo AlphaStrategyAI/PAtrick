@@ -8,7 +8,8 @@ import { snapshotDigest, testDefinitionDigest, knowledgeCandidateHash } from '..
 import { Store } from '../../src/store.js';
 import { repositoryKnowledgeFixture, H, H2, reportPath } from '../fixtures/repository-knowledge.js';
 import * as evidence from '../../src/knowledge-evidence.js';
-import { readHostObservation, knowledgeActionSourceRefs, hostObservationId } from '../../src/knowledge-records.js';
+import { canonicalCiTestPayloadSchema, readHostObservation, knowledgeActionSourceRefs, hostObservationId } from '../../src/knowledge-records.js';
+import { enqueueStructuredKnowledge, readyStructuredKnowledgeJobs } from '../../src/knowledge-jobs.js';
 
 function candidate(s:ReturnType<typeof repositoryKnowledgeFixture>,claim?:AtomicClaim):KnowledgeCard {
  const card:KnowledgeCard={id:'card',projectId:s.project.id,domain:s.project.domain,sourceId:s.source.id,sourceRevision:s.source.revision,title:'Requested check',body:'users lost drafts; solution and revenue remain reported',quote:'Requested check',locator:s.source.locator,kind:'fact',verification:'reported',status:'active',aliases:[],createdAt:''};
@@ -23,6 +24,47 @@ const testClaim:AtomicClaim={kind:'test-result',subject:{provider:'gitlab',repos
 function observation(id:string,event:string,origin:string):HostObservation{return {schemaVersion:1,id,projectId:'p',domain:'personal',claim:structuredClone(testClaim),origin:{kind:'host-test',repository:'owner/repo',producerId:origin,originalEventId:event,independentOrigin:origin,derivedFrom:[]},sourceRefs:[{id:'common-source',revision:'r1'}],responseDigest:'c'.repeat(64),locator:'local:'+id,observedAt:'2026-11-04T12:00:00Z',bindingHash:'d'.repeat(64)};}
 
 describe('canonical repository evidence admission',()=>{
+ it.each(['active-source','missing-source','foreign-source','pending','extra','malformed'] as const)('does not treat a %s payload as a host retraction',async kind=>{
+  const s=repositoryKnowledgeFixture();try{
+   const revoked={...s.source,id:'revoked',status:'withdrawn' as const};s.store.save('sources',revoked);
+   if(kind==='foreign-source')s.store.save('sources',{...revoked,id:'foreign',projectId:'elsewhere'});
+   const sourceId=kind==='active-source'?s.source.id:kind==='missing-source'?'missing':kind==='foreign-source'?'foreign':'revoked';
+   const payload=kind==='malformed'?{retracted:true,sourceIds:[17]}:{retracted:true,sourceIds:[sourceId],...(kind==='extra'?{raw:'private'}:{})};
+   s.store.save('actions',{id:'not-a-tombstone',projectId:s.project.id,domain:s.project.domain,kind:'knowledge.host-observation',status:kind==='pending'?'pending':'completed',payload,updatedAt:''});
+   const readback=await read(s);expect(()=>evidence.acceptRepositoryReadback(s.store,s.source.id,readback)).toThrow();
+   expect(readHostObservation(s.store,'not-a-tombstone',s.project)).toBeUndefined();
+  }finally{s.close();}
+ });
+ it.each(['digest','id','status'] as const)('fails closed on a structurally plausible active canonical row with invalid %s',async kind=>{
+  const s=repositoryKnowledgeFixture();try{
+   const ids=evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s)),row=s.store.get('actions',ids.find(id=>(s.store.get('actions',id)!.payload.observation as HostObservation).claim.kind==='ci-result')!)!;
+   if(kind==='id'){s.store.delete('actions',row.id);s.store.save('actions',{...row,id:'incorrect-id'});}
+   else if(kind==='status')s.store.save('actions',{...row,status:'pending'});
+   else s.store.save('actions',{...row,payload:{...row.payload,digest:'0'.repeat(64)}});
+   const readback=await read(s);expect(()=>evidence.acceptRepositoryReadback(s.store,s.source.id,readback)).toThrow();
+  }finally{s.close();}
+ });
+ it('retains one bound CI observation alongside the admitted host records',async()=>{
+  const s=repositoryKnowledgeFixture('gitlab');try{
+   const readback=await read(s),ids=evidence.acceptRepositoryReadback(s.store,s.source.id,readback);
+   const rows=s.store.list('actions').filter(a=>a.kind==='experience.test-observation');
+   expect(ids).toHaveLength(3);expect(rows).toHaveLength(1);
+   expect(rows[0]!.payload).toMatchObject({schemaVersion:1,sourceHash:digest(s.source),sourceRefs:[{id:s.source.id,revision:s.source.revision}],observation:{sourceId:s.source.id,sourceRevision:s.source.revision,checks:[{result:'success'}],origin:{kind:'ci',runId:'52',jobId:'71'}}});
+   expect((rows[0]!.payload.hostObservationIds as string[]).every(id=>ids.includes(id))).toBe(true);
+   expect(canonicalCiTestPayloadSchema.safeParse({...rows[0]!.payload,hostObservationIds:[...(rows[0]!.payload.hostObservationIds as string[]),ids[0]]}).success).toBe(false);
+   evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s));
+   expect(s.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);
+  }finally{s.close();}
+ });
+ it.each([['success','success'],['failed','failure'],['running','incomplete']] as const)('retains actual GitLab %s CI state without adding comparable authority',async(status,result)=>{
+  const s=repositoryKnowledgeFixture('gitlab');try{
+   s.routes['/jobs/71'].status=status;if(status==='running')s.routes['/jobs/71'].finished_at=null;
+   const ids=evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s)),ci=s.store.list('actions').filter(a=>a.kind==='experience.test-observation');
+   expect(ci).toHaveLength(1);expect(ci[0]!.payload).toMatchObject({observation:{checks:[{result}],environment:{observed:{},unknown:['execution-environment']},origin:{kind:'ci',runId:'52',jobId:'71'}}});
+   expect((ci[0]!.payload.observation as any).comparable).toBeUndefined();
+   expect(ci[0]!.payload.hostObservationIds).toHaveLength(1);expect(ids).toContain((ci[0]!.payload.hostObservationIds as string[])[0]);
+  }finally{s.close();}
+ });
  it('admits only actual one-use readback then links a fresh exact PR atom without verifying prose',async()=>{
   const s=repositoryKnowledgeFixture();try{const card=candidate(s),oldHash=knowledgeCandidateHash(card),r=await read(s),ids=evidence.acceptRepositoryReadback(s.store,s.source.id,r);expect(ids).toHaveLength(3);
    expect(()=>evidence.linkKnowledgeEvidence(s.store,card.id,ids)).toThrow();
@@ -45,7 +87,7 @@ describe('canonical repository evidence admission',()=>{
  it('repeated reads are idempotent, contradictory same execution fails closed and timestamps do not mint new execution',async()=>{
   const s=repositoryKnowledgeFixture('gitlab');try{const ids=evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s));expect(evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s))).toEqual(ids);
    s.routes['/jobs/71'].status='failed';s.routes['/jobs/71'].finished_at='2026-11-04T13:00:00Z';expect(()=>s.store.transaction(()=>evidence.acceptRepositoryReadback(s.store,s.source.id,{} as any))).toThrow();
-   const changed=await read(s);expect(()=>evidence.acceptRepositoryReadback(s.store,s.source.id,changed)).toThrow();expect(s.store.list('actions')).toHaveLength(3);
+   const changed=await read(s);expect(()=>evidence.acceptRepositoryReadback(s.store,s.source.id,changed)).toThrow();expect(s.store.list('actions').filter(a=>a.kind==='knowledge.host-observation')).toHaveLength(3);expect(s.store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);
   }finally{s.close();}
  });
  it.each(['success','failed','canceled'] as const)('retains one GitLab job history from pending to %s and rejects stale pending',async status=>{
@@ -126,6 +168,56 @@ describe('bounded independent atomic comparison',()=>{
 });
 
 describe('task-independent temporary canonical evidence',()=>{
+ it.each(['permanent','ephemeral'] as const)('preserves accepted local observation %s retention and unrelated actions',retention=>{
+  const dir=mkdtempSync(join(tmpdir(),'patrick-g5-local-retention-'));let store=new Store(join(dir,'db'));
+  try{
+   store.save('sources',{id:'s',projectId:'p',domain:'personal',kind:'manual',externalId:'s',revision:'r',title:'Source',content:'text',locator:'s',authorId:'owner',status:'active',retention,createdAt:''});
+   const h='a'.repeat(64),observation={schemaVersion:1,id:'local',projectId:'p',domain:'personal',sourceId:'s',sourceRevision:'r',repository:'a/b',observedAt:'2026-11-04T12:00:00Z',snapshot:{revision:'baseline',files:[]},checks:[{id:'check',result:'failure',outputDigest:h}],environment:{observed:{},unknown:[]},origin:{kind:'local',taskId:'task',taskVersion:1,attemptId:'attempt',inputHash:h,planHash:h,artifactHash:h,role:'execute',runId:'run'}};
+   const accepted={attemptId:'attempt',taskId:'task',taskVersion:1,role:'execute',runner:'grok',provider:'provider',model:'model',inputHash:h,outputHash:h,planHash:h,artifactHash:h,runId:'run',sourceHash:h,policyHash:h};
+   store.save('actions',{id:'local',projectId:'p',domain:'personal',kind:'experience.test-observation',status:'completed',payload:{schemaVersion:1,observation,digest:digest(observation),accepted,acceptedDigest:digest(accepted),sourceRefs:[{id:'s',revision:'r'}]},updatedAt:''});
+   store.save('actions',{id:'unrelated',projectId:'p',domain:'personal',kind:'unrelated',status:'completed',payload:{dependencies:{unknown:true}},updatedAt:''});
+   store.close();store=new Store(join(dir,'db'));expect(!!store.get('actions','local')).toBe(retention==='permanent');expect(store.get('actions','unrelated')).toBeDefined();
+  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+ });
+ it('does not schedule a job after a temporary source ancestor expires',()=>{
+  const s=repositoryKnowledgeFixture();try{
+   const parent={...s.source,id:'parent',externalId:'parent',retention:'ephemeral' as const,content:'private ancestor'};s.store.save('sources',parent);
+   const child={...s.source,parentSources:[{id:parent.id,revision:parent.revision}]};s.store.save('sources',child);
+   expect(enqueueStructuredKnowledge(s.store,child)).toBeDefined();expect(readyStructuredKnowledgeJobs(s.store,new Date().toISOString(),4)).toHaveLength(1);
+   s.store.save('sources',{...parent,content:''});expect(readyStructuredKnowledgeJobs(s.store,new Date().toISOString(),4)).toEqual([]);
+  }finally{s.close();}
+ });
+ it.each(['parent','malformed','missing','cycle','retention-switch'] as const)('keeps a task-free structured job private for %s',kind=>{
+  const dir=mkdtempSync(join(tmpdir(),'patrick-g5-job-private-'));let store=new Store(join(dir,'db'));
+  try{
+   const base=repositoryKnowledgeFixture();const project=base.project,template=base.source;base.close();store.save('projects',project);
+   const parent={...template,id:'parent',externalId:'parent',retention:'ephemeral' as const,content:'private parent'};
+   if(kind==='parent')store.save('sources',parent);
+   let source={...template,id:'child',externalId:'child',...(kind==='parent'?{parentSources:[{id:parent.id,revision:parent.revision}]}:kind==='missing'?{parentSources:[{id:'absent',revision:'r1'}]}:kind==='cycle'?{parentSources:[{id:'child',revision:'r1'}]}:{})};
+   store.save('sources',source);
+   let id:string|undefined;
+   if(kind==='malformed'||kind==='missing'||kind==='cycle'){
+    id='PRIVATE_G5_JOB_ID';const sourceRefs=kind==='malformed'?[{id:'child',revision:4}]:[{id:'child',revision:'r1'}];
+    store.save('actions',{id,projectId:project.id,domain:project.domain,kind:'knowledge.structured-ingest',status:'pending',payload:{schemaVersion:1,sourceId:'child',sourceRevision:'r1',sourceHash:digest(source.content),sourceRefs,phase:'queued',tries:0,runAfter:'2026-11-04T12:00:00Z'},updatedAt:''});
+   }else id=enqueueStructuredKnowledge(store,source);
+   expect(id).toBeDefined();expect(store.get('actions',id!)).toBeDefined();
+   if(kind==='retention-switch'){source={...source,retention:'ephemeral'};store.save('sources',source);}
+   store.close();expect(readFileSync(join(dir,'db')).includes(Buffer.from(id!))).toBe(false);
+   store=new Store(join(dir,'db'));expect(store.get('actions',id!)).toBeUndefined();
+  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+ });
+ it.each(['knowledge.structured-ingest','experience.test-observation'] as const)('keeps %s with an unrecognized dependency shape private',kind=>{
+  const dir=mkdtempSync(join(tmpdir(),'patrick-g5-unknown-'));let store=new Store(join(dir,'db'));
+  try{
+   store.save('sources',{id:'s',projectId:'p',domain:'personal',kind:'manual',externalId:'s',revision:'r',title:'source',content:'text',locator:'s',authorId:'owner',status:'active',retention:'permanent',createdAt:''});
+   const common={schemaVersion:1,sourceRefs:[{id:'s',revision:'r'}],dependencies:{unrecognized:'PRIVATE_G5_UNKNOWN_DEPENDENCY'}};
+   const payload=kind==='knowledge.structured-ingest'?{...common,sourceId:'s',sourceRevision:'r',sourceHash:digest('text'),phase:'queued',tries:0,runAfter:'2026-11-04T12:00:00Z'}:{...common,observation:{sourceId:'s',sourceRevision:'r'}};
+   store.save('actions',{id:'row',projectId:'p',domain:'personal',kind,status:'pending',payload,updatedAt:''});
+   expect(store.get('actions','row')).toBeDefined();store.close();
+   expect(readFileSync(join(dir,'db')).includes(Buffer.from('PRIVATE_G5_UNKNOWN_DEPENDENCY'))).toBe(false);
+   store=new Store(join(dir,'db'));expect(store.get('actions','row')).toBeUndefined();
+  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+ });
  it('accepts an exact 256-ref canonical link',async()=>{
   const s=repositoryKnowledgeFixture();try{
    const parentSources=[];
@@ -189,7 +281,7 @@ describe('task-independent temporary canonical evidence',()=>{
    if(parent)store.save('sources',{...s.source,id:'temporary-parent',retention:'ephemeral',content:'PRIVATE_PARENT_SENTINEL'});
    s.source={...s.source,retention:parent?'permanent':'ephemeral',...(parent?{parentSources:[{id:'temporary-parent',revision:'r1'}]}:{})};store.save('sources',s.source);
    s.routes['/merge_requests/17'].web_url+='PRIVATE_OBSERVATION_SENTINEL';const ids=evidence.acceptRepositoryReadback(store,s.source.id,await read(s));const o=readHostObservation(store,ids[0]!,project)!;const c=candidate(s,o.claim);evidence.linkKnowledgeEvidence(store,c.id,[o.id]);
-   expect(store.list('actions')).toHaveLength(4);await store.backup(join(dir,'backup'));store.close();
+   expect(store.list('actions').filter(a=>a.kind==='knowledge.host-observation')).toHaveLength(3);expect(store.list('actions').filter(a=>a.kind==='knowledge.evidence-link')).toHaveLength(1);expect(store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);await store.backup(join(dir,'backup'));store.close();
    for(const name of readdirSync(dir,{recursive:true}) as string[]){const file=join(dir,name);if(statSync(file).isFile())expect(readFileSync(file).includes(Buffer.from('PRIVATE_OBSERVATION_SENTINEL'))).toBe(false);}
    store=new Store(join(dir,'db'),join(dir,'vault'));expect(store.list('actions')).toEqual([]);expect(readHostObservation(store,o.id,project)).toBeUndefined();
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
@@ -239,7 +331,7 @@ describe('G4 canonical self-review regressions',()=>{
   const s=repositoryKnowledgeFixture();try{const ids=evidence.acceptRepositoryReadback(s.store,s.source.id,await read(s)),o=readHostObservation(s.store,ids[0]!,s.project)!,c=candidate(s,o.claim);evidence.linkKnowledgeEvidence(s.store,c.id,[o.id]);const a=s.store.list('actions').find(a=>a.kind==='knowledge.evidence-link')!;s.store.save('actions',{...a,payload:{schemaVersion:1,link:{invented:true}}});expect(()=>evidence.linkKnowledgeEvidence(s.store,c.id,[o.id])).toThrow();}finally{s.close();}
  });
  it('migrates retained canonical actions into memory when their source becomes ephemeral',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'patrick-evidence-transition-'));let store=new Store(join(dir,'db'));const base=repositoryKnowledgeFixture();const project=base.project;base.close();const s=repositoryKnowledgeFixture('github',{store,project});try{evidence.acceptRepositoryReadback(store,s.source.id,await read(s));expect(store.list('actions')).toHaveLength(3);store.save('sources',{...s.source,retention:'ephemeral'});expect(store.list('actions')).toHaveLength(3);store.close();store=new Store(join(dir,'db'));expect(store.list('actions')).toEqual([]);}finally{store.close();rmSync(dir,{recursive:true,force:true});}
+  const dir=mkdtempSync(join(tmpdir(),'patrick-evidence-transition-'));let store=new Store(join(dir,'db'));const base=repositoryKnowledgeFixture();const project=base.project;base.close();const s=repositoryKnowledgeFixture('github',{store,project});try{evidence.acceptRepositoryReadback(store,s.source.id,await read(s));expect(store.list('actions').filter(a=>a.kind==='knowledge.host-observation')).toHaveLength(3);expect(store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);store.save('sources',{...s.source,retention:'ephemeral'});expect(store.list('actions').filter(a=>a.kind==='knowledge.host-observation')).toHaveLength(3);expect(store.list('actions').filter(a=>a.kind==='experience.test-observation')).toHaveLength(1);store.close();store=new Store(join(dir,'db'));expect(store.list('actions')).toEqual([]);}finally{store.close();rmSync(dir,{recursive:true,force:true});}
  });
  it('keeps named malformed payloads with explicit temporary dependencies private while refusing their authority',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'patrick-evidence-malformed-'));let store=new Store(join(dir,'db'));try{store.save('sources',{id:'s',projectId:'p',domain:'personal',kind:'manual',externalId:'s',revision:'r',title:'temp',content:'',locator:'s',authorId:'owner',status:'active',retention:'ephemeral',createdAt:''});store.save('actions',{id:'bad',projectId:'p',domain:'personal',kind:'knowledge.host-observation',status:'completed',payload:{schemaVersion:1,sourceRefs:[{id:'s',revision:'r'}],private:'MALFORMED_PRIVATE_SENTINEL'},updatedAt:''});expect(readHostObservation(store,'bad',{projectId:'p',domain:'personal'})).toBeUndefined();store.close();expect(readFileSync(join(dir,'db')).includes(Buffer.from('MALFORMED_PRIVATE_SENTINEL'))).toBe(false);store=new Store(join(dir,'db'));expect(store.list('actions')).toEqual([]);}finally{store.close();rmSync(dir,{recursive:true,force:true});}

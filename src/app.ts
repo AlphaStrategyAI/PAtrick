@@ -97,13 +97,13 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
   app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);ownedProject(question.projectId,question.domain);return c.json({question});});
   app.post('/api/tasks',async c=>{
-    const value=await body(c),data=z.object({projectId:z.string().min(1),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional()}).parse(value);
+    const value=await body(c),data=z.object({projectId:z.string().min(1),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional(),kind:z.literal('manual').optional()}).strict().parse(value);
     ownedProject(data.projectId);
     const task=engine.ingest({...data,kind:'manual',externalId:data.externalId??`manual:${randomUUID()}`,authorId:config.ownerId,retention:'permanent'});
     return respond(c,{task,message:'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
   });
   app.post('/api/conversations',async c=>{
-    const data=z.object({projectId:z.string(),domain:z.string(),sessionId:z.string().min(1),turnId:z.string().min(1),revision:z.string().min(1),content:z.string().min(1).max(100000),tool:z.enum(['codex','cursor']),retention:z.enum(['permanent','ephemeral'])}).parse(await body(c));
+    const data=z.object({projectId:z.string(),domain:z.string(),sessionId:z.string().min(1),turnId:z.string().min(1),revision:z.string().min(1),content:z.string().min(1).max(100000),tool:z.enum(['codex','cursor']),retention:z.enum(['permanent','ephemeral'])}).strict().parse(await body(c));
     const project=ownedProject(data.projectId,data.domain);
     const content=data.content.replace(/<patrick-memory>[\s\S]*?<\/patrick-memory>/g,'').trim();
     if(!content)return c.json({recorded:false});

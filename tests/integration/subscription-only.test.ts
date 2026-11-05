@@ -7,7 +7,8 @@ import { createRuntime } from '../../src/runtime.js';
 import { acquireHostLease } from '../../src/lease.js';
 import { Store } from '../../src/store.js';
 import { liveWorkers } from '../../src/integrations/workers.js';
-import { DomainError, SubscriptionAccessError, WorkerUnavailable, type RunnerPolicy, type WorkerInput } from '../../src/domain.js';
+import { DomainError, SubscriptionAccessError, WorkerUnavailable, stableId, digest, type RunnerPolicy, type WorkerInput } from '../../src/domain.js';
+import { structuredKnowledgeJobId } from '../../src/knowledge-jobs.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { makeBillingFixture } from '../fixtures/billing.js';
 
@@ -28,6 +29,18 @@ function fixture(options: Parameters<typeof makeBillingFixture>[0] & { manualLea
 }
 const writer = { async baseline() { return 'synthetic'; }, async readBaseline() { return []; }, async deliver() { throw Error('No delivery in synthetic billing tests'); } };
 const research = { async research() { return { queries: [], summary: 'Synthetic', gaps: [] }; } };
+function financialActions(store:Store){return store.list('actions').filter(row=>row.kind==='billing_hold'||row.kind==='billing_profile_unavailable');}
+function oneFinancialAction(store:Store,kind:'billing_hold'|'billing_profile_unavailable'){
+  const rows=financialActions(store);expect(rows).toHaveLength(1);const row=rows[0]!;expect(row.kind).toBe(kind);
+  const p=row.payload;expect(p.attemptId).toEqual(expect.any(String));
+  expect(row.id).toBe(kind==='billing_profile_unavailable'?stableId('billing-profile-refusal',row.projectId,row.domain,p.profileHash,p.attemptId):p.profileHash?stableId('billing-hold',row.projectId,row.domain,p.profileHash):stableId('billing-admission-hold',row.projectId,row.domain,p.admissionId));
+  return row;
+}
+function expectIndependentJob(f:ReturnType<typeof fixture>,financialKind:'billing_hold'|'billing_profile_unavailable'){
+  const financial=oneFinancialAction(f.store,financialKind);
+  const job=expect.objectContaining({id:structuredKnowledgeJobId(f.source),kind:'knowledge.structured-ingest',projectId:f.source.projectId,domain:f.source.domain,status:'pending',payload:expect.objectContaining({schemaVersion:1,sourceId:f.source.id,sourceRevision:f.source.revision,sourceHash:digest(f.source.content),sourceRefs:[{id:f.source.id,revision:f.source.revision}],phase:'queued',tries:0})});
+  const actions=f.store.list('actions');expect(actions).toHaveLength(2);expect(actions).toEqual(expect.arrayContaining([job,financial]));
+}
 
 it('binds Workbench and native fake scheduling to the injected canonical authority', async () => {
   const f = fixture(), billing = new BillingAuthority(f.store, f.config, f.currentProvider, { proofRoot: f.proofRoot, now: f.now });
@@ -217,7 +230,7 @@ it.each(['quota', 'expired-credential'] as const)('persists %s quarantine throug
   const f = fixture({ persistent: true, maxAttemptsPerTask: 3 }), old = authority(f);
   await expect(refuse(f, old, reason)).rejects.toBeInstanceOf(SubscriptionAccessError);
   f.reopen(); const current = authority(f), calls = vi.fn(async () => successful(f));
-  expect(f.store.list('actions')[0]).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending' });
+  expect(oneFinancialAction(f.store,'billing_profile_unavailable')).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending' });expectIndependentJob(f,'billing_profile_unavailable');
   const engine = engineFor(f, current, [{ name: 'codex', run: calls }]);
   f.store.save('tasks', { ...f.store.get('tasks', f.task.id)!, status: 'blocked' }); engine.retry(f.task.id); await engine.tick();
   expect(calls).not.toHaveBeenCalled(); expect(f.store.get('tasks', f.task.id)?.billingStop).toBeUndefined();
@@ -228,18 +241,20 @@ it.each(['quota', 'expired-credential'] as const)('persists %s quarantine throug
   await expect(current.reserve(f.input, 'codex')).rejects.toMatchObject({ code: 'subscription_profile_unavailable' });
   f.included.billing = { mode: 'included-subscription', admissionId: 'synthetic-proof' }; refresh(f);
   expect(await current.status(f.project, f.included)).toMatchObject({ state: 'included-admitted' });
-  expect(f.store.list('actions')[0]?.status).toBe('pending'); // Read-only status never restores or allocates.
+  expect(oneFinancialAction(f.store,'billing_profile_unavailable').status).toBe('pending'); // Read-only status never restores or allocates.
   await current.runLima(f.input, 'codex', undefined, undefined, calls);
   expect(calls).toHaveBeenCalledTimes(1); expect(f.store.get('tasks', f.task.id)?.attempts).toBe(2);
-  expect(f.store.list('actions')[0]).toMatchObject({ status: 'completed', payload: { reason, restoredAt: f.at.toISOString() } });
+  expect(oneFinancialAction(f.store,'billing_profile_unavailable')).toMatchObject({ status: 'completed', payload: { reason, restoredAt: f.at.toISOString() } });
 });
 
 it.each(['incident', 'quarantine'] as const)('ephemeral %s metadata survives persistence without source text', async kind => {
   const f = fixture({ persistent: true, retention: 'ephemeral' }), billing = authority(f);
   if (kind === 'quarantine') await expect(refuse(f, billing)).rejects.toBeInstanceOf(SubscriptionAccessError);
   else await expect(billing.runLima(f.input, 'codex', undefined, undefined, async () => ({ ...successful(f), costUsd: 0.3 }))).rejects.toMatchObject({ code: 'billing_policy_violation' });
-  const before = f.store.list('actions'); f.reopen();
-  expect(f.store.list('actions')).toEqual(before); expect(f.store.get('tasks', f.task.id)).toMatchObject({ attempts: 1, attemptLimit: 32, spentUsd: kind === 'incident' ? 0.3 : 0 });
+  const before=financialActions(f.store),financialKind=kind==='incident'?'billing_hold':'billing_profile_unavailable',jobId=structuredKnowledgeJobId(f.source);
+  expect(oneFinancialAction(f.store,financialKind)).toEqual(before[0]);expectIndependentJob(f,financialKind);f.reopen();
+  expect(f.store.list('actions')).toEqual(before);expect(oneFinancialAction(f.store,financialKind)).toEqual(before[0]);expect(f.store.get('actions',jobId)).toBeUndefined();
+  expect(f.store.get('tasks', f.task.id)).toMatchObject({ attempts: 1, attemptLimit: 32, spentUsd: kind === 'incident' ? 0.3 : 0 });
   if (kind === 'incident') { expect(f.store.get('tasks', f.task.id)?.billingStop?.code).toBe('billing_policy_violation'); expect(f.store.list('outbox')[0]?.text).toContain('boundary violation'); }
   expect(f.store.get('sources', f.source.id)?.content).toBe('');
 });
@@ -298,7 +313,7 @@ it('a separately included backup remains eligible after refused-profile SQLite r
   const input: WorkerInput = { ...f.input, task: f.store.get('tasks', f.task.id)! };
   expect(await scheduler.run(input.task, f.project, input)).toEqual({ cards: [] }); expect(calls).toEqual(['backup']);
   expect(f.store.get('tasks', f.task.id)).toMatchObject({ attempts: 2, attemptLimit: 3, spentUsd: 0 }); expect(f.store.get('tasks', f.task.id)?.billingStop).toBeUndefined();
-  expect(f.store.list('actions')[0]).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending' });
+  expect(oneFinancialAction(f.store,'billing_profile_unavailable')).toMatchObject({ kind: 'billing_profile_unavailable', status: 'pending' });expectIndependentJob(f,'billing_profile_unavailable');
   expect(f.store.list('outbox').filter(row => row.text.includes('已继续'))).toHaveLength(1);
 });
 it.each(['allowance', 'receipt', 'principal', 'current'] as const)('quarantine cannot be restored when the %s observation predates refusal', async missing => {
@@ -309,7 +324,7 @@ it.each(['allowance', 'receipt', 'principal', 'current'] as const)('quarantine c
   if (missing === 'current') f.current.checkedAt = original;
   f.writeProof();
   await expect(authority(f).reserve(f.input, 'codex')).rejects.toBeInstanceOf(DomainError);
-  expect(f.store.get('tasks', f.task.id)?.attempts).toBe(1); expect(f.store.list('actions')[0]?.status).toBe('pending');
+  expect(f.store.get('tasks', f.task.id)?.attempts).toBe(1); expect(oneFinancialAction(f.store,'billing_profile_unavailable').status).toBe('pending');
 });
 it.each(['cap', 'runtime', 'role', 'checker'] as const)('fresh availability evidence never bypasses the independent %s gate', async gate => {
   const f = fixture({ persistent: true, maxAttemptsPerTask: gate === 'cap' ? 1 : 3 }); await expect(refuse(f, authority(f))).rejects.toBeInstanceOf(SubscriptionAccessError); f.reopen(); refresh(f);

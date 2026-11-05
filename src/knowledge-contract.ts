@@ -104,6 +104,7 @@ export interface RepositoryReadRequest {
   current?:{changeNumber:number;checkNames:string[]};
 }
 export interface RepositoryReadback {observations:HostObservation[];files:ObservedFile[];tests:TestObservation[];resolution?:{sourceId:string;revision:string;quote:string;locator:string};gaps:string[]}
+export type CiReadback = Pick<RepositoryReadback,'tests'|'resolution'>;
 export interface ReadbackProvenance {
   sourceHash:string;policyHash:string;requestHash:string;request:RepositoryReadRequest;
   attestedTests:{observationId:string;producerId:string;originalEventId:string;reportPath:string;reportDigest:string;snapshotDigest:string;testDefinitionDigest:string}[];
@@ -135,8 +136,12 @@ export const requestedRepositoryClaimSchema:z.ZodType<RequestedRepositoryClaim> 
 
 /** Private canonical action payloads; never accepted as a provider admission receipt. */
 export interface CanonicalHostObservationPayload {
- schemaVersion:1;observation:HostObservation;digest:string;sourceHash:string;policyHash:string;
+ schemaVersion:1;observation:HostObservation;digest:string;sourceHash:string;policyHash:string;issueSourceHash?:string;
  request:RepositoryReadRequest;requestHash:string;sourceRefs:SourceRef[];
  attestation?:ReadbackProvenance['attestedTests'][number];
 }
 export interface CanonicalKnowledgeEvidencePayload {schemaVersion:1;link:KnowledgeEvidenceLink;digest:string;sourceRefs:SourceRef[]}
+export interface CanonicalCiTestObservationPayload {
+ schemaVersion:1;observation:TestObservation;digest:string;sourceHash:string;policyHash:string;issueSourceHash?:string;
+ request:RepositoryReadRequest;requestHash:string;sourceRefs:SourceRef[];hostObservationIds:string[];hostObservationHashes:string[];
+}

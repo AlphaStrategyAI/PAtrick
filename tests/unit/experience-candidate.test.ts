@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { knowledgeOutputSchema, stableId, type KnowledgeCard, type SourceRevision } from '../../src/domain.js';
+import { digest, knowledgeOutputSchema, stableId, type KnowledgeCard, type SourceRevision } from '../../src/domain.js';
 import { publishKnowledge } from '../../src/knowledge.js';
 import { Store } from '../../src/store.js';
 import { invalidateSource } from '../../src/intake.js';
@@ -197,7 +197,11 @@ describe('descriptive pending experience candidates', () => {
     expect(card).toBeDefined();
     expect(card?.experience).toBeUndefined();
     expect(card?.verification).toBe('reported');
-    expect(recovered.list('actions')).toEqual([]);
+    const actions=recovered.list('actions');expect(actions).toHaveLength(2);
+    expect(actions.every(action=>action.kind==='knowledge.structured-ingest'&&action.status==='pending'&&action.payload.phase==='queued')).toBe(true);
+    const jobSourceIds=actions.map(action=>action.payload.sourceId as string);expect(new Set(jobSourceIds).size).toBe(2);expect(jobSourceIds).toContain(source.id);
+    for(const action of actions){const linked=recovered.get('sources',action.payload.sourceId as string);expect(linked).toBeDefined();expect(action.payload).toMatchObject({sourceId:linked!.id,sourceRevision:linked!.revision,sourceHash:digest(linked!.content)});}
+    expect(actions.filter(action=>['knowledge.host-observation','knowledge.evidence-link','experience.test-observation'].includes(action.kind))).toEqual([]);
     const readableEdits = recovered.list('sources').filter(value => value.status === 'active' && value.content.includes(sentinel));
     expect(readableEdits.length).toBeGreaterThan(0);
     for (const edit of readableEdits) {

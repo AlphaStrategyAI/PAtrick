@@ -9,6 +9,7 @@ import { configureDemo, DemoWorker, demoResearch, demoWriter, seedDemo } from '.
 import { liveWorkers } from './integrations/workers.js';
 import { GitHubWriter } from './integrations/github.js';
 import { GitLabWriter } from './integrations/gitlab.js';
+import { createRepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { BilingualResearch } from './integrations/research.js';
 import { SourceCollector } from './collector.js';
 import { FeishuChannel } from './integrations/feishu.js';
@@ -43,7 +44,8 @@ export async function createRuntime(config:AppConfig=readConfig()) {
     const gitlab=new GitLabWriter(store,config),choose=(project:AppConfig['projects'][number])=>project.repositoryProvider==='gitlab'?gitlab:github;
     const writer:DeliveryWriter={baseline:project=>choose(project).baseline(project),readBaseline:(project,sha)=>choose(project).readBaseline(project,sha),deliver:(task,project)=>choose(project).deliver(task,project)};
     let feishu:FeishuChannel|undefined;let guardian:NetworkGuardian|undefined;
-    const engine=new Workbench({store,config,billing,writer:config.mode==='demo'?demoWriter:writer,workers:config.mode==='demo'?['grok','dsh','codex'].map(name=>new DemoWorker(name as 'grok'|'dsh'|'codex')):liveWorkers(config,billing),research:config.mode==='demo'?demoResearch:new BilingualResearch(config),notifier:config.mode==='demo'?{send:async message=>({remoteId:`demo-notification:${message.id}`})}:config.feishu?{send:message=>feishu!.send(message)}:undefined,canRun:project=>!guardian||guardian.canRun(project.domain)});
+    const repositoryKnowledgeReader=config.mode==='demo'?undefined:createRepositoryKnowledgeReader(github,gitlab);
+    const engine=new Workbench({store,config,billing,repositoryKnowledgeReader,writer:config.mode==='demo'?demoWriter:writer,workers:config.mode==='demo'?['grok','dsh','codex'].map(name=>new DemoWorker(name as 'grok'|'dsh'|'codex')):liveWorkers(config,billing),research:config.mode==='demo'?demoResearch:new BilingualResearch(config),notifier:config.mode==='demo'?{send:async message=>({remoteId:`demo-notification:${message.id}`})}:config.feishu?{send:message=>feishu!.send(message)}:undefined,canRun:project=>!guardian||guardian.canRun(project.domain)});
     if(config.mode==='live'&&config.networkFile)guardian=new NetworkGuardian(readNetworkTargets(config.networkFile),systemNetworkActions(),result=>{for(const project of store.list('projects').filter(p=>p.domain===result.domain))store.save('events',{id:stableId('network',project.id,result.id,result.checkedAt),projectId:project.id,domain:project.domain,type:'network.path',message:result.reason,data:{state:result.state,targetId:result.id},createdAt:now()});});
     if(config.mode==='live'&&config.feishu)feishu=new FeishuChannel(store,config,engine);
     if(config.mode==='demo')await seedDemo(store,config,engine);

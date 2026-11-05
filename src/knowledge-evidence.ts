@@ -1,9 +1,10 @@
 import { DomainError, digest, now, type Scope } from './domain.js';
-import type { AtomicClaim, CanonicalHostObservationPayload, HostObservation, KnowledgeEvidenceLink, RepositoryReadback, SourceRef } from './knowledge-contract.js';
+import type { AtomicClaim, CanonicalHostObservationPayload, CanonicalCiTestObservationPayload, HostObservation, KnowledgeEvidenceLink, RepositoryReadback, SourceRef } from './knowledge-contract.js';
 import { atomicClaimSchema } from './knowledge-contract.js';
 import { knowledgeCandidateHash, knowledgePolicyHash, snapshotDigest } from './knowledge-identity.js';
-import { canonicalHostPayloadSchema, canonicalKnowledgePayloadSchema, hostObservationId, hostObservationSchema, knowledgeSourceRefs, readHostObservation } from './knowledge-records.js';
+import { canonicalCiTestObservationId, canonicalCiTestPayloadSchema, canonicalHostPayloadSchema, canonicalKnowledgePayloadSchema, hostObservationId, hostObservationSchema, isRetractedHostObservation, knowledgeRequestSourceRefs, knowledgeSourceRefs, readCanonicalHostRecord, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
+import { isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { takeRepositoryReadback } from './integrations/repository-knowledge.js';
 import type { Store } from './store.js';
 
@@ -21,14 +22,21 @@ export function acceptRepositoryReadback(store:Store,sourceId:string,readback:Re
  assertKnowledgeSource(store,source,project);
  const parsed=parseStructuredKnowledge(source,project);if(!parsed)invalid();const expected=structuredRepositoryRequest(store,source,project,parsed),request=provenance.request;
  if(request.repository!==expected.repository||request.headSha!==expected.headSha||request.changeNumber!==expected.changeNumber||!equal(request.checks,expected.checks)||!equal(request.issueSource??null,expected.issueSource??null)||request.testReportPath!==expected.testReportPath&&request.testReportPath!==undefined)invalid();
- const sourceRefs=knowledgeSourceRefs(store,source.id,project);if(!sourceRefs)invalid();
- const bindingHash=digest({source:provenance.sourceHash,policy:provenance.policyHash,request});
+ const sourceRefs=knowledgeRequestSourceRefs(store,source.id,project,request);if(!sourceRefs)invalid();
+ let issueSourceHash:string|undefined;
+ if(request.issueSource){const issue=store.get('sources',request.issueSource.id),resolution=readback.resolution;
+  if(!issue||issue.revision!==request.issueSource.revision||!resolution||resolution.sourceId!==issue.id||resolution.revision!==issue.revision||resolution.quote!==issue.content||resolution.locator!==issue.locator)invalid();
+  assertKnowledgeSource(store,issue,project);
+  issueSourceHash=digest(issue);
+ }
+ const rawBindingHash=digest({source:provenance.sourceHash,policy:provenance.policyHash,request});
+ const bindingHash=issueSourceHash?digest({source:provenance.sourceHash,policy:provenance.policyHash,request,issueSourceHash}):rawBindingHash;
  const ancestry=sourceRefs.filter(r=>r.id!==source.id).map(r=>`source:${r.id}:${r.revision}`);
  const rows:CanonicalHostObservationPayload[]=[];
  const add=(raw:HostObservation,attestation?:CanonicalHostObservationPayload['attestation'])=>{
-  if(!hostObservationSchema.safeParse(raw).success||!sameScope(raw,project)||raw.bindingHash!==bindingHash||raw.origin.repository!==project.repository||raw.claim.subject.repository!==project.repository||raw.claim.subject.provider!==project.repositoryProvider||!equal(raw.sourceRefs,[{id:source.id,revision:source.revision}]))invalid();
-  const observation={...structuredClone(raw),sourceRefs,origin:{...raw.origin,derivedFrom:ancestry}};observation.id=hostObservationId(observation);
-  const payload:CanonicalHostObservationPayload={schemaVersion:1,observation,digest:digest(observation),sourceHash:provenance.sourceHash,policyHash:provenance.policyHash,request,requestHash:provenance.requestHash,sourceRefs,...(attestation?{attestation}:{})};
+  if(!hostObservationSchema.safeParse(raw).success||!sameScope(raw,project)||raw.bindingHash!==rawBindingHash||raw.origin.repository!==project.repository||raw.claim.subject.repository!==project.repository||raw.claim.subject.provider!==project.repositoryProvider||!equal(raw.sourceRefs,[{id:source.id,revision:source.revision}]))invalid();
+  const observation={...structuredClone(raw),bindingHash,sourceRefs,origin:{...raw.origin,derivedFrom:ancestry}};observation.id=hostObservationId(observation);
+  const payload:CanonicalHostObservationPayload={schemaVersion:1,observation,digest:digest(observation),sourceHash:provenance.sourceHash,policyHash:provenance.policyHash,...(issueSourceHash?{issueSourceHash}:{}),request,requestHash:provenance.requestHash,sourceRefs,...(attestation?{attestation}:{})};
   if(!canonicalHostPayloadSchema.safeParse(payload).success)invalid();rows.push(payload);
  };
  for(const o of readback.observations){if(o.origin.kind!=='provider'||o.claim.kind==='test-result')invalid();add(o);}
@@ -44,15 +52,37 @@ export function acceptRepositoryReadback(store:Store,sourceId:string,readback:Re
    const o=p.observation;
    // Mutable PR state is separately timestamped. A running job can complete once; terminal outcomes cannot change.
    if(o.claim.kind!=='change-head')for(const existing of store.list('actions').filter(a=>a.kind==='knowledge.host-observation'&&sameScope(a,project))){
-    const previous=canonicalHostPayloadSchema.safeParse(existing.payload);if(!previous.success)invalid();const old=(existing.payload as unknown as CanonicalHostObservationPayload).observation;
+    if(isRetractedHostObservation(store,existing))continue;
+    const previous=readCanonicalHostRecord(existing);if(!previous)invalid();const old=previous.observation;
     if(old.origin.originalEventId===o.origin.originalEventId&&old.claim.kind===o.claim.kind&&!equal(old.claim,o.claim)){
      const completion=old.claim.kind==='ci-result'&&o.claim.kind==='ci-result'&&old.claim.value.conclusion==='pending'&&o.claim.value.conclusion!=='pending'&&
       equal(old.claim.subject,o.claim.subject)&&old.origin.producerId===o.origin.producerId&&old.origin.independentOrigin===o.origin.independentOrigin;
      if(!completion)invalid();
     }
    }
-   const old=store.get('actions',o.id);if(old){const existing=canonicalHostPayloadSchema.safeParse(old.payload);if(!existing.success||old.kind!=='knowledge.host-observation'||!sameScope(old,project)||!equal({...((old.payload as unknown as CanonicalHostObservationPayload).observation),observedAt:o.observedAt},o)||!equal(existing.data.sourceRefs,sourceRefs))invalid();continue;}
+   const old=store.get('actions',o.id);if(old){const existing=readCanonicalHostRecord(old);if(!existing||!sameScope(old,project)||!equal({...existing.observation,observedAt:o.observedAt},o)||!equal(existing.sourceRefs,sourceRefs))invalid();continue;}
    store.save('actions',{id:o.id,projectId:project.id,domain:project.domain,kind:'knowledge.host-observation',status:'completed',payload:p as unknown as Record<string,unknown>,updatedAt:now()});
+  }
+  // Normalize only the exact one-use readback while its authenticated identity is local.
+  for(const raw of readback.tests){
+   const origin=raw.origin;
+   if(origin.kind!=='ci'||!sameScope(raw,project)||raw.sourceId!==source.id||raw.sourceRevision!==source.revision||raw.repository!==project.repository||origin.provider!==project.repositoryProvider||raw.snapshot.revision!==origin.headSha||!raw.checks.length)invalid();
+   // The authenticated reader has no managed-receipt locator seam in G5.
+   if(origin.receiptId!==undefined)invalid();
+   const providers=rows.filter(p=>{const o=p.observation,c=o.claim;
+    return o.origin.kind==='provider'&&c.kind==='ci-result'&&o.origin.provider===origin.provider&&o.origin.producerId===origin.producerId&&o.responseDigest===origin.responseDigest&&
+     c.subject.headSha===origin.headSha&&c.subject.runId===origin.runId&&c.subject.jobId===origin.jobId&&raw.checks.some(t=>t.name===c.subject.checkName&&t.result===(c.value.conclusion==='success'?'success':c.value.conclusion==='failure'?'failure':'incomplete'));
+   });
+   if(!providers.length||raw.checks.some(c=>!providers.some(p=>p.observation.claim.kind==='ci-result'&&p.observation.claim.subject.checkName===c.name)))invalid();
+   const hostRows=[...providers,...rows.filter(p=>p.observation.claim.kind==='test-result'&&providers.some(provider=>provider.observation.origin.originalEventId===p.observation.origin.originalEventId)&&p.attestation?.observationId===raw.id)];
+   const hostObservationIds=[...new Set(hostRows.map(p=>p.observation.id))].sort();
+   const hostObservationHashes=hostObservationIds.map(id=>{const record=store.get('actions',id),parsed=record&&canonicalHostPayloadSchema.safeParse(record.payload);if(!parsed||!parsed.success)invalid();return digest(parsed.data.observation);});
+   const observation=structuredClone(raw);observation.id=canonicalCiTestObservationId(observation,provenance.sourceHash,provenance.policyHash,provenance.requestHash,hostObservationIds);
+   const payload:CanonicalCiTestObservationPayload={schemaVersion:1,observation,digest:digest(observation),sourceHash:provenance.sourceHash,policyHash:provenance.policyHash,...(issueSourceHash?{issueSourceHash}:{}),request,requestHash:provenance.requestHash,sourceRefs,hostObservationIds,hostObservationHashes};
+   if(!canonicalCiTestPayloadSchema.safeParse(payload).success)invalid();
+   const old=store.get('actions',observation.id);
+   if(old){const parsed=canonicalCiTestPayloadSchema.safeParse(old.payload),previous=old.payload as unknown as CanonicalCiTestObservationPayload;if(old.kind!=='experience.test-observation'||old.status!=='completed'||!sameScope(old,project)||!parsed.success||previous.digest!==digest(previous.observation)||!equal({...previous.observation,observedAt:observation.observedAt},observation)||!equal({...previous,observation:payload.observation,digest:payload.digest},payload))invalid();continue;}
+   store.save('actions',{id:observation.id,projectId:project.id,domain:project.domain,kind:'experience.test-observation',status:'completed',payload:payload as unknown as Record<string,unknown>,updatedAt:now()});
   }
   return rows.map(p=>p.observation.id);
  });
@@ -76,7 +106,13 @@ export function compareIndependentClaim(claim:AtomicClaim,observations:readonly 
 export function linkKnowledgeEvidence(store:Store,cardId:string,observationIds:string[]):KnowledgeEvidenceLink {
  const card=store.get('cards',cardId);if(!card||card.status!=='active'||!card.claim||card.pendingClaim||!atomicClaimSchema.safeParse(card.claim.claim).success||card.expiresAt&&Date.parse(card.expiresAt)<=Date.now()||!observationIds.length||observationIds.length>32||new Set(observationIds).size!==observationIds.length)invalid();
  const source=store.get('sources',card.sourceId),project=store.get('projects',card.projectId);if(!source||!project||source.revision!==card.sourceRevision||!source.content.includes(card.quote)||card.claim.quote!==card.quote)invalid();assertKnowledgeSource(store,source,project);
- const cardRefs=knowledgeSourceRefs(store,source.id,card);if(!cardRefs)invalid();
+ let cardRefs=knowledgeSourceRefs(store,source.id,card);
+ if(isStructuredKnowledgeCard(card)){
+  const action=store.get('actions',structuredKnowledgeJobId(source)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+  if(!action||action.kind!=='knowledge.structured-ingest'||!job?.success||job.data.sourceId!==source.id||job.data.sourceRevision!==source.revision||!validStructuredJobRefs(store,source,job.data.sourceRefs))invalid();
+  cardRefs=job.data.sourceRefs;
+ }
+ if(!cardRefs)invalid();
  const observations=observationIds.map(id=>readHostObservation(store,id,card));if(observations.some(o=>!o))invalid();const actual=observations as HostObservation[],claim=card.claim.claim;
  if(actual.some(o=>!equal(o.claim,claim)||o.origin.derivedFrom.includes(`card:${card.id}`)))invalid();
  const sourceRefs=union([cardRefs,...actual.map(o=>o.sourceRefs)]);
