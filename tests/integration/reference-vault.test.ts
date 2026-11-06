@@ -65,6 +65,19 @@ it('keeps prior task-source recovery behavior when frontmatter pretends to be a 
   expect(next.store.list('tasks')).toHaveLength(2);
 });
 
+it('removes a collected Vault edit when its reference source becomes temporary',async()=>{
+  const {root,config,runtime}=await setup();
+  runtime.engine.ingest({projectId:'p',externalId:'temporary-ancestor-reference',revision:'v1',title:'Reference',content:'Reference source',purpose:'reference'});
+  const parent=runtime.store.list('sources').find(s=>s.externalId==='temporary-ancestor-reference')!;
+  edit(sourcePath(root,parent.id),'reference','COLLECTED_VAULT_EDIT_PRIVATE_SENTINEL');await runtime.collector.scan();
+  const child=runtime.store.list('sources').find(s=>s.externalId.startsWith('vault:')&&s.parentSources?.some(ref=>ref.id===parent.id))!;
+  expect(child.content).toContain('COLLECTED_VAULT_EDIT_PRIVATE_SENTINEL');
+  runtime.store.save('sources',{...parent,retention:'ephemeral'});await runtime.close();
+  const next=await createRuntime(config);runtimes.push(next);
+  expect(JSON.stringify(next.store.list('sources'))).not.toContain('COLLECTED_VAULT_EDIT_PRIVATE_SENTINEL');
+  const vault=join(root,'vault');for(const entry of readdirSync(vault,{recursive:true,withFileTypes:true}).filter(item=>item.isFile()))expect(readFileSync(join(entry.parentPath,entry.name),'utf8')).not.toContain('COLLECTED_VAULT_EDIT_PRIVATE_SENTINEL');
+});
+
 it.each([
   ['reading', 'task'], ['reading', undefined], ['file', 'task'], ['file', undefined],
 ] as const)('keeps a Vault-only %s reference non-executable with purpose %s when restoring an older ledger', async (kind, purpose) => {

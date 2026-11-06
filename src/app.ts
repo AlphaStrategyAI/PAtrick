@@ -12,7 +12,7 @@ import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
 import { weeklyReport } from './reports.js';
 import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
-import { isKnowledgeSnapshotFailure, VaultSyncError, type Store } from './store.js';
+import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
 import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
 
@@ -161,13 +161,13 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.get('/tasks/:id',async c=>{if(!store.get('tasks',c.req.param('id')))return c.notFound();return c.html(renderPage({page:'task',store,config,url:new URL(c.req.url),projectId:store.get('tasks',c.req.param('id'))?.projectId,billing:await engine.billingStatuses(store.list('projects').filter(p=>p.ownerId===config.ownerId))}));});
   app.notFound(c=>c.req.path.startsWith('/api/')?c.json({error:'没有找到这个资源。'},404):c.html('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PAtrick · 404</title><body><h1>没有找到这个页面</h1><a href="/">返回工作台</a></body></html>',404));
   app.onError(async(error,c)=>{
-    const syncFailure=error instanceof VaultSyncError,snapshotFailure=isKnowledgeSnapshotFailure(error);
+    const privacyFailure=error instanceof PrivacyCheckpointError,syncFailure=error instanceof VaultSyncError,snapshotFailure=isKnowledgeSnapshotFailure(error);
     if(syncFailure||snapshotFailure||error instanceof DomainError&&error.code==='stale_project_state'){
-      const code=syncFailure?'vault_sync_unavailable':snapshotFailure?'knowledge_snapshot_unavailable':'stale_project_state';
-      const safeMessage=syncFailure?'Changes may have been saved, but Vault synchronization failed; retry.':snapshotFailure?'Knowledge temporarily unavailable; retry.':'Project state changed; retry.';
+      const code=privacyFailure?'privacy_checkpoint_unavailable':syncFailure?'vault_sync_unavailable':snapshotFailure?'knowledge_snapshot_unavailable':'stale_project_state';
+      const safeMessage=privacyFailure?error.message:syncFailure?'Changes may have been saved, but Vault synchronization failed; retry.':snapshotFailure?'Knowledge temporarily unavailable; retry.':'Project state changed; retry.';
       const status=code==='stale_project_state'?409:503;
       if(c.req.header('Accept')?.includes('text/html'))return c.html(`<!doctype html><html><head><meta charset="utf-8"><title>PAtrick</title></head><body><h1>${safeMessage}</h1></body></html>`,status as 400);
-      return c.json({error:safeMessage,code},status as 400);
+      return c.json({error:safeMessage,code,...(privacyFailure?{committed:true}:{})},status as 400);
     }
     const status=error instanceof DomainError?error.status:error instanceof ZodError?400:500;
     const message=error instanceof DomainError?error.message:error instanceof ZodError?error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；'):'处理暂时失败，请稍后重试。';

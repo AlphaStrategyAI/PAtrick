@@ -99,9 +99,10 @@ function validAuditRefs(store:Store,action:ActionRecord,p:FactualContextTombston
  const visit=(id:string):boolean=>{
   if(visiting.has(id))return false;if(visited.has(id))return true;
   const source=store.get('sources',id);
-  if(!source||source.projectId!==action.projectId||source.domain!==action.domain||indexed.get(id)!==digest(source.revision))return false;
+  const expected=indexed.get(id),parents=source&&store.sourceParentAuditRefs(source);
+  if(!source||source.projectId!==action.projectId||source.domain!==action.domain||!expected||!store.sourceRevisionHashMatches(source,expected)||!parents)return false;
   visiting.add(id);
-  if(!(source.parentSources??[]).every(parent=>indexed.get(parent.id)===digest(parent.revision)&&visit(parent.id)))return false;
+  if(!parents.every(parent=>parent.revisionHash===indexed.get(parent.id)&&visit(parent.id)))return false;
   visiting.delete(id);visited.add(id);return true;
  };
  if(!p.sourceRefs.every(ref=>visit(ref.id)))return false;
@@ -216,11 +217,20 @@ export function canonicalCiTestObservationId(observation:TestObservation,sourceH
 }
 
 /** Resolve and validate current host-recorded lineage. Common request/source is not an evidence root. */
+export function wellFormedParentSources(value:unknown):value is SourceRef[]|undefined {
+ if(value===undefined)return true;
+ if(!Array.isArray(value)||value.length>256)return false;
+ const ids=new Set<string>();
+ return value.every(ref=>{
+  if(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).length!==2||!Object.hasOwn(ref,'id')||!Object.hasOwn(ref,'revision')||typeof ref.id!=='string'||!ref.id.trim()||ref.id.length>10000||typeof ref.revision!=='string'||!ref.revision.trim()||ref.revision.length>10000||ids.has(ref.id))return false;
+  ids.add(ref.id);return true;
+ });
+}
 export function knowledgeSourceRefs(store:Store,sourceId:string,scope:Scope):SourceRef[]|undefined {
  const visiting=new Set<string>(),all=new Map<string,SourceRef>();
  const visit=(id:string,revision?:string):boolean=>{
   if(visiting.has(id))return false;const s=store.get('sources',id);
-  if(!s||s.status!=='active'||s.projectId!==scope.projectId||s.domain!==scope.domain||(revision!==undefined&&s.revision!==revision))return false;
+  if(!s||s.status!=='active'||s.projectId!==scope.projectId||s.domain!==scope.domain||(revision!==undefined&&s.revision!==revision)||!wellFormedParentSources(s.parentSources))return false;
   if(all.has(id))return all.get(id)!.revision===s.revision;
   visiting.add(id);if(!(s.parentSources??[]).every(p=>visit(p.id,p.revision)))return false;visiting.delete(id);all.set(id,{id:s.id,revision:s.revision});return true;
  };
@@ -242,6 +252,28 @@ export function knowledgeRequestSourceRefs(store:Store,sourceId:string,scope:Sco
  return refs;
 }
 export function knowledgeActionDependencies(action:ActionRecord,store?:Store):{refs:SourceRef[];unresolved:boolean} {
+ if(action.kind==='decision.evidence'||action.kind==='decision.review'){
+  const payload=action.payload as Record<string,unknown>,known:SourceRef[]=[];let unresolved=false;
+  const add=(id:unknown,revision:unknown)=>{if(typeof id!=='string'||!id||typeof revision!=='string'||!revision)unresolved=true;else known.push({id,revision});};
+  if(payload?.retracted===true){
+   if(!Array.isArray(payload.sourceIds))return {refs:[],unresolved:true};
+   return {refs:payload.sourceIds.filter((id):id is string=>typeof id==='string'&&!!id).map(id=>({id,revision:''})),unresolved:false};
+  }
+  const evidence=(value:unknown)=>{
+   if(!value||typeof value!=='object'||Array.isArray(value)){unresolved=true;return;}
+   const item=value as Record<string,unknown>;add(item.sourceId,item.sourceRevision);
+   const attribution=item.attribution as {citations?:unknown}|undefined;
+   if(!attribution||!Array.isArray(attribution.citations)){unresolved=true;return;}
+   for(const citation of attribution.citations){if(!citation||typeof citation!=='object'||Array.isArray(citation)){unresolved=true;continue;}const c=citation as Record<string,unknown>;add(c.sourceId,c.revision);}
+  };
+  if(action.kind==='decision.evidence')evidence(payload?.evidence);
+  else{
+   const review=payload?.review as {sourceRefs?:unknown;evidence?:unknown}|undefined;
+   if(!review||!Array.isArray(review.sourceRefs)||!Array.isArray(review.evidence))unresolved=true;
+   else{for(const ref of review.sourceRefs){if(!ref||typeof ref!=='object'||Array.isArray(ref)){unresolved=true;continue;}const r=ref as Record<string,unknown>;add(r.id,r.revision);}for(const item of review.evidence)evidence(item);}
+  }
+  return {refs:[...new Map(known.map(value=>[`${value.id}\0${value.revision}`,value])).values()],unresolved};
+ }
  const tombstone=action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload);
  if(tombstone&&tombstone.success){
   return {refs:tombstone.data.sourceRefs.map(ref=>({id:ref.id,revision:''})),

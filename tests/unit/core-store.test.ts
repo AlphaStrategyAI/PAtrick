@@ -179,6 +179,23 @@ describe('durable scoped knowledge store', () => {
     expect(reopened.get('cards', c.id)?.status).toBe('withdrawn'); expect(readFileSync(path, 'utf8')).not.toContain(c.body);
   });
 
+  it('fails before copying an unreconciled Vault while its projection fault remains active',async()=>{
+    const {store,root}=setup(),s=source(),c={...card(s),body:'PENDING_PRECOPY_SENTINEL'};store.save('sources',s);store.save('cards',c);
+    const state=store as unknown as {db:{inTransaction:boolean}},get=store.get.bind(store),path=join(root,'vault','one','personal','cards',`${c.id}.md`);
+    const spy=vi.spyOn(store,'get').mockImplementation(((...args:Parameters<typeof get>)=>{
+      if(!state.db.inTransaction&&args[0]==='sources'&&args[1]===s.id&&new Error().stack?.includes('publish'))throw Object.assign(new Error('persistent synthetic projection fault'),{code:'SQLITE_BUSY'});
+      return get(...args);
+    }) as typeof store.get);
+    const backup=vi.spyOn(store,'backup'),destination=join(root,'snapshot'),foreign=join(root,'snapshot.partial-foreign');mkdirSync(foreign);writeFileSync(join(foreign,'keep'),'foreign');
+    try{
+      expect(()=>withdrawSource(store,s.id)).toThrow();const original=readFileSync(path,'utf8');expect(original).toContain(c.body);
+      await expect(createBackup(store,destination,{vaultDir:join(root,'vault')})).rejects.toBeDefined();
+      expect(backup).not.toHaveBeenCalled();expect(existsSync(destination)).toBe(false);expect(readFileSync(path,'utf8')).toBe(original);
+      expect(readdirSync(root).filter(name=>name.startsWith('snapshot.partial-')&&name!=='snapshot.partial-foreign')).toEqual([]);
+      expect(readFileSync(join(foreign,'keep'),'utf8')).toBe('foreign');
+    }finally{backup.mockRestore();spy.mockRestore();}
+  });
+
   it.each(['complete','backup-fails','source-rebuild-fails','snapshot-rebuild-fails','rename-fails'] as const)('does not leave stale withdrawn Vault text in a %s backup', async mode => {
     const { store, root } = setup(), s = source(), c = { ...card(s), body: 'WITHDRAWN_BACKUP_SENTINEL' }; store.save('sources', s); store.save('cards', c);
     const state = store as unknown as { db: { inTransaction: boolean }; vaultJobs: Map<string, unknown> }, get = store.get.bind(store); let failures = 0;
@@ -190,11 +207,15 @@ describe('durable scoped knowledge store', () => {
       try { withdrawSource(store, s.id); } catch {}
       expect(failures).toBeGreaterThan(0); expect(state.vaultJobs.size).toBeGreaterThan(0);
       const destination = join(root, 'snapshot');
-      const sourcePath=join(root,'vault','one','personal','cards',`${c.id}.md`),original=readFileSync(sourcePath,'utf8');expect(original).toContain(c.body);
+      const sourcePath=join(root,'vault','one','personal','cards',`${c.id}.md`);expect(readFileSync(sourcePath,'utf8')).toContain(c.body);
       const completed=join(root,'completed-backup'),foreign=join(root,'snapshot.partial-foreign');mkdirSync(completed);mkdirSync(foreign);writeFileSync(join(completed,'keep'),'completed');writeFileSync(join(foreign,'keep'),'foreign');
+      spy.mockRestore();store.reconcileVault();const original=readFileSync(sourcePath,'utf8');expect(original).not.toContain(c.body);
+      let reached='';
       const backupOnly = {
-        ...(mode==='source-rebuild-fails'?{rebuildIndex(){throw new Error('synthetic source rebuild failure');}}:{}),
+        prepareVaultBackup:store.prepareVaultBackup.bind(store),
+        ...(mode==='source-rebuild-fails'?{rebuildIndex(){reached='source-rebuild';throw new Error('synthetic source rebuild failure');}}:{}),
         async backup(path:string){
+          reached='backup';
           if(mode==='backup-fails')throw new Error('synthetic backup failure');
           if(mode==='snapshot-rebuild-fails'){writeFileSync(path,'not a database');return;}
           if(mode==='rename-fails'){mkdirSync(destination);writeFileSync(join(destination,'keep'),'concurrent destination');}
@@ -212,6 +233,7 @@ describe('durable scoped knowledge store', () => {
         const vault = join(destination, 'vault'); const files = readdirSync(vault, { recursive: true }).map(String).filter(name => name.endsWith('.md'));
         expect(files.every(name => !readFileSync(join(vault, name), 'utf8').includes(c.body))).toBe(true);
       }
+      expect(reached).toBe(mode==='source-rebuild-fails'?'source-rebuild':'backup');
       expect(readFileSync(sourcePath,'utf8')).toBe(original);expect(readFileSync(join(completed,'keep'),'utf8')).toBe('completed');expect(readFileSync(join(foreign,'keep'),'utf8')).toBe('foreign');
     } finally { spy.mockRestore(); }
   });
@@ -293,7 +315,8 @@ describe('durable scoped knowledge store', () => {
     }) as typeof store.get);
     try{try{withdrawSource(store,s.id);}catch{}expect(readFileSync(join(root,'vault','one','personal','cards',`${c.id}.md`),'utf8')).toContain(c.body);}
     finally{projection.mockRestore();}
-    const destination=join(root,'snapshot'),backupOnly={async backup(path:string){await store.backup(path);}} as unknown as Store;let markdowns=0;
+    store.reconcileVault();
+    const destination=join(root,'snapshot'),backupOnly={prepareVaultBackup:store.prepareVaultBackup.bind(store),async backup(path:string){await store.backup(path);}} as unknown as Store;let markdowns=0;
     const link=vi.mocked(nodeFs.linkSync).mockImplementation((from,to)=>{
       if(String(from).endsWith('.md')&&++markdowns===2)throw new Error('injected install failure');
       return fsDefault.linkSync(from,to);
@@ -355,6 +378,16 @@ describe('durable scoped knowledge store', () => {
     expect(store.list('cards')).toEqual([]);
     const paths = readdirSync(join(root, 'vault'), { recursive: true }).map(String);
     expect(paths.filter(p => p.includes('card-source'))).toEqual([]);
+  });
+
+  it('rolls back a temporary ancestor transition and preserves the independent durable projections', () => {
+    const { store, root } = setup(), parent=source('rollback-parent'),child={...source('rollback-child'),parentSources:[{id:parent.id,revision:parent.revision}]};
+    store.save('sources',parent);store.save('sources',child);
+    const path=join(root,'vault','one','personal','sources',`${child.id}.md`),before=readFileSync(path,'utf8');
+    expect(()=>store.transaction(()=>{store.save('sources',{...parent,retention:'ephemeral'});throw new Error('abort policy change');})).toThrow('abort policy change');
+    expect(store.get('sources',parent.id)).toEqual(parent);expect(store.get('sources',child.id)).toEqual(child);expect(readFileSync(path,'utf8')).toBe(before);
+    store.close();const reopened=new Store(join(root,'db.sqlite'),join(root,'vault'));stores.push(reopened);
+    expect(reopened.get('sources',child.id)?.content).toBe(child.content);
   });
 
   it('does not resurrect withdrawn or superseded source cards when rebuilding FTS', () => {

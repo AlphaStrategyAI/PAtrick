@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
 import { readConfig } from '../../src/config.js';
+import { createApp } from '../../src/app.js';
 import { configureDemo, demoResearch, demoWriter, DemoWorker } from '../../src/demo.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { ingestStructuredKnowledge } from '../../src/knowledge.js';
@@ -17,6 +19,67 @@ import { ingestSource } from '../../src/intake.js';
 import { restoreBackup } from '../../scripts/restore.js';
 
 describe('shared structured host intake', () => {
+  it.each([false,true])('keeps an admitted in-flight reader and reports committed cleanup failure (current refresh=%s)',async refresh=>{
+    const root=mkdtempSync(join(tmpdir(),'g8-inflight-checkpoint-')),db=join(root,'db.sqlite'),vault=join(root,'vault');
+    let store=new Store(db,vault),readerLock:Database.Database|undefined,engine:Workbench|undefined;
+    const fixture=repositoryKnowledgeFixture('gitlab',{store,project:{id:'p',projectId:'p',domain:'personal',name:'P',description:'',repository:'owner/repo',repositoryProvider:'gitlab',prdPath:'docs/PRD.md',allowedPaths:['docs/'],trustedChecks:['validate'],trustedAppIds:[731],ownerId:'owner',autoMerge:false,budgetUsd:0,createdAt:''}});
+    let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+    let running:Promise<unknown>|undefined,reads=0,receipts=0;
+    try{
+      if(refresh)expect(await ingestStructuredKnowledge(store,fixture.reader,fixture.source.id,new AbortController().signal)).toBe('processed');
+      fixture.routes['/merge_requests/17/pipelines']=[{id:53,sha:H2}];
+      fixture.routes['/pipelines/53']={...fixture.routes['/pipelines/52'],id:53,sha:H2};
+      fixture.routes['/jobs/72']={...fixture.routes['/jobs/71'],id:72,pipeline:{id:53,project_id:42,sha:H2},commit:{id:H2}};
+      fixture.routes['/pipelines/53/jobs']=[{...fixture.routes['/pipelines/52/jobs'][0],id:72,pipeline:{id:53,project_id:42,sha:H2},commit:{id:H2}}];
+      const config=readConfig({PATRICK_MODE:'demo'});configureDemo(config);config.projects=[fixture.project];config.ownerId=fixture.project.ownerId;
+      engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch});
+      const controlled={async read(...args:Parameters<typeof fixture.reader.read>){reads++;const result=await fixture.reader.read(...args);entered();await gate;return result;}};
+      running=ingestStructuredKnowledge(store,controlled,fixture.source.id,new AbortController().signal,{...(refresh?{refresh:'current' as const}:{}),onCurrentReceipt:()=>{receipts++;}}).then(value=>value,error=>error);
+      await Promise.race([started,running.then(value=>{throw new Error(`Reader did not start: ${String(value)}`);})]);
+      ingestSource(store,{projects:[fixture.project]},{projectId:'p',externalId:'blocked-private',revision:'v1',title:'BLOCKED_CHECKPOINT_SENTINEL',content:'BLOCKED_CHECKPOINT_SENTINEL',purpose:'reference'});
+      const privateSource=store.list('sources').find(source=>source.externalId==='blocked-private')!;
+      readerLock=new Database(db);readerLock.exec('BEGIN');readerLock.prepare('SELECT * FROM sources').all();
+      (store as unknown as {db:Database.Database}).db.pragma('busy_timeout = 10');
+      expect(()=>store.save('sources',{...privateSource,retention:'ephemeral'})).toThrowError(expect.objectContaining({code:'privacy_checkpoint_unavailable',committed:true}));
+      const response=await createApp({store,config,engine}).request('/api/reference-sources',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({projectId:'p',domain:'personal',externalId:'committed-http',revision:'v1',title:'HTTP',content:'Committed reference',retention:'permanent'})});
+      expect(response.status).toBe(503);expect(await response.json()).toMatchObject({code:'privacy_checkpoint_unavailable',committed:true});
+      expect(store.list('sources').some(source=>source.externalId==='committed-http')).toBe(true);
+      release();const failure=await running;running=undefined;
+      expect(failure).toMatchObject({code:'privacy_checkpoint_unavailable',committed:true});expect(reads).toBe(1);expect(receipts).toBe(refresh?1:0);
+      expect(store.list('actions').some(action=>action.kind==='knowledge.host-observation')).toBe(true);
+      if(!refresh)expect(store.get('actions',structuredKnowledgeJobId(fixture.source))).toMatchObject({status:'completed',payload:{phase:'processed'}});
+      readerLock.exec('ROLLBACK');readerLock.close();readerLock=undefined;store.reconcileVault();
+      if(!refresh)expect(await ingestStructuredKnowledge(store,controlled,fixture.source.id,new AbortController().signal)).toBe('processed');
+      expect(reads).toBe(1);store.close();store=new Store(db,vault);
+      expect(store.list('actions').some(action=>action.kind==='knowledge.host-observation')).toBe(true);
+      if(existsSync(`${db}-wal`))expect(readFileSync(`${db}-wal`).includes(Buffer.from('BLOCKED_CHECKPOINT_SENTINEL'))).toBe(false);
+    }finally{release();if(running)await running;if(readerLock){readerLock.exec('ROLLBACK');readerLock.close();}await engine?.shutdown();store.close();rmSync(root,{recursive:true,force:true});}
+  });
+  it('holds the Workbench after an in-flight admission commits while WAL cleanup is blocked',async()=>{
+    const root=mkdtempSync(join(tmpdir(),'g8-workbench-checkpoint-')),db=join(root,'db.sqlite'),vault=join(root,'vault');
+    let store=new Store(db,vault),readerLock:Database.Database|undefined,engine:Workbench|undefined;
+    const fixture=repositoryKnowledgeFixture('github',{store,project:{id:'p',projectId:'p',domain:'personal',name:'P',description:'',repository:'owner/repo',repositoryProvider:'github',prdPath:'docs/PRD.md',allowedPaths:['docs/'],trustedChecks:['validate'],trustedAppIds:[15368],ownerId:'owner',autoMerge:false,budgetUsd:0,createdAt:''}});
+    let release!:()=>void,entered!:()=>void,reads=0;const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});let running:Promise<unknown>|undefined;
+    try{
+      store.save('sources',{...fixture.source,status:'withdrawn'});
+      const config=readConfig({PATRICK_MODE:'demo'});configureDemo(config);config.projects=[fixture.project];
+      const reader={async read(...args:Parameters<typeof fixture.reader.read>){reads++;const result=await fixture.reader.read(...args);entered();await gate;return result;}};
+      engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch,repositoryKnowledgeReader:reader});
+      const task=engine.ingest({projectId:'p',externalId:'workbench-inflight',revision:'v1',title:'Read',content:fixture.source.content})!,source=store.get('sources',task.sourceId)!,jobId=structuredKnowledgeJobId(source);
+      running=engine.tick(task.id).then(()=>undefined,error=>error);await Promise.race([started,running.then(value=>{throw new Error(`Workbench reader did not start: ${String(value)}`);})]);
+      ingestSource(store,config,{projectId:'p',externalId:'workbench-cleanup',revision:'v1',title:'Private',content:'WORKBENCH_CHECKPOINT_PRIVATE_SENTINEL',purpose:'reference'});
+      const privateSource=store.list('sources').find(value=>value.externalId==='workbench-cleanup')!;
+      readerLock=new Database(db);readerLock.exec('BEGIN');readerLock.prepare('SELECT * FROM sources').all();
+      (store as unknown as {db:Database.Database}).db.pragma('busy_timeout = 10');
+      expect(()=>store.save('sources',{...privateSource,retention:'ephemeral'})).toThrowError(expect.objectContaining({code:'privacy_checkpoint_unavailable',committed:true}));
+      release();expect(await running).toMatchObject({code:'privacy_checkpoint_unavailable',committed:true});running=undefined;
+      expect(store.get('actions',jobId)).toMatchObject({status:'completed',payload:{phase:'processed'}});expect(reads).toBe(1);
+      readerLock.exec('ROLLBACK');readerLock.close();readerLock=undefined;store.reconcileVault();
+      await engine.tick(task.id);expect(reads).toBe(1);
+      await engine.shutdown();engine=undefined;store.close();store=new Store(db,vault);
+      expect(store.get('actions',jobId)).toMatchObject({status:'completed',payload:{phase:'processed'}});expect(reads).toBe(1);
+    }finally{release();if(running)await running;if(readerLock){readerLock.exec('ROLLBACK');readerLock.close();}await engine?.shutdown();store.close();rmSync(root,{recursive:true,force:true});}
+  });
   it.each([
     ['conflict', 'reading', 'ephemeral'], ['local-fault', 'conversation', 'ephemeral'],
     ['conflict', 'conversation', 'ephemeral'], ['local-fault', 'reading', 'ephemeral'],
@@ -166,14 +229,23 @@ describe('shared structured host intake', () => {
         return get(...args);
       }) as typeof store.get);
       await engine.tick().catch(()=>undefined);fault.mockRestore();expect(injected).toBe(true);expect(fixture.requests).toHaveLength(2);
+      const heldId=structuredKnowledgeJobId(store.get('sources',task.sourceId)!);
+      const durableHold=()=>((store as unknown as {db:Database.Database}).db.prepare('SELECT data FROM actions WHERE id=?').get(heldId) as {data:string}|undefined);
+      expect(durableHold(),'hold before close').toBeDefined();
       await engine.shutdown();store.close();
       for(const path of [db,`${db}-wal`])if(existsSync(path)){const bytes=readFileSync(path);expect(bytes.includes(Buffer.from(parentInput.content))).toBe(false);expect(bytes.includes(Buffer.from('CHILD_TEMPORARY_SENTINEL'))).toBe(false);}
       store=new Store(db);fixture=repositoryKnowledgeFixture('github',{store,project});store.save('sources',{...fixture.source,status:'withdrawn'});
+      expect(durableHold(),'hold after reopen').toBeDefined();
       engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch,repositoryKnowledgeReader:fixture.reader});
-      engine.ingest(input);expect(()=>engine.retry(task.id)).toThrow();await engine.tick();expect(fixture.requests).toHaveLength(0);
+      engine.ingest(input);expect(durableHold(),'hold after child restore').toBeDefined();expect(()=>engine.retry(task.id)).toThrow();await engine.tick();expect(fixture.requests).toHaveLength(0);
       if(mode==='restore'){
         expect(()=>engine.ingest({...parentInput,content:'changed parent'})).toThrowError(expect.objectContaining({code:'revision_conflict'}));
-        engine.ingest(parentInput);engine.retry(task.id);await engine.tick();expect(fixture.requests).toHaveLength(2);
+        engine.ingest(parentInput);
+        const restoredSource=store.get('sources',task.sourceId)!,restoredJob=store.get('actions',structuredKnowledgeJobId(restoredSource));
+        expect(restoredJob).toMatchObject({status:'pending',payload:{sourceRevision:restoredSource.revision,errorCode:'knowledge_read_inflight'}});
+        expect((restoredJob!.payload.sourceRefs as {id:string;revision:string}[]).find(ref=>ref.id===parent.id)?.revision).toBe(parent.revision);
+        expect(restoredSource.parentSources).toEqual([{id:parent.id,revision:parent.revision}]);
+        engine.retry(task.id);await engine.tick();expect(fixture.requests).toHaveLength(2);
       }else{
         engine.withdraw(parent.id);expect(()=>engine.ingest(input)).toThrowError(expect.objectContaining({code:'revoked_revision'}));
         await engine.tick();expect(fixture.requests).toHaveLength(0);

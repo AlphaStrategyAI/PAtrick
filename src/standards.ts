@@ -59,7 +59,7 @@ export function recordOwnerDecision(store: Store, task: Task, question: Question
   const snapshotAction = question.decisionSnapshotId ? store.get('actions', question.decisionSnapshotId) : undefined;
   const snapshot = snapshotAction?.payload.snapshot as DecisionSnapshot | undefined;
   if (question.decisionSnapshotId && (!snapshot || snapshotAction?.kind !== 'decision.snapshot' || snapshot.taskId !== task.id || snapshot.taskVersion !== question.taskVersion || snapshot.projectId !== task.projectId || snapshot.domain !== task.domain || snapshot.sourceId !== task.sourceId || snapshot.sourceRevision !== task.sourceRevision)) throw new DomainError('The frozen question judgment is unavailable or out of scope.', 'invalid_decision_snapshot', 409);
-  const answerSource: SourceRevision = { id: stableId('owner-answer', question.id), projectId: task.projectId, domain: task.domain, kind: 'conversation', externalId: `answer:${question.id}`, revision: digest(words), title: `Owner decision: ${question.title}`, content: words, locator: `question:${question.id}@${question.version}`, authorId: answer.actorId, retention: source.retention, status: 'active', createdAt: at };
+  const answerSource: SourceRevision = { id: stableId('owner-answer', question.id), projectId: task.projectId, domain: task.domain, kind: 'conversation', externalId: `answer:${question.id}`, revision: digest(words), title: `Owner decision: ${question.title}`, content: words, locator: `question:${question.id}@${question.version}`, authorId: answer.actorId, retention: store.sourceRequiresTemporaryRetention(source)?'ephemeral':source.retention, status: 'active', createdAt: at };
   store.save('sources', answerSource);
   const caseId = stableId('decision-case', question.id); const ruleId = stableId('explicit-rule', question.id);
   const decisionCase: DecisionCase = { id: caseId, projectId: task.projectId, domain: task.domain, taskId: task.id, questionId: question.id, decisionId: snapshot?.id ?? stableId('decision', task.id, question.taskVersion), actorId: answer.actorId, choice: answer.choice, originalWords: words, rationale: answer.text && answer.choice !== 'C' ? answer.text : 'Owner rationale not separately stated.', alternatives: [question.options.A.description, question.options.B.description], ruleIds: [ruleId], sourceId: answerSource.id, status: 'active', createdAt: at, ...(snapshot ? { decisionSnapshot: structuredClone(snapshot) } : {}) };
@@ -70,12 +70,12 @@ export function recordOwnerDecision(store: Store, task: Task, question: Question
 }
 
 export function applicableRules(store: Store, task: Task): Rule[] {
-  const temporaryTask = store.get('sources', task.sourceId)?.retention === 'ephemeral';
+  const taskSource=store.get('sources',task.sourceId),temporaryTask=!!taskSource&&store.sourceRequiresTemporaryRetention(taskSource);
   return store.list('rules').filter(rule => {
     if (rule.projectId !== task.projectId || rule.domain !== task.domain || rule.status !== 'active' || Date.parse(rule.reviewAt) <= Date.now()) return false;
     if (!rule.citations.length || rule.citations.some(citation => {
       const source = store.get('sources', citation.sourceId);
-      return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && source.retention === 'ephemeral';
+      return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && store.sourceRequiresTemporaryRetention(source);
     })) return false;
     return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; });
   });

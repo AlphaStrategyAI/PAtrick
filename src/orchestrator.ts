@@ -151,8 +151,9 @@ export class Workbench {
     const task = this.task(taskId);
     const source=this.store.get('sources',task.sourceId),jobAction=source&&this.store.get('actions',structuredKnowledgeJobId(source)),job=jobAction&&structuredIngestJobSchema.safeParse(jobAction.payload);
     const heldRead=task.stage==='knowledge_extract'&&jobAction?.status==='pending'&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??'');
-    const expiredFeedback=source?.retention==='ephemeral'&&task.stage==='feedback'&&(!source.content||!task.plan||!task.artifact||!task.review||!task.receiptId);
-    const heldFeedback=source?.retention==='ephemeral'&&task.stage==='feedback'&&(this.localHolds.has(this.actionId(task))||consumedStageResult(this.store,task));
+    const temporary=!!source&&this.store.sourceRequiresTemporaryRetention(source);
+    const expiredFeedback=temporary&&task.stage==='feedback'&&(!source?.content||!task.plan||!task.artifact||!task.review||!task.receiptId);
+    const heldFeedback=temporary&&task.stage==='feedback'&&(this.localHolds.has(this.actionId(task))||consumedStageResult(this.store,task));
     if (!task.billingStop && !['blocked', 'retrying'].includes(task.status)&&!heldRead&&!expiredFeedback&&!heldFeedback) throw new DomainError('Only a blocked or retrying task can be retried.', 'invalid_transition', 409);
     // Commit an exhausted cap before returning the 409; throwing inside the
     // retry transaction would roll the durable stop and owner notice back.
@@ -165,7 +166,7 @@ export class Workbench {
       if(source&&task.stage==='feedback'&&!this.feedbackContextAvailable(task,source,project))throw new DomainError('Delivery completed, but feedback context expired; automatic recovery is unavailable.','feedback_context_unavailable',409);
       if(!source||acceptedHash&&acceptedHash!==digest(source.content))throw new DomainError('Knowledge source content changed.','stale_source',409);
       this.recoverStructuredHold(source);
-      const reconstruct=source.retention==='ephemeral'&&task.stage!=='knowledge_extract'&&task.stage!=='feedback'&&consumedStageResult(this.store,task);
+      const reconstruct=this.store.sourceRequiresTemporaryRetention(source)&&task.stage!=='knowledge_extract'&&task.stage!=='feedback'&&consumedStageResult(this.store,task);
       const next: Task = reconstruct
         ? {...task,budgetUsd:project.budgetUsd,version:task.version+1,status:'queued',stage:'knowledge_extract',runAfter:now(),updatedAt:now(),repairCount:0,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,receiptId:undefined,feedback:undefined,baselineFiles:undefined,error:undefined,blockedFrom:undefined}
         : { ...task, budgetUsd: project.budgetUsd, status: stageStatus[task.stage], error: undefined, runAfter: now(), updatedAt: now() };
@@ -242,7 +243,7 @@ export class Workbench {
           this.current(task);
           const project = this.project(task);
           const source = this.store.get('sources', task.sourceId)!;
-          if (source.retention === 'ephemeral' && !source.content) throw new DomainError('Temporary source content expired with the previous process. Re-ingest the authorized revision to resume.', 'ephemeral_expired');
+          if (this.store.sourceRequiresTemporaryRetention(source) && !source.content) throw new DomainError('Temporary source content expired with the previous process. Re-ingest the authorized revision to resume.', 'ephemeral_expired');
           if (task.status !== stageStatus[task.stage]) { task = { ...task, status: stageStatus[task.stage], updatedAt: now() }; this.store.save('tasks', task); }
           let handled=false;
           if(task.stage==='knowledge_extract'){
@@ -430,10 +431,10 @@ export class Workbench {
     const liveTask=this.store.get('tasks',task.id),liveSource=this.store.get('sources',task.sourceId),liveProject=this.store.get('projects',task.projectId);
     if(!liveTask||!liveSource||!liveProject||liveTask.id!==input.task.id||liveTask.version!==input.task.version||liveTask.sourceId!==input.task.sourceId||liveTask.sourceRevision!==input.task.sourceRevision||liveTask.title!==input.task.title||liveTask.description!==input.task.description||digest(liveSource)!==digest(input.source)||knowledgePolicyHash(liveProject)!==knowledgePolicyHash(input.project))throw new DomainError('The frozen decision input changed.','stale_frozen_input',409);
     if (decision.action === 'proceed' && !decision.citations.length) throw new DomainError('Proceed requires at least one current authorized source quotation or bound owner-answer quotation.', 'missing_evidence');
-    const temporaryTask = this.store.get('sources', task.sourceId)?.retention === 'ephemeral';
+    const taskSource=this.store.get('sources',task.sourceId),temporaryTask=!!taskSource&&this.store.sourceRequiresTemporaryRetention(taskSource);
     for (const citation of decision.citations) {
       const source = this.store.get('sources', citation.sourceId);
-      if (source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !source.content.includes(citation.quote) || source.locator !== citation.locator || !temporaryTask && source.retention === 'ephemeral') throw new DomainError('Decision cites unavailable, out-of-scope or temporary-only evidence.', 'invalid_citation', 403);
+      if (source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !source.content.includes(citation.quote) || source.locator !== citation.locator || !temporaryTask && this.store.sourceRequiresTemporaryRetention(source)) throw new DomainError('Decision cites unavailable, out-of-scope or temporary-only evidence.', 'invalid_citation', 403);
     }
     const rules = new Set(applicableRules(this.store, task).map(rule => rule.id));
     if (decision.ruleIds.some(id => !rules.has(id))) throw new DomainError('Decision cites a rule outside its current authorized scope.', 'invalid_rule', 403);
@@ -453,7 +454,7 @@ export class Workbench {
     if(decision.grounds.unresolved.some(item=>item.citation&&!hasCitation(item.citation)))throw new DomainError('An unresolved statement cites unavailable words.','invalid_ground',403);
     const facts=expandFactRefs(this.store,decision.grounds.facts,task,input.factualContext);
     if(facts.some(f=>!input.facts.some(original=>digest(original)===digest(f))))throw new DomainError('Fact was not in the frozen host input.','invalid_fact',403);
-    if(!temporaryTask&&facts.some(f=>f.sourceRefs.some(ref=>this.store.get('sources',ref.id)?.retention==='ephemeral')))throw new DomainError('Temporary evidence cannot be persisted through this task.','invalid_fact',403);
+    if(!temporaryTask&&facts.some(f=>f.sourceRefs.some(ref=>{const source=this.store.get('sources',ref.id);return !source||this.store.sourceRequiresTemporaryRetention(source);})))throw new DomainError('Temporary evidence cannot be persisted through this task.','invalid_fact',403);
     if(decision.action==='proceed'&&!decision.grounds.statements.length&&!facts.length)throw new DomainError('Proceed requires an authorized statement or fact.','missing_evidence');
     return {facts,statements:structuredClone(decision.grounds.statements),unresolved:structuredClone(decision.grounds.unresolved),interpretationLabel:'assistant-inference'};
   }

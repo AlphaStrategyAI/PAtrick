@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../../src/store.js';
+import { ingestSource } from '../../src/intake.js';
+import { publishObservations } from '../../src/standards.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { createBackup } from '../../src/backup.js';
 import { restoreBackup } from '../../scripts/restore.js';
@@ -47,6 +49,78 @@ async function workerStarted(calls: unknown[]) {
 }
 
 describe('single worker durable business flow', () => {
+  it.each(['rule','citation'] as const)('does not admit an effective-temporary descendant as a permanent-task %s',async mode=>{
+    let dependent:{id:string;revision:string;content:string;locator:string}|undefined;
+    const f=setup({mutateOutput:(input,output)=>input.role==='decide'&&mode==='citation'&&dependent?{...output as object,citations:[...(output as {citations:unknown[]}).citations,{sourceId:dependent.id,revision:dependent.revision,quote:dependent.content,locator:dependent.locator}]}:output});
+    try{
+      f.engine.ingest({projectId:'p',externalId:'guard-parent',revision:'v1',title:'Parent',content:'Parent',retention:'ephemeral',purpose:'reference'});
+      const parent=f.store.list('sources').find(source=>source.externalId==='guard-parent')!;
+      ingestSource(f.store,f.config,{projectId:'p',externalId:'guard-child',revision:'v1',title:'Child',content:'TEMPORARY_DESCENDANT_CITATION',retention:'permanent',purpose:'reference'},[{id:parent.id,revision:parent.revision}]);
+      dependent=f.store.list('sources').find(source=>source.externalId==='guard-child')!;
+      const [rule]=publishObservations(f.store,dependent as typeof parent,{observations:[{title:'Temporary rule',statement:'Temporary rule',quote:dependent.content,conditions:'Always',exceptions:'None'}]});
+      const task=f.ingest();
+      for(let i=0;i<20&&!f.calls.some(call=>call.role==='decide'&&call.input.task.id===task.id);i++)await f.engine.tick();
+      const input=f.calls.find(call=>call.role==='decide'&&call.input.task.id===task.id)!.input;
+      if(mode==='rule')expect(input.rules.some(value=>value.id===rule!.id)).toBe(false);
+      else {expect(f.store.get('tasks',task.id)).toMatchObject({stage:'decide',status:'blocked'});expect(f.store.list('actions').some(action=>action.taskId===task.id&&action.kind==='decision.snapshot')).toBe(false);}
+    }finally{await f.engine.shutdown();}
+  });
+
+  it('reconstructs an explicitly retried permanent-labeled child after temporary ancestry and a consumed stage',async()=>{
+    const f=setup(),parentInput={projectId:'p',externalId:'retry-parent',revision:'v1',title:'Parent',content:'Parent',retention:'ephemeral' as const,purpose:'reference' as const};
+    const childInput={projectId:'p',kind:'conversation' as const,externalId:'retry-child',revision:'v1',title:'Child',content:'保留草稿',retention:'permanent' as const};
+    f.engine.ingest(parentInput);const parent=f.store.list('sources').find(source=>source.externalId===parentInput.externalId)!;
+    const task=ingestSource(f.store,f.config,childInput,[{id:parent.id,revision:parent.revision}])!;let engine=f.engine;
+    try{
+      while(f.store.get('tasks',task.id)?.stage!=='execute')await engine.tick();
+      const before=f.store.get('tasks',task.id)!,transaction=f.store.transaction.bind(f.store);let injected=false;
+      const fault=vi.spyOn(f.store,'transaction').mockImplementation(((fn:()=>unknown)=>{
+        if(!injected&&new Error().stack?.includes('Workbench.process')&&f.store.list('attempts').some(attempt=>attempt.taskId===task.id&&attempt.role==='execute'&&attempt.taskVersion===before.version&&attempt.status==='succeeded')){injected=true;throw Object.assign(new Error('post-result fault'),{code:'SQLITE_BUSY'});}
+        return transaction(fn);
+      }) as typeof f.store.transaction);
+      await expect(engine.tick()).rejects.toMatchObject({code:'SQLITE_BUSY'});fault.mockRestore();expect(injected).toBe(true);
+      const calls=f.calls.filter(call=>call.role==='execute').length;await engine.shutdown();f.store.close();
+      const reopened=new Store(join(f.config.dataDir,'db.sqlite'),f.config.vaultDir);stores.push(reopened);engine=f.create(reopened);
+      engine.ingest(parentInput);const restored=engine.ingest(childInput)!;
+      expect(restored).toMatchObject({id:task.id,version:before.version,stage:'execute',status:'blocked'});
+      await engine.tick();expect(f.calls.filter(call=>call.role==='execute')).toHaveLength(calls);
+      const retried=engine.retry(task.id);
+      expect(retried).toMatchObject({version:before.version+1,stage:'knowledge_extract',status:'queued'});
+      expect(f.calls.filter(call=>call.role==='execute')).toHaveLength(calls);
+    }finally{await engine.shutdown();}
+  });
+
+  it('allows active temporary tasks to use temporary-derived rules and citations',async()=>{
+    let dependent:{id:string;revision:string;content:string;locator:string}|undefined;
+    const f=setup({mutateOutput:(input,output)=>input.role==='decide'&&dependent?{...output as object,citations:[...(output as {citations:unknown[]}).citations,{sourceId:dependent.id,revision:dependent.revision,quote:dependent.content,locator:dependent.locator}]}:output});
+    try{
+      f.engine.ingest({projectId:'p',externalId:'temporary-rule-parent',revision:'v1',title:'Parent',content:'Parent',retention:'ephemeral',purpose:'reference'});
+      const parent=f.store.list('sources').find(source=>source.externalId==='temporary-rule-parent')!;
+      ingestSource(f.store,f.config,{projectId:'p',externalId:'temporary-rule-child',revision:'v1',title:'Child',content:'Temporary citation',retention:'permanent',purpose:'reference'},[{id:parent.id,revision:parent.revision}]);
+      dependent=f.store.list('sources').find(source=>source.externalId==='temporary-rule-child')!;
+      const [rule]=publishObservations(f.store,dependent as typeof parent,{observations:[{title:'Temporary rule',statement:'Temporary rule',quote:dependent.content,conditions:'Always',exceptions:'None'}]});
+      const task=f.engine.ingest({projectId:'p',externalId:'temporary-guard-task',title:'Task',content:'保留草稿',retention:'ephemeral'})!;
+      for(let i=0;i<20&&f.store.get('tasks',task.id)?.stage!=='plan';i++)await f.engine.tick();
+      expect(f.store.get('tasks',task.id)?.stage).toBe('plan');
+      expect(f.calls.find(call=>call.role==='decide'&&call.input.task.id===task.id)?.input.rules.some(value=>value.id===rule!.id)).toBe(true);
+    }finally{await f.engine.shutdown();}
+  });
+
+  it('preserves completed delivery identity when a permanent-labeled child loses temporary feedback context',async()=>{
+    const f=setup(),parentInput={projectId:'p',externalId:'feedback-ancestor',revision:'v1',title:'Parent',content:'Parent',retention:'ephemeral' as const,purpose:'reference' as const};
+    const childInput={projectId:'p',kind:'conversation' as const,externalId:'feedback-descendant',revision:'v1',title:'Child',content:'保留草稿',retention:'permanent' as const};
+    f.engine.ingest(parentInput);const parent=f.store.list('sources').find(source=>source.externalId===parentInput.externalId)!;
+    const task=ingestSource(f.store,f.config,childInput,[{id:parent.id,revision:parent.revision}])!;let engine=f.engine;
+    try{
+      while(f.store.get('tasks',task.id)?.stage!=='feedback')await engine.tick();
+      const before=f.store.get('tasks',task.id)!;expect(before.receiptId).toBeTruthy();expect(f.deliveryCount()).toBe(1);
+      await engine.shutdown();f.store.close();const reopened=new Store(join(f.config.dataDir,'db.sqlite'),f.config.vaultDir);stores.push(reopened);engine=f.create(reopened);
+      engine.ingest(parentInput);const restored=engine.ingest(childInput)!;
+      expect(restored).toMatchObject({id:task.id,version:before.version,stage:'feedback',receiptId:before.receiptId,status:'blocked'});
+      expect(()=>engine.retry(task.id)).toThrowError(expect.objectContaining({code:'feedback_context_unavailable'}));
+      await engine.tick();expect(f.deliveryCount()).toBe(1);expect(f.calls.filter(call=>call.role==='feedback')).toHaveLength(0);expect(reopened.get('receipts',before.receiptId!)).toBeDefined();
+    }finally{await engine.shutdown();}
+  });
   it.each((['ephemeral','permanent'] as const).flatMap(retention=>(['supersession','withdrawal'] as const).map(mode=>[retention,mode] as const)))('fix6 cancels historical research dependency (%s, %s)',async (retention,mode)=>{
     let dependency: {id:string;revision:string;locator:string;content:string}|undefined; let questionSeen='';
     const f=setup({researchFromQuestion:question=>{questionSeen=question;return {...research,summary:`Derived from ${question}`};},mutateOutput:(input,output)=>input.role==='decide'&&!input.research&&dependency?{...output as object,action:'ask',citations:[...(output as {citations:unknown[]}).citations,{sourceId:dependency.id,revision:dependency.revision,locator:dependency.locator,quote:dependency.content}],question:{title:'Historical dependency question',context:'Secondary evidence context',A:suggestion('Retain'),B:suggestion('Delete')}}:output});

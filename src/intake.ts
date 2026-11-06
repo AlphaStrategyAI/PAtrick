@@ -1,7 +1,7 @@
 import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
 import type { Store } from './store.js';
 import { consumedStageResult, enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
-import { canonicalExperiencePayloadSchema, factualContextTombstone, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs } from './knowledge-records.js';
+import { canonicalExperiencePayloadSchema, factualContextTombstone, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs, wellFormedParentSources } from './knowledge-records.js';
 
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
@@ -21,7 +21,7 @@ function normalizationTombstone(store:Store,action:Entities['actions'],invalid:S
 }
 
 /** Historical snapshots are negative dependencies only when their host identity and references are coherent. */
-function historicalSnapshot(store: Store, action: Entities['actions'], scope: { projectId: string; domain: string }): DecisionSnapshot | undefined {
+export function historicalSnapshot(store: Store, action: Entities['actions'], scope: { projectId: string; domain: string }): DecisionSnapshot | undefined {
   if (action.projectId !== scope.projectId || action.domain !== scope.domain || action.kind !== 'decision.snapshot' || action.status !== 'completed' || typeof action.taskId !== 'string' || !action.taskId.trim() || typeof action.id !== 'string' || !action.id.trim()) return;
   const snapshot = action.payload?.snapshot as Partial<DecisionSnapshot> | undefined;
   if (!snapshot || snapshot.schemaVersion !== 1 || snapshot.id !== action.id || snapshot.projectId !== scope.projectId || snapshot.domain !== scope.domain || snapshot.taskId !== action.taskId || !Number.isSafeInteger(snapshot.taskVersion) || snapshot.taskVersion! < 1 || typeof snapshot.attemptId !== 'string' || !snapshot.attemptId.trim() || action.id !== stableId('decision-snapshot', action.taskId, snapshot.taskVersion, snapshot.attemptId) || !Array.isArray(snapshot.sourceRefs)) return;
@@ -56,7 +56,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     store.save('actions', { ...action, status: 'completed', payload, updatedAt: changed });
   }
   // Copies retain their originating revision, including secondary/historical Vault edits.
-  for (const child of store.list('sources')) if (child.projectId === source.projectId && child.domain === source.domain && child.parentSources?.some(ref => ref.id === sourceId)) invalidateSource(store, child.id, status);
+  for (const child of store.list('sources')) if (child.projectId === source.projectId && child.domain === source.domain && store.sourceDependsOnId(child,sourceId)) invalidateSource(store, child.id, status);
   const invalidRules = new Set<string>();
   for (const card of store.list('cards')) {
     if(isStructuredKnowledgeCard(card)&&(card.sourceId===sourceId||dependentCards.has(card.sourceId)))store.save('cards',{...card,status:'withdrawn',title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`});
@@ -109,7 +109,7 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   let previousSize = -1;
   while (previousSize !== sourceIds.size + taskIds.size + ruleIds.size + caseIds.size) {
     previousSize = sourceIds.size + taskIds.size + ruleIds.size + caseIds.size;
-    for (const child of sources) if (child.parentSources?.some(ref => sourceIds.has(ref.id))) sourceIds.add(child.id);
+    for (const child of sources) if ([...sourceIds].some(id=>store.sourceDependsOnId(child,id))) sourceIds.add(child.id);
     for (const rule of rules) if (rule.citations.some(c => sourceIds.has(c.sourceId))) ruleIds.add(rule.id);
     for (const c of cases) if (sourceIds.has(c.sourceId) || c.decisionSnapshot?.sourceRefs.some(ref => sourceIds.has(ref.id)) || c.ruleIds.some(id => ruleIds.has(id)) || taskIds.has(c.taskId)) { caseIds.add(c.id); taskIds.add(c.taskId); sourceIds.add(c.sourceId); }
     for (const task of tasks) if (sourceIds.has(task.sourceId) || task.decision?.citations.some(c => sourceIds.has(c.sourceId)) || task.decision?.ruleIds.some(id => ruleIds.has(id))) taskIds.add(task.id);
@@ -126,9 +126,16 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
   const refers = (value: unknown): boolean => typeof value === 'string' ? ids.has(value) : Array.isArray(value) ? value.some(refers) : !!value && typeof value === 'object' && Object.values(value).some(refers);
   const mentions = (value: unknown): boolean => typeof value === 'string' ? fragments.some(fragment => value.includes(fragment)) : Array.isArray(value) ? value.some(mentions) : !!value && typeof value === 'object' && Object.values(value).some(mentions);
   const write = <K extends Table>(table: K, entity: Entities[K]) => { if (JSON.stringify(store.get(table, entity.id)) !== JSON.stringify(entity)) store.save(table, entity); };
-  for (const source of sources) if (sourceIds.has(source.id)) write('sources', { ...source, status: 'withdrawn', title: '[withdrawn]', content: '', locator: `withdrawn:${source.id}` });
-  for (const card of cards) if (cardIds.has(card.id)) write('cards', { ...card, title: '[withdrawn]', body: '', quote: '', aliases: [], ...(isStructuredKnowledgeCard(card)?{experience:undefined,claim:undefined,pendingClaim:undefined}:{}),locator: `withdrawn:${card.sourceId}`, status: 'withdrawn' });
-  for (const rule of rules) if (ruleIds.has(rule.id)) write('rules', { ...rule, title: '[withdrawn]', statement: '[Evidence withdrawn]', conditions: '[withdrawn]', exceptions: '[withdrawn]', status: 'suspended', citations: rule.citations.map(c => ({ ...c, quote: '[withdrawn]', locator: `withdrawn:${c.sourceId}` })) });
+  // Preserve only independently authorized normalization origins before the
+  // revoked source revisions move their old links into temporary storage.
+  // Other action sanitation keeps its original order, after card redaction.
+  for(const action of store.list('actions'))if(scoped(action)&&action.kind==='experience.evidence-link'&&knowledgeActionDependencies(action).refs.some(ref=>sourceIds.has(ref.id))){
+    const payload=normalizationTombstone(store,action,sourceIds,{retracted:true,sourceIds:[...sourceIds]});
+    if(payload.normalizationOrigin)write('actions',{...action,status:'completed',payload});
+  }
+  for (const source of sources) if (sourceIds.has(source.id)) write('sources', { ...source, externalId:store.auditTemporaryRevision(source.externalId),authorId:store.auditTemporaryRevision(source.authorId),revision:store.auditTemporaryRevision(source.revision),...(source.parentSources!==undefined?{parentSources:wellFormedParentSources(source.parentSources)?source.parentSources!.map(ref=>({id:ref.id,revision:sourceIds.has(ref.id)?store.auditTemporaryRevision(ref.revision):ref.revision})):[{id:'',revision:''}]}:{}),status: 'withdrawn', title: '[withdrawn]', content: '', locator: `withdrawn:${source.id}` });
+  for (const card of cards) if (cardIds.has(card.id)) write('cards', { ...card, sourceRevision:sourceIds.has(card.sourceId)?store.auditTemporaryRevision(card.sourceRevision):card.sourceRevision,title: '[withdrawn]', body: '', quote: '', aliases: [], experience:undefined,claim:undefined,pendingClaim:undefined,locator: `withdrawn:${card.sourceId}`, status: 'withdrawn' });
+  for (const rule of rules) if (ruleIds.has(rule.id)) write('rules', { ...rule, title: '[withdrawn]', statement: '[Evidence withdrawn]', conditions: '[withdrawn]', exceptions: '[withdrawn]', status: 'suspended', citations: rule.citations.map(c => ({ ...c, revision:sourceIds.has(c.sourceId)?store.auditTemporaryRevision(c.revision):c.revision,quote: '[withdrawn]', locator: `withdrawn:${c.sourceId}` })) });
   for (const c of cases) if (caseIds.has(c.id)) write('cases', { ...c, originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, decisionSnapshot: undefined, outcomes: undefined, status: 'withdrawn' });
   const option = { label: '[withdrawn]', description: '[withdrawn]', rationale: '[withdrawn]', tradeoff: '[withdrawn]', evidenceUrls: [] };
   for (const q of questions) if (taskIds.has(q.taskId)) write('questions', { ...q, title: '[withdrawn]', context: '', options: { A: option, B: option }, research: { queries: [], summary: '', gaps: [] }, answer: undefined, status: 'stale' });
@@ -137,7 +144,7 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
     const completedDelivery = task.stage === 'feedback' && !!task.receiptId;
     const status = terminal ? task.status : completedDelivery || sourceIds.has(task.sourceId) ? 'cancelled' : 'deciding';
     const alreadyRedacted = task.error === 'Evidence withdrawn; readable content retracted.' && !task.description && !task.decision && !task.plan && !task.artifact && !task.review && !task.feedback;
-    write('tasks', { ...task, title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal || completedDelivery ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
+    write('tasks', { ...task, sourceRevision:sourceIds.has(task.sourceId)?store.auditTemporaryRevision(task.sourceRevision):task.sourceRevision,title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal || completedDelivery ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
   }
   for (const event of store.list('events')) if (scoped(event) && (event.taskId && taskIds.has(event.taskId) || refers(event.data) || mentions(event.data) || mentions(event.message))) write('events', { ...event, message: 'Evidence retracted.', data: { retracted: true } });
   for (const attempt of store.list('attempts')) if (taskIds.has(attempt.taskId)) write('attempts', { ...attempt, error: undefined, ...(attempt.status === 'running' ? { status: 'stale' as const, finishedAt: now() } : {}) });
@@ -171,7 +178,8 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
   const scope = { projectId: project.id, domain: project.domain };
   return store.transaction(() => {
     if (!store.get('projects', project.id)) store.save('projects', project);
-    const previous = store.list('sources').filter(s => s.projectId === project.id && s.domain === project.domain && s.kind === kind && s.externalId === input.externalId && s.status === 'active');
+    if(parentSources?.some(ref=>{const parent=store.get('sources',ref.id);return parent&&parent.status!=='active';}))throw new DomainError('A source dependency is no longer active.','stale_source',409);
+    const previous = store.list('sources').filter(s => s.projectId === project.id && s.domain === project.domain && s.kind === kind && store.sourceExternalIdMatches(s,input.externalId) && s.status === 'active');
     if (input.status === 'withdrawn') { for (const s of previous) invalidateSource(store, s.id, 'withdrawn'); return undefined; }
     const revision = input.revision ?? digest(input.content);
     if (!revision.trim()) throw new DomainError('A source revision is required.');
@@ -184,24 +192,32 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
       if ((existing.purpose ?? 'task') !== purpose) throw new DomainError('This source revision has a different purpose.', 'purpose_conflict', 409);
       if (knownHash && knownHash !== contentHash) throw new DomainError('This source revision already has different content.', 'revision_conflict', 409);
       if (existing.status !== 'active') throw new DomainError('A revoked source revision cannot be reused. Send a new revision.', 'revoked_revision', 409);
+      if(existing.content){
+        const identity={externalId:input.externalId,revision,authorId:input.authorId??'',locator:input.locator??`${kind}:${input.externalId}`};
+        if(existing.externalId!==identity.externalId||existing.revision!==identity.revision||existing.authorId!==identity.authorId||existing.locator!==identity.locator||
+          parentSources!==undefined&&(store.sourceHasOpaqueIdentity(existing)?!store.sourceIdentityMatches(existing,identity,parentSources):digest(existing.parentSources??[])!==digest(parentSources)))throw new DomainError('This source revision already has different identity metadata.','revision_conflict',409);
+      }
       const task = purpose === 'reference' ? undefined : store.list('tasks').find(t => t.sourceId === id);
-      if (existing.retention === 'ephemeral' && !existing.content) {
-        const restored = { ...existing, title: input.title, content: input.content };
+      if (!existing.content && (existing.retention === 'ephemeral' || store.sourceHasOpaqueIdentity(existing) || existing.title==='Temporary source')) {
+        const locator=input.locator??`${kind}:${input.externalId}`,authorId=input.authorId??'';
+        if(!store.sourceIdentityMatches(existing,{externalId:input.externalId,revision,authorId,locator},parentSources))throw new DomainError('This source revision has unavailable or different identity metadata.','revision_conflict',409);
+        const restored = { ...existing, externalId:input.externalId,authorId,revision, title: input.title, content: input.content, locator, ...(parentSources?{parentSources}:{}) };
         store.save('sources', restored);
-        enqueueStructuredKnowledge(store, restored);
+        enqueueStructuredKnowledge(store, store.get('sources',id)!);
         if (task && !finished.has(task.status)) {
+          const restoredTask={...task,sourceRevision:revision};
           if(task.stage==='feedback'){
-            const held:Task={...task,title:input.title,status:'blocked',blockedFrom:'feedback',error:'Delivery completed, but feedback context expired; automatic recovery is unavailable.',updatedAt:now()};
+            const held:Task={...restoredTask,title:input.title,status:'blocked',blockedFrom:'feedback',error:'Delivery completed, but feedback context expired; automatic recovery is unavailable.',updatedAt:now()};
             store.save('tasks',held);return held;
           }
           const action=store.get('actions',structuredKnowledgeJobId(restored)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
           const heldRead=action?.status==='pending'&&job?.success&&['knowledge_read_inflight','knowledge_snapshot_unavailable'].includes(job.data.errorCode??'');
-          if(heldRead||consumedStageResult(store,task)){
-            const held:Task={...task,title:input.title,status:'blocked',error:'knowledge_snapshot_unavailable',updatedAt:now()};
+          if(heldRead||consumedStageResult(store,restoredTask)){
+            const held:Task={...restoredTask,title:input.title,status:'blocked',error:'knowledge_snapshot_unavailable',updatedAt:now()};
             store.save('tasks',held);return held;
           }
           for (const question of store.list('questions')) if (question.taskId === task.id) store.save('questions', { ...question, status: 'stale' });
-          const reconstructed: Task = { ...task, title: input.title, version: task.version + 1, status: 'queued', stage: 'knowledge_extract', runAfter: now(), updatedAt: now(), repairCount: 0, decision: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, feedback: undefined, baselineFiles: undefined, error: undefined };
+          const reconstructed: Task = { ...task, sourceRevision:revision,title: input.title, version: task.version + 1, status: 'queued', stage: 'knowledge_extract', runAfter: now(), updatedAt: now(), repairCount: 0, decision: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, feedback: undefined, baselineFiles: undefined, error: undefined };
           store.save('tasks', reconstructed); return reconstructed;
         }
       }
@@ -215,7 +231,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
     enqueueStructuredKnowledge(store, source);
     if (purpose === 'reference') {
-      store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention, purpose } });
+      store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision:store.sourceRequiresTemporaryRetention(source)?store.auditTemporaryRevision(revision):revision, retention: source.retention, purpose } });
       return undefined;
     }
     const task: Task = { ...scope, billingBoundary, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };

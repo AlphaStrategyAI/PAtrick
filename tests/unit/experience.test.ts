@@ -342,6 +342,8 @@ describe('card-specific retained experience',()=>{
       invalidateSource(f.store,f.source.id,'withdrawn');f.store.close();reopened=new Store(path);
       const marker=reopened.list('actions').find(row=>row.kind==='experience.evidence-link'&&row.payload.normalizationOrigin)!;
       expect(marker.payload.normalizationOrigin).toMatchObject({cardId:original.id,reported:'unknown'});
+      for(const sensitive of [f.quote,f.observation.id,'Clear the cache',f.source.locator])expect(JSON.stringify(marker.payload)).not.toContain(sensitive);
+      expect(experienceReference(reopened,reopened.get('cards',original.id)!,f.project).eligible).toBe(false);
       const holder={...f,store:reopened};const later=seedAdditional(holder,'after-reopen','success','2026-11-04T13:00:00Z');
       const saved=reopened.get('cards',original.id)!;reopened.save('cards',{...saved,experience:{...saved.experience!,solution:'Different solution'}});
       expect(linkAvailableExperienceEvidence(reopened,later.observation.id)).toBeGreaterThan(0);

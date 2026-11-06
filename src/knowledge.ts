@@ -8,7 +8,7 @@ import { enqueueStructuredKnowledge, structuredIngestJobSchema, structuredKnowle
 import { knowledgeRequestSourceRefs, knowledgeSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
-import { isKnowledgeSnapshotFailure, VaultSyncError, type Store } from './store.js';
+import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
 
 export function publishKnowledge(store: Store, source: SourceRevision, output: unknown): KnowledgeCard[] {
   return store.transaction(()=>publish(store,source,output,false));
@@ -150,7 +150,8 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
   });
  });
  if(!reader)return pending(options.readbackUnavailableReason??'repository_reader_unavailable');
- let consumed=false;
+ let consumed=false,receipt:StructuredCurrentReceipt|undefined,receiptDelivered=false;
+ const deliverReceipt=()=>{if(receipt&&!receiptDelivered){receiptDelivered=true;options.onCurrentReceipt?.(receipt);}};
  try{
   signal.throwIfAborted();
   // Persist a negative gate before I/O. A crash after consuming the one-use
@@ -164,7 +165,6 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    action=store.get('actions',id);job=action&&structuredIngestJobSchema.safeParse(action.payload);
   }
   const readback=await untilAborted(reader.read(project,source,request,signal),signal);signal.throwIfAborted();
-  let receipt:StructuredCurrentReceipt|undefined;
   store.transaction(()=>{
    assertKnowledgeSource(store,source,project);if(issue)assertKnowledgeSource(store,issue,project);
    const liveJob=store.get('actions',id);
@@ -186,7 +186,7 @@ export async function ingestStructuredKnowledge(store:Store,reader:RepositoryKno
    if(!refresh)updateJob(store,id,j=>{const {readHold:_hold,...rest}=j;return {...rest,phase:'processed',errorCode:undefined};},'completed');
    linkExperienceForCards(store,cards.map(candidate=>store.get('cards',candidate.id)!).filter(Boolean));
   });
-  if(receipt)options.onCurrentReceipt?.(receipt);
+  deliverReceipt();
   return 'processed';
- }catch(error){if(error instanceof VaultSyncError||isKnowledgeSnapshotFailure(error))throw error;if(consumed&&!refresh)return 'pending';return pending('repository_readback_failed');}
+ }catch(error){if(error instanceof VaultSyncError||error instanceof PrivacyCheckpointError)deliverReceipt();if(error instanceof VaultSyncError||isKnowledgeSnapshotFailure(error))throw error;if(consumed&&!refresh)return 'pending';return pending('repository_readback_failed');}
 }

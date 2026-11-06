@@ -197,11 +197,16 @@ describe('structured experience host intake', () => {
         writeFileSync(join(directory,`${encodeURIComponent(experience.id)}.conflict-manual.md`),'A reported fix');
         store.save('sources',{...parent,retention:'ephemeral'});
       }
-      expect(store.searchCards('problem',project)).toEqual([]);
+      const experience=cards.find(card=>card.kind==='experience')!;
+      const history=store.searchCards('problem',project).filter(card=>card.id===experience.id);
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({id:experience.id,sourceId:f.source.id,sourceRevision:f.source.revision,
+        experienceReference:{label:'historical-test-backed-reference',observationIds:[ci.id],reportedSolution:{text:'A reported fix',status:'reported'},currentApplicability:{status:'unknown',evidenceIds:[]}}});
       await store.backup(join(root,'backup'));store.close();
       for(const id of [...actions.map(a=>a.id),...cards.map(c=>c.id)])for(const file of ['db','backup'])expect(readFileSync(join(root,file)).includes(Buffer.from(id))).toBe(false);
       for(const card of cards)if(existsSync(directory))for(const name of readdirSync(directory).filter(name=>name.startsWith(encodeURIComponent(card.id))))expect(readFileSync(join(directory,name),'utf8')).not.toContain('A reported fix');
       store=new Store(join(root,'db'));for(const row of actions)expect(store.get('actions',row.id)).toBeUndefined();for(const card of cards)expect(store.get('cards',card.id)).toBeUndefined();
+      expect(store.searchCards('problem',project)).toEqual([]);
     }finally{store.close();rmSync(root,{recursive:true,force:true});}
   });
 

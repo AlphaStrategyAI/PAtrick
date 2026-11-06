@@ -1,5 +1,8 @@
 # PAtrick
 
+> **Development checkpoint · 2026-11-06:** The frozen source passed 52 test files / 2,450 tests, with 1 existing skip, plus typecheck, build and PRD validation. Independent review has 1 critical and 6 important open findings; release readiness is not approved and live model dispatch remains disabled. See the [complete review and outstanding work](docs/reviews/2026-11-06-knowledge-experience-checkpoint.md). Older dated validation and implementation notes below retain their historical scope; final documentation audit and end-to-end revalidation remain pending.
+
+
 PAtrick connects project evidence, your explicit decisions, and verifiable delivery. Its first workflow turns changes in one product's `productIdeas` directory into evidence-backed updates to that product's formal PRD. It asks only when a real choice remains, then resumes the same task after your answer.
 
 [简体中文](README.zh-CN.md) · [Operations](docs/operations.md) · [Host setup](docs/deployment.md) · [Design](DESIGN.md) · [Detailed design](docs/designs/PAtrick详细设计.md) · [Acceptance evidence](docs/acceptance.md) · [Test report](docs/test-report.md)
@@ -18,7 +21,7 @@ In **Standards → 结果复核**, inspect the frozen judgment, its schedule, ve
 
 The host scans locally on startup and every 60 seconds. Approved integrations can import reference materials without creating tasks, attach exact quoted evidence to a judgment, and read or run scoped reviews; see the [operations how-to and HTTP contracts](docs/operations.md#outcome-review-sources-and-http-contracts) and [implementation plan](docs/plans/2026-11-03-outcome-reviews.md). There is **no live metrics feed configured**: missing results or attribution remain **待观察**. “已关联结果依据” associates source-reported material; it does not certify causality, prediction accuracy or business improvement, or promote a personal principle. A receipt awaiting review is not evidence of missing delivery.
 
-Local verification on **2026-11-04** passed **313 tests in 27 suites**, typecheck, build and PRD validation after the Feishu and Lima-home repairs. The current UI passed **15/15 Chromium tests**; the Lima fix did not change UI source. Final documentation audit, publication and exact-head CI remain pending. [The report](docs/test-report.md) separates current checks, historical runs and remaining live prerequisites.
+An earlier reviewed foundation checkpoint is `b50716c` (**2026-11-05**). Its complete check passed **1,687 tests in 41 suites**, with **1 explicitly skipped ownership fixture**, plus typecheck, build and PRD validation. The last UI checkpoint passed **16/16 Chromium tests**; later changes reused that unchanged-UI evidence. Descriptive experience candidates, one structured parser and bounded repository readback are reviewed source. Runtime ingestion, accepted test-backed history and factual-use integration remain in progress, alongside the remaining fault/restart controls, actual guest qualification, final documentation review, publication and exact-head CI. [The report](docs/test-report.md) distinguishes source checks from actual guest/provider acceptance.
 
 ## Try the local demo
 
@@ -76,9 +79,9 @@ Configure `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_OWNER_OPEN_ID` and `FEIS
 
 On **2026-11-04**, the production entrypoint completed a bounded own-chat transport check: a durable configuration notice was sent and remotely verified; after a clean restart, **2** distinct owner `/status` commands were accepted, replied to and remotely verified with **0** duplicate markers. This did not run a model or verify decision-card answer/resume, PRD delivery, billing, launchd or recovery on another machine. Connection settings and `doctor` report configuration, not acceptance of that full workflow.
 
-The operator permits **existing included Grok/Codex subscription allowance only, with no additional billing**. Actual account entitlement and paid-overflow controls are still unverified; a local budget or cost reservation does not authorize extra spending. No real model call or provider admission follows from this trial.
+The operator permits **existing included Grok/Codex subscription allowance only, with no additional billing**. The pilot now pins `billingBoundary: "included-only"`, a **0 additional-spending cap**, and a **32-attempt task limit**. Every role, retry and fallback consumes the same persisted limit; retrying cannot reset it. A zero amount requires separate verified subscription/account enforcement before dispatch. Real entitlement, no-extra-charge enforcement and the production verifier remain pending, so live model dispatch stays disabled. See [billing and attempt limits](docs/operations.md#billing-and-attempt-limits).
 
-The default role sequence is Grok knowledge extraction / case extraction / decision, Codex planning, Grok execution, then Codex checking and feedback. Each role has admitted fallback candidates. A question has exactly A (recommended), B (alternative), and C (your own answer). Waiting releases the worker indefinitely. Two repair rounds are allowed; version or baseline changes require new planning/checking.
+The default role sequence is Grok knowledge extraction / case extraction / decision, Codex planning, Grok execution, then Codex checking and feedback. Each role has a configured fallback order; only separately admitted candidates may run. A question has exactly A (recommended), B (alternative), and C (your own answer). Waiting releases the worker indefinitely. Two repair rounds are allowed; version or baseline changes require new planning/checking.
 
 Delivery requires a bound review, successful trusted required checks at the current PR head, a merged commit, and a read-back of the target file at that merge SHA. The writer rechecks permissions and paths. An uncertain network outcome is reconciled with the remote object before another write.
 

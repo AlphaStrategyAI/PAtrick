@@ -49,7 +49,7 @@ export class SourceCollector {
     if(!['.md','.txt','.markdown'].includes(extname(resolved).toLowerCase()))return;
     const content=await readFile(resolved,'utf8'),after=await stat(resolved);if(after.mtimeMs!==info.mtimeMs||after.size!==info.size)throw Error('Source is still changing');
     const local=relative(root,resolved).split(sep).join('/');
-    const externalId=`file:${local}`,lineage=this.store.list('sources').filter(s=>s.projectId===project.id&&s.domain===project.domain&&s.kind==='file'&&s.externalId===externalId),current=lineage.find(s=>s.status==='active');
+    const externalId=`file:${local}`,lineage=this.store.list('sources').filter(s=>s.projectId===project.id&&s.domain===project.domain&&s.kind==='file'&&this.store.sourceExternalIdMatches(s,externalId)),current=lineage.find(s=>s.status==='active');
     if(current&&digest(current.content)===digest(content))return;
     const revision=stableId('file-occurrence',lineage.at(-1)?.id??'first',digest(content),info.mtimeMs);
     this.engine.ingest({projectId:project.id,kind:'file',externalId,revision,title:content.match(/^#\s+(.+)/m)?.[1]??local.replace(/\.(md|txt|markdown)$/,''),content,locator:resolved,authorId:project.ownerId,retention:'permanent'});

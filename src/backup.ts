@@ -46,6 +46,10 @@ export async function createBackup(store:Store,destination:string,options:{mode?
   const staging=`${destination}.partial-${randomUUID()}`;mkdirSync(staging,{mode:0o700});
   try{
     const vaultDir=options.vaultDir??store.vaultDirectory?.();
+    if(vaultDir){
+      if(typeof store.prepareVaultBackup!=='function')throw new DomainError('Vault privacy cleanup cannot be verified.','vault_cleanup_unavailable',503);
+      store.prepareVaultBackup(vaultDir);
+    }
     if(typeof store.rebuildIndex==='function')store.rebuildIndex();
     if(vaultDir&&existsSync(vaultDir)){
       files(vaultDir); // Reject symlinks before copying authorized originals and preserved conflict versions.

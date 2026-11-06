@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { digest, knowledgeOutputSchema, stableId, type KnowledgeCard, type SourceRevision } from '../../src/domain.js';
 import { publishKnowledge } from '../../src/knowledge.js';
 import { Store } from '../../src/store.js';
-import { invalidateSource } from '../../src/intake.js';
+import { invalidateSource, withdrawSource } from '../../src/intake.js';
+import { createBackup } from '../../src/backup.js';
 
 const roots: string[] = [], stores: Store[] = [];
 const H = '8244f04f20df9bbc4536baa865a2454428c7584e';
@@ -181,7 +182,7 @@ describe('descriptive pending experience candidates', () => {
     expect(recovered.list('actions')).toEqual([]);
   });
 
-  it('preserves withdrawal provenance when recovering a malformed descriptor into a Vault edit source', () => {
+  it.each(['normal','publication-fault'] as const)('preserves withdrawal provenance when recovering a malformed descriptor into a Vault edit source (%s)', async mode => {
     const { store, source, root } = setup(), sentinel = 'G1_PRIVATE_RECOVERY_DESCRIPTOR_71b46e';
     const [published] = publishKnowledge(store, source, { cards: [{ ...candidate(), experience: { ...details(), problem: sentinel } }] });
     const path = cardPath(root);
@@ -197,7 +198,7 @@ describe('descriptive pending experience candidates', () => {
     expect(seed.list('cards')).toEqual([]);
     seed.close();
 
-    const recovered = new Store(databasePath, join(root, 'vault')); stores.push(recovered);
+    let recovered = new Store(databasePath, join(root, 'vault')); stores.push(recovered);
     const card = recovered.get('cards', published!.id);
     expect(card).toBeDefined();
     expect(card?.experience).toBeUndefined();
@@ -215,12 +216,30 @@ describe('descriptive pending experience candidates', () => {
       expect(edit.parentSources).toEqual([{ id: source.id, revision: source.revision }]);
     }
 
-    invalidateSource(recovered, source.id, 'withdrawn');
+    const editPath=join(root,'vault','one','personal','sources',`${encodeURIComponent(readableEdits[0]!.id)}.md`);
+    const editConflictPath=editPath.replace(/\.md$/,'.conflict-private.md');
+    expect(readFileSync(editPath,'utf8')).toContain(sentinel);writeFileSync(editConflictPath,readFileSync(editPath));
+    if(mode==='publication-fault'){
+      const internal=recovered as unknown as {publish:(job:{table:string;entity:{id:string}})=>void},publish=internal.publish.bind(recovered);
+      internal.publish=job=>{if(job.table==='sources'&&job.entity.id===readableEdits[0]!.id)throw new Error('synthetic source projection fault');publish(job);};
+      expect(()=>withdrawSource(recovered,source.id)).toThrowError(expect.objectContaining({code:'vault_sync_unavailable'}));
+      expect(readFileSync(editPath,'utf8')).toContain(sentinel);
+      await expect(createBackup(recovered,join(root,'blocked-backup'),{mode:'test',vaultDir:join(root,'vault')})).rejects.toThrow();
+      recovered.close();recovered=new Store(databasePath,join(root,'vault'));stores.push(recovered);
+    }else invalidateSource(recovered, source.id, 'withdrawn');
     expect(recovered.get('sources', source.id)?.status).toBe('withdrawn');
     expect(recovered.list('sources').filter(value => value.status === 'active' && JSON.stringify(value).includes(sentinel))).toEqual([]);
     const markdownPaths = readdirSync(join(root, 'vault'), { recursive: true }).map(String).filter(name => name.endsWith('.md'));
     expect(markdownPaths).toContain(conflictPath.slice(join(root, 'vault').length + 1));
+    expect(markdownPaths).toContain(editConflictPath.slice(join(root, 'vault').length + 1));
     for (const name of markdownPaths) expect(readFileSync(join(root, 'vault', name), 'utf8')).not.toContain(sentinel);
+    await createBackup(recovered,join(root,'backup'),{mode:'test',vaultDir:join(root,'vault')});
+    for(const name of readdirSync(join(root,'backup','vault'),{recursive:true}).map(String).filter(name=>name.endsWith('.md')))expect(readFileSync(join(root,'backup','vault',name),'utf8')).not.toContain(sentinel);
+    expect(readFileSync(join(root,'backup','patrick.db')).includes(Buffer.from(sentinel))).toBe(false);
+    recovered.close();recovered=new Store(databasePath,join(root,'vault'));stores.push(recovered);
+    expect(recovered.get('sources',source.id)?.status).toBe('withdrawn');
+    expect(recovered.list('sources').filter(value=>value.status==='active'&&JSON.stringify(value).includes(sentinel))).toEqual([]);
+    expect(recovered.list('actions').filter(action=>['knowledge.host-observation','knowledge.evidence-link','experience.test-observation'].includes(action.kind))).toEqual([]);
   });
 
   it('redacts added descriptors from withdrawn Vault frontmatter and conflict copies', () => {

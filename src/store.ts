@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { DomainError, digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
-import { canonicalExperiencePayloadSchema, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, normalizationOriginPayloadSchema, validFactualContextTombstoneTransition } from './knowledge-records.js';
-import { ingestSource, redactWithdrawnEvidence } from './intake.js';
+import { canonicalExperiencePayloadSchema, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, knowledgeSourceRefs, normalizationOriginPayloadSchema, validFactualContextTombstoneTransition, wellFormedParentSources } from './knowledge-records.js';
+import { historicalSnapshot, ingestSource, redactWithdrawnEvidence } from './intake.js';
 import { enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import { knowledgeReference, stripDerivedCardFields } from './knowledge-use.js';
@@ -11,8 +11,14 @@ import type { KnowledgeReferenceOptions, KnowledgeView, TestObservation } from '
 
 const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
 const vaultTables = new Set<Table>(['sources', 'cards', 'rules', 'cases']);
-type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Table]; redactStructuredCard?: boolean };
-type TemporaryEntry = { entity: Entities[Table]; privacyInvalidated?: true; missingJobCardId?: string; normalizationTransient?: true };
+type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Table]; redactStructuredCard?: boolean; redactTemporary?: boolean };
+type TemporaryEntry = { entity: Entities[Table]; privacyInvalidated?: true; missingJobCardId?: string; normalizationTransient?: true; restoredLineage?: true; caseAwaitingRules?: true };
+type OpaqueSourceIdentity = {version:1;externalId:string;revision:string;authorId:string;locator:string;parents?:{id:string;revision:string}[]|null};
+type StoredSource = Entities['sources'] & {__hostOpaqueIdentity?:OpaqueSourceIdentity};
+type OpaqueActionBinding = {version:1;sourceId:string;revision:string;refs?:{id:string;revision:string}[]};
+type StoredAction = Entities['actions'] & {__hostOpaqueHold?:OpaqueActionBinding};
+type VaultRedaction = {version:1;table:'sources'|'cards'|'rules'|'cases';id:string};
+type RetentionResolution = {scope:Scope;sources:Map<string,Entities['sources']>;resolved:Map<string,boolean>;affected:Set<string>};
 type ExperienceActionQuery = {scope?:Scope;cardId?:string;observationId?:string;revision?:string;after?:string;file?:string};
 type IdGroups={keys:Map<string,Set<string>>;byId:Map<string,string[]>};
 type OperationGroups={hosts:Map<string,IdGroups>;observations:Map<string,IdGroups>;knowledgeLinks:Map<string,IdGroups>;temporary?:IdGroups};
@@ -29,14 +35,18 @@ function updateGroups(groups:IdGroups,id:string,keys:string[]):void {
 export class VaultSyncError extends DomainError {
   constructor(readonly cause:unknown){super('Changes may have been saved, but Vault synchronization failed; retry.','vault_sync_unavailable',503);this.name='VaultSyncError';}
 }
+export class PrivacyCheckpointError extends DomainError {
+  readonly committed=true;
+  constructor(){super('The change committed, but temporary-data cleanup is waiting for an open database reader.','privacy_checkpoint_unavailable',503);this.name='PrivacyCheckpointError';}
+}
 export function isKnowledgeSnapshotFailure(error:unknown):boolean {
   if(error instanceof VaultSyncError)return isKnowledgeSnapshotFailure(error.cause);
   if(!error||typeof error!=='object'||!('code' in error))return false;
   const code=(error as {code?:unknown}).code;
-  return code==='knowledge_snapshot_unavailable'||typeof code==='string'&&/^SQLITE_(?:(?:BUSY|LOCKED)(?:_|$)|SCHEMA$)/.test(code);
+  return code==='knowledge_snapshot_unavailable'||code==='privacy_checkpoint_unavailable'||typeof code==='string'&&/^SQLITE_(?:(?:BUSY|LOCKED)(?:_|$)|SCHEMA$)/.test(code);
 }
 function snapshotError(error:unknown):unknown {
-  return isKnowledgeSnapshotFailure(error)&&!(error instanceof VaultSyncError)&&!(error instanceof DomainError&&error.code==='knowledge_snapshot_unavailable')
+  return isKnowledgeSnapshotFailure(error)&&!(error instanceof VaultSyncError)&&!(error instanceof DomainError&&['knowledge_snapshot_unavailable','privacy_checkpoint_unavailable'].includes(error.code))
     ?new DomainError('Knowledge temporarily unavailable; retry.','knowledge_snapshot_unavailable',503):error;
 }
 const cardExpired=(card:KnowledgeCard):boolean=>!!card.expiresAt&&!(Date.parse(card.expiresAt)>Date.now());
@@ -65,6 +75,8 @@ export class Store {
   private operation?:OperationGroups;
   private readDepth=0;
   private mutationFrames:MutationFrame[]=[];
+  private privacyCheckpointPending=false;
+  private retentionResolution?:RetentionResolution;
 
   constructor(databasePath: string, private readonly vaultDir?: string) {
     if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
@@ -75,6 +87,8 @@ export class Store {
     this.db.function('knowledge_host_root_key',{deterministic:true},hostRootKey);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // Private search terms stay in SQLite's connection-local memory only.
+    this.db.pragma('temp_store = MEMORY');
     // Source retention changes must not leave removed private canonical bytes in free pages.
     this.db.pragma('secure_delete = ON');
     this.db.pragma('busy_timeout = 5000');
@@ -88,11 +102,18 @@ export class Store {
       CREATE INDEX IF NOT EXISTS cards_experience_revision ON cards(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.experience.codeVersion'));
       CREATE INDEX IF NOT EXISTS cards_experience_target ON cards(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.experience.codeVersion'),json_extract(data,'$.experience.files[0]'))`);
     this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, project_id UNINDEXED, domain UNINDEXED, terms, tokenize='unicode61')");
+    this.db.exec("CREATE VIRTUAL TABLE temp.cards_search_fts USING fts5(id UNINDEXED, project_id UNINDEXED, domain UNINDEXED, terms, tokenize='unicode61')");
+    this.db.prepare('INSERT INTO cards_fts(cards_fts,rank) VALUES (?,1)').run('secure-delete');
+    // Finish committed redactions before any editable Vault projection is read.
+    this.flushVault();
+    // Migrate any pre-existing temporary ancestry before editable Vault content is read.
+    this.transaction(()=>this.protectTemporarySourceDependents(false,true));
     // Read the Vault before projecting SQLite, so an independent edit is never overwritten at startup.
     this.recoverVault();
+    this.transaction(()=>{this.protectTemporarySourceDependents(false);this.protectTemporaryKnowledgeActions(false);});
     this.protectTemporaryStructuredCards();
     this.flushVault();
-    this.transaction(() => { for (const source of this.list('sources')) if (source.status === 'withdrawn') redactWithdrawnEvidence(this, source.id); });
+    this.transaction(() => { for (const source of this.list('sources')) if (source.status === 'withdrawn') {redactWithdrawnEvidence(this, source.id);this.privacyCheckpointPending=true;} });
     if (vaultDir) for (const table of vaultTables) for (const entity of this.list(table)) this.publish({ table, entity }, true);
     this.rebuildIndex();
     }catch(error){this.db.close();throw error;}
@@ -129,6 +150,30 @@ export class Store {
     const result = new Map(rows.map(row => { const entity = this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K]; return [entity.id, entity]; }));
     for (const [key, entry] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entry.entity.id, this.visible(table,structuredClone(entry.entity)) as Entities[K]);
     return [...result.values()];
+  }
+  private listScope<K extends Table>(table:K,scope:Scope):Entities[K][] {
+    this.assertTable(table);
+    const rows=this.db.prepare(`SELECT data FROM ${table} WHERE project_id = ? AND domain = ? ORDER BY rowid`).all(scope.projectId,scope.domain) as {data:string}[];
+    const result=new Map(rows.map(row=>{const entity=this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K];return [entity.id,entity];}));
+    for(const [key,entry] of this.temporary)if(key.startsWith(`${table}:`)){
+      const value=entry.entity as Entities[K];
+      if(value.projectId===scope.projectId&&value.domain===scope.domain)result.set(value.id,this.visible(table,structuredClone(value)) as Entities[K]);else result.delete(value.id);
+    }
+    return [...result.values()];
+  }
+  private withRetentionResolution<T>(scope:Entities['sources'],run:()=>T):T {
+    const prior=this.retentionResolution;
+    const sources=new Map(this.listScope('sources',scope).map(source=>[source.id,source])),reverse=new Map<string,string[]>();
+    const link=(parent:string,child:string)=>{const children=reverse.get(parent)??[];children.push(child);reverse.set(parent,children);};
+    for(const source of sources.values()){
+      const binding=this.opaqueSourceIdentity(source.id),parents=Array.isArray(binding?.parents)?binding.parents:source.parentSources;
+      if(Array.isArray(parents))for(const ref of parents)if(ref&&typeof ref.id==='string')link(ref.id,source.id);
+      const task=this.ownerAnswerTask(source);if(task)link(task.sourceId,source.id);
+    }
+    const affected=new Set([scope.id]),pending=[scope.id];
+    while(pending.length)for(const child of reverse.get(pending.pop()!)??[])if(!affected.has(child)){affected.add(child);pending.push(child);}
+    this.retentionResolution={scope,sources,resolved:new Map(),affected};
+    try{return run();}finally{this.retentionResolution=prior;}
   }
 
   private scopeKey(scope:Scope):string {return groupKey(scope.projectId,scope.domain);}
@@ -181,11 +226,16 @@ export class Store {
     if(groups)updateGroups(groups,key,key.startsWith('actions:')?this.actionKeys(entry.entity as Entities['actions']):key.startsWith('cards:')?this.cardKeys(entry.entity as KnowledgeCard):[]);
     const frame=this.mutationFrames.at(-1);if(frame)frame.temporary=true;
     this.temporary.set(key,entry);
+    if(key.startsWith('cards:'))this.indexSearchOverlay(entry.entity as KnowledgeCard);
   }
   private deleteTemporary(key:string):void {
     if(this.operation?.temporary)updateGroups(this.operation.temporary,key,[]);
     const frame=this.mutationFrames.at(-1);if(frame&&this.temporary.has(key))frame.temporary=true;
     this.temporary.delete(key);
+    if(key.startsWith('cards:')){
+      const id=key.slice('cards:'.length);this.db.prepare('DELETE FROM temp.cards_search_fts WHERE id = ?').run(id);
+      this.db.prepare('INSERT INTO temp.cards_search_fts(id,project_id,domain,terms) SELECT id,project_id,domain,terms FROM main.cards_fts WHERE id = ?').run(id);
+    }
   }
   private scopedActionGroups(kind:'knowledge.host-observation'|'experience.test-observation'|'knowledge.evidence-link',scope:Scope):IdGroups {
     const operation=this.operation;if(!operation)throw new Error('Discovery requires an operation.');
@@ -303,9 +353,10 @@ export class Store {
 
   save<K extends Table>(table: K, entity: Entities[K]): void {
     if(this.readDepth)throw new Error('Store read snapshots cannot mutate state.');
-    if(!this.depth&&(table==='sources'||table==='actions'||table==='cards'&&this.temporary.get(`cards:${entity.id}`)?.normalizationTransient)){this.transaction(()=>this.save(table,entity));return;}
+    if(!this.depth&&(table==='sources'||table==='actions'||table==='rules'||table==='cases'||table==='cards'&&this.temporary.get(`cards:${entity.id}`)?.normalizationTransient)){this.transaction(()=>this.save(table,entity));return;}
     this.assertTable(table);
     const previous = this.get(table, entity.id);
+    if(table==='sources'&&previous&&(previous as Entities['sources']).status!=='withdrawn'&&(entity as Entities['sources']).status==='withdrawn'&&!(entity as Entities['sources']).content)this.privacyCheckpointPending=true;
     const withdrawing=table==='cards'&&(entity as KnowledgeCard).status==='withdrawn'&&
       (previous as KnowledgeCard|undefined)?.status==='active'&&(previous as KnowledgeCard).kind==='experience';
     // Retiring the associations and the card is one transaction, including
@@ -322,6 +373,8 @@ export class Store {
       }
     }
     let value = structuredClone(entity);
+    // This tag belongs to the host's durable row, never to a producer or Vault edit.
+    if(table==='sources')delete (value as StoredSource).__hostOpaqueIdentity;
     if(table==='cards')stripDerivedCardFields(value);
     const key = `${table}:${entity.id}`,structured=table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard);
     const priorEntry=this.temporary.get(key);
@@ -390,20 +443,22 @@ export class Store {
     if(card&&inactive)value=this.structuredCardTombstone(card) as Entities[K];
     else if(card&&unknown)value=this.redactStructuredCard(card) as Entities[K];
     if (table === 'cards' && !this.cardActive(value as KnowledgeCard, value)) delete (value as KnowledgeCard).experience;
-    if (table === 'sources' && (value as Entities['sources']).retention === 'ephemeral') {
-      this.setTemporary(key, {entity:value});
-      this.write(table, { ...value, content: '', title: 'Temporary source' } as Entities[K]);
-      this.protectTemporaryKnowledgeActions();
-      this.protectTemporaryStructuredCards();
+    if (table === 'sources' && this.temporarySource(value as Entities['sources'])) {
+      if(previous&&!this.temporary.has(key))this.privacyCheckpointPending=true;
+      const restoredLineage=this.temporary.get(key)?.restoredLineage||!!previous&&!(previous as Entities['sources']).content&&this.sourceHasOpaqueIdentity(previous as Entities['sources']);
+      this.setTemporary(key, {entity:value,...(restoredLineage?{restoredLineage:true as const}:{})});
+      this.write(table, this.redactTemporarySource(value as Entities['sources']) as Entities[K]);
+      this.queueTemporaryRedaction(table,value);
+      this.withRetentionResolution(value as Entities['sources'],()=>{this.protectTemporarySourceDependents(true,false,value);this.protectTemporaryKnowledgeActions(true,value);this.protectTemporaryStructuredCards(value);});
       if (!this.depth) this.flushVault();
       return;
     }
     if (this.isTemporaryDerived(table, value)) {
       const prior=this.temporary.get(key);
-      this.setTemporary(key, {entity:value,...(unknown&&!inactive?{privacyInvalidated:true as const}:{}),...(missingJobCard?{missingJobCardId:entity.id}:{})});
+      this.setTemporary(key, {entity:value,...(unknown&&!inactive?{privacyInvalidated:true as const}:{}),...(missingJobCard?{missingJobCardId:entity.id}:{}),...(table==='cases'&&this.mayDeferMissingCaseDependencies(value as Entities['cases'],false)?{caseAwaitingRules:true as const}:{})});
       if(table === 'actions'){
         const hold=this.durableReadHold(value as Entities['actions']);
-        if(hold)this.write('actions',hold);else this.deleteAction(entity.id);
+        if(hold){this.write('actions',hold);this.deleteTemporary(key);}else if(['decision.evidence','decision.review'].includes((value as Entities['actions']).kind))this.write('actions',this.redactTemporary('actions',value) as Entities['actions']);else this.deleteAction(entity.id);
         if((value as Entities['actions']).kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
       }
       if(table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard)){
@@ -417,6 +472,14 @@ export class Store {
         this.queueStructuredCardRedaction(value as KnowledgeCard);
         if(!this.depth)this.flushVault();
       }
+      else if(table==='cards'||table==='rules'||table==='cases'){
+        const durable=this.db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(entity.id);
+        if(durable){
+          this.privacyCheckpointPending=true;this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(entity.id);
+          if(table==='cards')this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(entity.id);
+          this.queueTemporaryRedaction(table,value);
+        }
+      }
       return;
     }
     if (this.isTemporaryTaskEntity(table, value)) {
@@ -425,25 +488,41 @@ export class Store {
       return;
     }
     this.deleteTemporary(key);
-    this.write(table, value);
+    if(table==='sources'&&(value as Entities['sources']).status==='withdrawn'){
+      const prior=previous as Entities['sources']|undefined;
+      const binding=this.opaqueSourceIdentity(entity.id)??(prior?.content&&prior.status!=='withdrawn'?this.bindOpaqueSource(prior):undefined);
+      this.write(table,{...value,...(binding?{__hostOpaqueIdentity:binding}:{})} as Entities[K]);
+    }else this.write(table, value);
     if(table==='actions'&&((value as Entities['actions']).kind==='knowledge.structured-ingest'||(previous as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest')){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
     if (table === 'cards') this.indexCard(value as KnowledgeCard);
     if (table === 'sources') {
       const source = value as Entities['sources'];
-      this.protectTemporaryKnowledgeActions();
-      this.protectTemporaryStructuredCards();
+      this.withRetentionResolution(source,()=>{this.protectTemporaryKnowledgeActions(true,source);this.protectTemporaryStructuredCards(source);});
       if (source.status !== 'active') this.db.prepare('DELETE FROM cards_fts WHERE id IN (SELECT json_extract(data, \'$.id\') FROM cards WHERE json_extract(data, \'$.sourceId\') = ?)').run(source.id);
     }
     if (vaultTables.has(table)) {
-      this.vaultJobs.set(key, { table, entity: value, previous });
+      // A withdrawn source may itself have a revoked parent, so ordinary
+      // projection is deliberately suppressed by publish(). Queue a durable
+      // redaction instead, including for recovered Vault-edit descendants.
+      if(table==='sources'&&(value as Entities['sources']).status==='withdrawn')this.queueTemporaryRedaction(table,value);
+      else this.vaultJobs.set(key, { table, entity: value, previous });
+      // Owner decisions are recorded before their new rule; revisit only cases
+      // waiting on this rule once all their real dependencies are permanent.
+      if(table==='rules')this.promoteResolvedCases(entity.id);
       if (!this.depth) this.flushVault();
     }
   }
 
   delete(table: Table, id: string): void {
     if(this.readDepth)throw new Error('Store read snapshots cannot mutate state.');
-    if(!this.depth&&table==='actions'){this.transaction(()=>this.delete(table,id));return;}
+    if(!this.depth&&(table==='actions'||table==='sources')){this.transaction(()=>this.delete(table,id));return;}
     this.assertTable(table); const entity = this.get(table, id);
+    if(table==='sources'&&entity){
+      const source=entity as Entities['sources'];
+      const dependent=this.list('sources').some(child=>child.id!==id&&(child.status==='active'||!!child.content)&&child.projectId===source.projectId&&child.domain===source.domain&&
+        (Array.isArray(child.parentSources)&&child.parentSources.some(ref=>ref&&ref.id===id)||this.ownerAnswerTask(child)?.sourceId===id));
+      if(dependent)throw new DomainError('This source has active dependents and cannot be removed.','source_has_dependents',409);
+    }
     this.deleteTemporary(`${table}:${id}`);
     if(table==='actions')this.deleteAction(id);else this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
     if(table==='actions'&&(entity as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
@@ -481,7 +560,7 @@ export class Store {
     const outer=!this.operation;
     if(outer&&this.db.inTransaction)throw new Error('Untracked Store transaction.');
     if(outer)this.operation=newOperation();
-    const previousJobs = new Map(this.vaultJobs); const previousTemporary = new Map(this.temporary);
+    const previousJobs = new Map(this.vaultJobs); const previousTemporary = new Map(this.temporary);const previousCheckpoint=this.privacyCheckpointPending;
     const frame:MutationFrame={hostScopes:new Set(),observationScopes:new Set(),knowledgeLinkScopes:new Set(),temporary:false};this.mutationFrames.push(frame);
     this.depth++;
     let result: T;
@@ -495,6 +574,7 @@ export class Store {
       this.depth--;
       this.mutationFrames.pop();
       this.vaultJobs = previousJobs; this.temporary = previousTemporary;
+      this.privacyCheckpointPending=previousCheckpoint;
       if(outer)this.operation=undefined;
       else if(this.operation){for(const scope of frame.hostScopes)this.operation.hosts.delete(scope);for(const scope of frame.observationScopes)this.operation.observations.delete(scope);for(const scope of frame.knowledgeLinkScopes)this.operation.knowledgeLinks.delete(scope);if(frame.temporary)this.operation.temporary=undefined;}
       throw preserveRawError?error:snapshotError(error);
@@ -503,8 +583,20 @@ export class Store {
     this.mutationFrames.pop();
     const parent=this.mutationFrames.at(-1);if(parent){for(const scope of frame.hostScopes)parent.hostScopes.add(scope);for(const scope of frame.observationScopes)parent.observationScopes.add(scope);for(const scope of frame.knowledgeLinkScopes)parent.knowledgeLinkScopes.add(scope);parent.temporary||=frame.temporary;}
     if(outer)this.operation=undefined;
-    if (!this.depth) this.flushVault();
+    if (!this.depth) {
+      let failure:unknown;
+      try{this.flushVault();}catch(error){failure=error;}
+      try{this.checkpointPrivacy();}catch(error){failure??=error;}
+      if(failure)throw failure;
+    }
     return result;
+  }
+
+  private checkpointPrivacy():void {
+    if(!this.privacyCheckpointPending)return;
+    const result=this.db.pragma('wal_checkpoint(TRUNCATE)') as {busy:number}[];
+    if(result.some(row=>row.busy))throw new PrivacyCheckpointError();
+    this.privacyCheckpointPending=false;
   }
 
   searchCards(query: string, scope: Scope, limit = 20, options: KnowledgeReferenceOptions = {}): KnowledgeView[] {
@@ -515,7 +607,7 @@ export class Store {
     if (!terms.length) return [];
     const match = [...new Set(terms)].map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
     const maximum=Number.isFinite(limit)?Math.max(1,Math.min(100,Math.floor(limit))):20,results:KnowledgeView[]=[];
-    const statement=this.db.prepare('SELECT id FROM cards_fts WHERE cards_fts MATCH ? AND project_id = ? AND domain = ? ORDER BY bm25(cards_fts), id LIMIT 100 OFFSET ?');
+    const statement=this.db.prepare('SELECT id FROM temp.cards_search_fts WHERE cards_search_fts MATCH ? AND project_id = ? AND domain = ? ORDER BY bm25(cards_search_fts), id LIMIT 100 OFFSET ?');
     for(let offset=0;offset<1000&&results.length<maximum;offset+=100){
       const rows=statement.all(match,scope.projectId,scope.domain,offset);
       for(const row of rows){if(!row||typeof row!=='object'||!('id' in row)||typeof row.id!=='string')continue;const card=this.get('cards',row.id);if(!card||!this.cardActive(card,scope))continue;const view=knowledgeReference(this,card,scope,options);if(view)results.push(view);if(results.length===maximum)break;}
@@ -527,18 +619,32 @@ export class Store {
   indexCard(card: KnowledgeCard): void {
     if(this.readDepth)throw new Error('Store read snapshots cannot mutate state.');
     this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);
+    this.indexSearchOverlay(card);
     if (!this.cardActive(card, card) || this.isTemporaryDerived('cards',card)) return;
-    this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, tokenize([card.title, card.aliases.join(' '), card.experience?.problem ?? '', card.experience?.symptomAliases.join(' ') ?? '', card.body, card.quote].join(' ')));
+    this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, this.cardSearchTerms(card));
+  }
+  private cardSearchTerms(card:KnowledgeCard):string {return tokenize([card.title,card.aliases.join(' '),card.experience?.problem??'',card.experience?.symptomAliases.join(' ')??'',card.body,card.quote].join(' '));}
+  private indexSearchOverlay(card:KnowledgeCard):void {
+    this.db.prepare('DELETE FROM temp.cards_search_fts WHERE id = ?').run(card.id);
+    if(this.cardActive(card,card))this.db.prepare('INSERT INTO temp.cards_search_fts(id,project_id,domain,terms) VALUES (?,?,?,?)').run(card.id,card.projectId,card.domain,this.cardSearchTerms(card));
   }
 
   rebuildIndex(): void {
     if(this.readDepth)throw new Error('Store read snapshots cannot mutate state.');
+    this.flushVault();this.checkpointPrivacy();
     this.recoverVault();
-    this.db.transaction(() => { this.db.exec('DELETE FROM cards_fts'); for (const card of this.list('cards')) this.indexCard(card); })();
+    this.db.transaction(() => { this.db.exec('DELETE FROM cards_fts; DELETE FROM temp.cards_search_fts'); for (const card of this.list('cards')) this.indexCard(card); })();
   }
 
-  async backup(destination: string): Promise<void> { mkdirSync(dirname(destination), { recursive: true }); await this.db.backup(destination); }
+  async backup(destination: string): Promise<void> { this.flushVault();this.checkpointPrivacy();mkdirSync(dirname(destination), { recursive: true }); await this.db.backup(destination); }
   vaultDirectory():string|undefined{return this.vaultDir;}
+  prepareVaultBackup(selectedVault?:string):void {
+    if(!selectedVault)return;
+    const pending=this.db.prepare("SELECT 1 FROM cursors WHERE id LIKE 'vault-redaction:%' LIMIT 1").get();
+    if(!pending)return;
+    if(!this.vaultDir||resolve(this.vaultDir)!==resolve(selectedVault))throw new DomainError('Pending privacy cleanup requires the original attached Vault before backup.','vault_cleanup_unavailable',503);
+    this.flushVault();this.checkpointPrivacy();
+  }
   close(): void { if (this.closed) return; this.db.close(); this.closed = true; this.temporary.clear(); this.operation=undefined; }
 
   private write<K extends Table>(table: K, entity: Entities[K]): void {
@@ -572,9 +678,41 @@ export class Store {
   }
   private assertTable(table: string): void { if (!tables.includes(table as Table)) throw new Error('Unknown entity table.'); }
   private visible(table:Table,entity:Entities[Table]):Entities[Table] {
+    if(table==='sources'){
+      const stored=entity as StoredSource,{__hostOpaqueIdentity:_private,...source}=stored;
+      const entry=this.temporary.get(`sources:${source.id}`),binding=this.opaqueSourceIdentity(source.id);
+      if((!source.content||entry?.restoredLineage)&&Array.isArray(source.parentSources)){
+        const parents=binding?.parents;
+        const refs=source.parentSources.map((ref,index)=>{
+          const bound=Array.isArray(parents)?parents[index]:undefined;
+          const opaque={id:ref.id,revision:{kind:'host-opaque-parent',digest:bound?.revision??''}};
+          if(!source.content||!entry?.restoredLineage||!bound||bound.id!==ref.id||ref.id===source.id)return opaque;
+          const parent=this.get('sources',ref.id);
+          return parent?.content&&parent.status==='active'&&parent.projectId===source.projectId&&parent.domain===source.domain&&digest(parent.revision)===bound.revision?{id:ref.id,revision:parent.revision}:opaque;
+        });
+        return {...source,parentSources:refs as unknown as Entities['sources']['parentSources']};
+      }
+      return source;
+    }
     if(table==='cards'){
       const card=entity as KnowledgeCard;
       if(isStructuredKnowledgeCard(card)&&cardExpired(card))return this.structuredCardTombstone(card);
+    }
+    if(table==='actions'){
+      const stored=entity as StoredAction,{__hostOpaqueHold:binding,...action}=stored,payload=action.payload;
+      if(!payload||typeof payload!=='object'||Array.isArray(payload))return action;
+      if(binding?.version===1&&typeof binding.sourceId==='string'&&typeof binding.revision==='string'){
+        const source=this.retentionResolution?.sources.get(binding.sourceId)??this.get('sources',binding.sourceId);
+        if(!source?.content||digest(source.revision)!==binding.revision)return action;
+        const restore=(ref:{id:string;revision:string},index:number)=>{
+          const bound=binding.refs?.[index],dependency=this.retentionResolution?.sources.get(ref.id)??this.get('sources',ref.id);
+          return bound?.id===ref.id&&dependency?.content&&digest(dependency.revision)===bound.revision?{...ref,revision:dependency.revision}:{...ref,revision:{kind:'host-opaque-revision'}};
+        };
+        const parsed=action.kind==='knowledge.structured-ingest'&&structuredIngestJobSchema.safeParse(payload);
+        if(parsed&&parsed.success){const job=parsed.data;return {...action,payload:{...job,sourceRevision:source.revision,sourceRefs:job.sourceRefs.map(restore),...(job.readHold?{readHold:{...job.readHold,sourceHashes:job.readHold.sourceHashes.map(restore)}}:{})}} as Entities['actions'];}
+        return {...action,payload:{...payload,sourceRevision:source.revision}};
+      }
+      return action;
     }
     return entity;
   }
@@ -586,32 +724,110 @@ export class Store {
     if (table === 'actions') return this.temporaryKnowledgeAction(entity as Entities['actions']);
     if (table === 'cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard)) return this.temporaryStructuredCard(entity as KnowledgeCard);
     if (!['cards', 'rules', 'cases'].includes(table)) return false;
-    if ('sourceId' in entity) return this.get('sources', entity.sourceId)?.retention === 'ephemeral';
-    if ('citations' in entity) return entity.citations.some(c => this.get('sources', c.sourceId)?.retention === 'ephemeral');
+    if(table==='cases'){
+      const value=entity as Entities['cases'];
+      if(this.temporarySourceDependency(value.sourceId,value))return true;
+      if(value.decisionSnapshot&&(!this.validCaseSnapshot(value)||value.decisionSnapshot.sourceRefs.some(ref=>this.temporarySourceDependency(ref.id,value,ref.revision))))return true;
+      if(!Array.isArray(value.ruleIds))return true;
+      return value.ruleIds.some(id=>{const rule=this.get('rules',id);return !rule||rule.projectId!==value.projectId||rule.domain!==value.domain||this.isTemporaryDerived('rules',rule);});
+    }
+    if ('sourceId' in entity) return this.temporarySourceDependency(entity.sourceId,entity);
+    if ('citations' in entity) return entity.citations.some(c => this.temporarySourceDependency(c.sourceId,entity,c.revision));
     return false;
   }
+  private promoteResolvedCases(ruleId:string):void {
+    for(const [key,entry] of [...this.temporary]){
+      if(!key.startsWith('cases:')||!entry.caseAwaitingRules)continue;
+      const value=entry.entity as Entities['cases'];
+      if(value.status!=='active'||!Array.isArray(value.ruleIds)||!value.ruleIds.includes(ruleId)||this.isTemporaryDerived('cases',value))continue;
+      const active=(id:string,revision?:string)=>{const source=this.get('sources',id);return !!source&&source.status==='active'&&source.projectId===value.projectId&&source.domain===value.domain&&(revision===undefined||source.revision===revision)&&!!knowledgeSourceRefs(this,id,value);};
+      if(!active(value.sourceId)||value.decisionSnapshot?.sourceRefs.some(ref=>!active(ref.id,ref.revision)))continue;
+      if(value.ruleIds.some(id=>{const rule=this.get('rules',id);return !rule||rule.status!=='active'||!Array.isArray(rule.citations)||rule.citations.some(c=>!active(c.sourceId,c.revision));}))continue;
+      this.save('cases',value);
+    }
+  }
+
+  // Startup may encounter genuinely missing rows which the same authorized
+  // recovery pass can restore. Every dependency already present must be valid.
+  private mayDeferMissingCaseDependencies(value:Entities['cases'],allowMissingSources=true):boolean {
+    if(!Array.isArray(value.ruleIds)||value.decisionSnapshot&&!this.validCaseSnapshot(value))return false;
+    let missing=false;
+    const available=(id:string,revision?:string)=>{
+      const source=this.get('sources',id);if(!source){if(!allowMissingSources)return false;missing=true;return true;}
+      const ownerTask=this.ownerAnswerTask(source);
+      if(allowMissingSources&&ownerTask&&!this.get('sources',ownerTask.sourceId)){missing=true;return true;}
+      return source.status==='active'&&!this.temporarySourceDependency(id,value,revision)&&!!knowledgeSourceRefs(this,id,value);
+    };
+    if(!available(value.sourceId))return false;
+    if(value.decisionSnapshot?.sourceRefs.some(ref=>!available(ref.id,ref.revision)))return false;
+    for(const id of value.ruleIds){
+      const rule=this.get('rules',id);if(!rule){if(allowMissingSources)return false;missing=true;continue;}
+      if(rule.projectId!==value.projectId||rule.domain!==value.domain||rule.status!=='active'||!Array.isArray(rule.citations)||rule.citations.some(c=>!available(c.sourceId,c.revision)))return false;
+    }
+    return missing;
+  }
+
+  private validCaseSnapshot(value:Entities['cases']):boolean {
+    const embedded=value.decisionSnapshot;if(!embedded)return true;
+    const action=this.get('actions',value.decisionId),host=action&&historicalSnapshot(this,action,value);
+    if(!host||embedded.id!==value.decisionId||embedded.taskId!==value.taskId||embedded.id!==host.id||embedded.projectId!==host.projectId||embedded.domain!==host.domain||
+      embedded.taskVersion!==host.taskVersion||embedded.attemptId!==host.attemptId||embedded.inputHash!==host.inputHash||embedded.sourceId!==host.sourceId||embedded.sourceRevision!==host.sourceRevision)return false;
+    const complete=(snapshot:typeof embedded):boolean=>{
+      if(!Array.isArray(snapshot.sourceRefs)||!snapshot.sourceRefs.length||!wellFormedParentSources(snapshot.sourceRefs)||!snapshot.decision||!Array.isArray(snapshot.decision.citations)||!Array.isArray(snapshot.rules))return false;
+      const indexed=new Map(snapshot.sourceRefs.map(ref=>[ref.id,ref.revision]));
+      const has=(id:unknown,revision:unknown)=>typeof id==='string'&&typeof revision==='string'&&indexed.get(id)===revision;
+      if(!has(snapshot.sourceId,snapshot.sourceRevision)||snapshot.decision.citations.some(c=>!c||!has(c.sourceId,c.revision)))return false;
+      if(snapshot.rules.some(rule=>!rule||!Array.isArray(rule.citations)||rule.citations.some(c=>!c||!has(c.sourceId,c.revision))))return false;
+      const factual=snapshot.factualUse;
+      if(factual&&(!Array.isArray(factual.facts)||factual.facts.some(fact=>!fact||!Array.isArray(fact.sourceRefs)||fact.sourceRefs.some(ref=>!ref||!has(ref.id,ref.revision)))||
+        !Array.isArray(factual.statements)||factual.statements.some(statement=>!statement?.citation||!has(statement.citation.sourceId,statement.citation.revision))||
+        !Array.isArray(factual.unresolved)||factual.unresolved.some(item=>item?.citation&&!has(item.citation.sourceId,item.citation.revision))))return false;
+      return true;
+    };
+    if(!complete(embedded)||!complete(host))return false;
+    const expected=new Map(host.sourceRefs.map(ref=>[ref.id,ref.revision]));
+    return embedded.sourceRefs.length===host.sourceRefs.length&&embedded.sourceRefs.every(ref=>expected.get(ref.id)===ref.revision);
+  }
+
   private temporaryKnowledgeAction(action:Entities['actions']):boolean {
     const dependencies=knowledgeActionDependencies(action,this);
-    return dependencies.unresolved||dependencies.refs.some(ref=>this.temporarySourceDependency(ref.id));
+    if(action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload).success&&!this.temporary.has(`actions:${action.id}`)&&!dependencies.unresolved)return false;
+    return dependencies.unresolved||dependencies.refs.some(ref=>this.temporarySourceDependency(ref.id,action,ref.revision||undefined));
+  }
+  private durableFactualAudit(action:Entities['actions']):boolean {
+    return action.kind==='knowledge.factual-context'&&!this.temporary.has(`actions:${action.id}`)&&factualContextTombstonePayloadSchema.safeParse(action.payload).success&&!knowledgeActionDependencies(action,this).unresolved;
   }
   /** Retain only the bounded denial needed to prevent replay, never a read result. */
   private durableReadHold(action:Entities['actions']):Entities['actions']|undefined {
+    const row=this.db.prepare('SELECT data FROM actions WHERE id = ?').get(action.id) as {data:string}|undefined;
+    const retained=row?JSON.parse(row.data) as StoredAction:undefined;
+    // An unresolved host-tagged hold is a denial, even when a dependency has
+    // not yet been reauthorized and its revision cannot be displayed as raw.
+    if(action.kind==='knowledge.structured-ingest'&&action.status==='pending'&&retained?.__hostOpaqueHold&&
+      (!structuredIngestJobSchema.safeParse(action.payload).success||!this.get('sources',retained.__hostOpaqueHold.sourceId)?.content))return retained;
     const parsed=structuredIngestJobSchema.safeParse(action.payload);
     if(action.kind!=='knowledge.structured-ingest'||action.status!=='pending'||!parsed.success)return undefined;
     const job=parsed.data,hold=job.readHold;
+    const source=this.get('sources',job.sourceId);
+    const expiredAudit=!!source&&!source.content&&source.revision===job.sourceRevision&&/^sha256:[a-f0-9]{64}$/.test(job.sourceRevision);
     if(job.phase!=='pending-readback'||job.errorCode!=='knowledge_read_inflight'||!hold||
-      action.id!==stableId('knowledge.structured-ingest',job.sourceId,job.sourceRevision,job.sourceHash)||
+      action.id!==stableId('knowledge.structured-ingest',job.sourceId,job.sourceRevision,job.sourceHash)&&!expiredAudit||
       hold.sourceHashes.length!==job.sourceRefs.length||new Set(job.sourceRefs.map(ref=>ref.id)).size!==job.sourceRefs.length||
       hold.sourceHashes.some((ref,index)=>ref.id!==job.sourceRefs[index]?.id||ref.revision!==job.sourceRefs[index]?.revision)||
       !hold.sourceHashes.some(ref=>ref.id===job.sourceId&&ref.revision===job.sourceRevision&&ref.hash===job.sourceHash))return undefined;
-    const source=this.get('sources',job.sourceId);
     if(!source||source.id!==job.sourceId||source.revision!==job.sourceRevision||source.projectId!==action.projectId||source.domain!==action.domain)return undefined;
-    return {id:action.id,projectId:action.projectId,domain:action.domain,kind:action.kind,status:'pending',payload:job as unknown as Record<string,unknown>,updatedAt:action.updatedAt};
+    const audit=(ref:{id:string;revision:string})=>({...ref,revision:this.auditTemporaryRevision(ref.revision)});
+    const sanitized={...job,sourceRevision:this.auditTemporaryRevision(job.sourceRevision),sourceRefs:job.sourceRefs.map(audit),readHold:{...hold,sourceHashes:hold.sourceHashes.map(audit)}};
+    return {id:action.id,projectId:action.projectId,domain:action.domain,kind:action.kind,status:'pending',payload:sanitized as unknown as Record<string,unknown>,updatedAt:action.updatedAt,
+      __hostOpaqueHold:{version:1,sourceId:job.sourceId,revision:digest(job.sourceRevision),refs:job.sourceRefs.map(ref=>({id:ref.id,revision:digest(ref.revision)}))}} as StoredAction;
   }
-  private protectTemporaryKnowledgeActions():void {
-    for(const action of this.list('actions'))if(this.temporaryKnowledgeAction(action)){
-      this.setTemporary(`actions:${action.id}`,{entity:action});
-      const hold=this.durableReadHold(action);if(hold)this.write('actions',hold);else this.deleteAction(action.id);
+  private protectTemporaryKnowledgeActions(retainReadable=true,scope?:Scope):void {
+    const affected=scope?this.retentionResolution?.affected:undefined;
+    for(const action of scope?this.listScope('actions',scope):this.list('actions'))if((!affected||knowledgeActionDependencies(action).refs.some(ref=>affected.has(ref.id)))&&this.temporaryKnowledgeAction(action)){
+      const hold=this.durableReadHold(action);
+      if(hold){this.write('actions',hold);this.deleteTemporary(`actions:${action.id}`);continue;}
+      if(retainReadable)this.setTemporary(`actions:${action.id}`,{entity:action});else this.deleteTemporary(`actions:${action.id}`);
+      if(['decision.evidence','decision.review'].includes(action.kind))this.write('actions',this.redactTemporary('actions',action) as Entities['actions']);else this.deleteAction(action.id);
     }
   }
   private structuredCardDependencyState(card:KnowledgeCard):'unknown'|'temporary'|'permanent' {
@@ -640,12 +856,14 @@ export class Store {
     return card.status==='withdrawn'&&card.locator===expiryIntentLocator&&!!card.expiresAt&&Number.isFinite(Date.parse(card.expiresAt))&&card.kind==='fact'&&card.verification==='reported'&&!card.title&&!card.body&&!card.quote&&!card.createdAt&&!card.aliases.length&&!card.experience&&!card.claim&&!card.pendingClaim;
   }
   private queueStructuredCardRedaction(card:KnowledgeCard):void {
-    if(!this.vaultDir)return;
+    if(!this.vaultDir){this.queueTemporaryRedaction('cards',card);return;}
     const path=this.vaultPath('cards',card),directory=dirname(path),prefix=path.slice(path.lastIndexOf('/')+1).replace(/\.md$/,'.conflict-');
-    if(existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.vaultJobs.set(`cards:${card.id}`,{table:'cards',entity:card,redactStructuredCard:true});
+    if(existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.queueTemporaryRedaction('cards',card);
   }
-  private protectTemporaryStructuredCards():void {
-    for(const card of this.list('cards'))if(isStructuredKnowledgeCard(card)){
+  private protectTemporaryStructuredCards(scope?:Scope):void {
+    const affected=scope?this.retentionResolution?.affected:undefined,cardSources=affected?new Set(affected):undefined;
+    if(cardSources)for(const action of this.listScope('actions',scope!))if(action.kind==='knowledge.structured-ingest'&&typeof action.payload.sourceId==='string'&&knowledgeActionDependencies(action).refs.some(ref=>affected!.has(ref.id)))cardSources.add(action.payload.sourceId);
+    for(const card of scope?this.listScope('cards',scope):this.list('cards'))if(isStructuredKnowledgeCard(card)&&(!cardSources||cardSources.has(card.sourceId))){
       const key=`cards:${card.id}`,entry=this.temporary.get(key),state=this.structuredCardDependencyState(card),unknown=state==='unknown',expired=cardExpired(card),intent=this.isStructuredCardExpiryIntent(card);
       if(!unknown&&!expired&&entry?.missingJobCardId===card.id){
         if(card.expiresAt)continue;
@@ -667,22 +885,205 @@ export class Store {
       else if(card.expiresAt||!automatic&&card.status==='withdrawn'||intent&&!recoverable)this.write('cards',this.structuredCardTombstone(card));
       else this.db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
       this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);this.queueStructuredCardRedaction(card);
-      for(const action of this.list('actions'))if((action.kind==='knowledge.evidence-link'&&(action.payload.link as {cardId?:unknown}|undefined)?.cardId===card.id)||(action.kind==='experience.evidence-link'&&canonicalExperiencePayloadSchema.safeParse(action.payload).data?.association.cardId===card.id)){
+      for(const action of scope?this.listScope('actions',scope):this.list('actions'))if((action.kind==='knowledge.evidence-link'&&(action.payload.link as {cardId?:unknown}|undefined)?.cardId===card.id)||(action.kind==='experience.evidence-link'&&canonicalExperiencePayloadSchema.safeParse(action.payload).data?.association.cardId===card.id)){
         this.setTemporary(`actions:${action.id}`,{entity:unknown?{...action,status:'completed',payload:{retracted:true,sourceIds:[card.sourceId]}}:action,...(unknown&&recoverable?{missingJobCardId:card.id}:{})});this.deleteAction(action.id);
       }
     }
   }
-  private temporarySourceDependency(id:string, seen=new Set<string>()):boolean {
-    if(seen.has(id))return true;seen.add(id);const source=this.get('sources',id);
-    const temporary=!source||source.retention==='ephemeral'||!!source.parentSources?.some(ref=>this.temporarySourceDependency(ref.id,seen));
-    seen.delete(id);return temporary;
+  auditTemporaryRevision(revision:string):string {return /^sha256:[a-f0-9]{64}$/.test(revision)?revision:`sha256:${digest(revision)}`;}
+  private bindOpaqueSource(source:Entities['sources']):OpaqueSourceIdentity {
+    return {version:1,externalId:digest(source.externalId),revision:digest(source.revision),authorId:digest(source.authorId),locator:digest(source.locator),
+      ...(source.parentSources!==undefined?{parents:wellFormedParentSources(source.parentSources)?source.parentSources!.map(ref=>({id:ref.id,revision:digest(ref.revision)})):null}:{})};
+  }
+  private opaqueSourceIdentity(id:string):OpaqueSourceIdentity|undefined {
+    const row=this.db.prepare('SELECT data FROM sources WHERE id = ?').get(id) as {data:string}|undefined;
+    if(!row)return undefined;
+    const binding=(JSON.parse(row.data) as StoredSource).__hostOpaqueIdentity;
+    const hash=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+    return binding?.version===1&&hash(binding.externalId)&&hash(binding.revision)&&hash(binding.authorId)&&hash(binding.locator)&&
+      (binding.parents===undefined||binding.parents===null||Array.isArray(binding.parents)&&binding.parents.every(ref=>!!ref&&typeof ref.id==='string'&&!!ref.id&&hash(ref.revision)))?binding:undefined;
+  }
+  sourceExternalIdMatches(source:Entities['sources'],externalId:string):boolean {
+    if(this.temporary.has(`sources:${source.id}`))return source.externalId===externalId;
+    const binding=this.opaqueSourceIdentity(source.id);
+    if(binding)return binding.externalId===digest(externalId);
+    if(!source.content&&(source.title==='Temporary source'||source.status==='withdrawn'))return false;
+    return source.externalId===externalId;
+  }
+  sourceIdentityMatches(source:Entities['sources'],identity:{externalId:string;revision:string;authorId:string;locator:string},parents?:Entities['sources']['parentSources']):boolean {
+    const binding=this.opaqueSourceIdentity(source.id);
+    if(!binding)return false;
+    if(binding.externalId!==digest(identity.externalId)||binding.revision!==digest(identity.revision)||binding.authorId!==digest(identity.authorId)||binding.locator!==digest(identity.locator))return false;
+    if(parents!==undefined){
+      if(!wellFormedParentSources(parents)||!Array.isArray(binding.parents)&&!(parents.length===0&&binding.parents===undefined)||parents.length!==(binding.parents?.length??0))return false;
+      if(parents.some((ref,index)=>binding.parents![index]!.id!==ref.id||binding.parents![index]!.revision!==digest(ref.revision)))return false;
+    }
+    return binding.parents!==null;
+  }
+  sourceHasOpaqueIdentity(source:Entities['sources']):boolean {return !!this.opaqueSourceIdentity(source.id);}
+  sourceRevisionHashMatches(source:Entities['sources'],expected:string):boolean {
+    const binding=this.opaqueSourceIdentity(source.id);
+    if(binding)return binding.revision===expected;
+    return !!source.content&&digest(source.revision)===expected;
+  }
+  sourceParentAuditRefs(source:Entities['sources']):{id:string;revisionHash:string}[]|undefined {
+    const binding=this.opaqueSourceIdentity(source.id);
+    if(binding?.parents===null)return undefined;
+    if(Array.isArray(binding?.parents))return binding.parents.map(ref=>({id:ref.id,revisionHash:ref.revision}));
+    if(source.parentSources===undefined)return [];
+    if(!source.content||!wellFormedParentSources(source.parentSources))return undefined;
+    return source.parentSources!.map(ref=>({id:ref.id,revisionHash:digest(ref.revision)}));
+  }
+  sourceDependsOnId(source:Entities['sources'],id:string):boolean {
+    const binding=this.opaqueSourceIdentity(source.id);
+    if(Array.isArray(binding?.parents))return binding.parents.some(ref=>ref.id===id);
+    return Array.isArray(source.parentSources)&&source.parentSources.some(ref=>!!ref&&ref.id===id);
+  }
+  sourceRequiresTemporaryRetention(source:Entities['sources']):boolean {return this.temporarySource(source);}
+  private redactTemporarySource(source:Entities['sources']):Entities['sources'] {
+    const binding=this.opaqueSourceIdentity(source.id)??(source.content?this.bindOpaqueSource(source):undefined);
+    const previous=this.db.prepare('SELECT data FROM sources WHERE id = ?').get(source.id) as {data:string}|undefined;
+    const oldParents=previous?(JSON.parse(previous.data) as StoredSource).parentSources:undefined;
+    const parents=binding?.parents===null?[{id:'',revision:''}]:Array.isArray(binding?.parents)?binding.parents.map(ref=>({id:ref.id,revision:`sha256:${ref.revision}`})):
+      source.parentSources===undefined?undefined:wellFormedParentSources(source.parentSources)?source.parentSources!.map(ref=>({id:ref.id,revision:this.auditTemporaryRevision(ref.revision)})):oldParents??[{id:'',revision:''}];
+    return {...source,title:'Temporary source',content:'',externalId:binding?`sha256:${binding.externalId}`:this.auditTemporaryRevision(source.externalId),authorId:binding?`sha256:${binding.authorId}`:this.auditTemporaryRevision(source.authorId),locator:binding?`sha256:${binding.locator}`:this.auditTemporaryRevision(source.locator),revision:binding?`sha256:${binding.revision}`:this.auditTemporaryRevision(source.revision),
+      ...(parents!==undefined?{parentSources:parents}:{}),...(binding?{__hostOpaqueIdentity:binding}:{})};
+  }
+  private temporarySource(source:Entities['sources']):boolean {
+    const context=this.retentionResolution&&this.retentionResolution.scope.projectId===source.projectId&&this.retentionResolution.scope.domain===source.domain?this.retentionResolution:undefined;
+    const seen=new Set<string>(),resolved=context?.resolved??new Map<string,boolean>();
+    const visit=(current:Entities['sources']|undefined,revision?:string):boolean=>{
+      if(!current||current.projectId!==source.projectId||current.domain!==source.domain||revision!==undefined&&current.revision!==revision||seen.has(current.id)||!['permanent','ephemeral'].includes(current.retention))return true;
+      if(current.retention==='ephemeral')return true;
+      const cached=resolved.get(current.id);if(cached!==undefined)return cached;
+      const parents:unknown=current.parentSources;
+      if(!wellFormedParentSources(parents))return true;
+      seen.add(current.id);
+      const result=(parents??[]).some(parent=>{
+        return visit(parent.id===source.id?source:context?context.sources.get(parent.id):this.get('sources',parent.id),parent.revision);
+      })||(()=>{const task=this.ownerAnswerTask(current);return !!task&&visit(task.sourceId===source.id?source:context?context.sources.get(task.sourceId):this.get('sources',task.sourceId),task.sourceRevision);})();
+      seen.delete(current.id);resolved.set(current.id,result);return result;
+    };
+    return visit(source);
+  }
+  private ownerAnswerTask(source:Entities['sources']):Entities['tasks']|undefined {
+    if(source.kind!=='conversation'||!source.externalId.startsWith('answer:'))return undefined;
+    const question=this.get('questions',source.externalId.slice('answer:'.length)),task=question&&this.get('tasks',question.taskId),project=this.get('projects',source.projectId);
+    if(!question||question.status!=='answered'||!question.answer||!task||!project||source.id!==stableId('owner-answer',question.id)||
+      question.projectId!==source.projectId||question.domain!==source.domain||task.projectId!==source.projectId||task.domain!==source.domain||project.domain!==source.domain||
+      question.ownerId!==project.ownerId||question.answer.actorId!==project.ownerId||source.authorId!==project.ownerId||task.version<question.taskVersion||
+      source.revision!==digest(question.answer.text)||source.content!==question.answer.text||source.locator!==`question:${question.id}@${question.version}`)return undefined;
+    const event=this.get('cursors',stableId('answer-event',source.projectId,source.domain,question.answer.eventId));
+    if(event&&event.value!==digest({questionId:question.id,choice:question.answer.choice,words:question.answer.text}))return undefined;
+    return task;
+  }
+  private temporarySourceDependency(id:string,scope?:Scope,revision?:string):boolean {
+    const context=this.retentionResolution&&(!scope||scope.projectId===this.retentionResolution.scope.projectId&&scope.domain===this.retentionResolution.scope.domain)?this.retentionResolution:undefined;
+    const source=context?context.sources.get(id):this.get('sources',id);
+    return !source||!!scope&&(source.projectId!==scope.projectId||source.domain!==scope.domain)||revision!==undefined&&source.revision!==revision||this.temporarySource(source);
+  }
+  private queueTemporaryRedaction(table:Table,entity:Entities[Table]):void {
+    if(!vaultTables.has(table))return;
+    const intent:VaultRedaction={version:1,table:table as VaultRedaction['table'],id:entity.id};
+    this.write('cursors',{id:this.vaultRedactionId(intent,entity),projectId:entity.projectId,domain:entity.domain,value:JSON.stringify(intent),updatedAt:''});
+    if(this.vaultDir)this.vaultJobs.set(`${table}:${entity.id}`,{table,entity,redactTemporary:true});
+  }
+  private vaultRedactionId(intent:VaultRedaction,scope:Scope):string {return `vault-redaction:${stableId('vault-redaction',scope.projectId,scope.domain,intent.table,intent.id)}`;}
+  private replayVaultRedactions():void {
+    if(!this.vaultDir)return;
+    const rows=this.db.prepare("SELECT data FROM cursors WHERE id LIKE 'vault-redaction:%'").all() as {data:string}[];
+    for(const row of rows){
+      const cursor=JSON.parse(row.data) as Entities['cursors'];let intent:VaultRedaction;
+      try{intent=JSON.parse(cursor.value) as VaultRedaction;}catch{throw new Error('Invalid durable Vault redaction intent.');}
+      if(intent.version!==1||!['sources','cards','rules','cases'].includes(intent.table)||typeof intent.id!=='string'||!intent.id||cursor.id!==this.vaultRedactionId(intent,cursor))throw new Error('Invalid durable Vault redaction intent.');
+      const key=`${intent.table}:${intent.id}`,queued=this.vaultJobs.get(key);
+      if(queued?.redactTemporary||queued?.redactStructuredCard)continue;
+      const scope={id:intent.id,projectId:cursor.projectId,domain:cursor.domain};
+      const entity=(intent.table==='sources'?{...scope,kind:'manual',externalId:'',revision:'',title:'',content:'',locator:'',authorId:'',retention:'ephemeral',status:'withdrawn',createdAt:''}:
+        intent.table==='cards'?{...scope,sourceId:'',sourceRevision:'',title:'',body:'',quote:'',locator:'',kind:'fact',verification:'reported',status:'withdrawn',aliases:[],createdAt:''}:
+        intent.table==='rules'?{...scope,title:'',statement:'',conditions:'',exceptions:'',version:1,kind:'observation',status:'suspended',caseIds:[],citations:[],createdAt:'',reviewAt:''}:
+        {...scope,taskId:'',questionId:'',decisionId:'',actorId:'',choice:'C',originalWords:'',rationale:'',alternatives:[],ruleIds:[],sourceId:'',status:'withdrawn',createdAt:''}) as Entities[Table];
+      this.vaultJobs.set(key,{table:intent.table,entity,redactTemporary:true});
+    }
+  }
+  private protectTemporarySourceDependents(retainReadable=true,deferMissingSources=false,scope?:Scope):void {
+    const list=<K extends Table>(table:K)=>scope?this.listScope(table,scope):this.list(table);
+    const affected=scope?this.retentionResolution?.affected:undefined;
+    for(const source of list('sources'))if((!affected||affected.has(source.id))&&this.temporarySource(source)){
+      const ownerTask=deferMissingSources?this.ownerAnswerTask(source):undefined;
+      if(ownerTask&&!this.get('sources',ownerTask.sourceId))continue;
+      const key=`sources:${source.id}`;if(!this.temporary.has(key)){this.privacyCheckpointPending=true;if(retainReadable)this.setTemporary(key,{entity:source});}
+      this.write('sources',this.redactTemporarySource(source));
+      this.queueTemporaryRedaction('sources',source);
+    }
+    const affectedRules=affected?new Set(list('rules').filter(rule=>Array.isArray(rule.citations)&&rule.citations.some(c=>affected.has(c.sourceId))).map(rule=>rule.id)):undefined;
+    const historicalTasks=new Set<string>();
+    for(const action of list('actions'))if(action.kind==='decision.snapshot'&&action.taskId){
+      const candidate=action.payload?.snapshot as {sourceId?:unknown;sourceRefs?:{id?:unknown}[]}|undefined;
+      if(affected&&!affected.has(String(candidate?.sourceId??''))&&(!Array.isArray(candidate?.sourceRefs)||!candidate.sourceRefs.some(ref=>typeof ref?.id==='string'&&affected.has(ref.id))))continue;
+      const snapshot=historicalSnapshot(this,action,action);
+      if(snapshot?.sourceRefs.some(ref=>this.temporarySourceDependency(ref.id,action,ref.revision)))historicalTasks.add(action.taskId);
+    }
+    const affectedTasks=affected?new Set(list('tasks').filter(task=>affected.has(task.sourceId)||historicalTasks.has(task.id)||!!task.decision&&(Array.isArray(task.decision.citations)&&task.decision.citations.some(c=>!!c&&affected.has(c.sourceId))||Array.isArray(task.decision.ruleIds)&&task.decision.ruleIds.some(id=>affectedRules!.has(id)))).map(task=>task.id)):undefined;
+    for(const table of ['tasks','events','attempts','outbox','questions','actions'] as const)for(const entity of list(table)){
+      const taskId=table==='tasks'?entity.id:'taskId' in entity&&entity.taskId||'';
+      const outboxIds=table==='outbox'?(entity as Entities['outbox']).sourceIds:undefined;
+      if(affectedTasks&&!affectedTasks.has(taskId)&&!(Array.isArray(outboxIds)&&outboxIds.some(id=>affected!.has(id))))continue;
+      if(!((table!=='actions'||!this.durableFactualAudit(entity as Entities['actions'])&&!['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','knowledge.factual-context','experience.test-observation','experience.evidence-link'].includes((entity as Entities['actions']).kind))&&(this.isTemporaryTaskEntity(table,entity)||historicalTasks.has(taskId))))continue;
+      const task=table==='tasks'?entity as Entities['tasks']:'taskId' in entity&&entity.taskId?this.get('tasks',entity.taskId):undefined;
+      if(deferMissingSources&&task&&!this.get('sources',task.sourceId))continue;
+      if(retainReadable)this.setTemporary(`${table}:${entity.id}`,{entity});this.write(table,this.redactTemporary(table,entity) as never);
+    }
+    for(const event of list('events')){
+      const sourceId=event.data?.sourceId;
+      if(typeof sourceId!=='string'||!this.temporarySourceDependency(sourceId,event))continue;
+      if(deferMissingSources&&!this.get('sources',sourceId))continue;
+      if(!this.temporary.has(`events:${event.id}`))this.privacyCheckpointPending=true;
+      if(retainReadable)this.setTemporary(`events:${event.id}`,{entity:event});
+      const revision=event.data?.revision;
+      this.write('events',{...event,message:'Temporary source event.',data:{sourceId,...(typeof revision==='string'?{revision:this.auditTemporaryRevision(revision)}:{})}});
+    }
+    for(const table of ['cards','rules','cases'] as const)for(const entity of list(table)){
+      if(table==='cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard))continue;
+      if(affected){
+        const relevant=table==='cards'?affected.has((entity as KnowledgeCard).sourceId):table==='rules'?affectedRules!.has(entity.id):(()=>{
+          const value=entity as Entities['cases'],snapshot=value.decisionSnapshot;
+          return affected.has(value.sourceId)||!!snapshot&&(affected.has(snapshot.sourceId)||Array.isArray(snapshot.sourceRefs)&&snapshot.sourceRefs.some(ref=>!!ref&&affected.has(ref.id)))||Array.isArray(value.ruleIds)&&value.ruleIds.some(id=>affectedRules!.has(id));
+        })();
+        if(!relevant)continue;
+      }
+      if(!this.isTemporaryDerived(table,entity))continue;
+      if(deferMissingSources&&(table==='cases'?this.mayDeferMissingCaseDependencies(entity as Entities['cases']):('sourceId' in entity&&!this.get('sources',entity.sourceId)||'citations' in entity&&entity.citations.some(c=>!this.get('sources',c.sourceId)))))continue;
+      if(!this.temporary.has(`${table}:${entity.id}`))this.privacyCheckpointPending=true;
+      if(retainReadable)this.setTemporary(`${table}:${entity.id}`,{entity});this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(entity.id);
+      if(table==='cards')this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(entity.id);
+      this.queueTemporaryRedaction(table,entity);
+    }
   }
   private isTemporaryTaskEntity(table: Table, entity: Entities[Table]): boolean {
+    if(table==='outbox'){
+      const ids=(entity as Entities['outbox']).sourceIds;
+      if(ids!==undefined&&(!Array.isArray(ids)||ids.some(id=>typeof id!=='string'||this.temporarySourceDependency(id,entity))))return true;
+    }
     const task = table === 'tasks' ? entity as Entities['tasks'] : 'taskId' in entity && entity.taskId ? this.get('tasks', entity.taskId) : undefined;
-    return !!task && this.get('sources', task.sourceId)?.retention === 'ephemeral';
+    if(!task)return false;
+    if(table==='actions'&&this.durableFactualAudit(entity as Entities['actions']))return false;
+    if(this.temporary.has(`tasks:${task.id}`))return true;
+    if(this.temporarySourceDependency(task.sourceId,task,task.sourceRevision))return true;
+    const decision=task.decision;
+    if(decision){
+      if(!Array.isArray(decision.citations)||!Array.isArray(decision.ruleIds))return true;
+      if(decision.citations.some(c=>!c||typeof c.sourceId!=='string'||typeof c.revision!=='string'||this.temporarySourceDependency(c.sourceId,task,c.revision)))return true;
+      if(decision.ruleIds.some(id=>{const rule=this.get('rules',id);return !rule||rule.projectId!==task.projectId||rule.domain!==task.domain||this.isTemporaryDerived('rules',rule);}))return true;
+    }
+    if(table==='actions'&&(entity as Entities['actions']).kind==='decision.snapshot'){
+      const snapshot=historicalSnapshot(this,entity as Entities['actions'],task);
+      if(snapshot?.sourceRefs.some(ref=>this.temporarySourceDependency(ref.id,task,ref.revision)))return true;
+    }
+    return false;
   }
   private redactTemporary(table: Table, entity: Entities[Table]): Entities[Table] {
-    if (table === 'tasks') return { ...entity, title: 'Temporary task', description: '', decision: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, baselineFiles: undefined, error: 'Temporary content is kept only in the active process.' } as Entities['tasks'];
+    if (table === 'tasks') {const task=entity as Entities['tasks'];return { ...task, sourceRevision:this.temporarySourceDependency(task.sourceId,task,task.sourceRevision)?this.auditTemporaryRevision(task.sourceRevision):task.sourceRevision,title: 'Temporary task', description: '', decision: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, baselineFiles: undefined, error: 'Temporary content is kept only in the active process.' };}
     if (table === 'events') return { ...entity, message: 'Temporary task event.', data: {} } as Entities['events'];
     if (table === 'attempts') {
       const attempt = entity as Entities['attempts'];
@@ -692,12 +1093,20 @@ export class Store {
     }
     if (table === 'actions') {
       const action=entity as Entities['actions'],task=action.taskId&&this.get('tasks',action.taskId),payload=action.payload;
+      if(['decision.evidence','decision.review'].includes(action.kind)){
+        if(payload.retracted===true)return action;
+        const refs=knowledgeActionDependencies(action).refs,record=(payload.evidence??payload.review) as {snapshotId?:unknown;evidenceIds?:unknown}|undefined;
+        const safe=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{32}$/.test(value);
+        const sourceIds=[...new Set(refs.map(ref=>ref.id).filter(safe))],snapshotId=safe(record?.snapshotId)?record.snapshotId:undefined;
+        const evidenceIds=Array.isArray(record?.evidenceIds)?record.evidenceIds.filter(safe):[];
+        return {...action,payload:{retracted:true,sourceIds,payloadHash:digest(payload),...(snapshotId?{snapshotId}:{}),...(evidenceIds.length?{evidenceIds}:{})}};
+      }
       const prior=payload.priorSucceededAttemptIds,before=payload.attemptsBefore;
       if(task&&action.status==='pending'&&action.kind===task.stage&&['knowledge_extract','case_extract','decide','plan','execute','check','feedback'].includes(action.kind)&&
         action.id===stableId('stage-action',task.id,task.version,task.stage,task.repairCount)&&action.projectId===task.projectId&&action.domain===task.domain&&
-        payload.taskVersion===task.version&&payload.sourceRevision===task.sourceRevision&&typeof before==='number'&&Number.isSafeInteger(before)&&before>=0&&before<=task.attempts&&
+        payload.taskVersion===task.version&&(payload.sourceRevision===task.sourceRevision||typeof payload.sourceRevision==='string'&&this.auditTemporaryRevision(payload.sourceRevision)===task.sourceRevision)&&typeof before==='number'&&Number.isSafeInteger(before)&&before>=0&&before<=task.attempts&&
         Array.isArray(prior)&&prior.length<=32&&new Set(prior).size===prior.length&&prior.every(id=>typeof id==='string'&&this.list('attempts').some(a=>a.id===id&&a.taskId===task.id&&a.projectId===task.projectId&&a.domain===task.domain&&a.taskVersion===task.version&&a.role===task.stage&&a.status==='succeeded')))
-        return {id:action.id,projectId:action.projectId,domain:action.domain,taskId:task.id,kind:action.kind,status:'pending',updatedAt:action.updatedAt,payload:{taskVersion:task.version,sourceRevision:task.sourceRevision,attemptsBefore:before,priorSucceededAttemptIds:prior}};
+        return {id:action.id,projectId:action.projectId,domain:action.domain,taskId:task.id,kind:action.kind,status:'pending',updatedAt:action.updatedAt,payload:{taskVersion:task.version,sourceRevision:this.auditTemporaryRevision(task.sourceRevision),attemptsBefore:before,priorSucceededAttemptIds:prior},__hostOpaqueHold:{version:1,sourceId:task.sourceId,revision:digest(task.sourceRevision)}} as StoredAction;
       return { ...action, payload: {} };
     }
     if (table === 'outbox') return { ...entity, text: '', status: 'sent', remoteId: 'expired-temporary' } as Entities['outbox'];
@@ -741,10 +1150,16 @@ export class Store {
     // not a temporary overlay; use a tombstone if the row disappeared.
     const row=this.db.prepare(`SELECT data FROM ${job.table} WHERE id = ?`).get(job.entity.id) as {data:string}|undefined;
     const latest=row?this.visible(job.table,JSON.parse(row.data) as Entities[Table]):{...job.entity,status:'withdrawn'} as Entities[Table];
-    if (!job.redactStructuredCard && (this.isTemporaryDerived(job.table, latest) || job.table === 'sources' && (latest as Entities['sources']).retention === 'ephemeral')) return;
+    if (!job.redactStructuredCard && !job.redactTemporary && (this.isTemporaryDerived(job.table, latest) || job.table === 'sources' && this.temporarySource(latest as Entities['sources']))) return;
     const card=latest as KnowledgeCard;
-    const entity=job.redactStructuredCard?{...card,status:'withdrawn' as const,title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`} : latest;
-    const path = this.vaultPath(job.table, entity); const body = this.markdown(job.table, entity);
+    let temporary=job.redactTemporary?{...job.entity,status:job.table==='rules'?'suspended':'withdrawn'} as Entities[Table]:undefined;
+    if(temporary&&job.table==='sources')temporary=this.redactTemporarySource(temporary as Entities['sources']);
+    if(temporary&&job.table==='cards'){const value=temporary as KnowledgeCard;temporary={...value,sourceRevision:this.auditTemporaryRevision(value.sourceRevision)};}
+    if(temporary&&job.table==='rules'){const value=temporary as Entities['rules'];temporary={...value,citations:value.citations.map(c=>({...c,revision:this.auditTemporaryRevision(c.revision)}))};}
+    const entity=job.redactStructuredCard?{...card,status:'withdrawn' as const,title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`} : temporary??latest;
+    const path = this.vaultPath(job.table, entity);
+    if(job.redactTemporary&&!existsSync(path)&&!(existsSync(dirname(path))&&readdirSync(dirname(path)).some(name=>name.startsWith(path.slice(path.lastIndexOf('/')+1).replace(/\.md$/,'.conflict-'))&&name.endsWith('.md'))))return;
+    const body = this.markdown(job.table, entity);
     const effective = this.vaultEntity(job.table, entity);
     const inactive = 'status' in effective && effective.status !== 'active';
     if (startup && !inactive && this.preserveVaultPaths.has(path)) return;
@@ -768,10 +1183,14 @@ export class Store {
     finally { if (existsSync(temporaryPath)) unlinkSync(temporaryPath); }
   }
   private flushVault(limit=Number.POSITIVE_INFINITY): void {
+    this.replayVaultRedactions();
     let processed=0;
     for(const [key,job] of this.vaultJobs){
       if(processed++>=limit)break;
-      try{this.publish(job);}catch(error){throw error instanceof VaultSyncError?error:new VaultSyncError(error);}
+      try{
+        this.publish(job);
+        if(job.redactTemporary||job.redactStructuredCard){const intent:VaultRedaction={version:1,table:job.table as VaultRedaction['table'],id:job.entity.id};this.db.prepare('DELETE FROM cursors WHERE id = ?').run(this.vaultRedactionId(intent,job.entity));}
+      }catch(error){throw error instanceof VaultSyncError?error:new VaultSyncError(error);}
       if(this.vaultJobs.get(key)===job)this.vaultJobs.delete(key);
     }
   }
@@ -780,11 +1199,12 @@ export class Store {
   reconcileVault():void {
     if(this.readDepth||this.depth)throw new Error('Vault reconciliation requires an idle Store.');
     this.flushVault(32);
+    this.checkpointPrivacy();
   }
 
   private vaultEntity(table: Table, entity: Entities[Table]): Entities[Table] {
     if (table === 'sources') { const s = entity as Entities['sources']; return s.status === 'active' ? s : { ...s, title: '[withdrawn]', content: '', locator: `withdrawn:${s.id}` }; }
-    if (table === 'cards') { const c = entity as Entities['cards']; return this.cardActive(c, c) ? c : { ...c, status: 'withdrawn', title: '[withdrawn]', body: '', quote: '', aliases: [], experience: undefined, locator: `withdrawn:${c.sourceId}` }; }
+    if (table === 'cards') { const c = entity as Entities['cards']; return this.cardActive(c, c) ? c : { ...c, status: 'withdrawn', title: '[withdrawn]', body: '', quote: '', aliases: [], experience: undefined, claim: undefined, pendingClaim: undefined, locator: `withdrawn:${c.sourceId}` }; }
     if (table === 'rules') {
       const r = entity as Entities['rules'];
       if (r.status !== 'active' || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision; })) return { ...r, status: 'suspended', title: '[withdrawn]', statement: '[Evidence no longer active]', conditions: '[withdrawn]', exceptions: '[withdrawn]', citations: r.citations.map(c => ({ ...c, quote: '[inactive]', locator: `withdrawn:${c.sourceId}` })) };
@@ -866,17 +1286,25 @@ export class Store {
     for (const record of records) {
       const { table, entity, path, text } = record;
       const existing = this.get(table, entity.id);
+      // An editable projection cannot recreate a missing host decision or its
+      // frozen snapshot, including one withheld by the startup privacy pass.
+      if(table==='cases'&&!existing)continue;
       let sourceEdited: boolean | undefined;
       if (existing && 'status' in existing && existing.status !== 'active') {this.publish({table,entity:existing},true);continue;}
       if (table === 'sources') {
         const s = entity as Entities['sources'];
+        delete (s as StoredSource).__hostOpaqueIdentity;
         if (s.retention !== 'permanent' || typeof s.content !== 'string' || typeof s.revision !== 'string' || !['active', 'superseded', 'withdrawn'].includes(s.status)) continue;
         // Purpose normalization is recovery bookkeeping, not an independent content edit.
         sourceEdited = text !== this.markdown(table, entity);
         const canonical = trustedSources.get(s.id);
         s.parentSources = canonical?.parentSources;
-        s.purpose = canonical ? canonical.purpose ?? 'task' : (trustedTasks ??= this.list('tasks')).some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
-        if (!canonical && (!this.recoverableSourceIdentity(s, trustedQuestions) || s.kind === 'file' && s.externalId.startsWith('vault:'))) {
+        const recoverable = !!canonical || this.recoverableSourceIdentity(s, trustedQuestions);
+        // The separately host-bound owner-answer identity is task material, just
+        // as it was when recordOwnerDecision created it without an explicit purpose.
+        const ownerAnswer = !canonical && recoverable && !this.ordinarySourceIdentity(s);
+        s.purpose = canonical ? canonical.purpose ?? 'task' : ownerAnswer || (trustedTasks ??= this.list('tasks')).some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
+        if (!canonical && (!recoverable || s.kind === 'file' && s.externalId.startsWith('vault:'))) {
           // Mismatched identities and copies without host provenance cannot recover readable material.
           s.status = 'withdrawn'; s.content = ''; s.title = '[withdrawn]'; s.locator = `withdrawn:${s.id}`; s.parentSources = []; s.purpose = 'reference'; sourceEdited = false;
         }

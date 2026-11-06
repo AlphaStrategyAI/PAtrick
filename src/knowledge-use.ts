@@ -74,7 +74,9 @@ function knowledgeReferenceBody(store:Store,card:KnowledgeCard,scope:Scope,optio
  if(card.projectId!==scope.projectId||card.domain!==scope.domain)return undefined;
  const base={...card};stripDerivedCardFields(base);
  const source=store.get('sources',card.sourceId),active=card.status==='active'&&(!card.expiresAt||Date.parse(card.expiresAt)>Date.now())&&source?.status==='active'&&source.revision===card.sourceRevision&&source.projectId===scope.projectId&&source.domain===scope.domain;
- if(!active)return options.usage==='browse'&&card.status==='withdrawn'?base:undefined;
+ if(!active)return options.usage==='browse'&&card.status==='withdrawn'?{...base,title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`}:undefined;
+ const lineage=knowledgeSourceRefs(store,source.id,scope);
+ if(!lineage||lineage.some(ref=>{const dependency=store.get('sources',ref.id),hash=store.get('cursors',stableId('source-hash',ref.id))?.value;return !dependency||dependency.retention==='ephemeral'&&!dependency.content||!!hash&&hash!==digest(dependency.content);}))return undefined;
  const hasAuthorizedQuote=!!card.quote&&source.locator===card.locator&&source.content.includes(card.quote);
  const reported=hasAuthorizedQuote?{reportedStatement:{text:card.quote,status:'reported' as const},reportedAuthor:recordedAuthor(store,source)}:{};
  if(!hasAuthorizedQuote)base.quote='';

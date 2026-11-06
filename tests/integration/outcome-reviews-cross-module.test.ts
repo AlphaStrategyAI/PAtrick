@@ -2,6 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { Store } from '../../src/store.js';
 import { ingestSource, withdrawSource } from '../../src/intake.js';
 import { recordDecisionSnapshot } from '../../src/standards.js';
@@ -11,6 +12,7 @@ import { configureDemo, DemoWorker, demoResearch, demoWriter } from '../../src/d
 import { Workbench } from '../../src/orchestrator.js';
 import { createApp } from '../../src/app.js';
 import { digest, stableId, WorkerUnavailable, type DecisionSnapshot, type SourceRevision, type WorkerInput, type WorkerAdapter } from '../../src/domain.js';
+import { knowledgeSourceRefs } from '../../src/knowledge-records.js';
 const roots: string[] = [], stores: Store[] = [];
 afterEach(() => { stores.splice(0).forEach(s => s.close()); roots.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })); });
 function setup(temporary = false) {
@@ -37,6 +39,62 @@ function reference(f: ReturnType<typeof setup>) {
 function quote(f: ReturnType<typeof setup>, s: SourceRevision) {
   return recordOutcomeEvidence(f.store, f.config, f.snapshot.id, { projectId: f.project.id, domain: f.project.domain, kind: 'correction', sourceId: s.id, sourceRevision: s.revision, quote: 'original metric fragment', observedAt: f.snapshot.recordedAt }, f.config.ownerId, new Date(f.snapshot.reviewAt!));
 }
+it.each(['evidence','attribution'] as const)('migrates independent outcome and outbox references when %s becomes temporary',async changed=>{
+  const f=setup(),at=new Date(f.snapshot.reviewAt!);
+  for(const [id,content] of [['outcome-source','OUTCOME_INDEPENDENT_QUOTE_SENTINEL'],['attribution-source','OUTCOME_ATTRIBUTION_QUOTE_SENTINEL']] as const)
+    ingestSource(f.store,f.config,{projectId:f.project.id,externalId:id,title:'Independent source',content,purpose:'reference'});
+  const evidenceSource=f.store.list('sources').find(s=>s.externalId==='outcome-source')!,attributionSource=f.store.list('sources').find(s=>s.externalId==='attribution-source')!;
+  const evidence=recordOutcomeEvidence(f.store,f.config,f.snapshot.id,{projectId:f.project.id,domain:f.project.domain,kind:'correction',sourceId:evidenceSource.id,sourceRevision:evidenceSource.revision,quote:evidenceSource.content,observedAt:f.snapshot.recordedAt,attribution:{method:'direct_measurement',citations:[{sourceId:attributionSource.id,revision:attributionSource.revision,quote:attributionSource.content,locator:attributionSource.locator}]}},f.config.ownerId,at);
+  expect(runOutcomeReviews(f.store,at)).toBe(1);
+  const review=f.store.list('actions').find(action=>action.kind==='decision.review')!;
+  expect(JSON.stringify(review.payload)).toContain('OUTCOME_INDEPENDENT_QUOTE_SENTINEL');
+  expect(JSON.stringify(review.payload)).toContain('OUTCOME_ATTRIBUTION_QUOTE_SENTINEL');
+  const dependency=changed==='evidence'?evidenceSource:attributionSource;
+  f.store.save('outbox',{id:'independent-outbox',projectId:f.project.id,domain:f.project.domain,channel:'origin',recipient:'owner',text:'OUTBOX_INDEPENDENT_PRIVATE_SENTINEL',status:'pending',attempts:0,runAfter:'',createdAt:'',sourceIds:[dependency.id]});
+  f.store.save('sources',{...dependency,retention:'ephemeral'});
+  await f.store.backup(join(f.root,'after-transition.sqlite'));f.store.close();
+  const changedMarker=changed==='evidence'?'OUTCOME_INDEPENDENT_QUOTE_SENTINEL':'OUTCOME_ATTRIBUTION_QUOTE_SENTINEL';
+  for(const file of [f.db,join(f.root,'after-transition.sqlite')]){
+    for(const marker of [changedMarker,'OUTBOX_INDEPENDENT_PRIVATE_SENTINEL'])expect(readFileSync(file).includes(Buffer.from(marker)),`${file} contains ${marker}`).toBe(false);
+    const ledger=new Database(file,{readonly:true});try{for(const id of [evidence.id,review.id]){const row=ledger.prepare('SELECT data FROM actions WHERE id=?').get(id) as {data:string};expect(row.data).not.toContain('OUTCOME_INDEPENDENT_QUOTE_SENTINEL');expect(row.data).not.toContain('OUTCOME_ATTRIBUTION_QUOTE_SENTINEL');}}finally{ledger.close();}
+  }
+  const next=new Store(f.db,f.vault);stores.push(next);
+  for(const id of [evidence.id,review.id])expect(next.get('actions',id)).toMatchObject({id,kind:expect.stringMatching(/^decision\.(evidence|review)$/),payload:{retracted:true}});
+  expect(next.get('outbox','independent-outbox')?.text).toBe('');
+});
+it('keeps newly created temporary outcome and task-independent outbox text out of durable state',async()=>{
+  const f=setup(true),at=new Date(f.snapshot.reviewAt!);
+  ingestSource(f.store,f.config,{projectId:f.project.id,externalId:'temporary-outcome',revision:'v1',title:'Temporary evidence',content:'TEMP_OUTCOME_CREATE_SENTINEL',retention:'ephemeral',purpose:'reference'});
+  const source=f.store.list('sources').find(value=>value.externalId==='temporary-outcome')!;
+  const evidence=recordOutcomeEvidence(f.store,f.config,f.snapshot.id,{projectId:f.project.id,domain:f.project.domain,kind:'correction',sourceId:source.id,sourceRevision:source.revision,quote:source.content,observedAt:f.snapshot.recordedAt},f.config.ownerId,at);
+  expect(runOutcomeReviews(f.store,at)).toBe(1);
+  const review=f.store.list('actions').find(action=>action.kind==='decision.review')!;
+  f.store.save('outbox',{id:'temporary-independent-outbox',projectId:f.project.id,domain:f.project.domain,channel:'origin',recipient:'owner',text:'TEMP_OUTBOX_CREATE_SENTINEL',status:'pending',attempts:0,runAfter:'',createdAt:'',sourceIds:[source.id]});
+  await f.store.backup(join(f.root,'creation.sqlite'));f.store.close();
+  for(const file of [f.db,join(f.root,'creation.sqlite')])for(const marker of ['TEMP_OUTCOME_CREATE_SENTINEL','TEMP_OUTBOX_CREATE_SENTINEL'])expect(readFileSync(file).includes(Buffer.from(marker))).toBe(false);
+  const next=new Store(f.db,f.vault);stores.push(next);
+  for(const id of [evidence.id,review.id])expect(next.get('actions',id)).toMatchObject({id,payload:{retracted:true}});
+  expect(next.get('outbox','temporary-independent-outbox')?.text).toBe('');
+});
+it.each(['at-creation','after-acceptance'] as const)('keeps the host-bound owner answer temporary %s through its task ancestry',async timing=>{
+  const f=setup(),engine=new Workbench({store:f.store,config:f.config,workers:[],writer:demoWriter,research:demoResearch});
+  ingestSource(f.store,f.config,{projectId:f.project.id,externalId:'answer-ancestor',revision:'v1',title:'Ancestor',content:'Ancestor',retention:timing==='at-creation'?'ephemeral':'permanent',purpose:'reference'});
+  const parent=f.store.list('sources').find(s=>s.externalId==='answer-ancestor')!,primary=f.store.get('sources',f.task.sourceId)!;
+  f.store.save('sources',{...primary,parentSources:[{id:parent.id,revision:parent.revision}]});
+  const option={label:'Keep',description:'OWNER_BOUND_PRIVATE_SENTINEL',rationale:'Reason',tradeoff:'Storage',evidenceUrls:[]};
+  const question={id:`bound-private-${timing}`,projectId:f.project.id,domain:f.project.domain,taskId:f.task.id,taskVersion:f.task.version,version:1,ownerId:f.config.ownerId,title:'OWNER_QUESTION_PRIVATE_SENTINEL',context:'Choice',options:{A:option,B:{...option,label:'Discard'}},research:{queries:[],summary:'',gaps:[]},status:'open' as const,createdAt:f.snapshot.recordedAt,decisionSnapshotId:f.snapshot.id};
+  f.store.save('questions',question);f.store.save('tasks',{...f.task,status:'awaiting_answer',stage:'decide',questionId:question.id,decisionSnapshotId:f.snapshot.id});
+  engine.answer({questionId:question.id,taskVersion:f.task.version,questionVersion:1,choice:'A',actorId:f.config.ownerId,eventId:`bound-answer-${timing}`});
+  const accepted=f.store.get('questions',question.id)!,decisionCase=f.store.list('cases').find(c=>c.questionId===question.id)!;
+  const answer=f.store.get('sources',stableId('owner-answer',question.id))!;
+  expect(accepted.status).toBe('answered');expect(decisionCase.sourceId).toBe(answer.id);expect(answer.content).toContain('OWNER_BOUND_PRIVATE_SENTINEL');
+  expect(answer.parentSources).toBeUndefined();expect(answer.purpose??'task').toBe('task');
+  if(timing==='after-acceptance')f.store.save('sources',{...parent,retention:'ephemeral'});
+  await f.store.backup(join(f.root,'owner-answer-backup.sqlite'));f.store.close();
+  const files=[f.db,join(f.root,'owner-answer-backup.sqlite'),...readdirSync(f.vault,{recursive:true,withFileTypes:true}).filter(entry=>entry.isFile()).map(entry=>join(entry.parentPath,entry.name))];
+  for(const file of files)for(const marker of ['OWNER_BOUND_PRIVATE_SENTINEL','OWNER_QUESTION_PRIVATE_SENTINEL'])expect(readFileSync(file).includes(Buffer.from(marker)),`${file} contains ${marker}`).toBe(false);
+  const next=new Store(f.db,f.vault);stores.push(next);expect(next.get('sources',answer.id)?.content).not.toContain('OWNER_BOUND_PRIVATE_SENTINEL');
+});
 it('withdraws partial copied evidence through historical and nested Vault edits across repeated restart', () => {
   const f = setup(), origin = reference(f); edit(f, origin, 'First annotation');
   const first = f.store.list('sources').find(s => s.kind === 'file')!;
@@ -130,7 +188,15 @@ it.each(['withdrawn', 'superseded'] as const)('backfills legacy Vault dependenci
   writeFileSync(path(f, child), text); f.store.close();
   const next = new Store(f.db, f.vault); stores.push(next);
   const restored = next.get('sources', child.id)!;
-  expect(restored.parentSources).toEqual([{ id: origin.id, revision: origin.revision }]);
+  // Withdrawal retains an opaque binding to the exact host-known original revision.
+  const expectedRevision = status === 'withdrawn' ? next.auditTemporaryRevision(origin.revision) : origin.revision;
+  // The withdrawn reference is explicitly tagged: a raw hash-shaped revision
+  // can no longer impersonate this host-recorded opaque binding.
+  expect(restored.parentSources).toEqual([{ id: origin.id, revision: status==='withdrawn'?{kind:'host-opaque-parent',digest:expectedRevision.slice('sha256:'.length)}:expectedRevision }]);
+  expect(next.get('sources', origin.id)?.revision).toBe(expectedRevision);
+  expect(expectedRevision).not.toBe(status === 'withdrawn' ? next.auditTemporaryRevision('forged-revision') : 'forged-revision');
+  expect(restored.projectId).toBe(origin.projectId); expect(restored.domain).toBe(origin.domain);
+  expect(knowledgeSourceRefs(next, child.id, child)).toBeUndefined();
   const at = new Date(f.snapshot.reviewAt!);
   expect(outcomeReviewViews(next, f.project, at)[0]?.evidence).toEqual([]);
   expect(() => recordOutcomeEvidence(next, f.config, f.snapshot.id, { projectId: f.project.id, domain: f.project.domain, kind: 'correction', sourceId: child.id, sourceRevision: child.revision, quote: 'original metric fragment', observedAt: f.snapshot.recordedAt }, f.config.ownerId, at)).toThrow();
@@ -289,7 +355,8 @@ it.each([true, false])('preserves accepted answers when both source rows need re
     const recovered = new Store(f.db, f.vault); stores.push(recovered);
     recovered.rebuildIndex(); recovered.rebuildIndex();
     expect(recovered.get('sources', f.task.sourceId)).toMatchObject({ status: 'active', content: 'Original judgment' });
-    expect(recovered.get('sources', answerSource.id)).toMatchObject({ status: 'active', content: answerSource.content });
+    expect(recovered.get('sources', answerSource.id)).toMatchObject({ status: 'active', content: answerSource.content, purpose: answerSource.purpose ?? 'task' });
+    expect(recovered.get('sources', f.task.sourceId)?.purpose ?? 'task').toBe('task');
     expect(recovered.get('questions', questionId)).toEqual(accepted);
     expect(recovered.get('cases', decisionCase.id)).toEqual(decisionCase);
     expect(readFileSync(path(f, answerSource), 'utf8')).toContain('ACCEPTED_RECOVERY_ORDER_SENTINEL');
