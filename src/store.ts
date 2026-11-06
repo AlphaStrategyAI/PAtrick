@@ -228,10 +228,10 @@ export class Store {
     for (const [key, entry] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entry.entity.id, this.visible(table,structuredClone(entry.entity)) as Entities[K]);
     return [...result.values()];
   }
-  private listScope<K extends Table>(table:K,scope:Scope):Entities[K][] {
+  private listScope<K extends Table>(table:K,scope:Scope,bindings?:Map<string,OpaqueSourceIdentity|undefined>):Entities[K][] {
     this.assertTable(table);
     const rows=this.db.prepare(`SELECT data FROM ${table} WHERE project_id = ? AND domain = ? ORDER BY rowid`).all(scope.projectId,scope.domain) as {data:string}[];
-    const result=new Map(rows.map(row=>{const entity=this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K];return [entity.id,entity];}));
+    const result=new Map(rows.map(row=>{const stored=JSON.parse(row.data) as Entities[Table];if(bindings&&table==='sources')bindings.set(stored.id,this.validOpaqueSourceIdentity((stored as StoredSource).__hostOpaqueIdentity));const entity=this.visible(table,stored) as Entities[K];return [entity.id,entity];}));
     for(const [key,entry] of this.temporary)if(key.startsWith(`${table}:`)){
       const value=entry.entity as Entities[K];
       if(value.projectId===scope.projectId&&value.domain===scope.domain)result.set(value.id,this.visible(table,structuredClone(value)) as Entities[K]);else result.delete(value.id);
@@ -240,10 +240,11 @@ export class Store {
   }
   private withRetentionResolution<T>(scope:Entities['sources'],run:()=>T):T {
     const prior=this.retentionResolution;
-    const sources=new Map(this.listScope('sources',scope).map(source=>[source.id,source])),reverse=new Map<string,string[]>();
+    const bindings=new Map<string,OpaqueSourceIdentity|undefined>();
+    const sources=new Map(this.listScope('sources',scope,bindings).map(source=>[source.id,source])),reverse=new Map<string,string[]>();
     const link=(parent:string,child:string)=>{const children=reverse.get(parent)??[];children.push(child);reverse.set(parent,children);};
     for(const source of sources.values()){
-      const binding=this.opaqueSourceIdentity(source.id),parents=Array.isArray(binding?.parents)?binding.parents:source.parentSources;
+      const binding=bindings.get(source.id),parents=Array.isArray(binding?.parents)?binding.parents:source.parentSources;
       if(Array.isArray(parents))for(const ref of parents)if(ref&&typeof ref.id==='string')link(ref.id,source.id);
       const task=this.ownerAnswerTask(source);if(task)link(task.sourceId,source.id);
     }
@@ -754,9 +755,9 @@ export class Store {
   private visible(table:Table,entity:Entities[Table]):Entities[Table] {
     if(table==='sources'){
       const stored=entity as StoredSource,{__hostOpaqueIdentity:_private,...source}=stored;
-      const entry=this.temporary.get(`sources:${source.id}`),binding=this.opaqueSourceIdentity(source.id);
+      const entry=this.temporary.get(`sources:${source.id}`);
       if((!source.content||entry?.restoredLineage)&&Array.isArray(source.parentSources)){
-        const parents=binding?.parents;
+        const parents=this.opaqueSourceIdentity(source.id)?.parents;
         const refs=source.parentSources.map((ref,index)=>{
           const bound=Array.isArray(parents)?parents[index]:undefined;
           const opaque={id:ref.id,revision:{kind:'host-opaque-parent',digest:bound?.revision??''}};
@@ -973,7 +974,9 @@ export class Store {
   private opaqueSourceIdentity(id:string):OpaqueSourceIdentity|undefined {
     const row=this.db.prepare('SELECT data FROM sources WHERE id = ?').get(id) as {data:string}|undefined;
     if(!row)return undefined;
-    const binding=(JSON.parse(row.data) as StoredSource).__hostOpaqueIdentity;
+    return this.validOpaqueSourceIdentity((JSON.parse(row.data) as StoredSource).__hostOpaqueIdentity);
+  }
+  private validOpaqueSourceIdentity(binding:OpaqueSourceIdentity|undefined):OpaqueSourceIdentity|undefined {
     const hash=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
     return binding?.version===1&&hash(binding.externalId)&&hash(binding.revision)&&hash(binding.authorId)&&hash(binding.locator)&&
       (binding.parents===undefined||binding.parents===null||Array.isArray(binding.parents)&&binding.parents.every(ref=>!!ref&&typeof ref.id==='string'&&!!ref.id&&hash(ref.revision)))?binding:undefined;
@@ -1240,7 +1243,7 @@ export class Store {
     }
     for(const event of list('events')){
       const sourceId=event.data?.sourceId;
-      if(typeof sourceId!=='string'||!this.temporarySourceDependency(sourceId,event))continue;
+      if(typeof sourceId!=='string'||affected&&!affected.has(sourceId)||!this.temporarySourceDependency(sourceId,event))continue;
       if(deferMissingSources&&!this.get('sources',sourceId))continue;
       if(!this.temporary.has(`events:${event.id}`))this.privacyCheckpointPending=true;
       if(retainReadable)this.setTemporary(`events:${event.id}`,{entity:event});

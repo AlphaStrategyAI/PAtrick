@@ -554,21 +554,30 @@ it('bounds source resolution during a scoped shared-DAG retention transition',as
       expect(await ingestStructuredExperience(store,undefined,source.id,new AbortController().signal)).toBe(false);
     }
     const independentTask=ingestSource(store,{projects:[project]},{projectId:'p',externalId:'unrelated-case-task',title:'Independent task',content:'Independent task'})!,independentSource=store.get('sources',independentTask.sourceId)!;
+    unrelated.push(independentSource.id);
+    store.save('events',{id:'unrelated-source-event',projectId:'p',domain:'personal',taskId:independentTask.id,type:'source.updated',message:'Independent',data:{sourceId:independentSource.id},createdAt:''});
+    store.save('events',{id:'affected-source-event',projectId:'p',domain:'personal',taskId:independentTask.id,type:'source.updated',message:'Sensitive',data:{sourceId:root.id,revision:root.revision},createdAt:''});
     const independentInput={task:independentTask,source:independentSource,project,role:'decide',cards:[],facts:[],rules:[]} as WorkerInput;
     store.save('attempts',{id:'unrelated-case-attempt',projectId:'p',domain:'personal',taskId:independentTask.id,taskVersion:independentTask.version,role:'decide',runner:'grok',model:'local',provider:'local',inputHash:digest(independentInput),status:'succeeded',costUsd:0,startedAt:new Date().toISOString()});
     const independentSnapshot=recordDecisionSnapshot(store,independentTask,independentInput,{action:'proceed',summary:'Independent',rationale:'Reason',citations:[],ruleIds:[]});
     const option={label:'Keep',description:'Independent',rationale:'Reason',tradeoff:'Storage',evidenceUrls:[]};
     const question={id:'unrelated-case-question',projectId:'p',domain:'personal',taskId:independentTask.id,taskVersion:independentTask.version,version:1,ownerId:project.ownerId,title:'Keep?',context:'Choice',options:{A:option,B:{...option,label:'Discard'}},research:{queries:[],summary:'',gaps:[]},status:'answered' as const,createdAt:independentSnapshot.recordedAt,decisionSnapshotId:independentSnapshot.id};
     recordOwnerDecision(store,independentTask,question,{questionId:question.id,taskVersion:question.taskVersion,questionVersion:question.version,choice:'A',actorId:project.ownerId,eventId:'unrelated-case-answer'});
-    const get=vi.spyOn(store,'get');
+    const get=vi.spyOn(store,'get'),prepare=vi.spyOn((store as any).db,'prepare'),dependency=vi.spyOn(store as any,'temporarySourceDependency');
     try{
       store.save('sources',{...root,retention:'ephemeral'});
+      expect(prepare.mock.calls.filter(([sql])=>sql==='SELECT data FROM sources WHERE id = ?').length).toBeLessThan(affected.length*3);
+      expect(dependency.mock.calls.filter(([id,scope])=>id===independentSource.id&&(scope as {id?:string}|undefined)?.id==='unrelated-source-event')).toHaveLength(0);
+      expect(dependency.mock.calls.some(([id,scope])=>id===root.id&&(scope as {id?:string}|undefined)?.id==='affected-source-event')).toBe(true);
+      const durableEvent=JSON.parse(((store as any).db.prepare('SELECT data FROM events WHERE id = ?').get('affected-source-event') as {data:string}).data);
+      expect(durableEvent.message).toBe('Temporary source event.');
+      expect(durableEvent.data.revision).toBe(`sha256:${digest(root.revision)}`);
       const lookups=get.mock.calls.filter(([table])=>table==='sources').map(([,id])=>id);
       expect(lookups.filter(id=>unrelated.includes(id))).toHaveLength(0);
       expect(get.mock.calls.filter(([table,id])=>table==='actions'&&id===independentSnapshot.id)).toHaveLength(0);
       expect(lookups.length).toBeLessThan(affected.length*12+30);
       expect(store.get('sources',layer[0]!.id)?.content).toBe('Node');
-    }finally{get.mockRestore();}
+    }finally{get.mockRestore();prepare.mockRestore();dependency.mockRestore();}
   }finally{store.close();}
 });
 
