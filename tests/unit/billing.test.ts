@@ -212,8 +212,10 @@ describe('private receipt loader mechanics', () => {
     writeFileSync(f.proofPath, json + ' '.repeat(65536 - Buffer.byteLength(json)));
     expect(loadIncludedAdmission(f.root, f.proof.id, [])).toEqual(f.proof);
     rmSync(f.proofPath); mkdirSync(f.proofPath, { mode: 0o700 }); expect(loadIncludedAdmission(f.root, f.proof.id, [])).toBeUndefined();
-    rmSync(f.proofPath, { recursive: true }); f.writeProof(); const child = join(f.root, 'child'); mkdirSync(child, { mode: 0o700 });
-    writeFileSync(join(child, `${f.proof.id}.json`), json, { mode: 0o600 }); chmodSync(f.root, 0o755);
+    rmSync(f.proofPath, { recursive: true }); f.writeProof(); const parent = join(f.root, 'parent'), child = join(parent, 'child');
+    mkdirSync(parent, { mode: 0o700 }); mkdirSync(child, { mode: 0o700 });
+    writeFileSync(join(child, `${f.proof.id}.json`), json, { mode: 0o600 }); chmodSync(parent, 0o755);
+    // Keep f.root as the explicit private boundary above the now-public parent.
     expect(loadIncludedAdmission(child, f.proof.id, [])).toBeUndefined();
   });
   it('rejects known sync storage and symlink aliases into excluded roots', () => {
