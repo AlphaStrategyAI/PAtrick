@@ -627,7 +627,7 @@ describe('card-specific retained experience',()=>{
   });
 
   it('bounds publication and startup work by affected records and measures synchronous delay',async()=>{
-    const f=retainedLocalFixture();let engine:Workbench|undefined;
+    const totalStart=performance.now(),f=retainedLocalFixture(),seedStart=performance.now();let engine:Workbench|undefined,seedMs:number|undefined;
     try{
       const retained:ActionRecord[]=[];
       for(let i=0;i<1000;i++){
@@ -644,6 +644,7 @@ describe('card-specific retained experience',()=>{
       }
       f.store.transaction(()=>{for(const action of retained)f.store.save('actions',action);});
       for(let i=0;i<3000;i++)f.store.save('actions',{id:`other-${i}`,projectId:'p',domain:'personal',kind:'unrelated',status:'completed',payload:{},updatedAt:''});
+      seedMs=performance.now()-seedStart;
       const list=vi.spyOn(f.store,'list'),get=vi.spyOn(f.store,'get'),sweep=vi.spyOn(f.store,'experienceObservationIds');
       const start=performance.now(),eventLoop=new Promise<number>(resolve=>setImmediate(()=>resolve(performance.now()-start)));
       const linked=f.publish();
@@ -657,7 +658,7 @@ describe('card-specific retained experience',()=>{
       const actionGets=get.mock.calls.filter(([table])=>table==='actions').length;
       expect(broadObservationReads).toBe(1);expect(actionGets).toBeLessThan(4000);expect(list.mock.calls.filter(([table])=>table==='actions')).toHaveLength(0);
       console.info('experience-scale',JSON.stringify({observations:1001,unrelatedActions:3000,publishedCards:131,broadObservationReads,actionGets,publicationMs,lookupMs,startupMs,eventLoopDelayMs:delayMs}));
-    }finally{await engine?.shutdown();f.store.close();}
+    }finally{await engine?.shutdown();f.store.close();console.info('experience-scale-phase',JSON.stringify({fixtureMs:seedStart-totalStart,seedMs,totalMs:performance.now()-totalStart}));}
   });
 
   it('rejects changed candidates, copied links and retracted canonical observations',()=>{

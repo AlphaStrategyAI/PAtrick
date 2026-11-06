@@ -19,9 +19,12 @@ test('Chinese knowledge search preserves quoted evidence and source revision', a
   await expect(page.getByRole('searchbox', { name: '搜索知识' })).toHaveValue('草稿');
   const card = page.locator('.knowledge-card').first();
   await expect(card).toBeVisible();
-  await card.getByText('查看原文', { exact: true }).click();
-  await expect(card.locator('blockquote')).toBeVisible();
-  await expect(card.getByText('来源修订', { exact: false })).toBeVisible();
+  const original = card.locator('details.knowledge-evidence').filter({ hasText: '查看原文' });
+  await expect(original).toHaveCount(1);
+  await original.getByText('查看原文', { exact: true }).click();
+  await expect(original.locator('blockquote')).toHaveCount(1);
+  await expect(original.locator('blockquote')).toBeVisible();
+  await expect(original.getByText('来源修订', { exact: false })).toBeVisible();
   await page.getByRole('searchbox', { name: '搜索知识' }).fill('不存在的知识主题xqz987');
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await expect(page.getByText('没有找到相关知识', { exact: true })).toBeVisible();

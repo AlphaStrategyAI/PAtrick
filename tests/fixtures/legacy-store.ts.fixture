@@ -1,0 +1,736 @@
+import Database from 'better-sqlite3';
+import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
+import { canonicalExperiencePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, normalizationOriginPayloadSchema } from './knowledge-records.js';
+import { ingestSource, redactWithdrawnEvidence } from './intake.js';
+import { enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
+import { parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
+import { knowledgeReference, stripDerivedCardFields } from './knowledge-use.js';
+import type { KnowledgeReferenceOptions, KnowledgeView, TestObservation } from './knowledge-contract.js';
+
+const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
+const vaultTables = new Set<Table>(['sources', 'cards', 'rules', 'cases']);
+type VaultJob = { table: Table; entity: Entities[Table]; previous?: Entities[Table]; redactStructuredCard?: boolean };
+type TemporaryEntry = { entity: Entities[Table]; privacyInvalidated?: true; missingJobCardId?: string; normalizationTransient?: true };
+type ExperienceActionQuery = {scope?:Scope;cardId?:string;observationId?:string;revision?:string;after?:string;file?:string};
+type ObservationFileIndex = {files:Map<string,{all:Entities['actions'][];revisions:Map<string,Entities['actions'][]>}>;rows:Map<string,Entities['actions']>;dirty:Set<string>};
+type TemporaryHostIndex = {byBinding:Map<string,Map<string,Entities['actions'][]>>;byRoot:Map<string,Entities['actions'][]>;unrooted:Map<string,Entities['actions'][]>};
+const cardExpired=(card:KnowledgeCard):boolean=>!!card.expiresAt&&!(Date.parse(card.expiresAt)>Date.now());
+const expiryIntentLocator='withheld:expiry-intent';
+// Match the canonical host schema's nonempty, at-most-10000 UTF-16 code units.
+const identifiableHostRoot=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=10000;
+function hostRoot(row:Entities['actions']):unknown {
+  const payload=row.payload as {observation?:{origin?:{originalEventId?:unknown}}}|null;
+  return payload?.observation?.origin?.originalEventId;
+}
+
+/** SQLite owns business state; the Vault and FTS are recoverable, scoped projections. */
+export class Store {
+  private readonly db: Database.Database;
+  private temporary = new Map<string, TemporaryEntry>();
+  private vaultJobs = new Map<string, VaultJob>();
+  private depth = 0;
+  private closed = false;
+  private preserveVaultPaths = new Set<string>();
+  private observationFiles = new Map<string,ObservationFileIndex>();
+  private temporaryHosts?:TemporaryHostIndex;
+
+  constructor(databasePath: string, private readonly vaultDir?: string) {
+    if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
+    if (vaultDir) mkdirSync(vaultDir, { recursive: true });
+    this.db = new Database(databasePath);
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('foreign_keys = ON');
+    // Source retention changes must not leave removed private canonical bytes in free pages.
+    this.db.pragma('secure_delete = ON');
+    this.db.pragma('busy_timeout = 5000');
+    for (const table of tables) this.db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, domain TEXT NOT NULL, data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_scope ON ${table}(project_id, domain)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS actions_experience_card ON actions(json_extract(data,'$.kind'),project_id,domain,coalesce(json_extract(data,'$.payload.association.cardId'),json_extract(data,'$.payload.normalizationOrigin.cardId')));
+      CREATE INDEX IF NOT EXISTS actions_experience_revision ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.observation.snapshot.revision'),json_extract(data,'$.payload.observation.observedAt'));
+      CREATE INDEX IF NOT EXISTS actions_experience_time ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.observation.observedAt'));
+      CREATE INDEX IF NOT EXISTS actions_host_binding ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.sourceHash'),json_extract(data,'$.payload.requestHash'),json_extract(data,'$.payload.observation.claim.kind'),json_extract(data,'$.payload.observation.origin.originalEventId'));
+      CREATE INDEX IF NOT EXISTS actions_host_root ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.observation.origin.originalEventId'));
+      CREATE INDEX IF NOT EXISTS cards_experience_revision ON cards(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.experience.codeVersion'));
+      CREATE INDEX IF NOT EXISTS cards_experience_target ON cards(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.experience.codeVersion'),json_extract(data,'$.experience.files[0]'))`);
+    this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, project_id UNINDEXED, domain UNINDEXED, terms, tokenize='unicode61')");
+    // Read the Vault before projecting SQLite, so an independent edit is never overwritten at startup.
+    this.recoverVault();
+    this.protectTemporaryStructuredCards();
+    this.flushVault();
+    this.transaction(() => { for (const source of this.list('sources')) if (source.status === 'withdrawn') redactWithdrawnEvidence(this, source.id); });
+    if (vaultDir) for (const table of vaultTables) for (const entity of this.list(table)) this.publish({ table, entity }, true);
+    this.rebuildIndex();
+  }
+
+  get<K extends Table>(table: K, id: string): Entities[K] | undefined {
+    this.assertTable(table);
+    const temporary = this.temporary.get(`${table}:${id}`);
+    if (temporary) return this.visible(table,structuredClone(temporary.entity)) as Entities[K];
+    const row = this.db.prepare(`SELECT data FROM ${table} WHERE id = ?`).get(id) as { data: string } | undefined;
+    return row ? this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K] : undefined;
+  }
+
+  list<K extends Table>(table: K): Entities[K][] {
+    this.assertTable(table);
+    const rows = this.db.prepare(`SELECT data FROM ${table} ORDER BY rowid`).all() as { data: string }[];
+    const result = new Map(rows.map(row => { const entity = this.visible(table,JSON.parse(row.data) as Entities[Table]) as Entities[K]; return [entity.id, entity]; }));
+    for (const [key, entry] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entry.entity.id, this.visible(table,structuredClone(entry.entity)) as Entities[K]);
+    return [...result.values()];
+  }
+
+  private observationIndexKey(scope:Scope):string {return JSON.stringify([scope.projectId,scope.domain]);}
+  private updateTemporaryHost(index:TemporaryHostIndex,row:Entities['actions'],add:boolean):void {
+    if(row.kind!=='knowledge.host-observation')return;
+    const p=row.payload as {sourceHash?:unknown;requestHash?:unknown;observation?:{claim?:{kind?:unknown}}}|null;
+    const event=hostRoot(row),rooted=identifiableHostRoot(event);
+    const rootKey=JSON.stringify([row.projectId,row.domain,...(rooted?[event]:[])]),roots=rooted?index.byRoot:index.unrooted;
+    const update=(groups:Map<string,Entities['actions'][]>,key:string)=>{
+      const rows=groups.get(key)??[],position=rows.findIndex(value=>value.id===row.id);
+      if(position>=0)rows.splice(position,1);
+      if(add)rows.push(row);
+      if(rows.length)groups.set(key,rows);else groups.delete(key);
+    };
+    update(roots,rootKey);
+    if(!p||typeof p!=='object'||Array.isArray(p)||typeof p.sourceHash!=='string'||typeof p.requestHash!=='string'||typeof p.observation?.claim?.kind!=='string'||!rooted)return;
+    const key=JSON.stringify([row.projectId,row.domain,p.sourceHash,p.requestHash,p.observation.claim.kind]);
+    const group=index.byBinding.get(key)??new Map<string,Entities['actions'][]>();
+    update(group,event);
+    if(group.size)index.byBinding.set(key,group);else index.byBinding.delete(key);
+  }
+  private setTemporary(key:string,entry:TemporaryEntry):void {
+    if(this.temporaryHosts&&key.startsWith('actions:')){
+      const previous=this.temporary.get(key);
+      if(previous)this.updateTemporaryHost(this.temporaryHosts,previous.entity as Entities['actions'],false);
+      this.updateTemporaryHost(this.temporaryHosts,entry.entity as Entities['actions'],true);
+    }
+    this.temporary.set(key,entry);
+  }
+  private deleteTemporary(key:string):void {
+    const previous=this.temporary.get(key);
+    if(previous&&this.temporaryHosts&&key.startsWith('actions:'))this.updateTemporaryHost(this.temporaryHosts,previous.entity as Entities['actions'],false);
+    this.temporary.delete(key);
+  }
+  private temporaryHostIndex():TemporaryHostIndex {
+    if(!this.temporaryHosts){
+      const index:TemporaryHostIndex={byBinding:new Map(),byRoot:new Map(),unrooted:new Map()};
+      for(const [key,entry] of this.temporary)if(key.startsWith('actions:'))this.updateTemporaryHost(index,entry.entity as Entities['actions'],true);
+      this.temporaryHosts=index;
+    }
+    return this.temporaryHosts;
+  }
+  /** Scoped discovery only; every returned host row is revalidated by the caller. */
+  hostObservationActions(scope:Scope,sourceHash:string,requestHash:string,claimKind:'change-head'|'ci-result',eventId?:string):Entities['actions'][] {
+    const common=JSON.stringify([scope.projectId,scope.domain,sourceHash,requestHash,claimKind]);
+    const index=this.temporaryHostIndex();
+    const sql=`SELECT data FROM actions WHERE json_extract(data,'$.kind') = 'knowledge.host-observation' AND project_id = ? AND domain = ? AND json_extract(data,'$.payload.sourceHash') = ? AND json_extract(data,'$.payload.requestHash') = ? AND json_extract(data,'$.payload.observation.claim.kind') = ?${eventId===undefined?'':" AND json_extract(data,'$.payload.observation.origin.originalEventId') = ?"} ORDER BY rowid`;
+    const params=[scope.projectId,scope.domain,sourceHash,requestHash,claimKind,...(eventId===undefined?[]:[eventId])];
+    const rows=this.db.prepare(sql).all(...params) as {data:string}[];
+    const result=rows.map(row=>JSON.parse(row.data) as Entities['actions']).filter(row=>!this.temporary.has(`actions:${row.id}`));
+    const group=index.byBinding.get(common),temporary=eventId===undefined?[...(group?.values()??[])].flat():group?.get(eventId)??[];
+    return [...result,...temporary.map(row=>structuredClone(row))];
+  }
+  /** Same execution root across all source/request bindings, plus unrooted malformed rows. */
+  hostObservationRootActions(scope:Scope,eventId:string):Entities['actions'][] {
+    const sql="SELECT data FROM actions WHERE json_extract(data,'$.kind') = 'knowledge.host-observation' AND project_id = ? AND domain = ?";
+    const path="'$.payload.observation.origin.originalEventId'";
+    const exact=this.db.prepare(`${sql} AND json_type(data,${path}) = 'text' AND json_extract(data,${path}) = ? ORDER BY rowid`).all(scope.projectId,scope.domain,eventId) as {data:string}[];
+    // SQLite counts Unicode code points; UTF-8 bytes provide a safe superset of
+    // overlong UTF-16 strings, which are filtered precisely after decoding.
+    const unrooted=this.db.prepare(`${sql} AND (json_type(data,${path}) IS NOT 'text' OR length(json_extract(data,${path})) = 0 OR length(CAST(json_extract(data,${path}) AS BLOB)) > 10000) ORDER BY rowid`).all(scope.projectId,scope.domain) as {data:string}[];
+    const rows=[...exact.map(row=>JSON.parse(row.data) as Entities['actions']),...unrooted.map(row=>JSON.parse(row.data) as Entities['actions']).filter(row=>!identifiableHostRoot(hostRoot(row)))];
+    const result=rows.filter(row=>!this.temporary.has(`actions:${row.id}`));
+    const index=this.temporaryHostIndex(),temporary=[...(index.byRoot.get(JSON.stringify([scope.projectId,scope.domain,eventId]))??[]),...(index.unrooted.get(JSON.stringify([scope.projectId,scope.domain]))??[])];
+    return [...result,...temporary.map(row=>structuredClone(row))];
+  }
+  private markObservationDirty(action:Entities['actions']|undefined):void {
+    if(action?.kind==='experience.test-observation')this.observationFiles.get(this.observationIndexKey(action))?.dirty.add(action.id);
+  }
+  private updateObservationIndex(index:ObservationFileIndex,id:string,next?:Entities['actions']):void {
+    const prior=index.rows.get(id),old=prior?.payload.observation as TestObservation|undefined;
+    if(old){
+      for(const path of new Set(old.snapshot.files.map(file=>file?.path).filter((value):value is string=>typeof value==='string'))){
+        const entry=index.files.get(path);if(!entry)continue;
+        const remove=(rows:Entities['actions'][])=>{const position=rows.findIndex(row=>row.id===id);if(position>=0)rows.splice(position,1);};
+        remove(entry.all);const group=entry.revisions.get(old.snapshot.revision);if(group){remove(group);if(!group.length)entry.revisions.delete(old.snapshot.revision);}
+        if(!entry.all.length)index.files.delete(path);
+      }
+      index.rows.delete(id);
+    }
+    const observation=next?.payload.observation as TestObservation|undefined;
+    if(!next||next.kind!=='experience.test-observation'||!observation?.snapshot?.files||!Array.isArray(observation.snapshot.files)||typeof observation.observedAt!=='string'||!Number.isFinite(Date.parse(observation.observedAt))||typeof observation.snapshot.revision!=='string')return;
+    index.rows.set(id,next);
+    for(const path of new Set(observation.snapshot.files.map(file=>file?.path).filter((value):value is string=>typeof value==='string'))){
+      let entry=index.files.get(path);if(!entry){entry={all:[],revisions:new Map()};index.files.set(path,entry);}
+      const group=entry.revisions.get(observation.snapshot.revision)??[];entry.revisions.set(observation.snapshot.revision,group);
+      for(const rows of [entry.all,group]){let low=0,high=rows.length;const time=Date.parse(observation.observedAt);while(low<high){const mid=(low+high)>>>1;if(Date.parse((rows[mid]!.payload.observation as TestObservation).observedAt)<=time)low=mid+1;else high=mid;}rows.splice(low,0,next);}
+    }
+  }
+
+  /** Indexed, scoped candidates; temporary entries overlay persisted rows just as in get/list. */
+  experienceActions(kind:'experience.evidence-link'|'experience.test-observation',query:ExperienceActionQuery={}):Entities['actions'][] {
+    if(kind==='experience.test-observation'&&query.scope&&query.file){
+      const key=this.observationIndexKey(query.scope);let index=this.observationFiles.get(key);
+      if(!index){
+        index={files:new Map(),rows:new Map(),dirty:new Set()};
+        for(const row of this.experienceActions(kind,{scope:query.scope}))this.updateObservationIndex(index,row.id,row);
+        this.observationFiles.set(key,index);
+      }
+      for(const id of index.dirty){const row=this.get('actions',id);this.updateObservationIndex(index,id,row&&row.projectId===query.scope.projectId&&row.domain===query.scope.domain?row:undefined);}index.dirty.clear();
+      const entry=index.files.get(query.file),rows=query.revision?entry?.revisions.get(query.revision)??[]:entry?.all??[];
+      let low=0,high=rows.length;if(query.after)while(low<high){const mid=(low+high)>>>1;if(Date.parse((rows[mid]!.payload.observation as TestObservation).observedAt)<=Date.parse(query.after))low=mid+1;else high=mid;}
+      return rows.slice(low).map(row=>structuredClone(row));
+    }
+    const clauses=["json_extract(data,'$.kind') = ?"],params:(string|number)[]=[kind];
+    if(query.scope){clauses.push('project_id = ?','domain = ?');params.push(query.scope.projectId,query.scope.domain);}
+    if(query.cardId){clauses.push("coalesce(json_extract(data,'$.payload.association.cardId'),json_extract(data,'$.payload.normalizationOrigin.cardId')) = ?");params.push(query.cardId);}
+    if(query.observationId){clauses.push("json_extract(data,'$.payload.association.observationId') = ?");params.push(query.observationId);}
+    if(query.revision){clauses.push("json_extract(data,'$.payload.observation.snapshot.revision') = ?");params.push(query.revision);}
+    if(query.after){clauses.push("julianday(json_extract(data,'$.payload.observation.observedAt')) > julianday(?)");params.push(query.after);}
+    if(query.file){clauses.push("EXISTS (SELECT 1 FROM json_each(data,'$.payload.observation.snapshot.files') f WHERE json_extract(f.value,'$.path') = ?)");params.push(query.file);}
+    const rows=this.db.prepare(`SELECT data FROM actions WHERE ${clauses.join(' AND ')} ORDER BY rowid`).all(...params) as {data:string}[];
+    const values=new Map(rows.map(row=>{const action=JSON.parse(row.data) as Entities['actions'];return [action.id,action];}));
+    for(const [key,entry] of this.temporary)if(key.startsWith('actions:')){
+      const action=structuredClone(entry.entity) as Entities['actions'];values.delete(action.id);
+      const p=action.payload as {association?:{cardId?:string;observationId?:string};normalizationOrigin?:{cardId?:string};observation?:TestObservation};
+      if(action.kind!==kind||query.scope&&(action.projectId!==query.scope.projectId||action.domain!==query.scope.domain)||query.cardId&&(p.association?.cardId??p.normalizationOrigin?.cardId)!==query.cardId||query.observationId&&p.association?.observationId!==query.observationId||query.revision&&p.observation?.snapshot?.revision!==query.revision||query.after&&!(p.observation?.observedAt&&Date.parse(p.observation.observedAt)>Date.parse(query.after))||query.file&&!p.observation?.snapshot?.files?.some(file=>file.path===query.file))continue;
+      values.set(action.id,action);
+    }
+    return [...values.values()];
+  }
+
+  experienceCandidates(observation:TestObservation):KnowledgeCard[] {
+    const paths=[...new Set(observation.snapshot.files.map(file=>file.path))];if(!paths.length)return [];
+    const sql=`SELECT data FROM cards WHERE json_extract(data,'$.kind') = 'experience' AND project_id = ? AND domain = ? AND json_extract(data,'$.experience.codeVersion') IN (?, 'unknown') AND json_extract(data,'$.experience.files[0]') IN (${paths.map(()=>'?').join(',')}) ORDER BY rowid`;
+    const rows=this.db.prepare(sql).all(observation.projectId,observation.domain,observation.snapshot.revision,...paths) as {data:string}[];
+    const values=new Map(rows.map(row=>{const card=this.visible('cards',JSON.parse(row.data)) as KnowledgeCard;return [card.id,card];}));
+    for(const [key,entry] of this.temporary)if(key.startsWith('cards:')){
+      const card=this.visible('cards',structuredClone(entry.entity)) as KnowledgeCard;values.delete(card.id);
+      if(card.kind==='experience'&&card.projectId===observation.projectId&&card.domain===observation.domain&&card.experience&&(card.experience.codeVersion===observation.snapshot.revision||card.experience.codeVersion==='unknown')&&!!card.experience.files[0]&&paths.includes(card.experience.files[0]))values.set(card.id,card);
+    }
+    return [...values.values()];
+  }
+
+  /** Keep a version derived from temporary evidence in memory over the original durable candidate. */
+  saveTemporaryNormalizedExperienceCard(card:KnowledgeCard):void {
+    const key=`cards:${card.id}`,previous=this.temporary.get(key);
+    this.setTemporary(key,{...previous,entity:structuredClone(card),normalizationTransient:true});
+  }
+
+  save<K extends Table>(table: K, entity: Entities[K]): void {
+    this.assertTable(table);
+    const previous = this.get(table, entity.id);
+    const withdrawing=table==='cards'&&(entity as KnowledgeCard).status==='withdrawn'&&
+      (previous as KnowledgeCard|undefined)?.status==='active'&&(previous as KnowledgeCard).kind==='experience';
+    // Retiring the associations and the card is one transaction, including
+    // the in-memory overlay and the queued Vault projection.
+    if(withdrawing&&!this.depth){this.transaction(()=>this.save(table,entity));return;}
+    if(withdrawing){
+      const card=previous as KnowledgeCard;
+      for(const row of this.experienceActions('experience.evidence-link',{scope:card,cardId:card.id})){
+        const parsed=canonicalExperiencePayloadSchema.safeParse(row.payload),origin=normalizationOriginPayloadSchema.safeParse(row.payload);
+        if(row.status==='completed'&&(parsed.success&&parsed.data.association.cardId===card.id||origin.success&&origin.data.normalizationOrigin.cardId===card.id))this.save('actions',{...row,status:'pending'});
+      }
+    }
+    if(table==='sources'&&previous)this.observationFiles.clear();
+    if(table==='actions'){this.markObservationDirty(previous as Entities['actions']|undefined);this.markObservationDirty(entity as Entities['actions']);}
+    let value = structuredClone(entity);
+    if(table==='cards')stripDerivedCardFields(value);
+    const key = `${table}:${entity.id}`,structured=table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard);
+    const priorEntry=this.temporary.get(key);
+    if(table==='cards'&&priorEntry?.normalizationTransient){
+      const incoming=value as KnowledgeCard,overlay=priorEntry.entity as KnowledgeCard;
+      const row=this.db.prepare('SELECT data FROM cards WHERE id = ?').get(entity.id) as {data:string}|undefined;
+      const base=row?JSON.parse(row.data) as KnowledgeCard:undefined;
+      const sameIdentity=!!base&&base.id===incoming.id&&base.sourceId===incoming.sourceId&&base.sourceRevision===incoming.sourceRevision&&
+        base.projectId===incoming.projectId&&base.domain===incoming.domain;
+      const retainsVersion=!!incoming.experience&&!!overlay.experience&&incoming.experience.codeVersion===overlay.experience.codeVersion;
+      // Only the observed version remains transient. Authored fields are always
+      // projected onto the durable unknown-version base.
+      if(incoming.status==='active'&&base?.experience?.codeVersion==='unknown'&&sameIdentity&&retainsVersion&&incoming.experience&&!this.isTemporaryDerived('cards',base)){
+        const durable:KnowledgeCard={...incoming,experience:{...incoming.experience,codeVersion:'unknown'}};
+        this.write('cards',durable);this.indexCard(durable);
+        this.vaultJobs.set(key,{table:'cards',entity:durable,previous:base});
+        if(!this.depth)this.flushVault();
+        this.setTemporary(key,{...priorEntry,entity:value});return;
+      }
+      if(incoming.status==='active'&&!base&&retainsVersion&&incoming.sourceId===overlay.sourceId&&incoming.sourceRevision===overlay.sourceRevision&&incoming.projectId===overlay.projectId&&incoming.domain===overlay.domain&&this.isTemporaryDerived('cards',incoming)){
+        this.setTemporary(key,{...priorEntry,entity:value});return;
+      }
+      // A removed descriptor, changed version or changed identity ends the overlay.
+      // Do not carry its revision into a newly durable identity.
+      for(const row of this.experienceActions('experience.evidence-link',{scope:overlay,cardId:overlay.id})){
+        const actionKey=`actions:${row.id}`,entry=this.temporary.get(actionKey),parsed=canonicalExperiencePayloadSchema.safeParse(row.payload);
+        if(entry&&row.status==='completed'&&parsed.success&&parsed.data.association.versionBinding)this.setTemporary(actionKey,{...entry,entity:{...row,status:'pending'}});
+      }
+      if(retainsVersion&&incoming.experience)value={...incoming,experience:{...incoming.experience,codeVersion:'unknown'}} as Entities[K];
+      if(base&&!sameIdentity&&!this.isTemporaryDerived('cards',base)&&this.isTemporaryDerived('cards',value)){
+        // A temporary replacement must not uncover the old durable card on restart.
+        const retired:KnowledgeCard={...base,status:'withdrawn',experience:undefined};
+        this.write('cards',retired);this.indexCard(retired);
+        this.vaultJobs.set(key,{table:'cards',entity:retired,previous:base});
+        if(!this.depth)this.flushVault();
+      }
+      this.deleteTemporary(key);
+    }
+    if(table==='actions'){
+      const parsed=canonicalExperiencePayloadSchema.safeParse((value as Entities['actions']).payload);
+      if(parsed.success&&parsed.data.association.versionBinding&&this.temporary.get(`cards:${parsed.data.association.cardId}`)?.normalizationTransient){
+        this.setTemporary(key,{entity:value});this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);return;
+      }
+    }
+    // A sanitized origin inherits the prior row's temporary lifetime even after old refs disappear.
+    if(table==='actions'&&this.temporary.has(key)&&normalizationOriginPayloadSchema.safeParse((value as Entities['actions']).payload).success){
+      this.setTemporary(key,{entity:value});this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);return;
+    }
+    let card=structured?value as KnowledgeCard:undefined;
+    if(card?.status==='active'&&previous&&(previous as KnowledgeCard).status==='withdrawn'){
+      const existing=previous as KnowledgeCard,entry=this.temporary.get(key),source=this.get('sources',card.sourceId);
+      if(cardExpired(existing)||!existing.expiresAt||!(entry?.missingJobCardId===card.id||this.isStructuredCardExpiryIntent(existing))||
+        existing.sourceId!==card.sourceId||existing.sourceRevision!==card.sourceRevision||existing.projectId!==card.projectId||existing.domain!==card.domain||
+        card.id!==structuredKnowledgeCardId(card)||card.verification!=='reported'||card.claim||!source?.content.includes(card.quote)||this.structuredCardDependencyState(card)==='unknown')return;
+      card={...card,expiresAt:existing.expiresAt};value=card as Entities[K];
+      this.deleteTemporary(key);
+      for(const [actionKey,action] of this.temporary)if(action.missingJobCardId===card.id)this.deleteTemporary(actionKey);
+    }
+    const inactive=!!card&&(card.status==='withdrawn'||cardExpired(card));
+    const unknown=!!card&&this.structuredCardDependencyState(card)==='unknown',source=card&&this.get('sources',card.sourceId);
+    const missingJobCard=unknown&&!inactive&&!!source&&source.status==='active'&&!this.get('actions',structuredKnowledgeJobId(source));
+    if(card&&inactive)value=this.structuredCardTombstone(card) as Entities[K];
+    else if(card&&unknown)value=this.redactStructuredCard(card) as Entities[K];
+    if (table === 'cards' && !this.cardActive(value as KnowledgeCard, value)) delete (value as KnowledgeCard).experience;
+    if (table === 'sources' && (value as Entities['sources']).retention === 'ephemeral') {
+      this.setTemporary(key, {entity:value});
+      this.write(table, { ...value, content: '', title: 'Temporary source' } as Entities[K]);
+      this.protectTemporaryKnowledgeActions();
+      this.protectTemporaryStructuredCards();
+      if (!this.depth) this.flushVault();
+      return;
+    }
+    if (this.isTemporaryDerived(table, value)) {
+      const prior=this.temporary.get(key);
+      this.setTemporary(key, {entity:value,...(unknown&&!inactive?{privacyInvalidated:true as const}:{}),...(missingJobCard?{missingJobCardId:entity.id}:{})});
+      if(table === 'actions'){
+        this.db.prepare('DELETE FROM actions WHERE id = ?').run(entity.id);
+        if((value as Entities['actions']).kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
+      }
+      if(table==='cards'&&isStructuredKnowledgeCard(value as KnowledgeCard)){
+        if(inactive)this.write('cards',this.structuredCardTombstone(entity as KnowledgeCard));
+        else if(card?.expiresAt&&Number.isFinite(Date.parse(card.expiresAt))){
+          const recoverable=!unknown||missingJobCard||prior?.missingJobCardId===entity.id;
+          this.write('cards',recoverable?this.structuredCardExpiryIntent(card):this.structuredCardTombstone(card));
+        }
+        else this.db.prepare('DELETE FROM cards WHERE id = ?').run(entity.id);
+        this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(entity.id);
+        this.queueStructuredCardRedaction(value as KnowledgeCard);
+        if(!this.depth)this.flushVault();
+      }
+      return;
+    }
+    if (this.isTemporaryTaskEntity(table, value)) {
+      this.setTemporary(key, {entity:value});
+      this.write(table, this.redactTemporary(table, value) as Entities[K]);
+      return;
+    }
+    this.deleteTemporary(key);
+    this.write(table, value);
+    if(table==='actions'&&((value as Entities['actions']).kind==='knowledge.structured-ingest'||(previous as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest')){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
+    if (table === 'cards') this.indexCard(value as KnowledgeCard);
+    if (table === 'sources') {
+      const source = value as Entities['sources'];
+      this.protectTemporaryKnowledgeActions();
+      this.protectTemporaryStructuredCards();
+      if (source.status !== 'active') this.db.prepare('DELETE FROM cards_fts WHERE id IN (SELECT json_extract(data, \'$.id\') FROM cards WHERE json_extract(data, \'$.sourceId\') = ?)').run(source.id);
+    }
+    if (vaultTables.has(table)) {
+      this.vaultJobs.set(key, { table, entity: value, previous });
+      if (!this.depth) this.flushVault();
+    }
+  }
+
+  delete(table: Table, id: string): void {
+    this.assertTable(table); const entity = this.get(table, id);
+    if(table==='sources')this.observationFiles.clear();
+    if(table==='actions')this.markObservationDirty(entity as Entities['actions']|undefined);
+    this.deleteTemporary(`${table}:${id}`);
+    this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    if(table==='actions'&&(entity as Entities['actions']|undefined)?.kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
+    if (table === 'cards') this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(id);
+    if (entity && this.vaultDir && vaultTables.has(table)) {
+      const path = this.vaultPath(table, entity);
+      // Deletions are represented by a tombstone in the same post-commit projection queue.
+      this.vaultJobs.set(`${table}:${id}`, { table, entity: { ...entity, status: 'withdrawn' } as Entities[Table], previous: entity });
+      if (!this.depth && existsSync(path)) this.flushVault();
+    }
+  }
+
+  transaction<T>(fn: () => T): T {
+    const previousJobs = new Map(this.vaultJobs); const previousTemporary = new Map(this.temporary);
+    this.depth++;
+    let result: T;
+    try {
+      result = this.db.transaction(() => {
+        const value = fn();
+        if (value && typeof (value as { then?: unknown }).then === 'function') throw new Error('Store transactions must be synchronous.');
+        return value;
+      })();
+    } catch (error) {
+      this.depth--;
+      this.vaultJobs = previousJobs; this.temporary = previousTemporary;
+      this.observationFiles.clear();
+      this.temporaryHosts=undefined;
+      throw error;
+    }
+    this.depth--;
+    if (!this.depth) this.flushVault();
+    return result;
+  }
+
+  searchCards(query: string, scope: Scope, limit = 20, options: KnowledgeReferenceOptions = {}): KnowledgeView[] {
+    const terms = tokenize(query).split(' ').filter(Boolean);
+    if (!terms.length) return [];
+    const match = [...new Set(terms)].map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
+    const maximum=Number.isFinite(limit)?Math.max(1,Math.min(100,Math.floor(limit))):20,results:KnowledgeView[]=[];
+    const statement=this.db.prepare('SELECT id FROM cards_fts WHERE cards_fts MATCH ? AND project_id = ? AND domain = ? ORDER BY bm25(cards_fts), id LIMIT 100 OFFSET ?');
+    for(let offset=0;offset<1000&&results.length<maximum;offset+=100){
+      const rows=statement.all(match,scope.projectId,scope.domain,offset);
+      for(const row of rows){if(!row||typeof row!=='object'||!('id' in row)||typeof row.id!=='string')continue;const card=this.get('cards',row.id);if(!card||!this.cardActive(card,scope))continue;const view=knowledgeReference(this,card,scope,options);if(view)results.push(view);if(results.length===maximum)break;}
+      if(rows.length<100)break;
+    }
+    return results;
+  }
+
+  indexCard(card: KnowledgeCard): void {
+    this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);
+    if (!this.cardActive(card, card) || this.isTemporaryDerived('cards',card)) return;
+    this.db.prepare('INSERT INTO cards_fts(id, project_id, domain, terms) VALUES (?, ?, ?, ?)').run(card.id, card.projectId, card.domain, tokenize([card.title, card.aliases.join(' '), card.experience?.problem ?? '', card.experience?.symptomAliases.join(' ') ?? '', card.body, card.quote].join(' ')));
+  }
+
+  rebuildIndex(): void {
+    this.recoverVault();
+    this.db.transaction(() => { this.db.exec('DELETE FROM cards_fts'); for (const card of this.list('cards')) this.indexCard(card); })();
+  }
+
+  async backup(destination: string): Promise<void> { mkdirSync(dirname(destination), { recursive: true }); await this.db.backup(destination); }
+  vaultDirectory():string|undefined{return this.vaultDir;}
+  close(): void { if (this.closed) return; this.db.close(); this.closed = true; this.temporary.clear(); this.observationFiles.clear(); this.temporaryHosts=undefined; }
+
+  private write<K extends Table>(table: K, entity: Entities[K]): void {
+    this.db.prepare(`INSERT INTO ${table}(id, project_id, domain, data) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, domain = excluded.domain, data = excluded.data`).run(entity.id, entity.projectId, entity.domain, JSON.stringify(entity));
+  }
+  private assertTable(table: string): void { if (!tables.includes(table as Table)) throw new Error('Unknown entity table.'); }
+  private visible(table:Table,entity:Entities[Table]):Entities[Table] {
+    if(table==='cards'){
+      const card=entity as KnowledgeCard;
+      if(isStructuredKnowledgeCard(card)&&cardExpired(card))return this.structuredCardTombstone(card);
+    }
+    return entity;
+  }
+  private cardActive(card: KnowledgeCard, scope: Scope): boolean {
+    const source = this.get('sources', card.sourceId);
+    return card.status === 'active' && card.projectId === scope.projectId && card.domain === scope.domain && (!card.expiresAt || Date.parse(card.expiresAt) > Date.now()) && source?.status === 'active' && source.revision === card.sourceRevision && source.projectId === card.projectId && source.domain === card.domain;
+  }
+  private isTemporaryDerived(table: Table, entity: Entities[Table]): boolean {
+    if (table === 'actions') return this.temporaryKnowledgeAction(entity as Entities['actions']);
+    if (table === 'cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard)) return this.temporaryStructuredCard(entity as KnowledgeCard);
+    if (!['cards', 'rules', 'cases'].includes(table)) return false;
+    if ('sourceId' in entity) return this.get('sources', entity.sourceId)?.retention === 'ephemeral';
+    if ('citations' in entity) return entity.citations.some(c => this.get('sources', c.sourceId)?.retention === 'ephemeral');
+    return false;
+  }
+  private temporaryKnowledgeAction(action:Entities['actions']):boolean {
+    const dependencies=knowledgeActionDependencies(action);
+    return dependencies.unresolved||dependencies.refs.some(ref=>this.temporarySourceDependency(ref.id));
+  }
+  private protectTemporaryKnowledgeActions():void {
+    for(const action of this.list('actions'))if(this.temporaryKnowledgeAction(action)){
+      this.setTemporary(`actions:${action.id}`,{entity:action});this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+    }
+  }
+  private structuredCardDependencyState(card:KnowledgeCard):'unknown'|'temporary'|'permanent' {
+    const source=this.get('sources',card.sourceId);if(!source||source.revision!==card.sourceRevision)return 'unknown';
+    const action=this.get('actions',structuredKnowledgeJobId(source)),job=action&&structuredIngestJobSchema.safeParse(action.payload);
+    if(!action||action.kind!=='knowledge.structured-ingest'||!job?.success||action.projectId!==card.projectId||action.domain!==card.domain||job.data.sourceId!==source.id||job.data.sourceRevision!==source.revision||job.data.sourceHash!==digest(source.content)||!validStructuredJobRefs(this,source,job.data.sourceRefs))return 'unknown';
+    if(job.data.sourceRefs.some(ref=>{const dependency=this.get('sources',ref.id),hash=this.get('cursors',stableId('source-hash',ref.id))?.value;return !dependency||!!hash&&hash!==digest(dependency.content);}))return 'unknown';
+    if(!(action.status==='pending'&&['queued','pending-readback'].includes(job.data.phase)||action.status==='completed'&&job.data.phase==='processed'))return 'unknown';
+    const project=this.get('projects',card.projectId);if(!project)return 'unknown';
+    try{
+      const parsed=parseStructuredKnowledge(source,project);if(!parsed)return 'unknown';
+      if(parsed.kind==='experience'&&parsed.input.issueId){const issue=this.get('sources',parsed.input.issueId);if(issue&&(issue.status!=='active'||issue.projectId!==source.projectId||issue.domain!==source.domain||issue.retention==='ephemeral'&&!issue.content))return 'unknown';}
+      const request=structuredRepositoryRequest(this,source,project,parsed),expected=knowledgeRequestSourceRefs(this,source.id,project,request);
+      if(!expected||digest(expected)!==digest(job.data.sourceRefs))return 'unknown';
+    }catch{return 'unknown';}
+    return job.data.sourceRefs.some(ref=>this.temporarySourceDependency(ref.id))?'temporary':'permanent';
+  }
+  private temporaryStructuredCard(card:KnowledgeCard):boolean {return this.structuredCardDependencyState(card)!=='permanent';}
+  private redactStructuredCard(card:KnowledgeCard):KnowledgeCard {return {...card,status:'withdrawn',title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`};}
+  private structuredCardTombstone(card:KnowledgeCard):KnowledgeCard {
+    const expiry=card.expiresAt?Date.parse(card.expiresAt):NaN;
+    return {id:card.id,projectId:card.projectId,domain:card.domain,sourceId:card.sourceId,sourceRevision:card.sourceRevision,status:'withdrawn',kind:'fact',verification:'reported',title:'',body:'',quote:'',locator:'',aliases:[],createdAt:'',...(Number.isFinite(expiry)&&card.expiresAt?{expiresAt:card.expiresAt}:{})};
+  }
+  private structuredCardExpiryIntent(card:KnowledgeCard):KnowledgeCard {return {...this.structuredCardTombstone(card),locator:expiryIntentLocator};}
+  private isStructuredCardExpiryIntent(card:KnowledgeCard):boolean {
+    return card.status==='withdrawn'&&card.locator===expiryIntentLocator&&!!card.expiresAt&&Number.isFinite(Date.parse(card.expiresAt))&&card.kind==='fact'&&card.verification==='reported'&&!card.title&&!card.body&&!card.quote&&!card.createdAt&&!card.aliases.length&&!card.experience&&!card.claim&&!card.pendingClaim;
+  }
+  private queueStructuredCardRedaction(card:KnowledgeCard):void {
+    if(!this.vaultDir)return;
+    const path=this.vaultPath('cards',card),directory=dirname(path),prefix=path.slice(path.lastIndexOf('/')+1).replace(/\.md$/,'.conflict-');
+    if(existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.vaultJobs.set(`cards:${card.id}`,{table:'cards',entity:card,redactStructuredCard:true});
+  }
+  private protectTemporaryStructuredCards():void {
+    for(const card of this.list('cards'))if(isStructuredKnowledgeCard(card)){
+      const key=`cards:${card.id}`,entry=this.temporary.get(key),state=this.structuredCardDependencyState(card),unknown=state==='unknown',expired=cardExpired(card),intent=this.isStructuredCardExpiryIntent(card);
+      if(!unknown&&!expired&&entry?.missingJobCardId===card.id){
+        if(card.expiresAt)continue;
+        // Drop only automatically invalidated placeholders. A fresh processor must rebuild
+        // the description and perform a new authenticated read before it can link facts.
+        this.deleteTemporary(key);
+        for(const [actionKey,action] of this.temporary)if(action.missingJobCardId===card.id)this.deleteTemporary(actionKey);
+        continue;
+      }
+      if(state==='permanent'&&!expired)continue;
+      const source=this.get('sources',card.sourceId),missing=!!source&&!this.get('actions',structuredKnowledgeJobId(source));
+      const automatic=!!entry?.privacyInvalidated||intent||card.status==='active'&&!expired;
+      let validIssue=true;
+      if(source){const project=this.get('projects',source.projectId);try{const parsed=project&&parseStructuredKnowledge(source,project);if(parsed?.kind==='experience'&&parsed.input.issueId){const issue=this.get('sources',parsed.input.issueId);validIssue=!issue||issue.status==='active'&&issue.projectId===source.projectId&&issue.domain===source.domain&&!(issue.retention==='ephemeral'&&!issue.content);}}catch{validIssue=false;}}
+      const recoverable=unknown&&automatic&&!expired&&source?.status==='active'&&validIssue&&(entry?.privacyInvalidated?entry.missingJobCardId===card.id:intent||missing);
+      const redacted=unknown?this.redactStructuredCard(card):card;
+      this.setTemporary(key,{entity:redacted,...(unknown&&automatic?{privacyInvalidated:true as const}:{}),...(recoverable?{missingJobCardId:card.id}:{})});
+      if((recoverable||state==='temporary'&&card.status==='active'&&!expired)&&card.expiresAt&&Number.isFinite(Date.parse(card.expiresAt)))this.write('cards',this.structuredCardExpiryIntent(card));
+      else if(card.expiresAt||!automatic&&card.status==='withdrawn'||intent&&!recoverable)this.write('cards',this.structuredCardTombstone(card));
+      else this.db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
+      this.db.prepare('DELETE FROM cards_fts WHERE id = ?').run(card.id);this.queueStructuredCardRedaction(card);
+      for(const action of this.list('actions'))if((action.kind==='knowledge.evidence-link'&&(action.payload.link as {cardId?:unknown}|undefined)?.cardId===card.id)||(action.kind==='experience.evidence-link'&&canonicalExperiencePayloadSchema.safeParse(action.payload).data?.association.cardId===card.id)){
+        this.setTemporary(`actions:${action.id}`,{entity:unknown?{...action,status:'completed',payload:{retracted:true,sourceIds:[card.sourceId]}}:action,...(unknown&&recoverable?{missingJobCardId:card.id}:{})});this.db.prepare('DELETE FROM actions WHERE id = ?').run(action.id);
+      }
+    }
+  }
+  private temporarySourceDependency(id:string, seen=new Set<string>()):boolean {
+    if(seen.has(id))return true;seen.add(id);const source=this.get('sources',id);
+    const temporary=!source||source.retention==='ephemeral'||!!source.parentSources?.some(ref=>this.temporarySourceDependency(ref.id,seen));
+    seen.delete(id);return temporary;
+  }
+  private isTemporaryTaskEntity(table: Table, entity: Entities[Table]): boolean {
+    const task = table === 'tasks' ? entity as Entities['tasks'] : 'taskId' in entity && entity.taskId ? this.get('tasks', entity.taskId) : undefined;
+    return !!task && this.get('sources', task.sourceId)?.retention === 'ephemeral';
+  }
+  private redactTemporary(table: Table, entity: Entities[Table]): Entities[Table] {
+    if (table === 'tasks') return { ...entity, title: 'Temporary task', description: '', decision: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, baselineFiles: undefined, error: 'Temporary content is kept only in the active process.' } as Entities['tasks'];
+    if (table === 'events') return { ...entity, message: 'Temporary task event.', data: {} } as Entities['events'];
+    if (table === 'attempts') {
+      const attempt = entity as Entities['attempts'];
+      // Retain only fixed accounting/availability codes, never provider or source text.
+      const error = ['attempt_abandoned_after_host_restart', 'billing_policy_violation', 'subscription_unavailable'].includes(attempt.error ?? '') ? attempt.error : undefined;
+      return { ...attempt, error };
+    }
+    if (table === 'actions') return { ...entity, payload: {} } as Entities['actions'];
+    if (table === 'outbox') return { ...entity, text: '', status: 'sent', remoteId: 'expired-temporary' } as Entities['outbox'];
+    if (table === 'questions') {
+      const q = entity as Entities['questions']; const option = { label: '[expired]', description: '[expired]', rationale: '[expired]', tradeoff: '[expired]', evidenceUrls: [] };
+      return { ...q, title: 'Temporary question', context: '', status: 'stale', options: { A: option, B: option }, research: { queries: [], summary: '', gaps: [] }, answer: q.answer ? { ...q.answer, text: '' } : undefined };
+    }
+    return entity;
+  }
+  private vaultPath(table: Table, entity: Entities[Table]): string {
+    const segment = (text: string) => encodeURIComponent(text).replaceAll('.', '%2E');
+    return join(this.vaultDir!, segment(entity.projectId), segment(entity.domain), table, `${segment(entity.id)}.md`);
+  }
+  private markdown(table: Table, entity: Entities[Table]): string {
+    entity = this.vaultEntity(table, entity);
+    const meta = ['---', `id: ${JSON.stringify(entity.id)}`, `project: ${JSON.stringify(entity.projectId)}`, `domain: ${JSON.stringify(entity.domain)}`, `type: ${table}`, `patrick_entity: ${JSON.stringify(entity)}`];
+    if ('status' in entity) meta.push(`status: ${entity.status}`);
+    if ('sourceId' in entity) meta.push(`source: ${JSON.stringify(entity.sourceId)}`);
+    if ('sourceRevision' in entity) meta.push(`revision: ${JSON.stringify(entity.sourceRevision)}`);
+    if ('verification' in entity) meta.push(`verification: ${entity.verification}`);
+    meta.push('---', '');
+    if ('status' in entity && !['active'].includes(entity.status)) return `${meta.join('\n')}\nEvidence is no longer active.\n`;
+    const title = 'title' in entity ? entity.title : 'originalWords' in entity ? 'Decision case' : entity.id;
+    let body = '';
+    if (table === 'sources') body = (entity as Entities['sources']).content;
+    if (table === 'cards') {
+      const card = entity as Entities['cards'], experience = card.experience;
+      const description = card.kind === 'experience' ? `\n\nExperience: pending (reported description; no host evidence)${experience ? `\nReported problem: ${experience.problem}\nReported solution: ${experience.solution}\nReported files: ${experience.files.join(', ')}\nReported product: ${experience.productId}\nReported code version: ${experience.codeVersion}\nReported environment: ${experience.environment}\nReported invalidation conditions: ${experience.invalidationConditions.join('; ')}` : '\nReported details unavailable (legacy card).'}` : '';
+      body = `${card.body}${description}\n\n> ${card.quote.replaceAll('\n', '\n> ')}\n\nSource: ${card.locator}\nRevision: ${card.sourceRevision}`;
+    }
+    if (table === 'rules') { const rule = entity as Entities['rules']; body = `${rule.statement}\n\nKind: ${rule.kind}\nVersion: ${rule.version}\nConditions: ${rule.conditions}\nExceptions: ${rule.exceptions}\n\n${rule.citations.map(c => `> ${c.quote}\n\nSource: ${c.locator} (${c.revision})`).join('\n\n')}`; }
+    if (table === 'cases') {
+      const c = entity as Entities['cases'], s = c.decisionSnapshot;
+      body = `${c.originalWords}\n\nChoice: ${c.choice}\nActor: ${c.actorId}\nQuestion: ${c.questionId}\nRationale: ${c.rationale}\n\n## Judgment at the time\n\n${s ? `Goal: ${s.goal.title}\n\n${s.decision.summary}\n\n${s.decision.rationale}\n\nExpected outcome: ${s.expectedOutcome ?? 'Not stated'}\n\n${s.rules.map(rule => `Used rule: ${rule.title} @ v${rule.version}\n${rule.statement}`).join('\n\n')}` : 'Historical judgment snapshot unavailable.'}\n\n## Observed results\n\n${c.outcomes?.length ? c.outcomes.map(outcome => `${outcome.recordedAt} · Receipt ${outcome.receiptId}\n${outcome.summary}`).join('\n\n') : c.outcome ?? 'Not observed'}`;
+    }
+    return `${meta.join('\n')}\n# ${title}\n\n${body}\n`;
+  }
+  private publish(job: VaultJob, startup = false): void {
+    if (!this.vaultDir || !job.redactStructuredCard && (this.isTemporaryDerived(job.table, job.entity) || job.table === 'sources' && (job.entity as Entities['sources']).retention === 'ephemeral')) return;
+    const card=job.entity as KnowledgeCard;
+    const entity=job.redactStructuredCard?{...card,status:'withdrawn' as const,title:'[withdrawn]',body:'',quote:'',aliases:[],experience:undefined,claim:undefined,pendingClaim:undefined,locator:`withdrawn:${card.sourceId}`} : job.entity;
+    const path = this.vaultPath(job.table, entity); const body = this.markdown(job.table, entity);
+    const effective = this.vaultEntity(job.table, entity);
+    const inactive = 'status' in effective && effective.status !== 'active';
+    if (startup && !inactive && this.preserveVaultPaths.has(path)) return;
+    mkdirSync(dirname(path), { recursive: true });
+    if (inactive) {
+      const prefix = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '.conflict-');
+      for (const name of readdirSync(dirname(path))) if (name.startsWith(prefix) && name.endsWith('.md')) writeFileSync(join(dirname(path), name), body, { mode: 0o600 });
+    }
+    if (existsSync(path)) {
+      const previous = readFileSync(path, 'utf8');
+      if (previous === body) return;
+      if (!inactive && (!job.previous || previous !== this.markdown(job.table, job.previous))) {
+        const conflict = path.replace(/\.md$/, `.conflict-${digest(previous).slice(0, 12)}.md`);
+        if (!existsSync(conflict)) writeFileSync(conflict, previous, { flag: 'wx', mode: 0o600 });
+      }
+    }
+    const temporaryPath = `${path}.tmp-${process.pid}`;
+    try { writeFileSync(temporaryPath, body, { mode: 0o600 }); renameSync(temporaryPath, path); }
+    finally { if (existsSync(temporaryPath)) unlinkSync(temporaryPath); }
+  }
+  private flushVault(): void { const jobs = [...this.vaultJobs.values()]; this.vaultJobs.clear(); for (const job of jobs) this.publish(job); }
+
+  private vaultEntity(table: Table, entity: Entities[Table]): Entities[Table] {
+    if (table === 'sources') { const s = entity as Entities['sources']; return s.status === 'active' ? s : { ...s, title: '[withdrawn]', content: '', locator: `withdrawn:${s.id}` }; }
+    if (table === 'cards') { const c = entity as Entities['cards']; return this.cardActive(c, c) ? c : { ...c, status: 'withdrawn', title: '[withdrawn]', body: '', quote: '', aliases: [], experience: undefined, locator: `withdrawn:${c.sourceId}` }; }
+    if (table === 'rules') {
+      const r = entity as Entities['rules'];
+      if (r.status !== 'active' || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision; })) return { ...r, status: 'suspended', title: '[withdrawn]', statement: '[Evidence no longer active]', conditions: '[withdrawn]', exceptions: '[withdrawn]', citations: r.citations.map(c => ({ ...c, quote: '[inactive]', locator: `withdrawn:${c.sourceId}` })) };
+    }
+    if (table === 'cases') { const c = entity as Entities['cases']; if (c.status !== 'active' || this.get('sources', c.sourceId)?.status !== 'active' || c.decisionSnapshot?.sourceRefs.some(ref => { const source = this.get('sources', ref.id); return source?.status !== 'active' || source.revision !== ref.revision; })) return { ...c, status: 'withdrawn', originalWords: '[withdrawn]', rationale: '[withdrawn]', alternatives: [], outcome: undefined, decisionSnapshot: undefined, outcomes: undefined }; }
+    return entity;
+  }
+
+  private ordinarySourceIdentity(source: Entities['sources']): boolean {
+    return ['file', 'feishu', 'github', 'conversation', 'manual', 'reading'].includes(source.kind)
+      && typeof source.externalId === 'string' && !!source.externalId.trim()
+      && source.id === stableId('source', { projectId: source.projectId, domain: source.domain }, source.kind, source.externalId, source.revision);
+  }
+
+  /** Missing rows must match a host-generated identity; editable classification is not authority. */
+  private recoverableSourceIdentity(source: Entities['sources'], trustedQuestions: ReadonlyMap<string, Entities['questions']>): boolean {
+    if (this.ordinarySourceIdentity(source)) return true;
+    if (source.kind !== 'conversation' || typeof source.externalId !== 'string' || !source.externalId.startsWith('answer:')) return false;
+    const question = trustedQuestions.get(source.externalId.slice('answer:'.length));
+    if (!question || question.status !== 'answered' || !question.answer || source.id !== stableId('owner-answer', question.id)) return false;
+    const project = this.get('projects', question.projectId), task = this.get('tasks', question.taskId);
+    const primary = task && this.get('sources', task.sourceId);
+    return !!project && !!task && !!primary && question.projectId === source.projectId && question.domain === source.domain
+      && project.domain === source.domain && project.ownerId === question.ownerId && question.answer.actorId === project.ownerId
+      && source.authorId === project.ownerId && task.projectId === source.projectId && task.domain === source.domain && task.version >= question.taskVersion
+      && primary.status === 'active' && primary.revision === task.sourceRevision && primary.projectId === source.projectId && primary.domain === source.domain
+      && source.retention === primary.retention && source.revision === digest(question.answer.text) && source.content === question.answer.text
+      && source.locator === `question:${question.id}@${question.version}`;
+  }
+
+  /** Import only our structured card format; existing withdrawal records always win. */
+  private recoverVault(): void {
+    if (!this.vaultDir) return;
+    // Capture authority before any editable projection can be written back into SQLite.
+    const trustedSources = new Map(this.list('sources').map(source => [source.id, source]));
+    const trustedQuestions = new Map(this.list('questions').map(question => [question.id, question]));
+    let trustedTasks: Entities['tasks'][] | undefined;
+    const trustedPaths = new Map<string, { id: string; revision: string }[]>();
+    for (const table of vaultTables) for (const entity of this.list(table)) {
+      const refs = table === 'sources' ? [{ id: entity.id, revision: (entity as Entities['sources']).revision }]
+        : table === 'rules' ? (entity as Entities['rules']).citations.map(c => ({ id: c.sourceId, revision: c.revision }))
+        : table === 'cards' ? [{ id: (entity as Entities['cards']).sourceId, revision: (entity as Entities['cards']).sourceRevision }]
+        : [{ id: (entity as Entities['cases']).sourceId, revision: trustedSources.get((entity as Entities['cases']).sourceId)?.revision ?? '' }, ...((entity as Entities['cases']).decisionSnapshot?.sourceRefs ?? [])];
+      trustedPaths.set(`vault:${relative(this.vaultDir, this.vaultPath(table, entity))}`, refs);
+    }
+    // Legacy SQLite rows have trustworthy path identities even when their projections were edited or removed.
+    for (const source of trustedSources.values()) if (!source.parentSources && source.kind === 'file' && source.externalId.startsWith('vault:')) {
+      const refs = trustedPaths.get(source.externalId);
+      if (refs?.length && !refs.some(ref => ref.id === source.id)) {
+        source.parentSources = refs; this.write('sources', source);
+      }
+    }
+    const records: { table: Table; entity: Entities[Table]; path: string; text: string }[] = [];
+    const walk = (directory: string) => {
+      for (const item of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, item.name);
+        if (item.isDirectory()) { walk(path); continue; }
+        if (!item.isFile() || !item.name.endsWith('.md') || item.name.includes('.conflict-')) continue;
+        const text = readFileSync(path, 'utf8'); const header = text.match(/^---\n([\s\S]*?)\n---\n/);
+        if (!header) continue;
+        const table = header[1]?.match(/^type: (\w+)$/m)?.[1] as Table;
+        const json = header[1]?.match(/^patrick_entity: (.+)$/m)?.[1];
+        if (!json || !vaultTables.has(table)) continue;
+        try {
+          const entity = JSON.parse(json) as Entities[Table];
+          if (!entity.id || !entity.projectId || !entity.domain || this.vaultPath(table, entity) !== path) continue;
+          records.push({ table, entity, path, text });
+        } catch { /* A malformed human edit is preserved and never silently trusted. */ }
+      }
+    };
+    walk(this.vaultDir);
+    const order = ['sources', 'cases', 'cards', 'rules'];
+    // Accepted answers depend on primary rows: finish ordinary source recovery first, regardless of filenames.
+    const recoveryOrder = (record: typeof records[number]) => record.table === 'sources'
+      ? this.ordinarySourceIdentity(record.entity as Entities['sources']) ? 0 : 1
+      : order.indexOf(record.table) + 1;
+    records.sort((a, b) => recoveryOrder(a) - recoveryOrder(b));
+    const edits: typeof records = [];
+    for (const record of records) {
+      const { table, entity, path, text } = record;
+      const existing = this.get(table, entity.id);
+      let sourceEdited: boolean | undefined;
+      if (existing && 'status' in existing && existing.status !== 'active') {this.publish({table,entity:existing},true);continue;}
+      if (table === 'sources') {
+        const s = entity as Entities['sources'];
+        if (s.retention !== 'permanent' || typeof s.content !== 'string' || typeof s.revision !== 'string' || !['active', 'superseded', 'withdrawn'].includes(s.status)) continue;
+        // Purpose normalization is recovery bookkeeping, not an independent content edit.
+        sourceEdited = text !== this.markdown(table, entity);
+        const canonical = trustedSources.get(s.id);
+        s.parentSources = canonical?.parentSources;
+        s.purpose = canonical ? canonical.purpose ?? 'task' : (trustedTasks ??= this.list('tasks')).some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
+        if (!canonical && (!this.recoverableSourceIdentity(s, trustedQuestions) || s.kind === 'file' && s.externalId.startsWith('vault:'))) {
+          // Mismatched identities and copies without host provenance cannot recover readable material.
+          s.status = 'withdrawn'; s.content = ''; s.title = '[withdrawn]'; s.locator = `withdrawn:${s.id}`; s.parentSources = []; s.purpose = 'reference'; sourceEdited = false;
+        }
+      }
+      if (table === 'cards') {
+        const c = entity as Entities['cards']; stripDerivedCardFields(c); const source = this.get('sources', c.sourceId);
+        if (source && source.status !== 'active') { this.publish({ table, entity: this.vaultEntity(table, entity) }, true); continue; }
+        if (!this.cardActive(c, c) || source?.retention !== 'permanent' || !source.content.includes(c.quote) || !Array.isArray(c.aliases) || !['reported', 'verified', 'inference'].includes(c.verification)) continue;
+        // A recovered model card is never promoted to verified merely by its Markdown label.
+        if (!existing && c.verification === 'verified') c.verification = 'reported';
+        if (c.experience !== undefined) {
+          const details = experienceDetailsSchema.safeParse(c.experience);
+          if (c.kind === 'experience' && details.success && details.data.productId === c.projectId) {
+            c.experience = details.data;
+            c.aliases = [...new Set([...c.aliases, ...details.data.symptomAliases].map(value => value.trim()).filter(Boolean))];
+          } else delete c.experience;
+        }
+      }
+      if (table === 'cases') {
+        const c = entity as Entities['cases']; const p = this.get('projects', c.projectId); const source = this.get('sources', c.sourceId); const q = this.get('questions', c.questionId);
+        if (!p || c.actorId !== p.ownerId || source?.status !== 'active' || source.authorId !== p.ownerId || q?.status !== 'answered' || q.answer?.actorId !== p.ownerId || q.answer.text !== c.originalWords) continue;
+      }
+      if (table === 'rules') {
+        const r = entity as Entities['rules'];
+        if (!Array.isArray(r.citations) || !r.citations.length || r.citations.some(c => { const s = this.get('sources', c.sourceId); return s?.status !== 'active' || s.revision !== c.revision || s.projectId !== r.projectId || s.domain !== r.domain || !s.content.includes(c.quote); })) continue;
+        if (r.kind === 'principle' && (!Array.isArray(r.caseIds) || !r.caseIds.length || r.caseIds.some(id => this.get('cases', id)?.status !== 'active'))) continue;
+      }
+      if (!existing) {
+        if(table==='cards'&&isStructuredKnowledgeCard(entity as KnowledgeCard))this.save('cards',entity as KnowledgeCard);
+        else this.write(table, entity);
+      }
+      if (sourceEdited ?? text !== this.markdown(table, entity)) { this.preserveVaultPaths.add(path); edits.push(record); }
+    }
+    for (const record of records) if (record.table === 'sources') {
+      const source = this.get('sources', record.entity.id), project = source && this.get('projects', source.projectId);
+      if (source && project && source.status === 'active' && source.domain === project.domain) enqueueStructuredKnowledge(this, source);
+    }
+    for (const record of edits) {
+      if (!this.get('projects', record.entity.projectId)) continue;
+      const content = record.text.replace(/^---\n[\s\S]*?\n---\n/, '');
+      const externalId=`vault:${relative(this.vaultDir,record.path)}`,lineage=this.list('sources').filter(source=>source.projectId===record.entity.projectId&&source.domain===record.entity.domain&&source.kind==='file'&&source.externalId===externalId),current=lineage.find(source=>source.status==='active');
+      if(current&&digest(current.content)===digest(content))continue;
+      const revision=stableId('vault-occurrence',lineage.at(-1)?.id??'first',digest(content));
+      // Source purpose was resolved from pre-recovery authority, never from editable frontmatter.
+      const purpose=record.table==='sources'?(record.entity as Entities['sources']).purpose??'reference':'task';
+      const parentSources = trustedPaths.get(`vault:${relative(this.vaultDir, record.path)}`)
+        ?? (record.table === 'sources' ? [{ id: record.entity.id, revision: (record.entity as Entities['sources']).revision }] : []);
+      if (parentSources.some(ref => { const parent = this.get('sources', ref.id); return parent?.status !== 'active' || parent.revision !== ref.revision; })) continue;
+      try { ingestSource(this, { projects: [] }, { projectId: record.entity.projectId, kind: 'file', externalId,revision, title: `Vault edit: ${'title' in record.entity ? record.entity.title : record.entity.id}`, content, locator: record.path, retention: 'permanent',purpose }, parentSources); }
+      catch { /* Revoked/conflicting edits remain intact for explicit review. */ }
+    }
+  }
+}

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, chownSync, linkSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 vi.mock('node:fs', async importOriginal => { const actual = await importOriginal<typeof import('node:fs')>(); return { ...actual, readSync: vi.fn(actual.readSync), closeSync: vi.fn(actual.closeSync) }; });
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { BillingAuthority, billingSwitchInputHash, evaluateBilling, loadIncludedAdmission, type HostDispatchPermit, type CurrentBillingContext, type IncludedAdmission } from '../../src/billing.js';
 import { ingestSource } from '../../src/intake.js';
 import { digest, stableId, DomainError, roles, SubscriptionAccessError, WorkerUnavailable, type HostSubscriptionObservation, type Runner, type RunnerPolicy, type WorkerAdapter, type WorkerResult } from '../../src/domain.js';
@@ -77,6 +78,75 @@ describe('bounded billing decision', () => {
 });
 
 describe('private receipt loader mechanics', () => {
+  it('uses a verified project parent when the temp ancestor is writable, without admitting that ancestor', async () => {
+    const base = makeBillingFixture(); const parent = mkdtempSync(join(base.root, 'patrick-proof-parent-witness-'));
+    const unsafe = join(parent, 'unsafe'), project = join(parent, 'project');
+    mkdirSync(unsafe, { mode: 0o700 }); chmodSync(unsafe, 0o777);
+    mkdirSync(project, { mode: 0o700 }); mkdirSync(join(project, 'src'), { mode: 0o700 });
+    writeFileSync(join(project, 'package.json'), '{}'); writeFileSync(join(project, 'src', 'billing.ts'), '');
+    vi.stubEnv('TMPDIR', unsafe); vi.stubEnv('CI', 'true'); vi.stubEnv('GITHUB_ACTIONS', 'true');
+    vi.stubEnv('GITHUB_WORKSPACE', project); vi.stubEnv('RUNNER_TEMP', ''); vi.spyOn(process, 'cwd').mockReturnValue(project);
+    let f: ReturnType<typeof makeBillingFixture> | undefined;
+    try {
+      f = makeBillingFixture();
+      const rejected = join(unsafe, 'receipt'); mkdirSync(rejected, { mode: 0o700 });
+      writeFileSync(join(rejected, `${f.proof.id}.json`), JSON.stringify(f.proof), { mode: 0o600 });
+      expect(loadIncludedAdmission(rejected, f.proof.id, []) === undefined).toBe(true);
+      const loaded = loadIncludedAdmission(f.root, f.proof.id, []);
+      expect(loaded !== undefined && digest(loaded) === digest(f.proof)).toBe(true);
+      expect(evaluateBilling(f.included, f.task, f.project, loaded, f.current, f.at)).toMatchObject({ allowed: true, reserveUsd: 0 });
+      let admission = 'allowed';
+      try { await new BillingAuthority(f.store, f.config, f.currentProvider, { proofRoot: f.root, now: f.now }).reserve(f.input, 'codex'); }
+      catch (error) { admission = (error as { code?: string }).code ?? 'unknown'; }
+      expect(admission).toBe('allowed');
+      expect(dirname(f.root)).toBe(parent);
+      console.info('synthetic-proof-ancestor-witness', JSON.stringify({ effectiveUid: process.geteuid?.(), unsafeMode: fs.lstatSync(unsafe).mode & 0o7777, projectMode: fs.lstatSync(project).mode & 0o7777, privateRootMode: fs.lstatSync(f.root).mode & 0o7777 }));
+    } finally {
+      f?.dispose(); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(parent, { recursive: true, force: true }); base.dispose();
+    }
+  });
+  it('fails closed without writing when neither allowed parent is verified', () => {
+    const parent = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-proof-no-parent-'));
+    const unsafe = join(parent, 'unsafe'); mkdirSync(unsafe, { mode: 0o700 }); chmodSync(unsafe, 0o777);
+    vi.stubEnv('TMPDIR', unsafe); vi.stubEnv('GITHUB_ACTIONS', 'false');
+    try {
+      expect(() => makeBillingFixture()).toThrow('No verified private synthetic proof parent');
+      expect(fs.readdirSync(unsafe)).toEqual([]);
+    } finally { vi.unstubAllEnvs(); rmSync(parent, { recursive: true, force: true }); }
+  });
+  it('accepts a verified CI runner temp outside the checkout through actual billing', async () => {
+    const base = makeBillingFixture(); const parent = mkdtempSync(join(base.root, 'patrick-proof-runner-temp-'));
+    const unsafe = join(parent, 'unsafe'), project = join(parent, 'project'), runnerTemp = join(parent, 'runner-temp');
+    mkdirSync(unsafe, { mode: 0o700 }); chmodSync(unsafe, 0o777); mkdirSync(project, { mode: 0o700 });
+    mkdirSync(join(project, 'src'), { mode: 0o700 }); writeFileSync(join(project, 'package.json'), '{}'); writeFileSync(join(project, 'src', 'billing.ts'), ''); mkdirSync(runnerTemp, { mode: 0o700 });
+    vi.stubEnv('TMPDIR', unsafe); vi.stubEnv('CI', 'true'); vi.stubEnv('GITHUB_ACTIONS', 'true'); vi.stubEnv('GITHUB_WORKSPACE', project); vi.stubEnv('RUNNER_TEMP', runnerTemp); vi.spyOn(process, 'cwd').mockReturnValue(project);
+    let f: ReturnType<typeof makeBillingFixture> | undefined;
+    try {
+      f = makeBillingFixture(); expect(dirname(f.root)).toBe(runnerTemp);
+      let admission = 'allowed';
+      try { await new BillingAuthority(f.store, f.config, f.currentProvider, { proofRoot: f.root, now: f.now }).reserve(f.input, 'codex'); }
+      catch (error) { admission = (error as { code?: string }).code ?? 'unknown'; }
+      expect(admission).toBe('allowed');
+    } finally { f?.dispose(); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(parent, { recursive: true, force: true }); base.dispose(); }
+  });
+  it('removes its new proof directory when fixture initialization fails', () => {
+    const base = makeBillingFixture(); const parent = mkdtempSync(join(base.root, 'patrick-proof-init-failure-')); vi.stubEnv('TMPDIR', parent);
+    const save = vi.spyOn(Store.prototype, 'save').mockImplementation(() => { throw Error('synthetic initialization failure'); });
+    try { expect(() => makeBillingFixture()).toThrow('synthetic initialization failure'); expect(fs.readdirSync(parent)).toEqual([]); }
+    finally { save.mockRestore(); vi.unstubAllEnvs(); rmSync(parent, { recursive: true, force: true }); base.dispose(); }
+  });
+  it('does not remove a replacement directory and disposal is idempotent', () => {
+    const base = makeBillingFixture(); const parent = mkdtempSync(join(base.root, 'patrick-proof-custody-'));
+    vi.stubEnv('TMPDIR', parent);
+    let f: ReturnType<typeof makeBillingFixture> | undefined;
+    try {
+      f = makeBillingFixture();
+      renameSync(f.root, join(parent, 'original'));
+      mkdirSync(f.root, { mode: 0o700 }); writeFileSync(join(f.root, 'foreign'), 'preserve');
+      f.dispose(); f.dispose();
+      expect(fs.existsSync(join(f.root, 'foreign'))).toBe(true);
+    } finally { f?.dispose(); vi.unstubAllEnvs(); rmSync(parent, { recursive: true, force: true }); base.dispose(); }
+  });
   it('loads only an owner-private synthetic receipt', () => { const f = fixture(); expect(loadIncludedAdmission(f.root, f.proof.id, [])).toEqual(f.proof); });
   it('loads a receipt when an unrelated sibling changes its private ancestor during read', () => {
     const f = fixture(), root = join(f.root, 'receipts'); mkdirSync(root, { mode: 0o700 });

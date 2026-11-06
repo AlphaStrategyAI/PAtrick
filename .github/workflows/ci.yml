@@ -16,6 +16,34 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Record temporary directory ancestry
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const effective = path.resolve(os.tmpdir());
+          const chain = start => {
+            const rows = [];
+            let current = start;
+            for (let i = 0; i < 32; i++) {
+              try {
+                const stat = fs.lstatSync(current);
+                rows.push({path: current, uid: stat.uid, mode: (stat.mode & 0o7777).toString(8), symlink: stat.isSymbolicLink()});
+              } catch (error) { rows.push({path: current, error: error.code || 'unknown'}); break; }
+              const parent = path.dirname(current);
+              if (parent === current) break;
+              current = parent;
+            }
+            return rows;
+          };
+          try {
+            const realpath = fs.realpathSync(effective);
+            console.log(JSON.stringify({effective, realpath, effectiveUid: process.geteuid?.() ?? null, ancestry: chain(effective), realAncestry: realpath === effective ? undefined : chain(realpath)}));
+          } catch (error) {
+            console.log(JSON.stringify({effective, effectiveUid: process.geteuid?.() ?? null, error: error.code || 'unknown', ancestry: chain(effective)}));
+          }
+          NODE
       - run: npm run check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

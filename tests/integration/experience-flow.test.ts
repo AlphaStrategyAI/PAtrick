@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ingestStructuredExperience } from '../../src/integrations/experience-ci.js';
 import { createApp } from '../../src/app.js';
 import { readConfig } from '../../src/config.js';
@@ -110,11 +111,13 @@ describe('legacy host index migration',()=>{
     }finally{raw?.close();rmSync(root,{recursive:true,force:true});}
   });
   it('backs up and restores a migrated copy for the genuine prior Store and raw full integrity',async()=>{
-    const root=mkdtempSync(join(process.cwd(),'.superpowers/sdd/knowledge-experience-g6-boundary-impl-tmp-')),path=join(root,'store.sqlite');let store:Store|undefined,raw:Database.Database|undefined;
+    const projectRoot=fileURLToPath(new URL('../../',import.meta.url));
+    const root=mkdtempSync(join(projectRoot,'.patrick-prior-store-')),path=join(root,'store.sqlite');let store:Store|undefined,raw:Database.Database|undefined;
     try{
-      const original=readFileSync('.superpowers/sdd/knowledge-experience-g6-fix5-before/src/store.ts','utf8');
+      // Verbatim prior Store from knowledge-experience-g6-fix5-before/src/store.ts, SHA-256 654b779cefa77d20248aef546821a9dec1acee3359aff131a4a5e9017f6e0132.
+      const original=readFileSync(new URL('../fixtures/legacy-store.ts.fixture',import.meta.url),'utf8');
       expect(createHash('sha256').update(original).digest('hex')).toBe('654b779cefa77d20248aef546821a9dec1acee3359aff131a4a5e9017f6e0132');
-      let rewritten=0;const prior=original.replace(/from '(\.\/[^']+)\.js'/g,(_all,name:string)=>{rewritten++;return `from '${pathToFileURL(join(process.cwd(),'src',name.slice(2)+'.ts')).href}'`;});expect(rewritten).toBe(7);
+      let rewritten=0;const prior=original.replace(/from '(\.\/[^']+)\.js'/g,(_all,name:string)=>{rewritten++;return `from '${pathToFileURL(join(projectRoot,'src',name.slice(2)+'.ts')).href}'`;});expect(rewritten).toBe(7);
       const priorPath=join(root,'prior-store.ts'),childPath=join(root,'rollback-child.ts');writeFileSync(priorPath,prior);
       writeFileSync(childPath,`import {Store} from ${JSON.stringify(pathToFileURL(priorPath).href)};\nconst store=new Store(process.argv[2]!);const row={id:'rollback-action',projectId:'p',domain:'personal',kind:'unrelated',status:'completed',payload:{},updatedAt:''} as const;store.save('actions',row);store.save('actions',{...row,payload:{changed:true}});store.delete('actions',row.id);store.close();\n`);
       legacyDatabase(path);store=new Store(path);
@@ -122,7 +125,8 @@ describe('legacy host index migration',()=>{
       expect(verifyBackup(snapshot).files.some(file=>file.path==='patrick.db')).toBe(true);
       restoreBackup({snapshot,destination,writerRevoked:true,reconciled:true});const restoredPath=join(destination,'patrick.db');
       raw=new Database(restoredPath);expect(raw.pragma('integrity_check',{simple:true})).toBe('ok');raw.close();raw=undefined;
-      const child=spawnSync(process.execPath,['--import','tsx',childPath,restoredPath],{encoding:'utf8',env:{...process.env,PATH:`/Users/fengpengcheng/.nvm/versions/node/v24.22.2/bin:${process.env.PATH??''}`}});
+      const tsx=pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
+      const child=spawnSync(process.execPath,['--import',tsx,childPath,restoredPath],{encoding:'utf8',cwd:root});
       expect({status:child.status,signal:child.signal,stderr:child.stderr}).toEqual({status:0,signal:null,stderr:''});
       raw=new Database(restoredPath);expect(raw.pragma('integrity_check',{simple:true})).toBe('ok');
       raw.prepare('INSERT INTO actions VALUES(?,?,?,?)').run('raw','p','personal','{}');raw.prepare('DELETE FROM actions WHERE id=?').run('raw');
