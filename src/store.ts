@@ -229,6 +229,16 @@ export class Store {
     for (const [key, entry] of this.temporary) if (key.startsWith(`${table}:`)) result.set(entry.entity.id, this.visible(table,structuredClone(entry.entity)) as Entities[K]);
     return [...result.values()];
   }
+  /** Select a single action kind without scanning unrelated ledger records. */
+  actionsOfKind(kind: string): Entities['actions'][] {
+    const rows = this.db.prepare("SELECT data FROM actions WHERE json_extract(data,'$.kind') = ? ORDER BY rowid").all(kind) as { data: string }[];
+    const result = new Map(rows.map(row => { const action = this.visible('actions', JSON.parse(row.data) as Entities['actions']) as Entities['actions']; return [action.id, action]; }));
+    for (const [key, entry] of this.temporary) if (key.startsWith('actions:')) {
+      const action = this.visible('actions', structuredClone(entry.entity)) as Entities['actions'];
+      if (action.kind === kind) result.set(action.id, action); else result.delete(action.id);
+    }
+    return [...result.values()];
+  }
   private listScope<K extends Table>(table:K,scope:Scope,bindings?:Map<string,OpaqueSourceIdentity|undefined>):Entities[K][] {
     this.assertTable(table);
     const rows=this.db.prepare(`SELECT data FROM ${table} WHERE project_id = ? AND domain = ? ORDER BY rowid`).all(scope.projectId,scope.domain) as {data:string}[];

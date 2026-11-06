@@ -128,7 +128,9 @@ export class Workbench {
       const at = now(); const ownerCase = recordOwnerDecision(this.store, task, question, answer);
       this.store.save('questions', { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } });
       this.store.save('cursors', { id: eventId, projectId: task.projectId, domain: task.domain, value: fingerprint, updatedAt: at });
-      captureOwnerCaseVersion(this.store, this.config, ownerCase.id);
+      // Legacy questions can be accepted without granting a canonical case from
+      // a snapshot that cannot prove the question's original contents.
+      try { captureOwnerCaseVersion(this.store, this.config, ownerCase.id); } catch (error) { if (!(error instanceof DomainError) || error.code !== 'invalid_decision_snapshot') throw error; }
       const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
       this.store.save('tasks', resumed);
       this.event(task, 'answer.accepted', 'Owner answer accepted; the original task resumed once.', { questionId: question.id, choice: answer.choice });
@@ -237,7 +239,7 @@ export class Workbench {
     try {
       this.store.reconcileVault();
       reconcileReferenceKnowledge(this.store, this.config);
-      const ready = this.readyTask(undefined,undefined,true) ?? (preferredTaskId?this.readyTask(undefined,preferredTaskId):undefined) ?? this.readyTask();
+      const ready = (preferredTaskId ? this.readyTask(undefined,preferredTaskId,true) : undefined) ?? this.readyTask(undefined,undefined,true) ?? (preferredTaskId ? this.readyTask(undefined,preferredTaskId) : undefined) ?? this.readyTask();
       const source = ready?.stage==='knowledge_extract' ? this.store.get('sources',ready.sourceId) : undefined;
       if(source)enqueueStructuredKnowledge(this.store,source);
       const preferred=source?await this.drainHostJobs(1,structuredKnowledgeJobId(source),true,ready?.id):{count:0,aborted:false};

@@ -80,7 +80,7 @@ export function enqueueReferenceKnowledge(store: Store, config: AppConfig, sourc
 
 export function reconcileReferenceKnowledge(store: Store, config: AppConfig): void {
   store.transaction(() => {
-    for (const action of store.list('actions')) {
+    for (const action of store.actionsOfKind('knowledge.structured-ingest')) {
       if (action.kind !== 'knowledge.structured-ingest' || action.status !== 'completed') continue;
       const parsed = structuredIngestJobSchema.safeParse(action.payload), source = parsed.success ? store.get('sources', parsed.data.sourceId) : undefined;
       if (source?.purpose === 'reference' && parsed.success && parsed.data.phase === 'ordinary') enqueueReferenceKnowledge(store, config, source);

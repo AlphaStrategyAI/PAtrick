@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { now, roles, stableId, type AppConfig, type DeliveryReceipt, type Project, type Question, type Rule, type WorkerAdapter } from '../../src/domain.js';
+import { DomainError, now, roles, stableId, type AppConfig, type DeliveryReceipt, type Project, type Question, type Rule, type WorkerAdapter } from '../../src/domain.js';
 import { caseVersions, refreshCaseVersions } from '../../src/cases.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { recordOutcomeEvidence } from '../../src/reviews.js';
@@ -27,6 +27,21 @@ function setup(database = ':memory:', retention: 'permanent' | 'ephemeral' = 'pe
 afterEach(() => stores.splice(0).forEach(store => store.close()));
 
 describe('canonical owner cases', () => {
+  it('rolls back the accepted answer when the case snapshot is unavailable', () => {
+    const f = setup(), q = f.question('snapshot-failure');
+    const before = f.store.get('tasks', q.taskId)!, list = f.store.list.bind(f.store);
+    const fault = vi.spyOn(f.store, 'list').mockImplementation(((...args: Parameters<typeof list>) => {
+      if (args[0] === 'actions' && new Error().stack?.includes('relatedQuestionSnapshots')) throw new DomainError('Knowledge temporarily unavailable; retry.', 'knowledge_snapshot_unavailable', 503);
+      return list(...args);
+    }) as typeof f.store.list);
+    try {
+      expect(() => f.engine.answer({ questionId: q.id, taskVersion: 1, questionVersion: 1, actorId: 'owner', eventId: 'failed-answer', choice: 'C', text: 'Keep drafts.' })).toThrowError(expect.objectContaining({ code: 'knowledge_snapshot_unavailable', status: 503 }));
+    } finally { fault.mockRestore(); }
+    expect(f.store.get('questions', q.id)?.status).toBe('open');
+    expect(f.store.get('tasks', q.taskId)).toEqual(before);
+    expect(f.store.list('cases')).toHaveLength(0);
+    expect(f.store.get('cursors', stableId('answer-event', 'p', 'personal', 'failed-answer'))).toBeUndefined();
+  });
   it.each(['A', 'B', 'C'] as const)('freezes answer %s once, including replay and a separate identical question', choice => {
     const f = setup();
     const q = f.question('question-1');

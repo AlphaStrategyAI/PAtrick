@@ -50,7 +50,7 @@ function snapshotObservations(store: Store, snapshot: DecisionSnapshot, at: Date
       if (!e || !project || e.snapshotId !== snapshot.id || e.taskId !== snapshot.taskId || e.actorId !== project.ownerId || e.id !== action.id || e.id !== stableId('decision-evidence', snapshot.id, e.kind, e.sourceId, e.sourceRevision, digest(e.quote)) || !source || !sameScope(source, snapshot) || source.revision !== e.sourceRevision || !source.content.includes(e.quote) || !e.quote.trim() || !e.attribution || !Array.isArray(e.attribution.citations) || !Number.isFinite(Date.parse(e.observedAt)) || !Number.isFinite(Date.parse(e.recordedAt)) || Date.parse(e.observedAt) > +at || Date.parse(e.recordedAt) > +at || Date.parse(e.observedAt) < Date.parse(snapshot.recordedAt)) continue;
       if (e.attribution.citations.some(c => { const s = store.get('sources', c.sourceId); return !s || !sameScope(s, snapshot) || s.revision !== c.revision || s.locator !== c.locator || !c.quote.trim() || !s.content.includes(c.quote); })) continue;
       const evidenceSources = [{ id: e.sourceId, revision: e.sourceRevision }, ...e.attribution.citations.map(c => ({ id: c.sourceId, revision: c.revision }))];
-      try { currentRefs(store, snapshot, evidenceSources); } catch { continue; }
+      try { currentRefs(store, snapshot, evidenceSources); } catch (error) { if (!(error instanceof DomainError) || error.code !== 'stale_source') throw error; continue; }
       const { recordedAt: _recordedAt, ...semantic } = e;
       refs.push({ kind: 'outcome-evidence', id: e.id, hash: digest(semantic) }); sources.push(...evidenceSources);
     } else if (action.kind === 'decision.tests') {
@@ -308,7 +308,7 @@ export function refreshCaseVersions(store: Store, config: AppConfig, scope: Scop
     if (store.list('actions').filter(a => a.kind === 'decision.case-version').length > before) count++;
   }
   const visitedTasks = new Set<string>();
-  for (const action of store.list('actions')) if (action.kind === 'decision.snapshot' && sameScope(action, scope)) {
+  for (const action of store.actionsOfKind('decision.snapshot')) if (sameScope(action, scope)) {
     const snapshot = action.payload.snapshot as DecisionSnapshot | undefined;
     if (!snapshot?.decision || snapshot.decision.action === 'ask' || visitedTasks.has(snapshot.taskId) || store.list('questions').some(q => q.taskId === snapshot.taskId && q.status === 'answered')) continue;
     visitedTasks.add(snapshot.taskId);
