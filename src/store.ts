@@ -4,11 +4,12 @@ import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFile
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { DomainError, digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
 import { canonicalExperiencePayloadSchema, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, knowledgeSourceRefs, normalizationOriginPayloadSchema, validFactualContextTombstoneTransition, wellFormedParentSources } from './knowledge-records.js';
-import { historicalSnapshot, ingestSource, redactWithdrawnEvidence } from './intake.js';
+import { historicalSnapshot, ingestSource, normalizationTombstone, redactWithdrawnEvidence } from './intake.js';
 import { enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeCardId, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import { knowledgeReference, stripDerivedCardFields } from './knowledge-use.js';
 import type { KnowledgeReferenceOptions, KnowledgeView, TestObservation } from './knowledge-contract.js';
+import { knowledgeCandidateHash } from './knowledge-identity.js';
 
 const tables: Table[] = ['projects', 'sources', 'tasks', 'cards', 'rules', 'cases', 'questions', 'events', 'attempts', 'outbox', 'receipts', 'actions', 'cursors'];
 const vaultTables = new Set<Table>(['sources', 'cards', 'rules', 'cases']);
@@ -859,7 +860,7 @@ export class Store {
         !Array.isArray(factual.unresolved)||factual.unresolved.some(item=>item?.citation&&!has(item.citation.sourceId,item.citation.revision))))return false;
       return true;
     };
-    if(!complete(embedded)||!complete(host))return false;
+    if(!complete(embedded)||!complete(host)||digest(embedded)!==digest(host))return false;
     const expected=new Map(host.sourceRefs.map(ref=>[ref.id,ref.revision]));
     return embedded.sourceRefs.length===host.sourceRefs.length&&embedded.sourceRefs.every(ref=>expected.get(ref.id)===ref.revision);
   }
@@ -901,7 +902,18 @@ export class Store {
     for(const action of scope?this.listScope('actions',scope):this.list('actions'))if((!affected||knowledgeActionDependencies(action).refs.some(ref=>affected.has(ref.id)))&&this.temporaryKnowledgeAction(action)){
       const hold=this.durableReadHold(action);
       if(hold){this.write('actions',hold);this.deleteTemporary(`actions:${action.id}`);continue;}
+      const invalid=new Set(knowledgeActionDependencies(action).refs.filter(ref=>this.temporarySourceDependency(ref.id,action,ref.revision||undefined)).map(ref=>ref.id));
+      const tombstone=normalizationTombstone(this,action,invalid,{phase:'invalid',errorCode:'source_invalidated',retracted:true,sourceIds:[...invalid]});
       if(retainReadable)this.setTemporary(`actions:${action.id}`,{entity:action});else this.deleteTemporary(`actions:${action.id}`);
+      const origin=normalizationOriginPayloadSchema.safeParse(tombstone);
+      if(origin.success){
+        const card=this.get('cards',origin.data.normalizationOrigin.cardId),binding=origin.data.normalizationOrigin;
+        if(card?.experience&&knowledgeCandidateHash(card)===binding.candidateHash){
+          if(/^[a-f0-9]{40}$/.test(binding.observedRevision)){this.write('actions',{...action,payload:tombstone});continue;}
+          const reverted={...card,experience:{...card.experience,codeVersion:'unknown'}};
+          this.write('cards',reverted);this.indexCard(reverted);this.vaultJobs.set(`cards:${card.id}`,{table:'cards',entity:reverted,previous:card});
+        }
+      }
       if(['decision.evidence','decision.review'].includes(action.kind))this.write('actions',this.redactTemporary('actions',action) as Entities['actions']);else this.deleteAction(action.id);
     }
   }

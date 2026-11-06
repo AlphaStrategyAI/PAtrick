@@ -11,7 +11,7 @@ export interface IngestInput {
 const finished = new Set(['delivered', 'archived', 'cancelled']);
 
 /** Preserve no evidence content or authority when a normalization link is sanitized. */
-function normalizationTombstone(store:Store,action:Entities['actions'],invalid:Set<string>,base:Record<string,unknown>):Record<string,unknown> {
+export function normalizationTombstone(store:Store,action:Entities['actions'],invalid:Set<string>,base:Record<string,unknown>):Record<string,unknown> {
   if(action.kind!=='experience.evidence-link'||action.status!=='completed')return base;
   const parsed=canonicalExperiencePayloadSchema.safeParse(action.payload);if(!parsed.success)return base;
   const association=parsed.data.association,binding=association.versionBinding,card=store.get('cards',association.cardId);

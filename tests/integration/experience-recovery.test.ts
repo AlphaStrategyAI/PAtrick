@@ -734,7 +734,7 @@ it('withholds an owner case whose snapshot is missing its source references', ()
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 
-it.each(['empty-refs','existing-case-empty-refs','missing-citation','missing-rule-citation','snapshot-id','task-id','scope','version','source-id','source-revision'] as const)('withholds a case whose host snapshot has %s',mode=>{
+it.each(['empty-refs','existing-case-empty-refs','missing-citation','missing-rule-citation','snapshot-id','task-id','scope','version','source-id','source-revision','changed-decision'] as const)('withholds a case whose host snapshot has %s',mode=>{
   const root=mkdtempSync(join(tmpdir(),'g8-case-snapshot-identity-')),db=join(root,'db.sqlite'),store=new Store(db,join(root,'vault'));
   try{
     const task=ingestSource(store,{projects:[project]},{projectId:'p',externalId:'case-host-task',title:'Task',content:'Task'})!,source=store.get('sources',task.sourceId)!;
@@ -759,6 +759,7 @@ it.each(['empty-refs','existing-case-empty-refs','missing-citation','missing-rul
     if(mode==='version')altered.taskVersion++;
     if(mode==='source-id')altered.sourceId=reference.id;
     if(mode==='source-revision')altered.sourceRevision='different-revision';
+    if(mode==='changed-decision')altered.decision.summary='Forged decision';
     if(mode!=='existing-case-empty-refs')store.delete('cases',decisionCase.id);
     store.save('cases',{...decisionCase,decisionSnapshot:altered});
     const raw=new Database(db,{readonly:true});try{expect(raw.prepare('SELECT data FROM cases WHERE id=?').get(decisionCase.id)).toBeUndefined();}finally{raw.close();}

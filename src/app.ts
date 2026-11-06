@@ -106,10 +106,21 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
   app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);ownedProject(question.projectId,question.domain);return c.json({question});});
   app.post('/api/tasks',async c=>{
-    const value=await body(c),data=z.object({projectId:z.string().min(1),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional(),kind:z.literal('manual').optional()}).strict().parse(value);
-    ownedProject(data.projectId);
-    const task=engine.ingest({...data,kind:'manual',externalId:data.externalId??`manual:${randomUUID()}`,authorId:config.ownerId,retention:'permanent'});
-    return respond(c,{task,message:'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
+    const value=await body(c),data=z.object({projectId:z.string().min(1),domain:z.string().optional(),requestId:z.string().uuid().optional(),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional(),kind:z.literal('manual').optional()}).strict().parse(value);
+    const project=ownedProject(data.projectId,data.domain);
+    const externalId=data.requestId?`mcp:${data.requestId}`:data.externalId??`manual:${randomUUID()}`;
+    const revision=data.requestId?digest({title:data.title,content:data.content}):undefined;
+    if(data.requestId&&store.list('sources').some(source=>source.projectId===project.id&&source.domain===project.domain&&source.kind==='manual'&&store.sourceExternalIdMatches(source,externalId)&&source.revision!==revision))throw new DomainError('Request identity already used for different content.','request_conflict',409);
+    try {
+      const task=engine.ingest({projectId:data.projectId,title:data.title,content:data.content,kind:'manual',externalId,revision,authorId:config.ownerId,retention:'permanent'});
+      return respond(c,{task,message:'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
+    } catch(error) {
+      if(error instanceof PrivacyCheckpointError&&data.requestId&&revision){
+        const sourceId=stableId('source',{projectId:project.id,domain:project.domain},'manual',externalId,revision),taskId=stableId('task',sourceId),task=store.get('tasks',taskId);
+        if(task&&task.projectId===project.id&&task.domain===project.domain)return c.json({error:error.message,code:error.code,committed:true,taskId},503);
+      }
+      throw error;
+    }
   });
   app.post('/api/conversations',async c=>{
     const data=z.object({projectId:z.string(),domain:z.string(),sessionId:z.string().min(1),turnId:z.string().min(1),revision:z.string().min(1),content:z.string().min(1).max(100000),tool:z.enum(['codex','cursor']),retention:z.enum(['permanent','ephemeral'])}).strict().parse(await body(c));

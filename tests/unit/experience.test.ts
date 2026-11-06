@@ -954,6 +954,19 @@ describe('G6 relation, normalization and target invariants',()=>{
     }finally{f.store.close();}
   });
 
+  it('preserves unknown provenance when an independent observation becomes temporary',()=>{
+    const root=mkdtempSync(join(tmpdir(),'patrick-transition-origin-')),path=join(root,'store.sqlite'),f=retainedLocalFixture(false,'',path);let reopened:Store|undefined;
+    try{
+      const source={...f.source,id:'independent-card',externalId:'independent-card'};f.store.save('sources',source);
+      const card=publishKnowledge(f.store,source,{cards:[{title:'cache misses',body:'cache misses',quote:f.quote,aliases:['cache'],verification:'reported',kind:'experience',experience:{schemaVersion:1,problem:'cache misses',symptomAliases:['cache'],solution:'Clear the cache',files:[f.file.path],productId:f.project.id,codeVersion:'unknown',environment:'unknown',invalidationConditions:['changes']}}]})[0]!;
+      expect(f.store.get('cards',card.id)?.experience?.codeVersion).toBe(f.observation.snapshot.revision);
+      f.store.save('sources',{...f.source,retention:'ephemeral'});f.store.close();reopened=new Store(path);
+      const fresh=seedAdditional({...f,store:reopened},'transition-fresh','success','2026-11-04T13:00:00Z');
+      linkAvailableExperienceEvidence(reopened,fresh.observation.id);
+      expect(experienceReference(reopened,reopened.get('cards',card.id)!,f.project)).toMatchObject({eligible:true,reference:{versionBinding:{reported:'unknown'}}});
+    }finally{reopened?.close();f.store.close();rmSync(root,{recursive:true,force:true});}
+  });
+
   it('keeps removal and withdrawal durable when both follow an ephemeral normalization',()=>{
     const root=mkdtempSync(join(tmpdir(),'patrick-g6-fix3-remove-withdraw-')),path=join(root,'store.sqlite'),f=retainedLocalFixture(false,'',path,'ephemeral');let reopened:Store|undefined;
     try{
