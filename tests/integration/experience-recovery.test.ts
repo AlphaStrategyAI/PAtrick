@@ -149,7 +149,7 @@ it('removes both ordinary-card claim forms from the Vault tombstone and a new ba
 });
 
 it.each(['cards','rules','cases'] as const)('replays committed %s Vault redaction after a publication fault and restart',async failedTable=>{
-  const root=mkdtempSync(join(tmpdir(),'g8-vault-redaction-retry-')),db=join(root,'db.sqlite'),vault=join(root,'vault'),backup=join(root,'backup');
+  const root=mkdtempSync(join(tmpdir(),'g8-vault-redaction-retry-')),db=join(root,'db.sqlite'),vault=join(root,'vault'),otherPopulated=join(root,'populated-vault'),backup=join(root,'backup');
   let store=new Store(db,vault);
   try{
     const task=ingestSource(store,{projects:[project]},{projectId:'p',externalId:'redaction-task',revision:'v1',title:'Task',content:'Redaction source'})!;
@@ -164,21 +164,79 @@ it.each(['cards','rules','cases'] as const)('replays committed %s Vault redactio
     const paths={cards:join(vault,'p','personal','cards',`${card.id}.md`),rules:join(vault,'p','personal','rules',`${rule.id}.md`),cases:join(vault,'p','personal','cases',`${decisionCase.id}.md`)};
     const marker={cards:'CARD_PROJECTION_PRIVATE_SENTINEL',rules:'RULE_PROJECTION_PRIVATE_SENTINEL',cases:'CASE_PROJECTION_PRIVATE_SENTINEL'};
     for(const table of ['cards','rules','cases'] as const)expect(readFileSync(paths[table],'utf8')).toContain(marker[table]);
+    if(failedTable==='cards'){
+      store.close();store=new Store(db,otherPopulated);
+      expect(readFileSync(join(otherPopulated,'p','personal','cards',`${card.id}.md`),'utf8')).toContain(marker.cards);
+      expect(readFileSync(join(otherPopulated,'p','personal','sources',`${source.id}.md`),'utf8')).toContain(source.content);
+      store.close();store=new Store(db,vault);
+    }
     const internal=store as unknown as {publish:(job:{table:string})=>void},publish=internal.publish.bind(store);
     internal.publish=job=>{if(job.table===failedTable)throw new Error('synthetic projection fault');publish(job);};
     expect(()=>store.save('sources',{...source,retention:'ephemeral'})).toThrowError(expect.objectContaining({code:'vault_sync_unavailable'}));
     expect(readFileSync(paths[failedTable],'utf8')).toContain(marker[failedTable]);
     await expect(createBackup(store,join(root,'must-fail'),{mode:'test',vaultDir:vault})).rejects.toThrow();
+    if(failedTable==='cards'){
+      const pending=store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'));
+      expect(pending.length).toBeGreaterThan(0);
+      store.close();store=new Store(db,join(root,'other-vault'));
+      expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual(pending);
+      expect(readFileSync(paths.cards,'utf8')).toContain(marker.cards);
+      const rejected=join(root,'wrong-vault-backup');
+      await expect(createBackup(store,rejected,{mode:'test',vaultDir:vault})).rejects.toThrowError(expect.objectContaining({code:'vault_cleanup_unavailable'}));
+      expect(existsSync(rejected)).toBe(false);
+      expect(readdirSync(root).filter(name=>name.startsWith('wrong-vault-backup.partial-'))).toEqual([]);
+      expect(readFileSync(paths.cards,'utf8')).toContain(marker.cards);
+    }
     store.close();store=new Store(db,vault);
+    if(failedTable==='cards'){
+      const waitingForOther=store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'));
+      expect(waitingForOther.length).toBeGreaterThan(0);
+      expect(waitingForOther.some(cursor=>JSON.parse(cursor.value).table==='sources')).toBe(true);
+      expect(waitingForOther.some(cursor=>JSON.parse(cursor.value).table==='cards')).toBe(true);
+      store.reconcileVault();
+      expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual(waitingForOther);
+      expect(readFileSync(join(otherPopulated,'p','personal','cards',`${card.id}.md`),'utf8')).toContain(marker.cards);
+      expect(readFileSync(join(otherPopulated,'p','personal','sources',`${source.id}.md`),'utf8')).toContain(source.content);
+      await expect(createBackup(store,join(root,'dirty-other-backup'),{mode:'test',vaultDir:otherPopulated})).rejects.toThrowError(expect.objectContaining({code:'vault_cleanup_unavailable'}));
+      expect(existsSync(join(root,'dirty-other-backup'))).toBe(false);
+      await createBackup(store,backup,{mode:'test',vaultDir:vault});
+      expect(readFileSync(join(backup,'vault','p','personal','cards',`${card.id}.md`),'utf8')).not.toContain(marker.cards);
+      expect(readFileSync(join(backup,'vault','p','personal','sources',`${source.id}.md`),'utf8')).not.toContain(source.content);
+      store.close();store=new Store(db,otherPopulated);
+      expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual([]);
+      expect(readFileSync(join(otherPopulated,'p','personal','cards',`${card.id}.md`),'utf8')).not.toContain(marker.cards);
+      expect(readFileSync(join(otherPopulated,'p','personal','sources',`${source.id}.md`),'utf8')).not.toContain(source.content);
+      const otherBackup=join(root,'other-backup');await createBackup(store,otherBackup,{mode:'test',vaultDir:otherPopulated});
+      expect(readFileSync(join(otherBackup,'vault','p','personal','cards',`${card.id}.md`),'utf8')).not.toContain(marker.cards);
+      expect(readFileSync(join(otherBackup,'vault','p','personal','sources',`${source.id}.md`),'utf8')).not.toContain(source.content);
+    }
     for(const table of ['cards','rules','cases'] as const)expect(readFileSync(paths[table],'utf8')).not.toContain(marker[table]);
     expect(store.get('cards',card.id)).toBeUndefined();expect(store.get('rules',rule.id)).toBeUndefined();expect(store.get('cases',decisionCase.id)).toBeUndefined();
     expect(store.searchCards(marker.cards,project)).toEqual([]);
-    await createBackup(store,backup,{mode:'test',vaultDir:vault});store.close();
+    if(failedTable!=='cards')await createBackup(store,backup,{mode:'test',vaultDir:vault});
     for(const table of ['cards','rules','cases'] as const){
       const path=join(backup,'vault','p','personal',table,`${table==='cards'?card.id:table==='rules'?rule.id:decisionCase.id}.md`);
       expect(readFileSync(path,'utf8')).not.toContain(marker[table]);
       expect(readFileSync(db).includes(Buffer.from(marker[table]))).toBe(false);
       expect(readFileSync(join(backup,'patrick.db')).includes(Buffer.from(marker[table]))).toBe(false);
+    }
+    if(failedTable==='cards'){
+      // The earlier Vault must also remain pending when a later, clean switch is followed by withdrawal.
+      store.close();store=new Store(db,vault);
+      const source2={...source,id:'clean-switch-source',externalId:'clean-switch-source',content:'CLEAN_SWITCH_SOURCE_PRIVATE'};
+      const card2={...card,id:'clean-switch-card',sourceId:source2.id,title:'CLEAN_SWITCH_CARD_PRIVATE',quote:source2.content};
+      store.save('sources',source2);store.save('cards',card2);
+      store.close();store=new Store(db,otherPopulated);
+      expect(readFileSync(join(otherPopulated,'p','personal','cards',`${card2.id}.md`),'utf8')).toContain(card2.title);
+      withdrawSource(store,source2.id);
+      expect(readFileSync(join(otherPopulated,'p','personal','cards',`${card2.id}.md`),'utf8')).not.toContain(card2.title);
+      expect(readFileSync(join(vault,'p','personal','cards',`${card2.id}.md`),'utf8')).toContain(card2.title);
+      await expect(createBackup(store,join(root,'dirty-first-backup'),{mode:'test',vaultDir:vault})).rejects.toThrowError(expect.objectContaining({code:'vault_cleanup_unavailable'}));
+      store.close();store=new Store(db,vault);
+      expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual([]);
+      const cleanBackup=join(root,'clean-first-backup');await createBackup(store,cleanBackup,{mode:'test',vaultDir:vault});
+      expect(readFileSync(join(cleanBackup,'vault','p','personal','cards',`${card2.id}.md`),'utf8')).not.toContain(card2.title);
+      expect(readFileSync(join(cleanBackup,'vault','p','personal','sources',`${source2.id}.md`),'utf8')).not.toContain(source2.content);
     }
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });

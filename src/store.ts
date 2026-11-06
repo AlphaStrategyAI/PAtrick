@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
-import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, unlinkSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { DomainError, digest, experienceDetailsSchema, stableId, tokenize, type Entities, type KnowledgeCard, type Scope, type Table } from './domain.js';
 import { canonicalExperiencePayloadSchema, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeRequestSourceRefs, knowledgeSourceRefs, normalizationOriginPayloadSchema, validFactualContextTombstoneTransition, wellFormedParentSources } from './knowledge-records.js';
 import { historicalSnapshot, ingestSource, redactWithdrawnEvidence } from './intake.js';
@@ -17,12 +18,13 @@ type OpaqueSourceIdentity = {version:1;externalId:string;revision:string;authorI
 type StoredSource = Entities['sources'] & {__hostOpaqueIdentity?:OpaqueSourceIdentity};
 type OpaqueActionBinding = {version:1;sourceId:string;revision:string;refs?:{id:string;revision:string}[]};
 type StoredAction = Entities['actions'] & {__hostOpaqueHold?:OpaqueActionBinding};
-type VaultRedaction = {version:1;table:'sources'|'cards'|'rules'|'cases';id:string};
+type VaultRedaction = {table:'sources'|'cards'|'rules'|'cases';id:string} & ({version:1}|{version:2;origin:string|null}|{version:3;origins:string[]});
 type RetentionResolution = {scope:Scope;sources:Map<string,Entities['sources']>;resolved:Map<string,boolean>;affected:Set<string>};
 type ExperienceActionQuery = {scope?:Scope;cardId?:string;observationId?:string;revision?:string;after?:string;file?:string};
 type IdGroups={keys:Map<string,Set<string>>;byId:Map<string,string[]>};
 type OperationGroups={hosts:Map<string,IdGroups>;observations:Map<string,IdGroups>;knowledgeLinks:Map<string,IdGroups>;temporary?:IdGroups};
 type MutationFrame={hostScopes:Set<string>;observationScopes:Set<string>;knowledgeLinkScopes:Set<string>;temporary:boolean};
+type VaultCopyOptions={vaultCopyFrom?:string;restoringSnapshot?:boolean};
 const newGroups=():IdGroups=>({keys:new Map(),byId:new Map()});
 const newOperation=():OperationGroups=>({hosts:new Map(),observations:new Map(),knowledgeLinks:new Map()});
 const groupKey=(...parts:unknown[])=>JSON.stringify(parts);
@@ -64,6 +66,56 @@ function hostRootKey(data:string):Buffer|null {
   return identifiableHostRoot(root)?Buffer.from(root,'utf16le'):null;
 }
 
+// Hash exactly the Markdown files copied into backups, without following links.
+function vaultFingerprint(root:string):string {
+  const entries:{path:string;sha256:string}[]=[];
+  const walk=(directory:string):void=>{
+    for(const item of readdirSync(directory,{withFileTypes:true})){
+      const path=join(directory,item.name);
+      if(item.isSymbolicLink())throw new Error('Vault contains a symbolic link.');
+      if(item.isDirectory())walk(path);
+      else if(!item.isFile())throw new Error('Vault contains a non-file entry.');
+      else if(path.endsWith('.md')&&!path.includes('.tmp-'))entries.push({path:relative(root,path).split('\\').join('/'),sha256:createHash('sha256').update(readFileSync(path)).digest('hex')});
+    }
+  };
+  walk(root);entries.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);return digest(entries);
+}
+
+function vaultOrigin(directory:string):string {
+  const path=realpathSync(directory),stat=statSync(path);
+  return digest({path,dev:stat.dev,ino:stat.ino});
+}
+function readVaultRedaction(cursor:Entities['cursors']):VaultRedaction {
+  let intent:VaultRedaction;
+  try{intent=JSON.parse(cursor.value) as VaultRedaction;}catch{throw new Error('Invalid durable Vault redaction intent.');}
+  if(!intent||![1,2,3].includes(intent.version)||!['sources','cards','rules','cases'].includes(intent.table)||typeof intent.id!=='string'||!intent.id||cursor.id!==`vault-redaction:${stableId('vault-redaction',cursor.projectId,cursor.domain,intent.table,intent.id)}`||
+    intent.version===2&&intent.origin!==null&&(typeof intent.origin!=='string'||!/^[a-f0-9]{64}$/.test(intent.origin))||
+    intent.version===3&&(!Array.isArray(intent.origins)||!intent.origins.length||new Set(intent.origins).size!==intent.origins.length||intent.origins.some(origin=>typeof origin!=='string'||!/^[a-f0-9]{64}$/.test(origin))))throw new Error('Invalid durable Vault redaction intent.');
+  return intent;
+}
+function vaultOriginClear(db:Database.Database,origin:string):boolean {
+  const rows=db.prepare("SELECT data FROM cursors WHERE id LIKE 'vault-redaction:%'").all() as {data:string}[];
+  for(const row of rows){
+    const intent=readVaultRedaction(JSON.parse(row.data) as Entities['cursors']);
+    if(intent.version===1||intent.version===2&&(!intent.origin||intent.origin===origin)||intent.version===3&&intent.origins.includes(origin))return false;
+  }
+  return true;
+}
+function assertVaultBackup(db:Database.Database,selectedVault:string):{origin:string;known:boolean} {
+  const unavailable=()=>new DomainError('Vault privacy cleanup cannot be verified for this location.','vault_cleanup_unavailable',503);
+  let origin:string;
+  try{origin=vaultOrigin(selectedVault);}catch{throw unavailable();}
+  const known=db.prepare('SELECT verified FROM vault_origins WHERE origin = ?').get(origin) as {verified:number}|undefined;
+  const uncertain=!!db.prepare("SELECT 1 FROM vault_state WHERE key IN ('redaction_history','origin_history_incomplete') LIMIT 1").get();
+  if(known?.verified===0||!known&&uncertain||!vaultOriginClear(db,origin))throw unavailable();
+  return {origin,known:!!known};
+}
+/** Read-only backup source for an already running host. */
+export function openReadOnlyBackupSource(databasePath:string):{backup(destination:string):Promise<void>;prepareVaultBackup(vault?:string):void;close():void} {
+  const db=new Database(databasePath,{readonly:true,fileMustExist:true});
+  return {backup:async destination=>{await db.backup(destination);},prepareVaultBackup:vault=>{if(vault)assertVaultBackup(db,vault);},close:()=>db.close()};
+}
+
 /** SQLite owns business state; the Vault and FTS are recoverable, scoped projections. */
 export class Store {
   private readonly db: Database.Database;
@@ -78,11 +130,13 @@ export class Store {
   private privacyCheckpointPending=false;
   private retentionResolution?:RetentionResolution;
 
-  constructor(databasePath: string, private readonly vaultDir?: string) {
+  constructor(databasePath: string, private readonly vaultDir?: string, options:VaultCopyOptions={}) {
     if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
     if (vaultDir) mkdirSync(vaultDir, { recursive: true });
     this.db = new Database(databasePath);
     try{
+    const existingLedger=!!this.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='sources'").get();
+    const existingOrigins=!!this.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='vault_projection_origins'").get();
     // The old schema needs its function until its two exact indexes are removed.
     this.db.function('knowledge_host_root_key',{deterministic:true},hostRootKey);
     this.db.pragma('journal_mode = WAL');
@@ -94,6 +148,24 @@ export class Store {
     this.db.pragma('busy_timeout = 5000');
     this.migrateLegacyHostIndexes();
     for (const table of tables) this.db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, domain TEXT NOT NULL, data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_scope ON ${table}(project_id, domain)`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS vault_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    this.db.transaction(()=>{
+      this.db.exec('CREATE TABLE IF NOT EXISTS vault_origins (origin TEXT PRIMARY KEY, verified INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS vault_projection_origins (id TEXT NOT NULL, origin TEXT NOT NULL, projected INTEGER NOT NULL, PRIMARY KEY(id,origin))');
+      if(existingLedger&&!existingOrigins){
+        this.db.prepare("INSERT OR IGNORE INTO vault_state(key,value) VALUES ('origin_history_incomplete','1')").run();
+        const previous=this.lastVaultOrigin();
+        if(previous){
+          // The old last-origin value identifies a root, but cannot prove its history is clean.
+          this.db.prepare('INSERT OR IGNORE INTO vault_origins(origin,verified) VALUES (?,0)').run(previous);
+          const remember=this.db.prepare('INSERT OR IGNORE INTO vault_projection_origins(id,origin,projected) VALUES (?,?,1)');
+          for(const table of vaultTables)for(const row of this.db.prepare(`SELECT id,project_id,domain FROM ${table}`).all() as {id:string;project_id:string;domain:string}[])
+            remember.run(this.vaultRedactionId({table:table as VaultRedaction['table'],id:row.id},{projectId:row.project_id,domain:row.domain}),previous);
+        }
+      }
+    })();
+    if(vaultDir&&options.vaultCopyFrom)this.bindVaultCopy(options.vaultCopyFrom,vaultDir);
+    if(vaultDir&&options.restoringSnapshot)this.bindSnapshotVault(vaultDir);
+    if(vaultDir)this.registerAttachedVault();
     this.db.exec(`CREATE INDEX IF NOT EXISTS actions_experience_card ON actions(json_extract(data,'$.kind'),project_id,domain,coalesce(json_extract(data,'$.payload.association.cardId'),json_extract(data,'$.payload.normalizationOrigin.cardId')));
       CREATE INDEX IF NOT EXISTS actions_experience_revision ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.observation.snapshot.revision'),json_extract(data,'$.payload.observation.observedAt'));
       CREATE INDEX IF NOT EXISTS actions_experience_time ON actions(json_extract(data,'$.kind'),project_id,domain,json_extract(data,'$.payload.observation.observedAt'));
@@ -106,8 +178,13 @@ export class Store {
     this.db.prepare('INSERT INTO cards_fts(cards_fts,rank) VALUES (?,1)').run('secure-delete');
     // Finish committed redactions before any editable Vault projection is read.
     this.flushVault();
+    // Remember an attached Vault for cleanup committed while no Vault is attached.
+    if(vaultDir&&!this.db.prepare("SELECT 1 FROM cursors WHERE id LIKE 'vault-redaction:%' LIMIT 1").get())
+      this.db.prepare("INSERT INTO vault_state(key,value) VALUES ('origin',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(this.attachedVaultOrigin());
     // Migrate any pre-existing temporary ancestry before editable Vault content is read.
     this.transaction(()=>this.protectTemporarySourceDependents(false,true));
+    // An old root may be certified only against pre-recovery host ledger content.
+    this.certifyLegacyVault();
     // Read the Vault before projecting SQLite, so an independent edit is never overwritten at startup.
     this.recoverVault();
     this.transaction(()=>{this.protectTemporarySourceDependents(false);this.protectTemporaryKnowledgeActions(false);});
@@ -501,10 +578,8 @@ export class Store {
       if (source.status !== 'active') this.db.prepare('DELETE FROM cards_fts WHERE id IN (SELECT json_extract(data, \'$.id\') FROM cards WHERE json_extract(data, \'$.sourceId\') = ?)').run(source.id);
     }
     if (vaultTables.has(table)) {
-      // A withdrawn source may itself have a revoked parent, so ordinary
-      // projection is deliberately suppressed by publish(). Queue a durable
-      // redaction instead, including for recovered Vault-edit descendants.
-      if(table==='sources'&&(value as Entities['sources']).status==='withdrawn')this.queueTemporaryRedaction(table,value);
+      // Withdrawn projections and descendants must be cleaned in every recorded Vault.
+      if(table==='sources'&&(value as Entities['sources']).status==='withdrawn'||previous&&'status' in previous&&previous.status==='active'&&'status' in value&&value.status!=='active')this.queueTemporaryRedaction(table,value);
       else this.vaultJobs.set(key, { table, entity: value, previous });
       // Owner decisions are recorded before their new rule; revisit only cases
       // waiting on this rule once all their real dependencies are permanent.
@@ -640,10 +715,9 @@ export class Store {
   vaultDirectory():string|undefined{return this.vaultDir;}
   prepareVaultBackup(selectedVault?:string):void {
     if(!selectedVault)return;
-    const pending=this.db.prepare("SELECT 1 FROM cursors WHERE id LIKE 'vault-redaction:%' LIMIT 1").get();
-    if(!pending)return;
-    if(!this.vaultDir||resolve(this.vaultDir)!==resolve(selectedVault))throw new DomainError('Pending privacy cleanup requires the original attached Vault before backup.','vault_cleanup_unavailable',503);
-    this.flushVault();this.checkpointPrivacy();
+    if(this.vaultDir&&resolve(this.vaultDir)===resolve(selectedVault)){this.flushVault();this.checkpointPrivacy();}
+    const {origin,known}=assertVaultBackup(this.db,selectedVault);
+    if(!known)this.db.prepare('INSERT INTO vault_origins(origin,verified) VALUES (?,1)').run(origin);
   }
   close(): void { if (this.closed) return; this.db.close(); this.closed = true; this.temporary.clear(); this.operation=undefined; }
 
@@ -858,7 +932,8 @@ export class Store {
   private queueStructuredCardRedaction(card:KnowledgeCard):void {
     if(!this.vaultDir){this.queueTemporaryRedaction('cards',card);return;}
     const path=this.vaultPath('cards',card),directory=dirname(path),prefix=path.slice(path.lastIndexOf('/')+1).replace(/\.md$/,'.conflict-');
-    if(existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.queueTemporaryRedaction('cards',card);
+    const id=this.vaultRedactionId({table:'cards',id:card.id},card);
+    if(this.db.prepare('SELECT 1 FROM vault_projection_origins WHERE id = ? AND projected = 1 LIMIT 1').get(id)||existsSync(path)||existsSync(directory)&&readdirSync(directory).some(name=>name.startsWith(prefix)&&name.endsWith('.md')))this.queueTemporaryRedaction('cards',card);
   }
   private protectTemporaryStructuredCards(scope?:Scope):void {
     const affected=scope?this.retentionResolution?.affected:undefined,cardSources=affected?new Set(affected):undefined;
@@ -984,18 +1059,147 @@ export class Store {
   }
   private queueTemporaryRedaction(table:Table,entity:Entities[Table]):void {
     if(!vaultTables.has(table))return;
-    const intent:VaultRedaction={version:1,table:table as VaultRedaction['table'],id:entity.id};
-    this.write('cursors',{id:this.vaultRedactionId(intent,entity),projectId:entity.projectId,domain:entity.domain,value:JSON.stringify(intent),updatedAt:''});
-    if(this.vaultDir)this.vaultJobs.set(`${table}:${entity.id}`,{table,entity,redactTemporary:true});
+    const identity={table:table as VaultRedaction['table'],id:entity.id},id=this.vaultRedactionId(identity,entity);
+    const existing=this.get('cursors',id);
+    const prior=existing&&this.readVaultRedaction(existing);
+    // Unknown legacy origins remain unbound and cannot be acknowledged by a new attachment.
+    if(prior&&(prior.version===1||prior.version===2&&!prior.origin))return;
+    const tracked=this.db.prepare('SELECT origin,projected FROM vault_projection_origins WHERE id = ?').all(id) as {origin:string;projected:number}[];
+    const origins=tracked.filter(row=>row.projected===1).map(row=>row.origin);
+    if(!tracked.length&&!existing){
+      const fallback=this.attachedVaultOrigin()??this.lastVaultOrigin();
+      if(fallback){origins.push(fallback);this.db.prepare('INSERT OR IGNORE INTO vault_projection_origins(id,origin,projected) VALUES (?,?,1)').run(id,fallback);}
+      else{
+        this.db.prepare("INSERT OR IGNORE INTO vault_state(key,value) VALUES ('redaction_history','1')").run();
+        this.write('cursors',{id,projectId:entity.projectId,domain:entity.domain,value:JSON.stringify({version:2,...identity,origin:null}),updatedAt:''});return;
+      }
+    }
+    const old=prior?(prior.version===2?[prior.origin!]:prior.origins):[];
+    const pending=[...new Set([...old,...origins])].sort();
+    if(!pending.length)return;
+    this.db.prepare("INSERT OR IGNORE INTO vault_state(key,value) VALUES ('redaction_history','1')").run();
+    const intent:VaultRedaction=pending.length===1?{version:2,...identity,origin:pending[0]!}:{version:3,...identity,origins:pending};
+    if(!existing)this.write('cursors',{id,projectId:entity.projectId,domain:entity.domain,value:JSON.stringify(intent),updatedAt:''});
+    else if(pending.some(origin=>!old.includes(origin)))this.write('cursors',{...existing,value:JSON.stringify(intent)});
+    if(pending.includes(this.attachedVaultOrigin()??''))this.vaultJobs.set(`${table}:${entity.id}`,{table,entity,redactTemporary:true});
   }
-  private vaultRedactionId(intent:VaultRedaction,scope:Scope):string {return `vault-redaction:${stableId('vault-redaction',scope.projectId,scope.domain,intent.table,intent.id)}`;}
+  private vaultOrigin(directory:string):string {
+    return vaultOrigin(directory);
+  }
+  private attachedVaultOrigin():string|undefined {
+    if(!this.vaultDir)return undefined;
+    // Bind to host filesystem identity without storing the path or trusting Vault content.
+    return this.vaultOrigin(this.vaultDir);
+  }
+  private vaultOriginClear(origin:string):boolean {
+    return vaultOriginClear(this.db,origin);
+  }
+  private copyVaultOrigin(source:string,target:string):void {
+    if(!this.vaultOriginClear(target))throw new DomainError('Vault privacy cleanup cannot be verified for this location.','vault_cleanup_unavailable',503);
+    this.db.transaction(()=>{
+      this.db.prepare('INSERT INTO vault_origins(origin,verified) VALUES (?,1) ON CONFLICT(origin) DO UPDATE SET verified=1').run(target);
+      this.db.prepare('INSERT INTO vault_projection_origins(id,origin,projected) SELECT id,?,projected FROM vault_projection_origins WHERE origin = ? ON CONFLICT(id,origin) DO UPDATE SET projected=max(projected,excluded.projected)').run(target,source);
+    })();
+  }
+  private bindVaultCopy(source:string,target:string):void {
+    this.prepareVaultBackup(source);
+    if(vaultFingerprint(source)!==vaultFingerprint(target))throw new DomainError('Copied Vault does not match its clean source.','vault_cleanup_unavailable',503);
+    this.copyVaultOrigin(this.vaultOrigin(source),this.vaultOrigin(target));
+  }
+  private bindSnapshotVault(target:string):void {
+    const row=this.db.prepare("SELECT value FROM vault_state WHERE key = 'backup_vault_proof'").get() as {value:string}|undefined;
+    if(!row)return;
+    const reject=()=>this.db.prepare('INSERT INTO vault_origins(origin,verified) VALUES (?,0) ON CONFLICT(origin) DO UPDATE SET verified=0').run(this.vaultOrigin(target));
+    let proof:{origin?:unknown;fingerprint?:unknown};
+    try{proof=JSON.parse(row.value) as typeof proof;}catch{reject();return;}
+    if(!proof||typeof proof.origin!=='string'||!/^[a-f0-9]{64}$/.test(proof.origin)||typeof proof.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(proof.fingerprint)){reject();return;}
+    const known=this.db.prepare('SELECT verified FROM vault_origins WHERE origin = ?').get(proof.origin) as {verified:number}|undefined;
+    if(known?.verified!==1||!this.vaultOriginClear(proof.origin)||vaultFingerprint(target)!==proof.fingerprint){reject();return;}
+    this.copyVaultOrigin(proof.origin,this.vaultOrigin(target));
+  }
+  /** Seal a validated backup copy in its host-owned snapshot ledger. */
+  sealVaultSnapshot():void {
+    if(!this.vaultDir)return;
+    this.prepareVaultBackup(this.vaultDir);
+    const value=JSON.stringify({origin:this.attachedVaultOrigin(),fingerprint:vaultFingerprint(this.vaultDir)});
+    this.db.prepare("INSERT INTO vault_state(key,value) VALUES ('backup_vault_proof',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(value);
+  }
+  /** Carry a clean staging origin across the imminent same-filesystem directory rename. */
+  prepareVaultMove(destinationVault:string):void {
+    if(!this.vaultDir)return;
+    const source=this.attachedVaultOrigin()!,known=this.db.prepare('SELECT verified FROM vault_origins WHERE origin = ?').get(source) as {verified:number}|undefined;
+    if(known?.verified!==1||!this.vaultOriginClear(source))return;
+    this.prepareVaultBackup(this.vaultDir);
+    const stat=statSync(realpathSync(this.vaultDir));
+    const path=join(realpathSync(dirname(dirname(destinationVault))),basename(dirname(destinationVault)),basename(destinationVault));
+    const target=digest({path,dev:stat.dev,ino:stat.ino});
+    if(!this.vaultOriginClear(target))return;
+    this.copyVaultOrigin(source,target);
+    if(source!==target)this.db.transaction(()=>{
+      this.db.prepare('DELETE FROM vault_projection_origins WHERE origin = ?').run(source);
+      this.db.prepare('DELETE FROM vault_origins WHERE origin = ?').run(source);
+      this.db.prepare("UPDATE vault_state SET value = ? WHERE key = 'origin' AND value = ?").run(target,source);
+    })();
+  }
+  private certifyLegacyVault():void {
+    if(!this.vaultDir||!this.db.prepare("SELECT 1 FROM vault_state WHERE key = 'origin_history_incomplete'").get())return;
+    const origin=this.attachedVaultOrigin()!,known=this.db.prepare('SELECT verified FROM vault_origins WHERE origin = ?').get(origin) as {verified:number}|undefined;
+    if(known?.verified!==0||!this.vaultOriginClear(origin))return;
+    const sources=this.list('sources'),expected=new Map<string,Set<string>>();
+    for(const table of vaultTables)for(const entity of this.list(table)){
+      if(table==='sources'?this.temporarySource(entity as Entities['sources']):this.isTemporaryDerived(table,entity))continue;
+      const path=this.vaultPath(table,entity),canonical=this.markdown(table,entity),effective=this.vaultEntity(table,entity),values=new Set([canonical]);
+      const header=canonical.match(/^---\n[\s\S]*?\n---\n/)?.[0],externalId=`vault:${relative(this.vaultDir,path)}`;
+      if(header&&(!('status' in effective)||effective.status==='active'))for(const edit of sources){
+        if(edit.kind!=='file'||edit.externalId!==externalId||edit.projectId!==entity.projectId||edit.domain!==entity.domain||!['active','superseded'].includes(edit.status)||this.temporarySource(edit)||!edit.parentSources?.length)continue;
+        if(edit.parentSources.some(ref=>{const parent=this.get('sources',ref.id);return !parent||parent.status!=='active'||parent.revision!==ref.revision||parent.projectId!==edit.projectId||parent.domain!==edit.domain;}))continue;
+        values.add(header+edit.content);
+      }
+      expected.set(path,values);
+    }
+    let count=0;
+    const matches=(directory:string):boolean=>{
+      for(const item of readdirSync(directory,{withFileTypes:true})){
+        const path=join(directory,item.name);
+        if(item.isSymbolicLink())return false;
+        if(item.isDirectory()){if(!matches(path))return false;continue;}
+        if(!item.isFile())return false;
+        if(!path.endsWith('.md')||path.includes('.tmp-'))continue;
+        count++;
+        const original=path.replace(/\.conflict-[^/]+\.md$/,'.md'),values=expected.get(original),content=readFileSync(path);
+        if(!values||![...values].some(value=>content.equals(Buffer.from(value))))return false;
+      }
+      return true;
+    };
+    try{if(matches(this.vaultDir)&&count>0)this.db.prepare('UPDATE vault_origins SET verified = 1 WHERE origin = ?').run(origin);}catch{/* Unverifiable content remains untouched and unverified. */}
+  }
+  private registerAttachedVault():void {
+    const origin=this.attachedVaultOrigin()!;
+    const existing=this.db.prepare('SELECT verified FROM vault_origins WHERE origin = ?').get(origin) as {verified:number}|undefined;
+    if(existing){
+      if(existing.verified===0&&readdirSync(this.vaultDir!).length===0)this.db.prepare('UPDATE vault_origins SET verified = 1 WHERE origin = ?').run(origin);
+      return;
+    }
+    const uncertain=!!this.db.prepare("SELECT 1 FROM vault_state WHERE key IN ('redaction_history','origin_history_incomplete') LIMIT 1").get()||!!this.db.prepare("SELECT 1 FROM cursors WHERE id LIKE 'vault-redaction:%' LIMIT 1").get();
+    // An unknown, populated location may be an older projection; never infer it is clean.
+    const verified=!uncertain||readdirSync(this.vaultDir!).length===0;
+    this.db.prepare('INSERT INTO vault_origins(origin,verified) VALUES (?,?)').run(origin,verified?1:0);
+  }
+  private lastVaultOrigin():string|undefined {
+    const row=this.db.prepare("SELECT value FROM vault_state WHERE key = 'origin'").get() as {value:string}|undefined;
+    return row&&/^[a-f0-9]{64}$/.test(row.value)?row.value:undefined;
+  }
+  private vaultRedactionId(intent:Pick<VaultRedaction,'table'|'id'>,scope:Scope):string {return `vault-redaction:${stableId('vault-redaction',scope.projectId,scope.domain,intent.table,intent.id)}`;}
+  private readVaultRedaction(cursor:Entities['cursors']):VaultRedaction {
+    return readVaultRedaction(cursor);
+  }
   private replayVaultRedactions():void {
     if(!this.vaultDir)return;
     const rows=this.db.prepare("SELECT data FROM cursors WHERE id LIKE 'vault-redaction:%'").all() as {data:string}[];
     for(const row of rows){
-      const cursor=JSON.parse(row.data) as Entities['cursors'];let intent:VaultRedaction;
-      try{intent=JSON.parse(cursor.value) as VaultRedaction;}catch{throw new Error('Invalid durable Vault redaction intent.');}
-      if(intent.version!==1||!['sources','cards','rules','cases'].includes(intent.table)||typeof intent.id!=='string'||!intent.id||cursor.id!==this.vaultRedactionId(intent,cursor))throw new Error('Invalid durable Vault redaction intent.');
+      const cursor=JSON.parse(row.data) as Entities['cursors'],intent=this.readVaultRedaction(cursor);
+      const origin=this.attachedVaultOrigin();
+      if(!origin||intent.version===1||intent.version===2&&intent.origin!==origin||intent.version===3&&!intent.origins.includes(origin))continue;
       const key=`${intent.table}:${intent.id}`,queued=this.vaultJobs.get(key);
       if(queued?.redactTemporary||queued?.redactStructuredCard)continue;
       const scope={id:intent.id,projectId:cursor.projectId,domain:cursor.domain};
@@ -1162,6 +1366,11 @@ export class Store {
     const body = this.markdown(job.table, entity);
     const effective = this.vaultEntity(job.table, entity);
     const inactive = 'status' in effective && effective.status !== 'active';
+    if(!job.redactTemporary&&!job.redactStructuredCard&&!inactive){
+      // Record the possible projection before touching the Vault, so a crash cannot lose its cleanup obligation.
+      const id=this.vaultRedactionId({table:job.table as VaultRedaction['table'],id:entity.id},entity),origin=this.attachedVaultOrigin()!;
+      this.db.prepare('INSERT INTO vault_projection_origins(id,origin,projected) VALUES (?,?,1) ON CONFLICT(id,origin) DO UPDATE SET projected=1').run(id,origin);
+    }
     if (startup && !inactive && this.preserveVaultPaths.has(path)) return;
     mkdirSync(dirname(path), { recursive: true });
     if (inactive) {
@@ -1188,8 +1397,23 @@ export class Store {
     for(const [key,job] of this.vaultJobs){
       if(processed++>=limit)break;
       try{
+        let cursorRow:{data:string}|undefined;
+        if(job.redactTemporary||job.redactStructuredCard){
+          const id=this.vaultRedactionId({table:job.table as VaultRedaction['table'],id:job.entity.id},job.entity);
+          cursorRow=this.db.prepare('SELECT data FROM cursors WHERE id = ?').get(id) as {data:string}|undefined;
+          const intent=cursorRow&&this.readVaultRedaction(JSON.parse(cursorRow.data) as Entities['cursors']);
+          const origin=this.attachedVaultOrigin();
+          if(!intent||!origin||intent.version===1||intent.version===2&&intent.origin!==origin||intent.version===3&&!intent.origins.includes(origin)){this.vaultJobs.delete(key);continue;}
+        }
         this.publish(job);
-        if(job.redactTemporary||job.redactStructuredCard){const intent:VaultRedaction={version:1,table:job.table as VaultRedaction['table'],id:job.entity.id};this.db.prepare('DELETE FROM cursors WHERE id = ?').run(this.vaultRedactionId(intent,job.entity));}
+        if(cursorRow)this.db.transaction(()=>{
+          const cursor=JSON.parse(cursorRow!.data) as Entities['cursors'],intent=this.readVaultRedaction(cursor),origin=this.attachedVaultOrigin()!;
+          const remaining=intent.version===3?intent.origins.filter(value=>value!==origin):[];
+          const changed=remaining.length
+            ?this.db.prepare('UPDATE cursors SET data = ? WHERE id = ? AND data = ?').run(JSON.stringify({...cursor,value:JSON.stringify({...intent,origins:remaining})}),cursor.id,cursorRow!.data)
+            :this.db.prepare('DELETE FROM cursors WHERE id = ? AND data = ?').run(cursor.id,cursorRow!.data);
+          if(changed.changes)this.db.prepare('UPDATE vault_projection_origins SET projected = 0 WHERE id = ? AND origin = ?').run(cursor.id,origin);
+        })();
       }catch(error){throw error instanceof VaultSyncError?error:new VaultSyncError(error);}
       if(this.vaultJobs.get(key)===job)this.vaultJobs.delete(key);
     }

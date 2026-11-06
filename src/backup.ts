@@ -40,7 +40,7 @@ function publish(staging:string,destination:string):void {
   assertReservation();linkSync(join(staging,'manifest.json'),join(destination,'manifest.json'));assertReservation();
 }
 /** A consistent SQLite snapshot regenerates published Vault files; credentials and machine leases are excluded. */
-export async function createBackup(store:Store,destination:string,options:{mode?:'live'|'demo'|'test';vaultDir?:string}={}):Promise<void> {
+export async function createBackup(store:Pick<Store,'backup'|'prepareVaultBackup'> & Partial<Pick<Store,'vaultDirectory'|'rebuildIndex'>>,destination:string,options:{mode?:'live'|'demo'|'test';vaultDir?:string}={}):Promise<void> {
   if(existsSync(destination))throw new DomainError('Backup destination already exists.','backup_exists',409);
   mkdirSync(dirname(destination),{recursive:true,mode:0o700});
   const staging=`${destination}.partial-${randomUUID()}`;mkdirSync(staging,{mode:0o700});
@@ -52,11 +52,17 @@ export async function createBackup(store:Store,destination:string,options:{mode?
     }
     if(typeof store.rebuildIndex==='function')store.rebuildIndex();
     if(vaultDir&&existsSync(vaultDir)){
+      // Recovery during index rebuilding can itself leave pending cleanup.
+      store.prepareVaultBackup(vaultDir);
       files(vaultDir); // Reject symlinks before copying authorized originals and preserved conflict versions.
       cpSync(vaultDir,join(staging,'vault'),{recursive:true,filter:path=>statSync(path).isDirectory()||path.endsWith('.md')&&!path.includes('.tmp-')});
     }
     await store.backup(join(staging,'patrick.db'));
-    const snapshot=new Store(join(staging,'patrick.db'),join(staging,'vault'));snapshot.close();
+    const snapshot=new Store(join(staging,'patrick.db'),join(staging,'vault'),vaultDir&&existsSync(vaultDir)?{vaultCopyFrom:vaultDir}:{});
+    try{
+      try{snapshot.sealVaultSnapshot();}
+      catch(error){if(vaultDir||!(error instanceof DomainError&&error.code==='vault_cleanup_unavailable'))throw error;}
+    }finally{snapshot.close();}
     writeFileSync(join(staging,'workspace-mode'),options.mode??'live',{mode:0o600});
     writeFileSync(join(staging,'manifest.json'),JSON.stringify({version:1,createdAt:now(),files:files(staging)},null,2),{mode:0o600});
     verifyBackup(staging);

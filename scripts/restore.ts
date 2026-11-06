@@ -69,9 +69,10 @@ export function restoreBackup(options: RestoreOptions): RestoreResult {
     verifyBackup(staging); unlinkSync(join(staging, 'manifest.json'));
     writeFileSync(join(staging, 'writer.lock'), lease, { mode: 0o600, flag: 'wx' });
     // Store initialization replays withdrawals before rebuilding its scoped FTS and Vault projections.
-    const recovered = new Store(join(staging, 'patrick.db'), join(staging, 'vault'));
+    const recovered = new Store(join(staging, 'patrick.db'), join(staging, 'vault'), { restoringSnapshot: true });
     try {
       if (typedMode === 'live' && (recovered.get('cursors', 'demo-seeded') || recovered.list('attempts').some(attempt => attempt.model.endsWith('-demo')) || recovered.list('receipts').some(receipt => receipt.pullRequestUrl.startsWith('https://example.com/patrick-demo/')))) throw new DomainError('Demo evidence cannot be restored into a live workspace.', 'workspace_mode', 409);
+      recovered.prepareVaultMove(join(destination, 'vault'));
     } finally { recovered.close(); }
     // Keep both directories on one filesystem. Each rename is atomic; the old directory survives any interrupted second rename.
     if (readFileSync(lockPath, 'utf8') !== lease) throw new DomainError('Writer lease changed before recovery swap. Recovery stopped.', 'writer_active', 409);

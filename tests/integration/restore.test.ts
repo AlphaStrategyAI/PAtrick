@@ -100,6 +100,24 @@ it('restores only ledger/Vault/mode files, keeps credentials external, and retai
   expect(existsSync(join(destination, 'writer.lock'))).toBe(false);
 });
 
+it('backs up again after restoring a clean Vault with completed privacy cleanup', async () => {
+  const root=mkdtempSync(join(tmpdir(),'patrick-restore-next-backup-'));dirs.push(root);
+  const vault=join(root,'source','vault'),snapshot=join(root,'snapshot'),destination=join(root,'destination'),next=join(root,'next');
+  let store=new Store(join(root,'source','patrick.db'),vault);
+  try {
+    store.save('sources',source);store.save('cards',card);store.save('sources',{...source,retention:'ephemeral'});
+    expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual([]);
+    await createBackup(store,snapshot,{mode:'test'});store.close();
+    const first=readFileSync(join(snapshot,'vault','p','personal','cards','c.md'),'utf8');expect(first).not.toContain(source.content);
+    restoreBackup({snapshot,destination,writerRevoked:true,reconciled:true});
+    store=new Store(join(destination,'patrick.db'),join(destination,'vault'));
+    expect(store.list('cursors').filter(cursor=>cursor.id.startsWith('vault-redaction:'))).toEqual([]);
+    expect(readFileSync(join(destination,'vault','p','personal','cards','c.md'),'utf8')).not.toContain(source.content);
+    await createBackup(store,next,{mode:'test'});
+    expect(readFileSync(join(next,'vault','p','personal','cards','c.md'),'utf8')).not.toContain(source.content);
+  } finally { store.close(); }
+});
+
 it('preserves demo mode and refuses a snapshot whose mode cannot be established', async () => {
   const demo = await fixture('demo');
   restoreBackup({ ...demo, writerRevoked: true, reconciled: true });
