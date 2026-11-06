@@ -154,6 +154,8 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
       const dependencies=knowledgeActionDependencies(action);
       if(!dependencies.unresolved)return dependencies.refs.some(ref=>sourceIds.has(ref.id));
     }
+    if(['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','knowledge.factual-context','experience.test-observation'].includes(action.kind) &&
+      knowledgeActionDependencies(action,store).refs.some(ref=>sourceIds.has(ref.id)))return true;
     return !!(action.taskId && taskIds.has(action.taskId) || refers(action.payload) || mentions(action.payload));
   })()) {
     if (typeof action.payload.outboxId === 'string') outboxIds.add(action.payload.outboxId);

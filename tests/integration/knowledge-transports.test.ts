@@ -1,0 +1,53 @@
+import { it, expect } from 'vitest';
+import { serve } from '@hono/node-server';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { createApp } from '../../src/app.js';
+import { readConfig } from '../../src/config.js';
+import { configureDemo, demoResearch, demoWriter, DemoWorker } from '../../src/demo.js';
+import { Workbench } from '../../src/orchestrator.js';
+import type { WorkerInput, WorkerAdapter } from '../../src/domain.js';
+import { repositoryKnowledgeFixture } from '../fixtures/repository-knowledge.js';
+
+it('drains a reference through host readback into authenticated HTTP and stdio MCP', async () => {
+  const f=repositoryKnowledgeFixture('github');
+  f.project.budgetUsd=5; f.store.save('projects',f.project);
+  const config=readConfig({PATRICK_MODE:'demo'}); configureDemo(config); config.projects=[f.project]; config.githubToken='fixture-gh'; config.host='owner-only.invalid'; config.authToken='local-transport-token';
+  const engine=new Workbench({store:f.store,config,workers:[],writer:demoWriter,research:demoResearch,repositoryKnowledgeReader:f.reader});
+  let server:ReturnType<typeof serve>|undefined,client:Client|undefined,workerEngine:Workbench|undefined;
+  try {
+    engine.ingest({projectId:f.project.id,externalId:'mainflow',revision:'r1',title:'Read',content:f.source.content,purpose:'reference'});
+    await engine.tick();
+    expect(f.requests.length).toBeGreaterThan(0);
+    expect(f.requests.every(r=>r.init.method==='GET' && new Headers(r.init.headers).get('Authorization')==='Bearer fixture-gh')).toBe(true);
+    expect(f.store.list('actions').some(a=>a.kind==='knowledge.host-observation')).toBe(true);
+    const app=createApp({store:f.store,config,engine});
+    server=serve({fetch:app.fetch,port:0,hostname:'127.0.0.1'}); await new Promise<void>(resolve=>server!.once('listening',resolve));
+    const address=server.address(); if(!address||typeof address==='string')throw Error('No listener');
+    const base=`http://127.0.0.1:${address.port}`;
+    expect((await fetch(`${base}/api/lookup?project=p&domain=personal&q=validate`)).status).toBe(401);
+    const response=await fetch(`${base}/api/lookup?project=p&domain=personal&q=validate`,{headers:{Authorization:'Bearer local-transport-token'}});
+    expect(response.status).toBe(200); const http=await response.json() as any;
+    const card=http.cards.find((c:any)=>c.claim?.claim.kind==='ci-result');
+    expect(card).toMatchObject({reportedStatement:{text:'Requested check',status:'reported'},factual:{eligible:true,fact:{temporal:'historical',claim:{subject:{jobId:'71'},value:{conclusion:'success'}}}}});
+    const transport=new StdioClientTransport({command:process.execPath,args:['--import','tsx','src/mcp.ts'],env:{PATH:process.env.PATH??'',PATRICK_URL:base,PATRICK_TOKEN:config.authToken,PATRICK_MCP_PROJECT:'p',PATRICK_MCP_DOMAIN:'personal'}});
+    client=new Client({name:'g9-test',version:'1'}); await client.connect(transport);
+    const result=await client.callTool({name:'lookup',arguments:{query:'validate'}});
+    const mcp=JSON.parse((result.content as {text:string}[])[0]!.text);
+    expect(mcp.cards.find((c:any)=>c.id===card.id)).toEqual(card);
+    expect(JSON.stringify({http,mcp})).not.toContain('fixture-gh');
+    await engine.shutdown();
+    const seen:WorkerInput[]=[], demo=new DemoWorker('grok');
+    const worker:WorkerAdapter={name:'grok',async run(input){seen.push(structuredClone(input));return demo.run(input);}};
+    workerEngine=new Workbench({store:f.store,config,workers:[worker],writer:demoWriter,research:demoResearch,repositoryKnowledgeReader:f.reader});
+    const task=workerEngine.ingest({projectId:'p',externalId:'next-task',title:'validate',content:'Review validate check'})!;
+    await workerEngine.tick(task.id);
+    const input=seen[0]!;expect(input).toBeDefined();
+    expect(input.project).toMatchObject({id:'p',domain:'personal'});
+    expect(input.cards.find(value=>value.id===card.id)?.factual?.eligible).toBe(true);
+    expect(input.facts.some(fact=>fact.ref.cardId===card.id&&fact.temporal==='historical')).toBe(true);
+    expect(input.cards.every(value=>value.projectId==='p'&&value.domain==='personal')).toBe(true);
+    expect(input.facts.every(value=>value.claim.subject.repository===f.project.repository)).toBe(true);
+    expect(JSON.stringify(input)).not.toContain('fixture-gh');
+  } finally { await client?.close(); await new Promise<void>(resolve=>server?server.close(()=>resolve()):resolve()); await workerEngine?.shutdown(); await engine.shutdown(); f.close(); }
+},15000);
