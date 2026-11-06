@@ -1,0 +1,211 @@
+#!/usr/bin/env node
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import * as fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
+import { networkProbeIds, type NetworkCoverage, type InstalledNetworkControl } from './installed-network.mjs';
+import { fileURLToPath } from 'node:url';
+import { profileFor, type Stage, type StageProfile } from './stage-lifetime.mjs';
+import { spawn } from 'node:child_process';
+import { realpathSync, mkdtempSync, mkdirSync, chmodSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { LimaWorker, limaFailureEvidence } from '../../src/integrations/workers.js';
+import { BillingAuthority, type IncludedAdmission, type CurrentBillingContext } from '../../src/billing.js';
+import { Store } from '../../src/store.js';
+import { digest, type AppConfig, type WorkerInput, type Runner } from '../../src/domain.js';
+export const probeIds=['grok-pass','planned-test-failure','cli-nonzero','malformed-output','codex-pass','codex-missing-result','acp-pass','acp-permission','acp-non-end-turn','acp-early-exit','profile-home',...networkProbeIds,'task-network-proxy','task-network-ip','synthetic-network','profile-setup-failure','workspace-substitution','prepare-interrupted','startup-stop','aborted-test','aborted-cleanup','private-mount-removal','abort-cli','abort-acp','timeout','fork-setsid','stdout-overflow','stderr-overflow','cleanup-denied','ssh-disconnect','control-unavailable','vm-unavailable','token-collision','lingering-process','reboot-registry','runtime-expiry','proxy-stopped','firewall-removed','proxy-restart','firewall-restart','vm-restart'] as const;
+export type ProbeId=typeof probeIds[number];
+export const reasons=['ok','not_run','dependency','identity','trust','policy','network','tls','lifetime','workspace','control_unavailable','host_health','unexpected_output','not_applicable'] as const;
+export type ReasonCode=typeof reasons[number];
+/** Host report only: no trusted coverage observation was retained. These zeros
+ * do not prove that no physical packet or guest action occurred. */
+export type UnobservedNetworkCoverage={targets:0;attempted:0;denied:0;basis:'unobserved';gate:'unobserved'};
+export type Result={id:ProbeId;status:'pass'|'fail'|'not_run'|'not_applicable';reason:ReasonCode;actualGuest:boolean;synthetic:boolean;environment:'installed'|'isolated-fixture'|'host-protocol';stage?:Stage;profile?:StageProfile;network?:NetworkCoverage|UnobservedNetworkCoverage;role?:'grok'|'codex'|'dsh';profileFacts?:{persistentMarkerReadable:boolean;persistentMarkerUnchanged:boolean;persistentConfigUnchanged:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;workspaceMatchesRecord:boolean;closedNetworkObserved:boolean};postDrop?:{uid:number;gid:number;groups:number[];noNewPrivileges:boolean;capEffective:string;capPermitted:string;capInheritable:string;capAmbient:string;capBounding:string;homeMatches:boolean;fixedEnvironmentMatches:boolean;extraEnvironmentKeys:('PWD'|'OLDPWD')[];unknownEnvironmentKeyPresent:boolean;derivedPwdMatchesHome:boolean;derivedOldPwdMatchesTrustedCwd:boolean}};
+export type QualificationReport={version:1;observedAt:string;instanceKind:'local-trial';limaVersion:string;guestVersion:string;systemdVersion:string;artifactHash:string;policyHash:string;inventoryHash:string;networkPreconditionRequests?:{header:0|1;tls:0|1};results:Result[];realModelCalls:0;costUsd:0;realProviderAdmission:false;providerAccountFeePrivacyQualified:false;productionMiniQualified:false};
+export function parseQualificationArguments(argv:string[]):{instance:string;user:string;reportPath:string}{
+ const values:Record<string,string>={};
+ for(let i=0;i<argv.length;i+=2){const flag=argv[i],value=argv[i+1];if(!['--instance','--user','--report'].includes(flag??'')||Object.hasOwn(values,flag!)||typeof value!=='string'||value.startsWith('--'))throw Error('arguments');values[flag!]=value;}
+ if(Object.keys(values).length!==3||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(values['--instance']!)||!/^patrick-[a-z][a-z0-9-]{0,23}$/.test(values['--user']!)||!isAbsolute(values['--report']!)||resolve(values['--report']!)!==values['--report']||values['--report']!.includes('\0'))throw Error('arguments');
+ return {instance:values['--instance']!,user:values['--user']!,reportPath:values['--report']!};
+}
+const profileFactsSchema=z.object({persistentMarkerReadable:z.boolean(),persistentMarkerUnchanged:z.boolean(),persistentConfigUnchanged:z.boolean(),privateHomeWritable:z.boolean(),privateScratchRemoved:z.boolean(),workspaceMatchesRecord:z.boolean(),closedNetworkObserved:z.boolean()}).strict();
+const postDropSchema=z.object({uid:z.number().int().min(1000).max(2147483647),gid:z.number().int().min(1000).max(2147483647),groups:z.array(z.number().int().min(0).max(2147483647)).max(64),noNewPrivileges:z.boolean(),capEffective:z.string().regex(/^[0-9a-f]{1,16}$/),capPermitted:z.string().regex(/^[0-9a-f]{1,16}$/),capInheritable:z.string().regex(/^[0-9a-f]{1,16}$/),capAmbient:z.string().regex(/^[0-9a-f]{1,16}$/),capBounding:z.string().regex(/^[0-9a-f]{1,16}$/),homeMatches:z.boolean(),fixedEnvironmentMatches:z.boolean(),extraEnvironmentKeys:z.array(z.enum(['PWD','OLDPWD'])).max(2).refine(a=>new Set(a).size===a.length),unknownEnvironmentKeyPresent:z.boolean(),derivedPwdMatchesHome:z.boolean(),derivedOldPwdMatchesTrustedCwd:z.boolean()}).strict();
+const coverageSchema=z.object({targets:z.number().int().min(0).max(1024),attempted:z.number().int().min(0).max(1024),denied:z.number().int().min(0).max(1024),basis:z.enum(['socket-policy','empty-allowlist','no-inventory-target','ipv6-upstream-disabled','nonempty-allowlist']),gate:z.enum(['nft','proxy-header','proxy-tls','inventory'])}).strict().refine(n=>n.denied<=n.attempted&&n.attempted<=n.targets);
+const unobservedCoverageSchema=z.object({targets:z.literal(0),attempted:z.literal(0),denied:z.literal(0),basis:z.literal('unobserved'),gate:z.literal('unobserved')}).strict();
+const networkSet=new Set<string>(networkProbeIds);
+const expectedNetworkPairs=new Set(networkProbeIds.flatMap(id=>(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']).map(role=>id+'/'+role)));
+const resultSchema=z.object({id:z.enum(probeIds),status:z.enum(['pass','fail','not_run','not_applicable']),reason:z.enum(reasons),actualGuest:z.boolean(),synthetic:z.literal(true),environment:z.enum(['installed','isolated-fixture','host-protocol']),stage:z.enum(['prepare','cli','read','tests','cleanup','acp']).optional(),profile:z.enum(['task-only','authenticated-client']).optional(),role:z.enum(['grok','codex','dsh']).optional(),network:z.union([coverageSchema,unobservedCoverageSchema]).optional(),profileFacts:profileFactsSchema.optional(),postDrop:postDropSchema.optional()}).strict().superRefine((r,ctx)=>{
+ const invalid=()=>ctx.addIssue({code:'custom',message:'invalid network evidence'});
+ if(!networkSet.has(r.id)){if(r.network||r.status==='not_applicable'||r.reason==='not_applicable')invalid();return;}
+ const n=r.network;if(!n||!r.role||r.environment!=='installed'||r.profile!=='authenticated-client'||r.stage||r.profileFacts||r.postDrop){invalid();return;}
+ if(r.id==='network-empty-codex'&&r.role!=='codex'||r.id==='network-empty-dsh'&&r.role!=='dsh')invalid();
+ if(n.basis==='unobserved'){if(r.status!=='not_run'||r.actualGuest||!['not_run','control_unavailable','lifetime'].includes(r.reason))invalid();return;}
+ if(r.status==='pass'&&(r.reason!=='ok'||n.targets===0||n.attempted!==n.targets||n.denied!==n.targets))invalid();
+ if(r.status!=='pass'&&r.reason==='ok')invalid();
+ if(r.status==='not_applicable'||r.status==='not_run'&&n.gate==='inventory'){
+  if(r.status==='not_applicable'&&r.reason!=='not_applicable'||n.targets!==0||n.attempted!==0||n.denied!==0||n.gate!=='inventory')invalid();
+  if(n.basis==='ipv6-upstream-disabled'){if(r.id!=='network-public-ipv6')invalid();}
+  else if(n.basis==='nonempty-allowlist'){if(!['network-empty-codex','network-empty-dsh'].includes(r.id))invalid();}
+  else if(n.basis==='no-inventory-target'){if(!['network-host-alias','network-host-ip','network-lan','network-gateway','network-resolver','network-vpn'].includes(r.id))invalid();}
+  else invalid();
+ }else{
+  if(r.reason==='not_applicable'||!['socket-policy','empty-allowlist'].includes(n.basis)||n.gate==='inventory')invalid();
+  const proxy=['network-disallowed-host','network-alternate-port','network-ip-connect','network-wrong-sni','network-ech','network-empty-codex','network-empty-dsh'].includes(r.id);
+  if(proxy&&n.gate==='nft'||!proxy&&n.gate!=='nft')invalid();
+  if(n.basis==='empty-allowlist'&&(!proxy||n.gate!=='proxy-header'))invalid();
+  if(['network-disallowed-host','network-alternate-port','network-ip-connect'].includes(r.id)&&n.gate!=='proxy-header')invalid();
+  if(['network-wrong-sni','network-ech'].includes(r.id)&&n.basis==='socket-policy'&&n.gate!=='proxy-tls')invalid();
+  if(r.id.startsWith('network-empty-')&&(n.basis!=='empty-allowlist'||n.gate!=='proxy-header'))invalid();
+ }
+});
+const uniqueNetwork=(rows:{id:string;role?:string}[])=>{const keys=rows.filter(r=>networkSet.has(r.id)).map(r=>r.id+'/'+r.role);return new Set(keys).size===keys.length;};
+function networkAggregates(rows:ReadonlyArray<{id:string;role?:string;status:string;network?:NetworkCoverage|UnobservedNetworkCoverage}>):boolean{
+ const proxyIds=['network-disallowed-host','network-alternate-port','network-ip-connect','network-wrong-sni','network-ech'];
+ for(const aggregate of rows.filter(r=>r.id.startsWith('network-empty-'))){
+  const n=aggregate.network;if(!n)return false;const members=rows.filter(r=>r.role===aggregate.role&&proxyIds.includes(r.id));
+  if(n.basis==='nonempty-allowlist'){if(members.some(r=>r.network?.basis==='empty-allowlist'))return false;continue;}
+  if(n.basis!=='empty-allowlist'||members.length!==5||members.some(r=>r.network?.basis!=='empty-allowlist'||r.network.gate!=='proxy-header'))return false;
+  if((['targets','attempted','denied'] as const).some(k=>n[k]!==members.reduce((total,r)=>total+r.network![k],0)))return false;
+ }
+ return true;
+}
+const versionSchema=z.string().regex(/^[0-9][0-9A-Za-z.+_-]{0,63}$/);
+const reportSchema=z.object({version:z.literal(1),observedAt:z.iso.datetime(),instanceKind:z.literal('local-trial'),limaVersion:versionSchema,guestVersion:versionSchema,systemdVersion:versionSchema,artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),networkPreconditionRequests:z.object({header:z.union([z.literal(0),z.literal(1)]),tls:z.union([z.literal(0),z.literal(1)])}).strict().optional(),results:z.array(resultSchema).max(1024),realModelCalls:z.literal(0),costUsd:z.literal(0),realProviderAdmission:z.literal(false),providerAccountFeePrivacyQualified:z.literal(false),productionMiniQualified:z.literal(false)}).strict().refine(r=>{
+ const rows=r.results.filter(row=>networkSet.has(row.id));
+ if(rows.some(row=>row.network?.basis==='unobserved'))return !Object.hasOwn(r,'networkPreconditionRequests')&&rows.length===expectedNetworkPairs.size&&uniqueNetwork(rows)&&rows.every(row=>row.network?.basis==='unobserved'&&expectedNetworkPairs.has(row.id+'/'+row.role));
+ return uniqueNetwork(rows)&&networkAggregates(rows);
+},'inconsistent network pairs');
+// The installed root operation still requires observed coverage on every row,
+// including failed returns. The host-only fallback cannot certify that ABI.
+const installedResultSchema=resultSchema.refine(row=>row.network?.basis!=='unobserved','unobserved coverage is report-only');
+const installedNetworkSchema=z.object({version:z.literal(1),operation:z.literal('qualification-network'),outcome:z.enum(['pass','fail']),reason:z.enum(['ok','dependency','trust','network','lifetime']),synthetic:z.literal(true),environment:z.literal('installed'),actualGuest:z.boolean(),artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),preconditionRequests:z.object({header:z.union([z.literal(0),z.literal(1)]),tls:z.union([z.literal(0),z.literal(1)])}).strict(),results:z.array(installedResultSchema).length(59)}).strict().superRefine((r,ctx)=>{
+ const expected=new Set(expectedNetworkPairs);
+ if(!uniqueNetwork(r.results)||!networkAggregates(r.results)||r.results.some(row=>!expected.delete(row.id+'/'+row.role)||row.actualGuest!==r.actualGuest)||expected.size||r.outcome==='pass'&&(r.reason!=='ok'||r.results.some(row=>!['pass','not_applicable'].includes(row.status)))||r.outcome==='fail'&&r.reason==='ok')ctx.addIssue({code:'custom',message:'incomplete installed network evidence'});
+});
+export function parseInstalledNetworkControl(value:unknown):InstalledNetworkControl{return installedNetworkSchema.parse(value) as InstalledNetworkControl;}
+export function sanitizeQualificationReport(value:unknown):QualificationReport{return reportSchema.parse(value);}
+export function writeQualificationReport(path:string,report:QualificationReport):void {
+ if(!isAbsolute(path)||resolve(path)!==path||path.includes('\0'))throw Error('report');
+ const parent=dirname(path),uid=process.geteuid?.();if(uid===undefined)throw Error('report');
+ for(let current=parent;;current=dirname(current)){const s=fs.lstatSync(current);if(s.isSymbolicLink()||!s.isDirectory()||s.uid!==0&&s.uid!==uid||current===parent&&(s.uid!==uid||(s.mode&0o077)!==0))throw Error('report');if(current==='/')break;}
+ const temp=join(parent,'.patrick-qualification-'+randomBytes(16).toString('hex')+'.tmp');let reservation:fs.Stats|undefined,fd:number|undefined;
+ try{
+  fd=fs.openSync(temp,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);fs.fchmodSync(fd,0o600);fs.writeFileSync(fd,JSON.stringify(sanitizeQualificationReport(report))+'\n');fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;
+  const reserved=fs.openSync(path,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);reservation=fs.fstatSync(reserved);fs.closeSync(reserved);
+  const before=fs.lstatSync(path);if(before.ino!==reservation.ino||before.dev!==reservation.dev||!before.isFile()||before.uid!==uid||before.size!==0||before.nlink!==1)throw Error('report');
+  fs.renameSync(temp,path);reservation=undefined;const directory=fs.openSync(parent,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+ }finally{if(fd!==undefined)fs.closeSync(fd);try{fs.unlinkSync(temp);}catch{}if(reservation){try{const s=fs.lstatSync(path);if(s.ino===reservation.ino&&s.dev===reservation.dev)fs.unlinkSync(path);}catch{}}}
+}
+const bindingSchema=z.object({runner:z.enum(['grok','codex','dsh']),user:z.string().regex(/^patrick-[a-z][a-z0-9-]{0,23}$/),projectId:z.string().regex(/^[a-zA-Z0-9_-]+$/),domain:z.string().min(1).max(1024),uid:z.number().int().min(1000).max(2147483647),gid:z.number().int().min(1000).max(2147483647),home:z.string().regex(/^\/var\/lib\/patrick-[a-z][a-z0-9-]{0,23}$/),proxyPort:z.number().int().min(1024).max(65535)}).strict().refine(b=>b.home==='/var/lib/'+b.user);
+const stageOutcomeSchema=z.object({phase:z.enum(['pending','acknowledged','complete','unknown','cancelled']),code:z.number().int().min(0).max(255).nullable(),submitterExited:z.boolean(),invocationClosed:z.boolean()}).strict();
+const controlSchema=z.object({version:z.literal(1),operation:z.enum(['qualification','qualification-start','qualification-finish']),outcome:z.literal('pass'),reason:z.literal('ok'),synthetic:z.literal(true),sessionActive:z.boolean(),artifactHash:z.string().regex(/^[a-f0-9]{64}$/),policyHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),fixtureHash:z.string().regex(/^[a-f0-9]{64}$/),guestVersion:versionSchema,systemdVersion:versionSchema,bindings:z.array(bindingSchema).length(3),observations:z.array(z.object({stage:z.enum(['prepare','cli','read','tests','cleanup','acp']),profile:z.enum(['task-only','authenticated-client']),role:z.enum(['grok','codex','dsh']),postDrop:postDropSchema,profileFacts:profileFactsSchema,outcome:stageOutcomeSchema}).strict()).max(1024)}).strict();
+type Control=z.infer<typeof controlSchema>;type Binding=z.infer<typeof bindingSchema>;
+function capture(command:string,args:string[],timeout=15000,acceptFailure=false):Promise<string>{return new Promise((resolve,reject)=>{const child=spawn(command,args,{stdio:['ignore','pipe','pipe'],env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LIMA_HOME:process.env.LIMA_HOME}});let stdout='',bytes=0,failed=false;const timer=setTimeout(()=>{failed=true;child.kill('SIGKILL');},timeout);child.stdout.on('data',c=>{stdout+=c;if(Buffer.byteLength(stdout)>1048576){failed=true;child.kill('SIGKILL');}});child.stderr.on('data',c=>{bytes+=c.length;if(bytes>1048576){failed=true;child.kill('SIGKILL');}});child.once('error',()=>{clearTimeout(timer);reject(Error('control_unavailable'));});child.once('close',(code,signal)=>{clearTimeout(timer);if(failed||signal||code!==0&&!acceptFailure)reject(Error('control_unavailable'));else resolve(stdout);});});}
+async function control(instance:string,operation:'qualification'|'qualification-start'|'qualification-finish'):Promise<Control>{return controlSchema.parse(JSON.parse(await capture('limactl',['shell',instance,'--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-probe','--operation',operation])));}
+const profileCommand=String.raw`node -e 'const f=require("node:fs"),h=process.env.HOME;for(const n of [".patrick-synthetic-auth",".patrick-synthetic-config"]){try{f.readFileSync(h+"/"+n);process.exit(78);}catch(e){if(e.code!=="ENOENT"&&e.code!=="EACCES")process.exit(78);}f.writeFileSync(h+"/"+n,"synthetic-poison");}f.writeFileSync(h+"/.patrick-synthetic-scratch","synthetic");'`;
+const fixtureCases=['pass','failed-test','exit-nonzero','malformed','wait','fork-setsid','stdout-overflow','stderr-overflow','codex-missing-result','acp-permission','acp-non-end-turn','acp-early-exit','profile-home-control'] as const;
+// Synthetic proof paths obey the same ancestor and sync exclusions as the loader.
+function syntheticProofRoot(){
+ const uid=process.geteuid?.();
+ const safeParent=(candidate:string):string|undefined=>{try{
+  if(uid===undefined)return undefined;const path=realpathSync(candidate);
+  if(path.split(sep).some(part=>/^(?:同步空间|vault|\.git|dropbox|onedrive(?: - .*)?|google drive|googledrive|mobile documents|cloudstorage|syncthing|icloud(?: drive)?)$/i.test(part)))return undefined;
+  const chain:fs.Stats[]=[];for(let current=path;;current=dirname(current)){const stat=fs.lstatSync(current);if(stat.isSymbolicLink()||!stat.isDirectory())return undefined;chain.unshift(stat);if(current===parse(current).root)break;}
+  let boundary=false;for(const stat of chain){const mode=stat.mode&0o7777;if(stat.uid!==0&&stat.uid!==uid)return undefined;if(stat.uid===uid&&mode===0o700)boundary=true;if(boundary?stat.uid!==uid||mode!==0o700:(mode&0o022)!==0)return undefined;}
+  return path;
+ }catch{return undefined;}};
+ const cwd=realpathSync(process.cwd()),outsideCwd=(path:string)=>{const value=relative(cwd,path);return value==='..'||value.startsWith('..'+sep)||isAbsolute(value);};
+ const temporary=safeParent(tmpdir());let parent=temporary&&outsideCwd(temporary)?temporary:undefined;
+ if(!parent&&process.env.GITHUB_ACTIONS==='true'&&['true','1'].includes(process.env.CI??'')){
+  const project=safeParent(cwd);let workspace:string|undefined;try{if(process.env.GITHUB_WORKSPACE)workspace=realpathSync(process.env.GITHUB_WORKSPACE);}catch{}
+  if(project&&project===workspace&&fs.existsSync(join(project,'package.json'))&&fs.existsSync(join(project,'src','billing.ts'))){const runnerTemp=process.env.RUNNER_TEMP?safeParent(process.env.RUNNER_TEMP):undefined,sibling=safeParent(dirname(project));parent=runnerTemp&&outsideCwd(runnerTemp)?runnerTemp:sibling&&outsideCwd(sibling)?sibling:undefined;}
+ }
+ if(!parent)throw Error('No verified private synthetic proof parent');
+ const root=mkdtempSync(join(parent,'patrick-SYNTHETIC-qualification-')),created=fs.lstatSync(root);
+ const remove=()=>{try{const current=fs.lstatSync(root);if(!current.isSymbolicLink()&&current.isDirectory()&&current.uid===uid&&current.dev===created.dev&&current.ino===created.ino)rmSync(root,{recursive:true,force:true});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}};
+ try{chmodSync(root,0o700);}catch(error){remove();throw error;}return {root,remove};
+}
+/** A synthetic mechanics factory, not installed/provider admission evidence. */
+export function createSyntheticBinding(declaration:{instance:string;binding:Binding;fixtureCase:string;policyHash:string;artifactHash:string;inventoryHash:string;fixtureHash:string}){
+ const schema=z.object({instance:z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),binding:bindingSchema,fixtureCase:z.enum(fixtureCases),policyHash:z.string().regex(/^[a-f0-9]{64}$/),artifactHash:z.string().regex(/^[a-f0-9]{64}$/),inventoryHash:z.string().regex(/^[a-f0-9]{64}$/),fixtureHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),parsed=schema.safeParse(declaration);if(!parsed.success)throw Error('trust');
+ const {instance,binding:b,fixtureCase:behavior,policyHash,artifactHash,inventoryHash,fixtureHash}=parsed.data;if(createHash('sha256').update(readFileSync(new URL('./synthetic-worker.mjs',import.meta.url))).digest('hex')!==fixtureHash)throw Error('trust');
+ const {root,remove}=syntheticProofRoot();let store!:Store;
+ try{
+ const vault=join(root,'vault'),proofRoot=join(root,'proof');mkdirSync(vault,{mode:0o700});mkdirSync(proofRoot,{mode:0o700});const at=new Date(),createdAt=at.toISOString();
+ const project:WorkerInput['project']={id:b.projectId,projectId:b.projectId,domain:b.domain,name:'Synthetic qualification',description:'No model qualification fixture',repository:'synthetic/qualification',repositoryProvider:'github',prdPath:'synthetic.txt',allowedPaths:['synthetic.txt'],trustedChecks:[],trustedAppIds:[],ownerId:'synthetic-owner',autoMerge:false,budgetUsd:0,createdAt};
+ const source:WorkerInput['source']={id:'synthetic-source',projectId:project.id,domain:b.domain,kind:'manual',externalId:'synthetic',revision:'synthetic-revision',title:'Synthetic',content:'Fixed no-model qualification only',locator:'synthetic',authorId:project.ownerId,retention:'ephemeral',status:'active',createdAt};
+ const task:WorkerInput['task']={id:'synthetic-task',projectId:project.id,domain:b.domain,sourceId:source.id,sourceRevision:source.revision,title:'Synthetic',description:'No model calls',status:'queued',version:1,createdAt,updatedAt:createdAt,runAfter:createdAt,attempts:0,repairCount:0,budgetUsd:0,spentUsd:0,stage:'execute',billingBoundary:'included-only',attemptLimit:1};
+ const input:WorkerInput={task,project,source,role:'execute',cards:[],facts:[],rules:[],plan:{taskVersion:1,sourceRevision:source.revision,baselineSha:'synthetic-baseline',summary:'Synthetic',paths:['synthetic.txt'],steps:['write'],tests:[behavior==='failed-test'?"node -e 'process.exit(23)'":behavior==='profile-home-control'?profileCommand:"node -e 'process.exit(0)'"],stopConditions:['stop']}};
+ const command='/usr/local/libexec/patrick-worker/synthetic-worker.mjs',args=['--fixture-case='+behavior,'--fixture-protocol='+(b.runner==='dsh'?'acp':'cli')];
+ const config:AppConfig={mode:'test',host:'127.0.0.1',port:0,dataDir:root,vaultDir:vault,ownerId:project.ownerId,authToken:'synthetic',sessionSecret:'synthetic',projects:[project],scanIntervalMs:1000,billingBoundary:'included-only',maxAttemptsPerTask:1,workers:{[b.runner]:{command,args,isolation:'lima',instance,guestUser:b.user,timeoutMs:10000}},runnerPolicies:[{runner:b.runner,roles:['execute'],domains:[b.domain],provider:'synthetic-provider',model:'synthetic-model',admitted:true,costPerRunUsd:0,independentReview:false,billing:{mode:'included-subscription',admissionId:'synthetic-qualification'}}]};
+ const current:CurrentBillingContext={projectId:project.id,domain:b.domain,ownerFingerprint:'synthetic-owner',runner:b.runner,provider:'synthetic-provider',model:'synthetic-model',accountFingerprint:'synthetic-only-account',workspaceFingerprint:'synthetic-only-workspace',authRouteFingerprint:'synthetic-no-auth-route',authMode:'subscription-oauth',cliVersion:'synthetic-'+fixtureHash,commandPolicyHash:digest({command,args,model:'synthetic-model',fixtureHash}),networkPolicyHash:digest({policyHash,artifactHash,inventoryHash}),runtimeIdentityHash:digest({instance,runner:b.runner,user:b.user,uid:b.uid,gid:b.gid,projectId:b.projectId,domain:b.domain,artifactHash,fixtureHash}),checkedAt:createdAt,principalVerifiedAt:createdAt,allowance:'available',noAdditionalBilling:'provider-enforced',paidOverflow:'disabled',additionalCredits:'disabled',autoRefill:'disabled'};
+ const {checkedAt,principalVerifiedAt,allowance,noAdditionalBilling,paidOverflow,additionalCredits,autoRefill,...bindings}=current;
+ const proof:IncludedAdmission={schemaVersion:1,id:'synthetic-qualification',...bindings,allowance:{state:'verified-available',checkedAt:createdAt,evidenceDigest:'synthetic-only'},noAdditionalBilling:{state:'provider-enforced',paidOverflow:'verified-disabled',additionalCredits:'verified-disabled',autoRefill:'verified-disabled',evidenceDigest:'synthetic-only'},verifiedAt:createdAt,expiresAt:new Date(at.getTime()+3600000).toISOString(),evidenceDigest:'synthetic-only-no-provider-capability'};
+ writeFileSync(join(proofRoot,'synthetic-qualification.json'),JSON.stringify(proof),{mode:0o600});store=new Store(':memory:');store.save('projects',project);store.save('sources',source);store.save('tasks',task);
+ const billing=new BillingAuthority(store,config,{async read(policy,actualProject){if(policy.provider!=='synthetic-provider'||policy.model!=='synthetic-model'||actualProject.id!==project.id||config.workers[b.runner]?.command!==command||digest(config.workers[b.runner]?.args??[])!==digest(args))return undefined;return {...current,checkedAt:new Date().toISOString(),principalVerifiedAt:new Date().toISOString()};}},{proofRoot});
+ let disposed=false;return {input,worker:new LimaWorker(b.runner,config,billing),dispose(){if(disposed)return;disposed=true;try{store.close();}finally{remove();}}};
+ }catch(error){try{store?.close();}finally{remove();}throw error;}
+}
+/** Shared qualification decision: only adapter-issued evidence plus completed
+ * trusted root outcomes can certify a negative. No error-message matching. */
+export function negativeScenarioMatches(id:ProbeId,error:unknown,observations:unknown):boolean {
+ const parsed=z.array(z.object({stage:z.enum(['prepare','cli','read','tests','cleanup','acp']),outcome:stageOutcomeSchema}).passthrough()).max(6).safeParse(observations),evidence=limaFailureEvidence(error);
+ if(!parsed.success||!evidence)return false;const rows=parsed.data;
+ const cases:Partial<Record<ProbeId,{stage:Stage;kind:string;code:number|null;stages:Stage[]}>>={
+  'cli-nonzero':{stage:'cli',kind:'process-exit',code:23,stages:['prepare','cli','cleanup']},
+  'malformed-output':{stage:'cli',kind:'malformed-output',code:0,stages:['prepare','cli','cleanup']},
+  'codex-missing-result':{stage:'read',kind:'process-exit',code:1,stages:['prepare','cli','read','cleanup']},
+  'acp-permission':{stage:'acp',kind:'acp-permission-cancelled',code:0,stages:['prepare','acp','cleanup']},
+  'acp-non-end-turn':{stage:'acp',kind:'acp-max-tokens',code:0,stages:['prepare','acp','cleanup']},
+  'acp-early-exit':{stage:'acp',kind:'acp-early-exit',code:0,stages:['prepare','acp','cleanup']},
+  'stdout-overflow':{stage:'cli',kind:'stdout-overflow',code:null,stages:['prepare','cli','cleanup']},
+  'stderr-overflow':{stage:'cli',kind:'stderr-overflow',code:null,stages:['prepare','cli','cleanup']},
+ };
+ const expected=cases[id];if(!expected||evidence.stage!==expected.stage||evidence.kind!==expected.kind||JSON.stringify(rows.map(o=>o.stage))!==JSON.stringify(expected.stages))return false;
+ return rows.every(o=>o.outcome.invocationClosed&&o.outcome.phase==='complete'&&(o.stage===expected.stage&&expected.code===null||o.outcome.submitterExited&&o.outcome.code===(o.stage===expected.stage?expected.code:0)));
+}
+export async function qualify(input:{instance:string;user:string;reportPath:string}):Promise<QualificationReport>{
+ const parsed=parseQualificationArguments(['--instance',input.instance,'--user',input.user,'--report',input.reportPath]);
+ const localHash=createHash('sha256').update(readFileSync(new URL('./synthetic-worker.mjs',import.meta.url))).digest('hex');
+ const initial=await control(parsed.instance,'qualification');
+ if(initial.sessionActive||initial.fixtureHash!==localHash||new Set(initial.bindings.map(b=>b.runner)).size!==3||new Set(initial.bindings.map(b=>b.uid)).size!==3||initial.bindings.find(b=>b.runner==='grok')?.user!==parsed.user)throw Error('trust');
+ const rawLima=(await capture('limactl',['--version'])).trim(),limaVersion=/^(?:limactl version )?v?([0-9][0-9A-Za-z.+_-]{0,63})$/.exec(rawLima)?.[1];if(!limaVersion)throw Error('dependency');
+ const report:QualificationReport={version:1,observedAt:new Date().toISOString(),instanceKind:'local-trial',limaVersion,guestVersion:initial.guestVersion,systemdVersion:initial.systemdVersion,artifactHash:initial.artifactHash,policyHash:initial.policyHash,inventoryHash:initial.inventoryHash,results:[],realModelCalls:0,costUsd:0,realProviderAdmission:false,providerAccountFeePrivacyQualified:false,productionMiniQualified:false};
+ const scenarios:[ProbeId,Runner,string,boolean][]=[['grok-pass','grok','pass',true],['planned-test-failure','grok','failed-test',true],['cli-nonzero','grok','exit-nonzero',false],['malformed-output','grok','malformed',false],['codex-pass','codex','pass',true],['codex-missing-result','codex','codex-missing-result',false],['acp-pass','dsh','pass',true],['acp-permission','dsh','acp-permission',false],['acp-non-end-turn','dsh','acp-non-end-turn',false],['acp-early-exit','dsh','acp-early-exit',false],['stdout-overflow','grok','stdout-overflow',false],['stderr-overflow','grok','stderr-overflow',false],['fork-setsid','grok','fork-setsid',true],...(['grok','codex','dsh'] as const).map(r=>['profile-home',r,'profile-home-control',true] as [ProbeId,Runner,string,boolean])];
+ let started=false,healthy=true,canContinue=true,requiredScenariosPassed=true,offset=0,priorObservations:Control['observations']=[];
+ try{
+  const start=await control(parsed.instance,'qualification-start');if(start.artifactHash!==initial.artifactHash||start.policyHash!==initial.policyHash||start.inventoryHash!==initial.inventoryHash||digest(start.bindings)!==digest(initial.bindings)||start.fixtureHash!==localHash||!start.sessionActive)throw Error('trust');started=true;priorObservations=start.observations;offset=priorObservations.length;
+  for(const [id,runner,behavior,expectedSuccess]of scenarios){if(!healthy||!canContinue){report.results.push({id,status:'not_run',reason:healthy?'not_run':'lifetime',actualGuest:false,synthetic:true,environment:'installed',role:runner});continue;}
+   const b=initial.bindings.find(b=>b.runner===runner)!;let session:ReturnType<typeof createSyntheticBinding>;
+   try{session=createSyntheticBinding({instance:parsed.instance,binding:b,fixtureCase:behavior,policyHash:initial.policyHash,artifactHash:initial.artifactHash,inventoryHash:initial.inventoryHash,fixtureHash:localHash});}catch(error){canContinue=false;requiredScenariosPassed=false;const reason:ReasonCode=error instanceof Error&&error.message==='No verified private synthetic proof parent'?'policy':'trust';report.results.push({id,status:'fail',reason,actualGuest:false,synthetic:true,environment:'installed',role:runner});continue;}
+   let passed=false,failure:unknown,reason:ReasonCode='unexpected_output',failureCode:string|undefined,disposalFailed=false;
+   try{const result=await session.worker.run(session.input);const tests=(result.output as {tests?:{passed:boolean}[]}).tests;passed=expectedSuccess&&result.provider==='synthetic-provider'&&result.model==='synthetic-model'&&result.costUsd===0&&tests?.length===1&&tests[0]?.passed===(behavior!=='failed-test');}catch(error){failureCode=(error as {code?:string}).code;failure=error;if(failureCode==='worker_cleanup_unconfirmed'){healthy=false;reason='lifetime';}}finally{try{session.dispose();}catch{disposalFailed=true;}}
+   let observations:Control['observations']=[],observationsTrusted=true;
+   try{const after=await control(parsed.instance,'qualification');if(after.artifactHash!==initial.artifactHash||after.policyHash!==initial.policyHash||after.inventoryHash!==initial.inventoryHash||after.fixtureHash!==localHash||digest(after.bindings)!==digest(initial.bindings)||!after.sessionActive||after.observations.length<offset||digest(after.observations.slice(0,offset))!==digest(priorObservations))throw Error('trust');observations=after.observations.slice(offset);priorObservations=after.observations;offset=after.observations.length;
+    const expected=['prepare',runner==='dsh'?'acp':'cli',...(runner==='codex'&&behavior!=='exit-nonzero'&&behavior!=='malformed'?['read']:[]),...(expectedSuccess?['tests']:[]),'cleanup'];
+    if(!expectedSuccess)passed=negativeScenarioMatches(id,failure,observations);
+    if(expectedSuccess&&observations.some(o=>!o.outcome.invocationClosed||o.outcome.phase!=='complete'||!o.outcome.submitterExited||o.outcome.code!==0))passed=false;
+    if(observations.length>0&&(JSON.stringify(observations.map(o=>o.stage))!==JSON.stringify(expected)||observations.some(o=>o.role!==runner||o.profile!==profileFor(o.stage)||o.postDrop.uid!==b.uid||o.postDrop.gid!==b.gid||o.postDrop.groups.length||!o.postDrop.noNewPrivileges||['capEffective','capPermitted','capInheritable','capAmbient','capBounding'].some(k=>!/^0+$/.test(o.postDrop[k as keyof typeof o.postDrop] as string))||!o.postDrop.homeMatches||!o.postDrop.fixedEnvironmentMatches||o.postDrop.unknownEnvironmentKeyPresent||!o.profileFacts.persistentMarkerUnchanged||!o.profileFacts.persistentConfigUnchanged||!o.profileFacts.workspaceMatchesRecord||!o.profileFacts.privateScratchRemoved||o.profile==='authenticated-client'&&!o.profileFacts.persistentMarkerReadable||o.profile==='task-only'&&(!o.profileFacts.closedNetworkObserved||!o.profileFacts.privateHomeWritable||o.profileFacts.persistentMarkerReadable)))){passed=false;canContinue=false;observationsTrusted=false;if(reason!=='lifetime')reason='trust';}
+   }catch{passed=false;canContinue=false;if(reason!=='lifetime')reason='trust';}
+   if(disposalFailed){passed=false;canContinue=false;if(reason!=='lifetime')reason='trust';}
+   if(!observations.length){passed=false;canContinue=false;if(healthy&&reason!=='trust')reason=failureCode?.startsWith('subscription_')||failureCode?.startsWith('billing_')?'policy':'trust';}
+   else if(!observations.some(o=>o.stage==='cleanup'&&o.outcome.phase==='complete'&&o.outcome.invocationClosed&&o.outcome.submitterExited&&o.outcome.code===0)){healthy=false;reason='lifetime';}
+   if(!passed)requiredScenariosPassed=false;
+   const trustedObservations=observationsTrusted?observations:[];
+   report.results.push({id,status:passed?'pass':'fail',reason:passed?'ok':reason,actualGuest:trustedObservations.length>0,synthetic:true,environment:'installed',role:runner});for(const {outcome:_,...o} of trustedObservations)report.results.push({id,status:passed?'pass':'fail',reason:passed?'ok':reason,actualGuest:true,synthetic:true,environment:'installed',...o});
+  }
+  const taskFacts=report.results.filter(r=>r.profile==='task-only'),taskNetworkPassed=healthy&&canContinue&&requiredScenariosPassed&&taskFacts.length>0&&taskFacts.every(r=>r.status==='pass'&&r.profileFacts?.closedNetworkObserved);for(const id of ['task-network-proxy','task-network-ip'] as const)report.results.push({id,status:taskNetworkPassed?'pass':taskFacts.length?'fail':'not_run',reason:taskNetworkPassed?'ok':taskFacts.length?'network':'not_run',actualGuest:taskFacts.length>0,synthetic:true,environment:'installed',profile:'task-only'});
+  if(healthy&&canContinue&&requiredScenariosPassed&&taskNetworkPassed){try{
+   const network=parseInstalledNetworkControl(JSON.parse(await capture('limactl',['shell',parsed.instance,'--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-probe','--operation','qualification-network'],900000,true)));
+   if(network.artifactHash!==initial.artifactHash||network.policyHash!==initial.policyHash||network.inventoryHash!==initial.inventoryHash||!network.actualGuest)throw Error('trust');
+   report.networkPreconditionRequests=network.preconditionRequests;report.results.push(...network.results);if(['lifetime','trust'].includes(network.reason))healthy=false;
+  }catch{healthy=false;}}
+  if(healthy&&canContinue&&requiredScenariosPassed&&taskNetworkPassed){try{const network=JSON.parse(await capture('limactl',['shell',parsed.instance,'--','/usr/bin/sudo','-n','--','/usr/local/libexec/patrick-worker-probe','--operation','synthetic-network'],25000,true));const pass=network.version===1&&network.operation==='synthetic-network'&&network.outcome==='pass'&&network.reason==='ok'&&network.synthetic===true&&network.environment==='isolated-fixture'&&network.actualGuest===true&&network.positive===1&&network.proxyDenials===7&&network.firewallDenials===15;report.results.push({id:'synthetic-network',status:pass?'pass':network.reason==='dependency'?'not_run':'fail',reason:pass?'ok':network.reason==='dependency'?'dependency':'network',actualGuest:network.outcome==='pass'||network.reason!=='dependency',synthetic:true,environment:'isolated-fixture'});}catch{report.results.push({id:'synthetic-network',status:'fail',reason:'network',actualGuest:true,synthetic:true,environment:'isolated-fixture'});}}
+ }finally{if(started){try{await control(parsed.instance,'qualification-finish');}catch{report.results.push({id:'profile-home',status:'fail',reason:'trust',actualGuest:true,synthetic:true,environment:'installed'});}}}
+ const executed=new Set(report.results.map(r=>r.id));for(const id of probeIds)if(!executed.has(id)){const roles:('grok'|'codex'|'dsh'|undefined)[]=networkSet.has(id)?(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']):[undefined];for(const role of roles)report.results.push({id,status:'not_run',reason:'not_run',actualGuest:false,synthetic:true,environment:id==='synthetic-network'?'isolated-fixture':'installed',...(role?{role,profile:'authenticated-client' as const,network:{targets:0,attempted:0,denied:0,basis:'unobserved' as const,gate:'unobserved' as const}}:{})});}
+ const sanitized=sanitizeQualificationReport(report);writeQualificationReport(parsed.reportPath,sanitized);return sanitized;
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ try{const report=await qualify(parseQualificationArguments(process.argv.slice(2)));if(report.results.some(r=>!['pass','not_applicable'].includes(r.status)))process.exitCode=1;}catch{process.stderr.write('qualification-failed\n');process.exitCode=78;}
+}

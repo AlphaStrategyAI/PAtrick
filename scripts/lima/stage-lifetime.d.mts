@@ -1,0 +1,86 @@
+import type { Stats, Dir } from 'node:fs';
+import type { ObservedFile, ObservedCheck, TestEnvironment } from '../../src/knowledge-contract.js';
+export interface TestsPayloadV1 {
+ schemaVersion:1;nonce:string;files:{path:string;content:string}[];commands:string[];
+ measurement:{baselineRevision:string;paths:string[];testFiles?:string[]};
+}
+export interface TestsFrameV1 {
+ schemaVersion:1;kind:'patrick-tests';nonce:string;
+ /** Canonical Base64 of at most 12000 captured stdout/stderr tail bytes. */
+ tests:{command:string;passed:boolean;outputBase64:string}[];
+ measurement:{observedAt:string;before:ObservedFile[];after:ObservedFile[];missing:string[];unstable:string[];checks:ObservedCheck[];environment:TestEnvironment};
+}
+export function parseTestsFrame(text:string,payload:TestsPayloadV1):TestsFrameV1;
+import type { Account, Entry, GuestContext } from './policy.mjs';
+export type Stage='prepare'|'cli'|'read'|'tests'|'cleanup'|'acp';
+export type StageProfile='task-only'|'authenticated-client';
+export type Operation='exec'|'stop'|'reconcile';
+export type InvocationState='active'|'stopping'|'drained'|'cleaning'|'closed'|'quarantined';
+export type LifetimeContext=Readonly<{invocation:string;stage:Stage;profile:StageProfile;operation:Operation}>;
+export type ControlReason='ok'|'active'|'unknown'|'workspace_residual'|'control_unavailable'|'boot_mismatch'|'authority_unavailable';
+export type ControlFacts=Readonly<{cgroupsEmpty:boolean;workerProcessesAbsent:boolean;workspacesAbsent:boolean;privateMountsAbsent:boolean}>;
+export type ReconcileResult=ControlFacts & (
+ | Readonly<{version:2;kind:'registered';state:InvocationState;closure:'none'|'workspace-cleaned';invocationClosed:boolean;reason:ControlReason}>
+ | Readonly<{version:2;kind:'denial-only';state:'denied';closure:'never-registered';invocationClosed:true;reason:'ok'|'unknown'|'workspace_residual'}>
+ | Readonly<{version:2;kind:'unknown';state:'quarantined';closure:'none';invocationClosed:false;reason:'unknown'|'control_unavailable'|'authority_unavailable'}>
+);
+export type NodeIdentity=Readonly<{dev:number;ino:number}>;
+export type MarkerIdentity=Readonly<NodeIdentity & {hash:string}>;
+export type RegistryReference=Readonly<{version:1;authorityId:string;witnessHash:string}>;
+export type RegistryAuthority=Readonly<RegistryReference & {root:NodeIdentity;records:NodeIdentity;marker:MarkerIdentity}>;
+export type RegistryMarker=Readonly<{version:1;authorityId:string;root:NodeIdentity;records:NodeIdentity}>;
+export type RegistryWitness=Readonly<{version:1;phase:'initializing'|'ready';authorityId:string;initializedBy:Readonly<{artifactHash:string;policyHash:string;boot:string}>;root:NodeIdentity|null;records:NodeIdentity|null;marker:MarkerIdentity|null}>;
+export type AbsenceFacts=Readonly<{workerProcessesAbsent:boolean;privateMountsAbsent:boolean;cgroupsEmpty:boolean}>;
+export type PersistedLayout={root:string;path:string;rootIno:number|null;workIno:number|null;status:'intended'|'allocated'|'removed'};
+export type SyntheticAssertion={version:1;stage:'prepare'|'read'|'tests'|'cleanup';persistentMarkerReadable:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;initialHomeEmpty:boolean;closedNetworkDenied:boolean};
+export type TrustedStageObservation={pid:number;start:string;directEnvironmentClean:true;postDrop:{uid:number;gid:number;groups:[];noNewPrivileges:true;capEffective:string;capPermitted:string;capInheritable:string;capAmbient:string;capBounding:string;homeMatches:true;fixedEnvironmentMatches:true;extraEnvironmentKeys:('PWD'|'OLDPWD')[];unknownEnvironmentKeyPresent:false;derivedPwdMatchesHome:true;derivedOldPwdMatchesTrustedCwd:true};profileFacts:{persistentMarkerReadable:boolean;persistentMarkerUnchanged:boolean;persistentConfigUnchanged:boolean;privateHomeWritable:boolean;privateScratchRemoved:boolean;workspaceMatchesRecord:boolean;closedNetworkObserved:boolean}};
+export type PersistedStage={stage:Stage;profile:StageProfile;sequence:number;unit:string;description:string;phase:'pending'|'acknowledged'|'complete'|'unknown'|'cancelled';invocationId:string|null;controlGroup:string|null;submission:{pid:number;start:string}|null;submitterExited:boolean;code:number|null;observation?:TrustedStageObservation|null};
+export type RegisteredRecord=Readonly<{version:2;kind:'registered';authorityId:string;invocation:string;context:GuestContext;identity:Readonly<{uid:number;gid:number;home:string}>;admission:Readonly<{policyHash:string;artifactHash:string;proxyPort:number}>;boot:string;generation:string;state:InvocationState;payloadSealed:boolean;cleanupConsumed:boolean;sequence:number;stages:readonly PersistedStage[];layout:PersistedLayout;baseline:AbsenceFacts;drain:Readonly<{generation:string;sequence:number}>|null;cleanupConfirmed:boolean;bootRevocation:string|null}>;
+export type DenialRecord=Readonly<{version:2;kind:'denial-only';authorityId:string;invocation:string;context:GuestContext;identity:Readonly<{uid:number;gid:number;home:string}>;authorization:Readonly<{policyHash:string;artifactHash:string}>;boot:string;state:'denied';payloadSealed:true}>;
+export type InvocationRecord=RegisteredRecord|DenialRecord;
+export type RegistryIO={
+ lstatSync(path:string):Stats;openSync(path:string,flags:number,mode?:number):number;fstatSync(fd:number):Stats;
+ readSync(fd:number,buffer:Buffer,offset:number,length:number,position:null):number;closeSync(fd:number):void;
+ readFileSync(path:string|number):Buffer;readFileSync(path:string|number,encoding:BufferEncoding):string;writeFileSync(path:string|number,data:string|Buffer):void;
+ readdirSync(path:string):string[];opendirSync(path:string,options:{bufferSize:number}):Dir;
+ fsyncSync(fd:number):void;fchmodSync(fd:number,mode:number):void;mkdirSync(path:string,options:{mode:number}):unknown;
+ chownSync(path:string,uid:number,gid:number):void;linkSync(from:string,to:string):void;renameSync(from:string,to:string):void;
+ unlinkSync(path:string):void;rmdirSync(path:string):void;
+};
+export type RuntimeDependencies=Readonly<{io:RegistryIO;boot:()=>string;witness:()=>Readonly<{pid:number;start:string}>;lockTimeoutMs?:number}>;
+export type RecoveryBinding=Readonly<{registry:RegistryReference;identity:Account;cancellationBinding:Readonly<{policyHash:string;artifactHash:string}>|null}>;
+export type Recover=(context:GuestContext)=>Promise<RecoveryBinding>;
+export type Admission=Readonly<{entry:Entry & {groups:number[]};policyHash:string;artifactHash:string}>;
+export type StageRequest={context:GuestContext;lifetime:LifetimeContext;command:string[]};
+export type StageOutcome={code:number|null;assertion?:SyntheticAssertion};
+export type ManagerFacts={description:string;invocationId:string;controlGroup:string;active:boolean;empty:boolean;mainPid?:number};
+export type Launch={completion:Promise<StageOutcome>;witness?:{pid:number;start:string}|null;advance?:()=>void;release?:()=>void;cancelInput?:()=>void};
+export type ServiceInvocation={command:string;args:string[]};
+export type ObservationSubject={context:GuestContext;identity:Readonly<{uid:number;gid:number;home:string}>;stages:readonly PersistedStage[];layout:{root:string;path:string}};
+export type LifetimeManager={submit:(spec:ServiceInvocation & {unit:string;description:string;stage:Stage;workspace:string})=>Launch;acknowledge:(unit:string)=>Promise<ManagerFacts|null>;inspect:(unit:string)=>Promise<ManagerFacts|null>;pending:(unit:string)=>Promise<boolean>;stop:(unit:string)=>Promise<void>;observeStage?:(input:{stage:PersistedStage;record:RegisteredRecord;launch:Launch;command:string[]})=>Promise<TrustedStageObservation>};
+export type LifetimeDependencies=RuntimeDependencies & Readonly<{effectiveUid:()=>number|undefined;trust:()=>void;identity:(context:GuestContext)=>Account;admit:(context:GuestContext,command:readonly string[])=>Promise<Admission>;recover:Recover;manager:LifetimeManager;observe:(record:ObservationSubject)=>AbsenceFacts}>;
+export function encodeRegistryMetadata(value:RegistryWitness|RegistryMarker):Buffer;
+export function readRegistryAuthority(io:Pick<RegistryIO,'lstatSync'|'openSync'|'fstatSync'|'readSync'|'closeSync'|'readdirSync'>,expected?:RegistryReference):RegistryAuthority;
+export function registryQuiescent(io:RegistryIO,expected?:RegistryReference):boolean;
+export function registryRecordsClosed(io:RegistryIO,expected:RegistryReference,invocations:readonly string[]):boolean;
+export function ensureRuntimeBase(deps:RuntimeDependencies,expected:RegistryReference):void;
+export function withInstallMutex<T>(deps:RuntimeDependencies,expected:RegistryReference,operation:()=>Promise<T>):Promise<T>;
+export function executeStage(request:StageRequest,deps:LifetimeDependencies):Promise<StageOutcome|ReconcileResult>;
+export function productionLifetimeDependencies(input:Readonly<{trust:()=>void;identity:(context:GuestContext)=>Account;admit:(context:GuestContext,command:readonly string[])=>Promise<Admission>;recover:Recover}>):LifetimeDependencies;
+export function productionManager():LifetimeManager;
+export const guestScripts:Readonly<Record<'prepare'|'read'|'tests'|'cleanup',string>>;
+export const cliWrapper:string;
+export const gateWrapper:string;
+export const releaseLine:string;
+export const execGateProgram:string;
+export const payloadReleaseLine:string;
+export function profileFor(stage:Stage):StageProfile;
+export function buildDropInvocation(entry:Entry,wrapper?:string):ServiceInvocation;
+export function buildServiceInvocation(entry:Entry,lifetime:LifetimeContext,owned:{unit:string;description:string;workspace:string}):ServiceInvocation;
+export function assertProfilePaths(profile:StageProfile,home:string,paths:readonly string[]):void;
+export function assertionCollector(stage:Stage,forward:(chunk:Buffer)=>void):{write(value:Buffer|string):void;finish():{assertion:SyntheticAssertion|null;invalid:boolean}};
+
+export type QualificationBinding=GuestContext & {uid:number;gid:number;home:string;proxyPort:number;homeIno:number;baseline:string;markers:{name:'.patrick-synthetic-auth'|'.patrick-synthetic-config';ino:number;hash:string;removeIntended:boolean;removed:boolean}[]};
+export type QualificationSession=Readonly<{version:2;registry:RegistryReference;generation:string;artifactHash:string;policyHash:string;inventoryHash:string;bindings:readonly QualificationBinding[];records:readonly string[];codeHashes:Readonly<Record<string,string>>;phase:'active'|'finishing';networkOperation?:Readonly<{version:1;generation:string;artifactHash:string;policyHash:string;inventoryHash:string;owner:{pid:number;startTime:string;bootId:string};phase:'running'|'complete'|'unknown';preconditionRequests:{header:number;tls:number};roles:readonly {role:string;token:string;phase:string;steps:number}[]}>}>;
+export function validQualificationSession(value:unknown):boolean;
+export function qualificationObservations(session:QualificationSession,io:RegistryIO):{stage:Stage;profile:StageProfile;role:string;postDrop:TrustedStageObservation['postDrop'];profileFacts:TrustedStageObservation['profileFacts'];outcome:{phase:PersistedStage['phase'];code:number|null;submitterExited:boolean;invocationClosed:boolean}}[];

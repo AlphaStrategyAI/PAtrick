@@ -1,0 +1,60 @@
+{
+  "projects": [
+    {
+      "id": "patrick",
+      "projectId": "patrick",
+      "domain": "personal",
+      "name": "PAtrick",
+      "description": "Approved pilot repository. Confirm validate and its actual GitHub App ID before enabling autoMerge.",
+      "repository": "AlphaStrategyAI/PAtrick",
+      "repositoryProvider": "github",
+      "executionRunner": "grok",
+      "prdPath": "docs/product/PRD.md",
+      "allowedPaths": ["docs/product/PRD.md"],
+      "trustedChecks": ["validate"],
+      "trustedAppIds": [15368],
+      "ownerId": "owner",
+      "autoMerge": false,
+      "budgetUsd": 5,
+      "sourceDir": "/absolute/path/to/productIdeas",
+      "createdAt": "2026-11-03T00:00:00.000Z"
+    }
+  ],
+  "runnerPolicies": [
+    {
+      "runner": "grok",
+      "roles": ["knowledge_extract", "case_extract", "decide", "execute", "plan", "check", "feedback"],
+      "domains": ["personal"],
+      "provider": "xai",
+      "model": "unconfigured",
+      "admitted": false,
+      "costPerRunUsd": 0,
+      "independentReview": false
+    },
+    {
+      "runner": "dsh",
+      "roles": ["knowledge_extract", "case_extract", "decide", "execute", "plan", "check", "feedback"],
+      "domains": ["personal"],
+      "provider": "deepseek",
+      "model": "unconfigured",
+      "admitted": false,
+      "costPerRunUsd": 0,
+      "independentReview": false
+    },
+    {
+      "runner": "codex",
+      "roles": ["knowledge_extract", "case_extract", "decide", "execute", "plan", "check", "feedback"],
+      "domains": ["personal"],
+      "provider": "openai",
+      "model": "unconfigured",
+      "admitted": false,
+      "costPerRunUsd": 0,
+      "independentReview": false
+    }
+  ],
+  "workers": {
+    "grok": { "command": "grok", "args": [], "timeoutMs": 180000, "isolation": "lima", "instance": "patrick" },
+    "dsh": { "command": "dsh", "args": ["--acp"], "timeoutMs": 180000, "isolation": "lima", "instance": "patrick" },
+    "codex": { "command": "codex", "args": [], "timeoutMs": 180000, "isolation": "lima", "instance": "patrick" }
+  }
+}

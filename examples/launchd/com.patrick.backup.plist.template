@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.patrick.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>--env-file={{BACKUP_ENV_FILE}}</string>
+    <string>--import=tsx</string>
+    <string>{{REPO}}/scripts/backup.ts</string>
+  </array>
+  <key>WorkingDirectory</key><string>{{REPO}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>{{PATH}}</string>
+    <key>PATRICK_MODE</key><string>live</string>
+    <key>PATRICK_CONFIG</key><string>{{CONFIG}}</string>
+    <key>PATRICK_DATA_DIR</key><string>{{DATA_DIR}}</string>
+    <key>PATRICK_VAULT_DIR</key><string>{{DATA_DIR}}/vault</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>15</integer></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>{{LOG_DIR}}/backup.stdout.log</string>
+  <key>StandardErrorPath</key><string>{{LOG_DIR}}/backup.stderr.log</string>
+</dict>
+</plist>

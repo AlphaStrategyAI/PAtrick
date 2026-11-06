@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.patrick.workbench</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>--env-file={{ENV_FILE}}</string>
+    <string>{{REPO}}/dist/index.js</string>
+  </array>
+  <key>WorkingDirectory</key><string>{{REPO}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>{{PATH}}</string>
+    <key>PATRICK_MODE</key><string>live</string>
+    <key>PATRICK_HOST</key><string>127.0.0.1</string>
+    <key>PATRICK_CONFIG</key><string>{{CONFIG}}</string>
+    <key>PATRICK_DATA_DIR</key><string>{{DATA_DIR}}</string>
+    <key>PATRICK_VAULT_DIR</key><string>{{DATA_DIR}}/vault</string>
+    <key>PATRICK_NETWORK_CONFIG</key><string>{{NETWORK_CONFIG}}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ExitTimeOut</key><integer>120</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>{{LOG_DIR}}/workbench.stdout.log</string>
+  <key>StandardErrorPath</key><string>{{LOG_DIR}}/workbench.stderr.log</string>
+</dict>
+</plist>

@@ -1,0 +1,36 @@
+# Operator-reviewed starting point. Generation does not create or start this VM.
+# Requires Lima 2.3+ for networkOpts.hostLoopback; validate with the installed version.
+minimumLimaVersion: 2.3.0
+base: template:ubuntu-24.04
+vmType: vz
+cpus: 2
+memory: 4GiB
+disk: 30GiB
+
+# Plain mode disables mounts, SSH-agent forwarding, dynamic forwarding,
+# the guest agent and bundled containerd even when a base template supplies them.
+plain: true
+mounts: []
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+containerd:
+  system: false
+  user: false
+portForwards:
+  - guestIP: 0.0.0.0
+    proto: any
+    guestPortRange: [1, 65535]
+    ignore: true
+copyToHost: []
+propagateProxyEnv: false
+networkOpts:
+  hostLoopback: false
+
+# No host repository, home, token, or environment file is mounted or copied.
+# Install guest Node 24 and approved worker CLIs separately after verifying their
+# provenance and unattended-use terms. Keep repository writer credentials on host.
+# Default outbound networking is NOT an egress allowlist: enforce an approved
+# guest/host firewall or gateway before admitting any runner. See deployment.md.

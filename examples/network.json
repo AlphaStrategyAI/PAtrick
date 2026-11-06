@@ -1,0 +1,19 @@
+[
+  {
+    "id": "workbench-heartbeat",
+    "url": "http://127.0.0.1:4317/health",
+    "domain": "personal",
+    "heartbeat": true
+  },
+  {
+    "id": "approved-personal-egress-unconfigured",
+    "url": "https://configure-approved-egress.invalid/health",
+    "domain": "personal",
+    "adapter": {
+      "kind": "shortcuts",
+      "status": "UNCONFIGURED - PAtrick Personal Path Status",
+      "connect": "UNCONFIGURED - PAtrick Personal Path Connect",
+      "disconnect": "UNCONFIGURED - PAtrick Personal Path Disconnect"
+    }
+  }
+]

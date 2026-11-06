@@ -1,0 +1,261 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { networkProbeIds } from '../../scripts/lima/installed-network.mjs';
+import { createSyntheticBinding, qualify, sanitizeQualificationReport } from '../../scripts/lima/qualify.js';
+import { BillingAuthority, loadIncludedAdmission } from '../../src/billing.js';
+import { guestScripts } from '../../src/integrations/workers.js';
+import { Store } from '../../src/store.js';
+import { makeBillingFixture } from '../fixtures/billing.js';
+const hash='a'.repeat(64);
+const common={actualGuest:false,synthetic:true,environment:'installed',profile:'authenticated-client'};
+function result(id:string,role='grok'){return {id,role,...common,status:'pass',reason:'ok',network:{targets:1,attempted:1,denied:1,basis:id.startsWith('network-empty-')?'empty-allowlist':'socket-policy',gate:['network-wrong-sni','network-ech'].includes(id)?'proxy-tls':['network-disallowed-host','network-alternate-port','network-ip-connect','network-empty-codex','network-empty-dsh'].includes(id)?'proxy-header':'nft'}};}
+function report(results:unknown[]){return {version:1,observedAt:'2026-11-05T00:00:00.000Z',instanceKind:'local-trial',limaVersion:'1',guestVersion:'24.04',systemdVersion:'255',artifactHash:hash,policyHash:hash,inventoryHash:hash,results,realModelCalls:0,costUsd:0,realProviderAdmission:false,providerAccountFeePrivacyQualified:false,productionMiniQualified:false};}
+const pairs=()=>networkProbeIds.flatMap(id=>(id==='network-empty-codex'?['codex']:id==='network-empty-dsh'?['dsh']:['grok','codex','dsh']).map(role=>{
+ const row=result(id,role);if(role!=='grok'&&row.network.gate.startsWith('proxy-')){row.network.basis='empty-allowlist';row.network.gate='proxy-header';}if(id.startsWith('network-empty-'))row.network.targets=row.network.attempted=row.network.denied=5;return row;
+}));
+const unobservedPairs=()=>pairs().map(r=>({...r,status:'not_run',reason:'not_run',network:{targets:0,attempted:0,denied:0,basis:'unobserved',gate:'unobserved'}}));
+type HostFailure='unhealthy-adapter'|'unavailable-network'|'invalid-network'|'untrusted-network'|'later-failure'|'missing-current'|'changed-prefix'|'bad-current-identity';
+/** The sole subprocess surface is a finite local fake limactl. The actual
+ * qualifier still creates its ordinary Store/billing binding and LimaWorker. */
+function hostFixture(failure:HostFailure){
+ const root=mkdtempSync(join(realpathSync(tmpdir()),'patrick-unobserved-network-')),bin=join(root,'bin'),work=join(root,'work'),eventsPath=join(root,'events'),observationsPath=join(root,'observations'),reportPath=join(root,'report.json');chmodSync(root,0o700);mkdirSync(bin,{mode:0o700});mkdirSync(work,{mode:0o700});
+ const fixturePath=fileURLToPath(new URL('../../scripts/lima/synthetic-worker.mjs',import.meta.url));
+ const fixtureHash=createHash('sha256').update(readFileSync(fixturePath)).digest('hex');
+ const bindings=(['grok','codex','dsh'] as const).map((runner,i)=>({runner,user:'patrick-'+runner,projectId:'synthetic',domain:'synthetic',uid:1101+i,gid:1101+i,home:'/var/lib/patrick-'+runner,proxyPort:18743+i}));
+ const control={version:1,outcome:'pass',reason:'ok',synthetic:true,artifactHash:hash,policyHash:hash,inventoryHash:hash,fixtureHash,guestVersion:'24.04',systemdVersion:'255',bindings,observations:[]};
+ const network={version:1,operation:'qualification-network',outcome:'pass',reason:'ok',synthetic:true,environment:'installed',actualGuest:failure!=='untrusted-network',artifactHash:hash,policyHash:hash,inventoryHash:hash,preconditionRequests:{header:1,tls:1},results:pairs().map(r=>({...r,actualGuest:failure!=='untrusted-network'}))};
+ writeFileSync(join(bin,'limactl'),`#!${process.execPath}
+(async()=>{
+const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),argv=process.argv.slice(2),failure=${JSON.stringify(failure)},events=${JSON.stringify(eventsPath)},observations=${JSON.stringify(observationsPath)},work=${JSON.stringify(work)};
+const emit=value=>process.stdout.write(JSON.stringify(value)),log=value=>fs.appendFileSync(events,JSON.stringify(value)+'\\n');
+if(JSON.stringify(argv)===JSON.stringify(['--version'])){process.stdout.write('limactl version 1.0.0\\n');process.exit(0);}
+const prefix=['shell','synthetic-instance','--','/usr/bin/sudo','-n','--'];
+if(JSON.stringify(argv.slice(0,6))!==JSON.stringify(prefix))process.exit(78);
+if(argv[6]==='/usr/local/libexec/patrick-worker-probe'&&argv.length===9&&argv[7]==='--operation'){
+ const operation=argv[8];log(operation);
+ if(['qualification','qualification-start','qualification-finish'].includes(operation)){
+  if(operation==='qualification-finish'&&failure==='later-failure')process.exit(78);
+  const rows=fs.existsSync(observations)?fs.readFileSync(observations,'utf8').trim().split('\\n').filter(Boolean).map(line=>JSON.parse(line)):[];
+  if(failure==='missing-current'&&operation==='qualification')rows.length=0;
+  if(failure==='changed-prefix'&&operation==='qualification'&&rows.length>=8)rows[0].postDrop.uid++;
+  if(failure==='bad-current-identity'&&operation==='qualification'&&rows.length>0)rows[0].postDrop.uid++;
+  emit({...${JSON.stringify(control)},operation,observations:rows,sessionActive:operation==='qualification-start'||operation==='qualification'&&fs.existsSync(events)&&fs.readFileSync(events,'utf8').includes('qualification-start')});
+ }else if(operation==='qualification-network'){
+  if(failure==='unavailable-network')process.exit(78);
+  emit(failure==='invalid-network'?{version:1}: ${JSON.stringify(network)});
+ }else if(operation==='synthetic-network')process.exit(78);else process.exit(78);
+}else if(argv[6]==='/usr/local/libexec/patrick-worker-enter'){
+ const runner=argv[8],binding=${JSON.stringify(bindings)}.find(b=>b.runner===runner),stage=argv[18],operation=argv[20],args=argv.slice(22),invocation=argv[16],dir='/var/lib/patrick-workspaces/'+invocation+'/work';
+ if(!binding||argv[7]!=='--runner'||argv[9]!=='--user'||argv[10]!==binding.user||argv[11]!=='--project'||argv[12]!==binding.projectId||argv[13]!=='--domain'||argv[14]!==binding.domain||argv[15]!=='--invocation'||! /^[a-f0-9]{32}$/.test(argv[16])||argv[17]!=='--stage'||argv[19]!=='--operation'||argv[21]!=='--')process.exit(78);
+ log({stage,operation});
+ if(failure==='unhealthy-adapter')process.exit(78);
+ if(operation!=='exec'){
+  if(stage!=='cleanup'||argv.length!==22||!['stop','reconcile'].includes(operation))process.exit(78);
+  emit({version:2,kind:'registered',closure:operation==='stop'?'none':'workspace-cleaned',state:operation==='stop'?'drained':'closed',cgroupsEmpty:true,workerProcessesAbsent:true,workspacesAbsent:operation==='reconcile',privateMountsAbsent:true,invocationClosed:operation==='reconcile',reason:'ok'});return;
+ }
+ const profile=['cli','acp'].includes(stage)?'authenticated-client':'task-only';let recorded=false;
+ const outcome=code=>{if(recorded)return;recorded=true;const postDrop={uid:binding.uid,gid:binding.gid,groups:[],noNewPrivileges:true,capEffective:'0',capPermitted:'0',capInheritable:'0',capAmbient:'0',capBounding:'0',homeMatches:true,fixedEnvironmentMatches:true,extraEnvironmentKeys:[],unknownEnvironmentKeyPresent:false,derivedPwdMatchesHome:true,derivedOldPwdMatchesTrustedCwd:true};const profileFacts={persistentMarkerReadable:profile==='authenticated-client',persistentMarkerUnchanged:true,persistentConfigUnchanged:true,privateHomeWritable:true,privateScratchRemoved:true,workspaceMatchesRecord:true,closedNetworkObserved:true};fs.appendFileSync(observations,JSON.stringify({stage,profile,role:runner,postDrop,profileFacts,outcome:{phase:'complete',code,submitterExited:true,invocationClosed:true}})+'\\n');};
+ if(stage==='cli'||stage==='acp'){
+  const extra=stage==='cli'?args.slice(6):args.slice(1),which=extra.find(a=>a.startsWith('--fixture-case='));
+  if(stage==='cli'&&(args[0]!=='sh'||args[3]!=='patrick'||args[4]!==dir||args[5]!=='/usr/local/libexec/patrick-worker/synthetic-worker.mjs')||stage==='acp'&&args[0]!=='/usr/local/libexec/patrick-worker/synthetic-worker.mjs')process.exit(78);
+  if(which==='--fixture-case=stdout-overflow'||which==='--fixture-case=stderr-overflow'){outcome(null);(which.includes('stdout')?process.stdout:process.stderr).write('x'.repeat(2000001));return;}
+  // Keep this host fixture finite: model the two guest-only setup cases with the fixed pass protocol.
+  const safe=extra.map(a=>['--fixture-case=fork-setsid','--fixture-case=profile-home-control'].includes(a)?'--fixture-case=pass':a);
+  const child=cp.spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(fixturePath)},...safe],{cwd:work,env:{HOME:work,PATH:${JSON.stringify(process.env.PATH)}},stdio:['pipe','pipe','pipe']});
+  process.stdin.pipe(child.stdin);child.stdin.on('error',()=>{});child.stdout.pipe(process.stdout);child.stderr.pipe(process.stderr);
+  child.once('close',(code,signal)=>{const actual=signal?null:code;outcome(actual);process.exit(actual??78);});return;
+ }
+ const scripts=${JSON.stringify(guestScripts)};if(args[0]!=='node'||args[1]!=='-e'||args[2]!==scripts[stage]||args[3]!==dir)process.exit(78);
+ let data='';for await(const chunk of process.stdin)data+=chunk;
+ if(stage==='prepare'){const p=JSON.parse(data);fs.writeFileSync(path.join(work,'prompt.txt'),p.prompt);fs.writeFileSync(path.join(work,'schema.json'),JSON.stringify(p.schema));emit({dir});}
+ else if(stage==='read'){try{process.stdout.write(fs.readFileSync(path.join(work,'result.json'),'utf8'));}catch{outcome(1);process.exit(1);}}
+ else if(stage==='tests'){
+  const p=JSON.parse(data),crypto=require('node:crypto'),os=require('node:os'),hash=v=>crypto.createHash('sha256').update(v).digest('hex');
+  for(const file of p.files){fs.mkdirSync(path.dirname(path.join(work,file.path)),{recursive:true});fs.writeFileSync(path.join(work,file.path),file.content);}
+  const missing=new Set(),unstable=[],measure=()=>p.measurement.paths.flatMap(name=>{try{const target=path.join(work,name),st=fs.lstatSync(target);if(!st.isFile()||st.isSymbolicLink()||st.size>1000000)throw Error('unavailable');return [{path:name,sha256:hash(fs.readFileSync(target)),mode:st.mode&0o111?'100755':'100644'}];}catch{missing.add(name);return [];}}),before=measure(),checks=[];
+  const results=p.commands.map(command=>{const startedAt=new Date().toISOString(),r=cp.spawnSync('/bin/sh',['-c',command],{cwd:work,env:{PATH:${JSON.stringify(process.env.PATH)},HOME:work},timeout:1000}),finishedAt=new Date().toISOString(),tail=Buffer.concat([r.stdout||Buffer.alloc(0),r.stderr||Buffer.alloc(0)]).subarray(-12000),passed=r.status===0&&!r.signal&&!r.error;checks.push({id:hash(JSON.stringify(['local-check',command])).slice(0,32),command,result:passed?'success':'failure',outputDigest:hash(tail),process:{exitCode:r.status,signal:r.signal,timedOut:r.error?.code==='ETIMEDOUT',startedAt,finishedAt,...(r.error?{errorCode:r.error.code==='ETIMEDOUT'?'ETIMEDOUT':'PROCESS_ERROR'}:{})}});return {command,passed,outputBase64:tail.toString('base64')};});
+  const after=measure();for(const f of before){const a=after.find(a=>a.path===f.path);if(!a||a.sha256!==f.sha256||a.mode!==f.mode)unstable.push(f.path);}
+  emit({schemaVersion:1,kind:'patrick-tests',nonce:p.nonce,tests:results,measurement:{observedAt:new Date().toISOString(),before,after,missing:[...missing],unstable,checks,environment:{observed:{node:process.versions.node,platform:process.platform,arch:process.arch,osRelease:os.release()},unknown:['browserVersion','databaseVersion','serviceVersions','dependencyClosure']}}});
+ }else if(stage==='cleanup'){for(const name of fs.readdirSync(work))fs.rmSync(path.join(work,name),{recursive:true,force:true});}else process.exit(78);
+ outcome(0);
+}else process.exit(78);
+})().catch(()=>process.exit(78));
+`,{mode:0o700});
+ return {root,bin,reportPath,events:()=>readFileSync(eventsPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)),close(){rmSync(root,{recursive:true,force:true});}};
+}
+function expectUnobservedReport(value:ReturnType<typeof sanitizeQualificationReport>){
+ const rows=value.results.filter(r=>(networkProbeIds as readonly string[]).includes(r.id));
+ expect(rows).toHaveLength(59);expect(new Set(rows.map(r=>r.id+'/'+r.role)).size).toBe(59);
+ for(const row of rows)expect(row).toMatchObject({status:'not_run',reason:'not_run',actualGuest:false,synthetic:true,environment:'installed',profile:'authenticated-client',network:{targets:0,attempted:0,denied:0,basis:'unobserved',gate:'unobserved'}});
+ expect(value).not.toHaveProperty('networkPreconditionRequests');expect(value).toMatchObject({realModelCalls:0,costUsd:0,realProviderAdmission:false,providerAccountFeePrivacyQualified:false,productionMiniQualified:false});
+ const pending=['profile-setup-failure','workspace-substitution','prepare-interrupted','startup-stop','aborted-test','aborted-cleanup','private-mount-removal','abort-cli','abort-acp','timeout','cleanup-denied','control-unavailable','token-collision','lingering-process','runtime-expiry','ssh-disconnect','vm-unavailable','reboot-registry','proxy-stopped','firewall-removed','proxy-restart','firewall-restart','vm-restart'];
+ expect(value.results.filter(r=>pending.includes(r.id))).toHaveLength(23);for(const id of pending)expect(value.results.find(r=>r.id===id)).toMatchObject({status:'not_run',actualGuest:false});
+}
+describe('qualifier failure reporting through the real coordinator (host-only process fixture)',()=>{
+ const bindingDeclaration=()=>({instance:'synthetic-instance',binding:{runner:'grok' as const,user:'patrick-grok',projectId:'synthetic',domain:'synthetic',uid:1101,gid:1101,home:'/var/lib/patrick-grok',proxyPort:18743},fixtureCase:'pass',policyHash:hash,artifactHash:hash,inventoryHash:hash,fixtureHash:createHash('sha256').update(readFileSync(new URL('../../scripts/lima/synthetic-worker.mjs',import.meta.url))).digest('hex')});
+ it('uses verified CI sibling scratch for a synthetic binding when temp is unsafe',async()=>{
+  const base=makeBillingFixture(),parent=mkdtempSync(join(base.root,'patrick-qualification-proof-parent-')),unsafe=join(parent,'unsafe'),project=join(parent,'project');
+  mkdirSync(unsafe,{mode:0o700});chmodSync(unsafe,0o777);mkdirSync(project,{mode:0o700});mkdirSync(join(project,'src'),{mode:0o700});writeFileSync(join(project,'package.json'),'{}');writeFileSync(join(project,'src','billing.ts'),'');
+  vi.stubEnv('TMPDIR',unsafe);vi.stubEnv('CI','true');vi.stubEnv('GITHUB_ACTIONS','true');vi.stubEnv('GITHUB_WORKSPACE',project);vi.stubEnv('RUNNER_TEMP','');vi.spyOn(process,'cwd').mockReturnValue(project);
+  let bound:ReturnType<typeof createSyntheticBinding>|undefined;
+  try{
+   bound=createSyntheticBinding(bindingDeclaration());
+   const authority=(bound.worker as unknown as {billing:BillingAuthority}).billing,proofRoot=(authority as unknown as {proofRoot:string}).proofRoot;
+   const rejected=join(unsafe,'receipt');mkdirSync(rejected,{mode:0o700});copyFileSync(join(proofRoot,'synthetic-qualification.json'),join(rejected,'synthetic-qualification.json'));
+   expect(loadIncludedAdmission(rejected,'synthetic-qualification',[])===undefined).toBe(true);
+   let admission='allowed';try{await authority.reserve(bound.input,'grok');}catch(error){admission=(error as {code?:string}).code??'unknown';}
+   expect(admission).toBe('allowed');expect(dirname(dirname(proofRoot))).toBe(parent);
+  }finally{bound?.dispose();vi.unstubAllEnvs();vi.restoreAllMocks();rmSync(parent,{recursive:true,force:true});base.dispose();}
+ },10000);
+ it('cleans up only its own qualification proof directory',()=>{
+  const base=makeBillingFixture(),parent=mkdtempSync(join(base.root,'patrick-qualification-custody-'));vi.stubEnv('TMPDIR',parent);
+  let bound:ReturnType<typeof createSyntheticBinding>|undefined;
+  try{
+   bound=createSyntheticBinding(bindingDeclaration());const authority=(bound.worker as unknown as {billing:BillingAuthority}).billing,proofRoot=(authority as unknown as {proofRoot:string}).proofRoot,root=dirname(proofRoot);
+   renameSync(root,join(parent,'original'));mkdirSync(root,{mode:0o700});writeFileSync(join(root,'foreign'),'preserve');bound.dispose();bound.dispose();
+   expect(existsSync(join(root,'foreign'))).toBe(true);
+  }finally{bound?.dispose();vi.unstubAllEnvs();rmSync(parent,{recursive:true,force:true});base.dispose();}
+ });
+ it('cleans the qualification proof directory after initialization fails',()=>{
+  const base=makeBillingFixture(),parent=mkdtempSync(join(base.root,'patrick-qualification-init-failure-'));vi.stubEnv('TMPDIR',parent);
+  const save=vi.spyOn(Store.prototype,'save').mockImplementation(()=>{throw Error('synthetic initialization failure');});
+  try{expect(()=>createSyntheticBinding(bindingDeclaration())).toThrow('synthetic initialization failure');expect(readdirSync(parent)).toEqual([]);}
+  finally{save.mockRestore();vi.unstubAllEnvs();rmSync(parent,{recursive:true,force:true});base.dispose();}
+ });
+ it('does not start network probing when synthetic billing denies before any adapter stage',async()=>{
+  const f=hostFixture('unavailable-network');vi.stubEnv('PATH',f.bin);
+  const runLima=BillingAuthority.prototype.runLima;
+  const deny=vi.spyOn(BillingAuthority.prototype,'runLima').mockImplementation(function(this:BillingAuthority,...args){
+   const proofRoot=(this as unknown as {proofRoot:string}).proofRoot;
+   chmodSync(join(proofRoot,'synthetic-qualification.json'),0o644);
+   return runLima.apply(this,args);
+  });
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   expect(deny).toHaveBeenCalledTimes(1);
+   expectUnobservedReport(value);
+   expect(value.results.find(r=>r.id==='grok-pass')).toMatchObject({status:'fail',reason:'policy',actualGuest:false});
+   expect(value.results.find(r=>r.id==='planned-test-failure')).toMatchObject({status:'not_run',reason:'not_run',actualGuest:false});
+   for(const id of ['task-network-proxy','task-network-ip'])expect(value.results.find(r=>r.id===id)).toMatchObject({status:'not_run',actualGuest:false});
+   expect(f.events()).not.toContain('qualification-network');
+   expect(f.events().filter(e=>typeof e==='object')).toEqual([]);
+   expect(f.events()).toContain('qualification-finish');
+  }finally{deny.mockRestore();vi.unstubAllEnvs();f.close();}
+ },10000);
+ it('reports unobserved work when no permitted synthetic proof parent exists',async()=>{
+  const f=hostFixture('unavailable-network'),parent=mkdtempSync(join(realpathSync(tmpdir()),'patrick-qualification-no-parent-')),unsafe=join(parent,'unsafe');
+  mkdirSync(unsafe,{mode:0o700});chmodSync(unsafe,0o777);vi.stubEnv('TMPDIR',unsafe);vi.stubEnv('GITHUB_ACTIONS','false');vi.stubEnv('PATH',f.bin);
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   expectUnobservedReport(value);expect(value.results.find(r=>r.id==='grok-pass')).toMatchObject({status:'fail',reason:'policy',actualGuest:false});
+   expect(f.events()).not.toContain('qualification-network');expect(f.events().filter(e=>typeof e==='object')).toEqual([]);expect(readdirSync(unsafe)).toEqual([]);
+  }finally{vi.unstubAllEnvs();f.close();rmSync(parent,{recursive:true,force:true});}
+ },10000);
+ it('keeps network unobserved if local synthetic binding disposal fails',async()=>{
+  const f=hostFixture('unavailable-network');vi.stubEnv('PATH',f.bin);
+  const close=Store.prototype.close,fail=vi.spyOn(Store.prototype,'close').mockImplementation(function(this:Store){close.call(this);throw Error('synthetic disposal failure');});
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   expectUnobservedReport(value);expect(f.events()).not.toContain('qualification-network');
+   expect(value.results.find(r=>r.id==='grok-pass'&&!r.stage)).toMatchObject({status:'fail',reason:'trust',actualGuest:true});
+  }finally{fail.mockRestore();vi.unstubAllEnvs();f.close();}
+ },10000);
+ it.each(['missing-current','changed-prefix'] as const)('requires unchanged current stage observations after %s',async failure=>{
+  const f=hostFixture(failure);vi.stubEnv('PATH',f.bin);
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   expectUnobservedReport(value);expect(f.events()).not.toContain('qualification-network');
+   expect(f.events().some(e=>typeof e==='object'&&e.stage==='prepare'&&e.operation==='exec')).toBe(true);
+   const failed=value.results.find(r=>r.id===(failure==='missing-current'?'grok-pass':'planned-test-failure')&&!r.stage);
+   expect(failed).toMatchObject({status:'fail',reason:'trust',actualGuest:false});
+  }finally{vi.unstubAllEnvs();f.close();}
+ },10000);
+ it('stops later stages when a current control observation has the wrong identity',async()=>{
+  const f=hostFixture('bad-current-identity');vi.stubEnv('PATH',f.bin);
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   expectUnobservedReport(value);expect(f.events()).not.toContain('qualification-network');
+   expect(f.events().filter(e=>typeof e==='object'&&e.stage==='prepare'&&e.operation==='exec')).toHaveLength(1);
+   expect(value.results.find(r=>r.id==='grok-pass'&&!r.stage)).toMatchObject({status:'fail',reason:'trust'});
+  }finally{vi.unstubAllEnvs();f.close();}
+ },10000);
+ it.each(['unhealthy-adapter','unavailable-network','invalid-network','untrusted-network'] as const)('persists private unobserved coverage after %s',async failure=>{
+  const f=hostFixture(failure);vi.stubEnv('PATH',f.bin);
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});expectUnobservedReport(value);expectUnobservedReport(sanitizeQualificationReport(JSON.parse(readFileSync(f.reportPath,'utf8'))));expect(statSync(f.reportPath).mode&0o777).toBe(0o600);expect(f.events()).toContain('qualification-finish');expect(f.events().includes('qualification-network')).toBe(failure!=='unhealthy-adapter');
+   if(failure==='unhealthy-adapter'){
+    expect(value.results.find(r=>r.id==='grok-pass'&&!r.stage)).toMatchObject({status:'fail',reason:'lifetime',actualGuest:false});
+    expect(value.results.find(r=>r.id==='planned-test-failure'&&!r.stage)).toMatchObject({status:'not_run',reason:'lifetime',actualGuest:false});
+   }else expect(value.results.find(r=>r.id==='cli-nonzero'&&!r.stage)).toMatchObject({status:'pass',reason:'ok'});
+  }
+  finally{vi.unstubAllEnvs();f.close();}
+ },10000);
+ it('keeps the CLI incomplete and nonzero after saving an unhealthy-adapter report',async()=>{
+  const f=hostFixture('unhealthy-adapter');
+  try{const cli=fileURLToPath(new URL('../../scripts/lima/qualify.ts',import.meta.url));const result=await new Promise<{code:number|null;stderr:string}>((resolve,reject)=>{
+   const child=spawn(process.execPath,['--import','tsx',cli,'--instance','synthetic-instance','--user','patrick-grok','--report',f.reportPath],{env:{...process.env,PATH:f.bin},stdio:['ignore','ignore','pipe']});let stderr='';const timer=setTimeout(()=>{child.kill('SIGKILL');reject(Error('fixture deadline'));},10000);child.stderr.on('data',chunk=>stderr+=chunk);child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('close',code=>{clearTimeout(timer);resolve({code,stderr});});
+  });expect(result).toEqual({code:1,stderr:''});expectUnobservedReport(sanitizeQualificationReport(JSON.parse(readFileSync(f.reportPath,'utf8'))));expect(statSync(f.reportPath).mode&0o777).toBe(0o600);}
+  finally{f.close();}
+ },15000);
+ it('retains already trusted observed counts after a later control failure',async()=>{
+  const f=hostFixture('later-failure');vi.stubEnv('PATH',f.bin);
+  try{
+   const value=await qualify({instance:'synthetic-instance',user:'patrick-grok',reportPath:f.reportPath});
+   const ids=['grok-pass','planned-test-failure','cli-nonzero','malformed-output','codex-pass','codex-missing-result','acp-pass','acp-permission','acp-non-end-turn','acp-early-exit','stdout-overflow','stderr-overflow','fork-setsid','profile-home'];
+   const scenarios=value.results.filter(r=>ids.includes(r.id)&&!r.stage&&r.role);
+   console.info('synthetic-qualification-scenarios',JSON.stringify(scenarios.map(({id,status,reason})=>({id,status,reason}))));
+   expect(scenarios).toHaveLength(16);expect(scenarios.every(r=>r.status==='pass')).toBe(true);
+   expect(value.networkPreconditionRequests).toEqual({header:1,tls:1});expect(value.results.filter(r=>(networkProbeIds as readonly string[]).includes(r.id))).toEqual(pairs().map(r=>({...r,actualGuest:true})));expect(sanitizeQualificationReport(JSON.parse(readFileSync(f.reportPath,'utf8')))).toEqual(value);
+  }
+  finally{vi.unstubAllEnvs();f.close();}
+ },10000);
+});
+describe('installed network strict host report/control integration (actualGuest=false)',()=>{
+ it('admits report-only unobserved coverage as one complete zero-attempt bundle',()=>{
+  const value=sanitizeQualificationReport(report(unobservedPairs()));expect(value.results).toEqual(unobservedPairs());expect(value).not.toHaveProperty('networkPreconditionRequests');
+  for(const reason of ['control_unavailable','lifetime'])expect(sanitizeQualificationReport(report(unobservedPairs().map(r=>({...r,reason})))).results).toHaveLength(59);
+ });
+ it.each(['missing','duplicate','wrong-role','mixed','partially-observed','pass','fail','not_applicable','actual-guest','profile','environment','synthetic','stage','profile-facts','post-drop','reason','targets','attempted','denied','fraction','extra-coverage','gate','basis','preconditions','undefined-preconditions','private-count','provider-admission','provider-privacy','production','model-calls','cost'])('rejects %s unobserved report laundering',kind=>{
+  const value:any=report(unobservedPairs()),row=value.results[0];
+  if(kind==='missing')value.results.pop();if(kind==='duplicate')value.results[value.results.length-1]=row;if(kind==='wrong-role')row.role='codex';if(kind==='mixed')value.results[0]=pairs()[0];if(kind==='partially-observed')value.results=value.results.slice(0,1);
+  if(['pass','fail','not_applicable'].includes(kind)){row.status=kind;row.reason=kind==='pass'?'ok':kind==='fail'?'network':'not_applicable';}
+  if(kind==='actual-guest')row.actualGuest=true;if(kind==='profile')row.profile='task-only';if(kind==='environment')row.environment='host-protocol';if(kind==='synthetic')row.synthetic=false;if(kind==='stage')row.stage='cli';if(kind==='profile-facts')row.profileFacts={};if(kind==='post-drop')row.postDrop={};if(kind==='reason')row.reason='trust';
+  if(['targets','attempted','denied'].includes(kind))row.network[kind]=1;if(kind==='fraction')row.network.targets=0.5;if(kind==='extra-coverage')row.network.privateTargets=0;if(kind==='gate')row.network.gate='nft';if(kind==='basis')row.network.basis='socket-policy';
+  if(kind==='preconditions')value.networkPreconditionRequests={header:0,tls:0};if(kind==='undefined-preconditions')value.networkPreconditionRequests=undefined;if(kind==='private-count')value.privateNetworkRequests=0;
+  if(kind==='provider-admission')value.realProviderAdmission=true;if(kind==='provider-privacy')value.providerAccountFeePrivacyQualified=true;if(kind==='production')value.productionMiniQualified=true;if(kind==='model-calls')value.realModelCalls=1;if(kind==='cost')value.costUsd=1;
+  expect(()=>sanitizeQualificationReport(value)).toThrow();
+ });
+ it('still rejects the contradictory observed empty-list fallback even with all counts zero',()=>{
+  const rows=pairs().map(r=>({...r,status:'not_run',reason:'not_run',network:{...r.network,targets:0,attempted:0,denied:0}}));
+  for(const row of rows)if(!row.id.startsWith('network-empty-')){row.network.basis='socket-policy';if(['network-wrong-sni','network-ech'].includes(row.id))row.network.gate='proxy-tls';}
+  expect(()=>sanitizeQualificationReport(report(rows))).toThrow('inconsistent network pairs');
+ });
+ it('accepts the finite 59 distinct network result pairs and conservative applicability',()=>{
+  const rows=pairs();rows[rows.findIndex(r=>r.id==='network-vpn'&&r.role==='grok')]={...result('network-vpn'),status:'not_applicable',reason:'not_applicable',network:{targets:0,attempted:0,denied:0,basis:'no-inventory-target',gate:'inventory'}};
+  const value=sanitizeQualificationReport(report(rows));expect(value.results).toHaveLength(59);expect(value.realProviderAdmission).toBe(false);
+ });
+ it.each(['nonnetwork','attempt','denied','fraction','overflow','extra','wrong-role','no-profile','no-coverage','duplicate','invalid-basis','loopback-skip','pass-zero'])('rejects %s report laundering',kind=>{
+  const row:any=result('network-vpn');if(kind==='nonnetwork'){row.id='grok-pass';row.status='not_applicable';row.reason='not_applicable';}
+  if(kind==='attempt')row.network.attempted=2;if(kind==='denied')row.network.denied=2;if(kind==='fraction')row.network.targets=1.5;if(kind==='overflow')row.network.targets=1025;
+  if(kind==='extra')row.network.destination='private.invalid';if(kind==='wrong-role')row.id='network-empty-codex';if(kind==='no-profile')delete row.profile;if(kind==='no-coverage')delete row.network;
+  if(kind==='invalid-basis'||kind==='loopback-skip'){row.status='not_applicable';row.reason='not_applicable';row.network={targets:0,attempted:0,denied:0,basis:'no-inventory-target',gate:'inventory'};if(kind==='invalid-basis')row.network.basis='ipv6-upstream-disabled';else row.id='network-loopback-ipv6';}
+  if(kind==='pass-zero')row.network={targets:0,attempted:0,denied:0,basis:'socket-policy',gate:'nft'};
+  expect(()=>sanitizeQualificationReport(report(kind==='duplicate'?[row,row]:[row]))).toThrow();
+ });
+ it('retains only finite separately observed precondition counts in the private report',()=>{
+  const base=report(pairs());expect(sanitizeQualificationReport({...base,networkPreconditionRequests:{header:1,tls:1}})).toHaveProperty('networkPreconditionRequests',{header:1,tls:1});expect(sanitizeQualificationReport(base)).not.toHaveProperty('networkPreconditionRequests');
+  for(const counts of [{header:2,tls:0},{header:0},{header:0,tls:0,raw:'private'}])expect(()=>sanitizeQualificationReport({...base,networkPreconditionRequests:counts})).toThrow();
+ });
+ it('strictly parses root operation results rather than trusting outcome pass',async()=>{
+  const {parseInstalledNetworkControl}=await import('../../scripts/lima/qualify.js');
+  const value={version:1,operation:'qualification-network',outcome:'pass',reason:'ok',synthetic:true,environment:'installed',actualGuest:false,artifactHash:hash,policyHash:hash,inventoryHash:hash,preconditionRequests:{header:0,tls:1},results:pairs()};
+  expect(parseInstalledNetworkControl(value).results).toHaveLength(59);
+  for(const outcome of ['pass','fail'])expect(()=>parseInstalledNetworkControl({...value,outcome,reason:outcome==='pass'?'ok':'network',results:unobservedPairs()})).toThrow();
+  for(const invalid of [{...value,results:value.results.slice(1)},{...value,results:[...value.results,value.results[0]]},{...value,results:value.results.map((r,i)=>i? r:{...r,status:'fail',reason:'network',network:{...r.network,denied:0}})},{...value,results:value.results.map(r=>r.id==='network-empty-codex'?{...r,network:{...r.network,targets:6,attempted:6,denied:6}}:r)},{...value,preconditionRequests:{header:2,tls:0}},{...value,raw:'private'}])expect(()=>parseInstalledNetworkControl(invalid)).toThrow();
+ });
+});

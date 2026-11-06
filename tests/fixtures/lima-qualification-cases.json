@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "gates": {
+    "installed-network": [
+      "network-direct-ip443",
+      "network-dns-udp",
+      "network-dns-tcp",
+      "network-public-ipv6",
+      "network-loopback-ipv6",
+      "network-host-alias",
+      "network-host-ip",
+      "network-lan",
+      "network-gateway",
+      "network-resolver",
+      "network-vpn",
+      "network-metadata",
+      "network-other-loopback",
+      "network-other-provider-port",
+      "network-disallowed-host",
+      "network-alternate-port",
+      "network-ip-connect",
+      "network-wrong-sni",
+      "network-ech",
+      "network-empty-codex",
+      "network-empty-dsh"
+    ],
+    "durable-fault-recovery": [
+      "profile-setup-failure",
+      "workspace-substitution",
+      "prepare-interrupted",
+      "startup-stop",
+      "aborted-test",
+      "aborted-cleanup",
+      "private-mount-removal",
+      "abort-cli",
+      "abort-acp",
+      "timeout",
+      "cleanup-denied",
+      "control-unavailable",
+      "token-collision",
+      "lingering-process",
+      "runtime-expiry"
+    ],
+    "host-orchestration": [
+      "ssh-disconnect",
+      "vm-unavailable",
+      "reboot-registry",
+      "proxy-stopped",
+      "firewall-removed",
+      "proxy-restart",
+      "firewall-restart",
+      "vm-restart"
+    ]
+  }
+}

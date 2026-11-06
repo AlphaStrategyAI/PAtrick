@@ -1,0 +1,11 @@
+# Render only after checking the existing control-admin identity.
+Defaults!/usr/local/libexec/patrick-worker-enter env_reset, !setenv, secure_path="/usr/local/bin:/usr/bin:/bin", env_delete+="LD_* DYLD_* NODE_* ENV BASH_ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE PYTHONPATH PERL5OPT RUBYOPT HOME PATH PWD OLDPWD"
+Defaults!/usr/local/libexec/patrick-worker-probe env_reset, !setenv, secure_path="/usr/local/bin:/usr/bin:/bin", env_delete+="LD_* DYLD_* NODE_* ENV BASH_ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE PYTHONPATH PERL5OPT RUBYOPT HOME PATH PWD OLDPWD"
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-enter
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation snapshot
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation firewall-load
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation synthetic-network
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification-start
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification-finish
+@CONTROL_ADMIN@ ALL=(root:root) NOPASSWD: NOSETENV: /usr/local/libexec/patrick-worker-probe --operation qualification-network
