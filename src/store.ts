@@ -684,7 +684,7 @@ export class Store {
     const match = [...new Set(terms)].map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
     const maximum=Number.isFinite(limit)?Math.max(1,Math.min(100,Math.floor(limit))):20,results:KnowledgeView[]=[];
     const statement=this.db.prepare('SELECT id FROM temp.cards_search_fts WHERE cards_search_fts MATCH ? AND project_id = ? AND domain = ? ORDER BY bm25(cards_search_fts), id LIMIT 100 OFFSET ?');
-    for(let offset=0;offset<1000&&results.length<maximum;offset+=100){
+    for(let offset=0;results.length<maximum;offset+=100){
       const rows=statement.all(match,scope.projectId,scope.domain,offset);
       for(const row of rows){if(!row||typeof row!=='object'||!('id' in row)||typeof row.id!=='string')continue;const card=this.get('cards',row.id);if(!card||!this.cardActive(card,scope))continue;const view=knowledgeReference(this,card,scope,options);if(view)results.push(view);if(results.length===maximum)break;}
       if(rows.length<100)break;
@@ -1019,7 +1019,14 @@ export class Store {
   }
   sourceRequiresTemporaryRetention(source:Entities['sources']):boolean {return this.temporarySource(source);}
   private redactTemporarySource(source:Entities['sources']):Entities['sources'] {
-    const binding=this.opaqueSourceIdentity(source.id)??(source.content?this.bindOpaqueSource(source):undefined);
+    // G7 persisted raw metadata for blank-body ephemeral sources. Capture it only
+    // while every preimage is unambiguous and the original host ID still binds it.
+    const raw=[source.externalId,source.revision,source.authorId,source.locator];
+    const unambiguous=(value:unknown):value is string=>typeof value==='string'&&!/^sha256:[a-f0-9]{64}$/.test(value);
+    const legacy=source.retention==='ephemeral'&&source.status==='active'&&raw.every(unambiguous)&&
+      source.id===stableId('source',{projectId:source.projectId,domain:source.domain},source.kind,source.externalId,source.revision)&&
+      wellFormedParentSources(source.parentSources)&&(source.parentSources??[]).every(ref=>unambiguous(ref.revision));
+    const binding=this.opaqueSourceIdentity(source.id)??(source.content||legacy?this.bindOpaqueSource(source):undefined);
     const previous=this.db.prepare('SELECT data FROM sources WHERE id = ?').get(source.id) as {data:string}|undefined;
     const oldParents=previous?(JSON.parse(previous.data) as StoredSource).parentSources:undefined;
     const parents=binding?.parents===null?[{id:'',revision:''}]:Array.isArray(binding?.parents)?binding.parents.map(ref=>({id:ref.id,revision:`sha256:${ref.revision}`})):

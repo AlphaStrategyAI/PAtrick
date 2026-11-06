@@ -85,6 +85,23 @@ it('finds two independently admitted histories by their problem and explicit ali
     expect(store.searchCards(temporaryHistory.problem,project).some(card=>card.id===temporaryCard.id)).toBe(true);
     expect(store.searchCards(temporaryHistory.alias,project).find(card=>card.id===temporaryCard.id)?.experienceReference?.reportedSolution.text).toBe(temporaryHistory.solution);
     expect(JSON.stringify(db.prepare('SELECT terms FROM cards_fts').all())).not.toContain(tokenize(temporaryHistory.alias));
+    // Populate ranked ineligible candidates without invoking external providers.
+    const pending=store.get('cards',pendingIds[0]!)!;
+    const insertCard=db.prepare('INSERT INTO cards(id,project_id,domain,data) VALUES (?,?,?,?)');
+    const insertFts=db.prepare('INSERT INTO temp.cards_search_fts(id,project_id,domain,terms) VALUES (?,?,?,?)');
+    db.transaction(()=>{for(const [group,alias] of [first.alias,temporaryHistory.alias].entries())for(let i=0;i<1001;i++){
+      const id=`boundary-pending-${group}-${i}`,card={...pending,id};
+      insertCard.run(id,project.id,project.domain,JSON.stringify(card));
+      insertFts.run(id,project.id,project.domain,Array(20).fill(tokenize(alias)).join(' '));
+    }})();
+    for(const [alias,id] of [[first.alias,eligible.id],[temporaryHistory.alias,temporaryCard.id]] as const){
+      const match=[...new Set(tokenize(alias).split(' '))].map(term=>`"${term}"`).join(' OR ');
+      const rankedBoundary=db.prepare('SELECT id FROM temp.cards_search_fts WHERE cards_search_fts MATCH ? AND project_id=? AND domain=? ORDER BY bm25(cards_search_fts), id LIMIT 1001').all(match,project.id,project.domain) as {id:string}[];
+      expect(rankedBoundary.every(row=>row.id.startsWith('boundary-pending-'))).toBe(true);
+      expect(store.searchCards(alias,project,1).map(card=>card.id)).toEqual([id]);
+    }
+    db.prepare("DELETE FROM temp.cards_search_fts WHERE id LIKE 'boundary-pending-%'").run();
+    db.prepare("DELETE FROM cards WHERE id LIKE 'boundary-pending-%'").run();
     const genuine=store.get('cards',eligible.id)!;
     store.save('cards',{...genuine,id:'forged-copy',verification:'verified'});
     store.save('cards',{...genuine,id:'expired-copy',expiresAt:'2000-01-01T00:00:00Z'});

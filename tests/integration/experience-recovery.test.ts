@@ -96,6 +96,21 @@ it.each(['authorId','locator'] as const)('does not substitute a preimage for a l
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 
+it('preserves recoverable raw legacy identity before startup redaction',()=>{
+  const root=mkdtempSync(join(tmpdir(),'g8-legacy-raw-')),db=join(root,'db.sqlite');let store=new Store(db);
+  try{
+    const input={projectId:'p',externalId:'legacy-raw-id',revision:'legacy-raw-revision',title:'Temporary',content:'Synthetic body',authorId:'legacy-raw-author',locator:'legacy-raw-locator',retention:'ephemeral' as const,purpose:'reference' as const};
+    ingestSource(store,{projects:[project]},input);const source=store.list('sources').find(value=>value.externalId===input.externalId)!;store.close();
+    const ledger=new Database(db);const row=JSON.parse((ledger.prepare('SELECT data FROM sources WHERE id=?').get(source.id) as {data:string}).data);
+    delete row.__hostOpaqueIdentity;Object.assign(row,{externalId:input.externalId,revision:input.revision,authorId:input.authorId,locator:input.locator,title:'Temporary source',content:''});
+    ledger.prepare('UPDATE sources SET data=? WHERE id=?').run(JSON.stringify(row),source.id);ledger.close();
+    store=new Store(db);expect(store.sourceHasOpaqueIdentity(store.get('sources',source.id)!)).toBe(true);
+    expect(()=>ingestSource(store,{projects:[project]},{...input,authorId:'wrong'})).toThrowError(expect.objectContaining({code:'revision_conflict'}));
+    ingestSource(store,{projects:[project]},input);expect(store.get('sources',source.id)?.content).toBe(input.content);
+    withdrawSource(store,source.id);expect(()=>ingestSource(store,{projects:[project]},input)).toThrow();
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
+
 it('fails closed for an untagged legacy source whose author and locator preimages were lost',()=>{
   const root=mkdtempSync(join(tmpdir(),'g8-legacy-opaque-')),db=join(root,'db.sqlite');let store=new Store(db);
   try{
