@@ -1,6 +1,7 @@
 import type { FactualUseView } from './knowledge-contract.js';
-import { DomainError, caseOutputSchema, digest, now, stableId, type Decision, type DecisionCase, type DecisionSnapshot, type DeliveryReceipt, type Question, type QuestionAnswer, type Rule, type SourceRevision, type Task, type WorkerInput } from './domain.js';
+import { DomainError, caseOutputSchema, digest, now, stableId, type AppConfig, type Decision, type DecisionCase, type DecisionSnapshot, type DeliveryReceipt, type Question, type QuestionAnswer, type Rule, type SourceRevision, type Task, type WorkerInput } from './domain.js';
 import { Store } from './store.js';
+import { applicableOriginalPrinciple, captureOwnerCaseVersion, refreshCasesForSnapshot } from './cases.js';
 
 export function publishObservations(store: Store, source: SourceRevision, output: unknown): Rule[] {
   const result = caseOutputSchema.parse(output); const current = store.get('sources', source.id);
@@ -43,12 +44,14 @@ export function recordDecisionSnapshot(store: Store, task: Task, input: WorkerIn
   return snapshot;
 }
 
-export function appendCaseOutcome(store: Store, task: Task, receipt: DeliveryReceipt, summary: string): void {
+export function appendCaseOutcome(store: Store, task: Task, receipt: DeliveryReceipt, summary: string, config?: AppConfig): void {
   for (const c of store.list('cases')) if (c.taskId === task.id && c.status === 'active') {
     const id = stableId('case-outcome', c.id, receipt.id);
     if (c.outcomes?.some(outcome => outcome.id === id)) continue;
     store.save('cases', { ...c, outcome: summary, outcomes: [...(c.outcomes ?? []), { id, receiptId: receipt.id, recordedAt: now(), summary }] });
+    if (config) try { captureOwnerCaseVersion(store, config, c.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
   }
+  if (config && task.decisionSnapshotId) refreshCasesForSnapshot(store, config, task.decisionSnapshotId);
 }
 
 /** Only the authenticated answer path can call this; model extraction never creates principles. */
@@ -69,7 +72,7 @@ export function recordOwnerDecision(store: Store, task: Task, question: Question
   return decisionCase;
 }
 
-export function applicableRules(store: Store, task: Task): Rule[] {
+export function applicableRules(store: Store, task: Task, config?: import('./domain.js').AppConfig): Rule[] {
   const taskSource=store.get('sources',task.sourceId),temporaryTask=!!taskSource&&store.sourceRequiresTemporaryRetention(taskSource);
   return store.list('rules').filter(rule => {
     if (rule.projectId !== task.projectId || rule.domain !== task.domain || rule.status !== 'active' || Date.parse(rule.reviewAt) <= Date.now()) return false;
@@ -77,6 +80,6 @@ export function applicableRules(store: Store, task: Task): Rule[] {
       const source = store.get('sources', citation.sourceId);
       return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && store.sourceRequiresTemporaryRetention(source);
     })) return false;
-    return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; });
+    return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; }) || !!config && applicableOriginalPrinciple(store, config, rule, task);
   });
 }

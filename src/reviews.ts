@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { citationSchema, DomainError, digest, stableId, type ActionRecord, type AppConfig, type DecisionCase, type DecisionSnapshot, type Scope, type SourceRevision, type Task } from './domain.js';
 import type { Store } from './store.js';
+import { refreshCasesForSnapshot } from './cases.js';
 const quotedText = z.string().min(1).refine(value => value.trim().length > 0, 'A quotation must contain substantive text.');
 const attributionCitationSchema = citationSchema.extend({ quote: quotedText }).strict();
 const testObservationSchema = z.object({
@@ -134,6 +135,7 @@ export function recordOutcomeEvidence(store: Store, config: AppConfig, snapshotI
         return original;
     }
     store.save('actions', { id, ...{ projectId: task.projectId, domain: task.domain }, taskId: task.id, kind: 'decision.evidence', status: 'completed', payload: { evidence: e }, updatedAt: e.recordedAt });
+    refreshCasesForSnapshot(store, config, snapshotId, at);
     return e;
 }
 function cadence(s: DecisionSnapshot, at: Date) {

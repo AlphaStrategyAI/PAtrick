@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { HostDispatchPermit } from './billing.js';
+import { caseMentionSchema } from './case-contract.js';
 import { claimCandidateSchema, decisionGroundsSchema, requestedRepositoryClaimSchema, type CanonicalFact, type ClaimCandidate, type DecisionGrounds, type ExperienceDetails, type FactualContext, type FactualUseView, type KnowledgeView, type RequestedRepositoryClaim } from './knowledge-contract.js';
 export type { ExperienceDetails } from './knowledge-contract.js';
 
@@ -23,7 +24,7 @@ export type AttemptBilling = {
 export type Runner = 'grok' | 'dsh' | 'codex';
 export const roles = ['knowledge_extract', 'case_extract', 'decide', 'plan', 'execute', 'check', 'feedback'] as const;
 export type Role = typeof roles[number];
-export const taskStatuses = ['queued', 'extracting', 'deciding', 'researching', 'awaiting_answer', 'planning', 'executing', 'checking', 'publishing', 'feedback', 'delivered', 'archived', 'blocked', 'retrying', 'cancelled'] as const;
+export const taskStatuses = ['queued', 'extracting', 'deciding', 'researching', 'awaiting_answer', 'planning', 'executing', 'checking', 'publishing', 'feedback', 'delivered', 'completed', 'archived', 'blocked', 'retrying', 'cancelled'] as const;
 export type TaskStatus = typeof taskStatuses[number];
 export interface Scope { projectId: string; domain: string }
 export interface Project extends Scope {
@@ -39,6 +40,8 @@ export interface SourceRevision extends Scope {
   authorId: string; retention: 'permanent' | 'ephemeral'; status: 'active' | 'superseded' | 'withdrawn'; createdAt: string;
 }
 export interface Task extends Scope {
+  /** Absent on historical delivery tasks; reference work is host-created only. */
+  kind?: 'delivery' | 'reference_knowledge';
   billingBoundary?: BillingBoundary; attemptLimit?: number; billingStop?: BillingStop;
   id: string; sourceId: string; sourceRevision: string; title: string; description: string; status: TaskStatus;
   version: number; createdAt: string; updatedAt: string; runAfter: string; attempts: number; repairCount: number;
@@ -167,7 +170,7 @@ export const knowledgeOutputSchema = z.object({ cards: z.array(z.object({
 }).strict().superRefine((candidate, ctx) => {
   if (candidate.kind === 'experience' && !candidate.experience) ctx.addIssue({ code: 'custom', message: 'Experience extraction requires a complete reported description.', path: ['experience'] });
   if (candidate.kind !== 'experience' && candidate.experience !== undefined) ctx.addIssue({ code: 'custom', message: 'Only experience cards may carry experience descriptions.', path: ['experience'] });
-})) }).strict();
+})), caseMentions: z.array(caseMentionSchema).max(20).superRefine((items, ctx) => { if (new Set(items.map(item => `${item.locator}\0${item.quote}`)).size !== items.length) ctx.addIssue({ code: 'custom', message: 'Case mentions must be unique.' }); }).optional() }).strict();
 export const caseOutputSchema = z.object({ observations: z.array(z.object({ title: z.string(), statement: z.string(), quote: z.string().min(1), conditions: z.string(), exceptions: z.string() })) });
 export const feedbackSchema = z.object({ summary: z.string().min(1), observations: z.array(z.string()) });
 export const roleSchemas = { knowledge_extract: knowledgeOutputSchema, case_extract: caseOutputSchema, decide: decisionSchema, plan: executionPlanSchema, execute: artifactSchema, check: reviewSchema, feedback: feedbackSchema };
@@ -177,8 +180,13 @@ export const questionAnswerSchema = z.object({
 }).superRefine((v, ctx) => { if (v.choice === 'C' && !v.text) ctx.addIssue({ code: 'custom', message: 'Tell PAtrick what you decided.', path: ['text'] }); });
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
 
+export interface ReferenceKnowledgeBinding {
+  schemaVersion: 1; jobId: string; jobHash: string;
+  sourceRefs: { id: string; revision: string; hash: string }[];
+}
 export interface WorkerInput {
   task: Task; project: Project; role: Role; source: SourceRevision; cards: KnowledgeView[]; facts: CanonicalFact[]; factualContext?: FactualContext; rules: Rule[];
+  referenceKnowledge?: ReferenceKnowledgeBinding;
   answer?: string; research?: ResearchRecord; receipt?: DeliveryReceipt; plan?: ExecutionPlan; artifact?: Artifact; baselineSha?: string; baselineFiles?: {path:string;content:string}[];
   decisionInterpretation?: {summary:'assistant-inference';rationale:'assistant-inference';expectedOutcome:'assistant-prediction'};
 }

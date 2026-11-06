@@ -1,4 +1,5 @@
-import { DomainError, digest, knowledgeOutputSchema, now, stableId, type KnowledgeCard, type SourceRevision } from './domain.js';
+import { DomainError, digest, knowledgeOutputSchema, now, stableId, type AppConfig, type KnowledgeCard, type SourceRevision } from './domain.js';
+import { captureSourceCaseMentions } from './cases.js';
 import { structuredClaimBody } from './knowledge-contract.js';
 import type { AtomicClaim, ParsedStructuredKnowledge, RequestedRepositoryClaim } from './knowledge-contract.js';
 import { knowledgeCandidateHash, knowledgePolicyHash } from './knowledge-identity.js';
@@ -10,8 +11,8 @@ import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRe
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
 
-export function publishKnowledge(store: Store, source: SourceRevision, output: unknown): KnowledgeCard[] {
-  return store.transaction(()=>publish(store,source,output,false));
+export function publishKnowledge(store: Store, source: SourceRevision, output: unknown, config?: AppConfig): KnowledgeCard[] {
+  return store.transaction(()=>{ const result = publish(store,source,output,false); const parsed = knowledgeOutputSchema.parse(output); if (config && parsed.caseMentions?.length) captureSourceCaseMentions(store,config,source,parsed.caseMentions); return result; });
 }
 function publish(store:Store,source:SourceRevision,output:unknown,structured:boolean):KnowledgeCard[] {
   const parsed = knowledgeOutputSchema.parse(output);

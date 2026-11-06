@@ -252,6 +252,14 @@ export function knowledgeRequestSourceRefs(store:Store,sourceId:string,scope:Sco
  return refs;
 }
 export function knowledgeActionDependencies(action:ActionRecord,store?:Store):{refs:SourceRef[];unresolved:boolean} {
+ if (['decision.case-version','decision.owner-origin','decision.case-alias','decision.rule-version'].includes(action.kind)) {
+  if(action.kind==='decision.case-version'&&action.payload?.retracted===true&&typeof action.payload.caseId==='string'&&Number.isSafeInteger(action.payload.version)&&typeof action.payload.hash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.hash)&&Object.keys(action.payload).sort().join(',')==='caseId,hash,retracted,version')return {refs:[],unresolved:false};
+  if(action.kind==='decision.rule-version'&&action.payload?.retracted===true&&typeof action.payload.ruleId==='string'&&Number.isSafeInteger(action.payload.version)&&typeof action.payload.hash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.hash)&&typeof action.payload.caseHash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.caseHash)&&Object.keys(action.payload).sort().join(',')==='caseHash,hash,retracted,ruleId,version')return {refs:[],unresolved:false};
+  const refs=action.payload?.sourceRefs;
+  if(!Array.isArray(refs)||!refs.length)return {refs:[],unresolved:true};
+  const valid=refs.every(ref=>ref&&typeof ref==='object'&&!Array.isArray(ref)&&typeof ref.id==='string'&&!!ref.id&&typeof ref.revision==='string'&&!!ref.revision);
+  return {refs:refs.filter(ref=>ref&&typeof ref.id==='string'&&typeof ref.revision==='string'),unresolved:!valid};
+ }
  if(action.kind==='decision.evidence'||action.kind==='decision.review'){
   const payload=action.payload as Record<string,unknown>,known:SourceRef[]=[];let unresolved=false;
   const add=(id:unknown,revision:unknown)=>{if(typeof id!=='string'||!id||typeof revision!=='string'||!revision)unresolved=true;else known.push({id,revision});};

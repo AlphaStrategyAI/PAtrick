@@ -536,7 +536,7 @@ export class Store {
       const prior=this.temporary.get(key);
       this.setTemporary(key, {entity:value,...(unknown&&!inactive?{privacyInvalidated:true as const}:{}),...(missingJobCard?{missingJobCardId:entity.id}:{}),...(table==='cases'&&this.mayDeferMissingCaseDependencies(value as Entities['cases'],false)?{caseAwaitingRules:true as const}:{})});
       if(table === 'actions'){
-        const hold=this.durableReadHold(value as Entities['actions']);
+        const hold=this.durableReadHold(value as Entities['actions'])??this.durableOrdinaryClassification(value as Entities['actions']);
         if(hold){this.write('actions',hold);this.deleteTemporary(key);}else if(['decision.evidence','decision.review'].includes((value as Entities['actions']).kind))this.write('actions',this.redactTemporary('actions',value) as Entities['actions']);else this.deleteAction(entity.id);
         if((value as Entities['actions']).kind==='knowledge.structured-ingest'){this.protectTemporaryStructuredCards();if(!this.depth)this.flushVault();}
       }
@@ -897,10 +897,26 @@ export class Store {
     return {id:action.id,projectId:action.projectId,domain:action.domain,kind:action.kind,status:'pending',payload:sanitized as unknown as Record<string,unknown>,updatedAt:action.updatedAt,
       __hostOpaqueHold:{version:1,sourceId:job.sourceId,revision:digest(job.sourceRevision),refs:job.sourceRefs.map(ref=>({id:ref.id,revision:digest(ref.revision)}))}} as StoredAction;
   }
+  /** Preserve only a host-bound hash audit of completed ordinary reference classification. */
+  private durableOrdinaryClassification(action:Entities['actions']):Entities['actions']|undefined {
+    if(action.kind!=='knowledge.structured-ingest'||action.status!=='completed')return undefined;
+    const row=this.db.prepare('SELECT data FROM actions WHERE id = ?').get(action.id) as {data:string}|undefined;
+    const retained=row?JSON.parse(row.data) as StoredAction:undefined, opaque=retained?.__hostOpaqueHold;
+    const retainedJob=retained&&structuredIngestJobSchema.safeParse(retained.payload),boundSource=opaque&&this.get('sources',opaque.sourceId);
+    if(opaque&&retainedJob?.success&&retainedJob.data.phase==='ordinary'&&retained?.status==='completed'&&boundSource?.status==='active'&&
+      digest(action)===digest(this.visible('actions',retained))&&(!structuredIngestJobSchema.safeParse(action.payload).success||!boundSource.content))return retained;
+    const parsed=structuredIngestJobSchema.safeParse(action.payload);if(!parsed.success||parsed.data.phase!=='ordinary')return undefined;
+    const job=parsed.data,source=this.get('sources',job.sourceId),accepted=this.get('cursors',stableId('source-hash',job.sourceId))?.value;
+    if(!source||source.purpose!=='reference'||source.status!=='active'||!source.content||source.projectId!==action.projectId||source.domain!==action.domain||source.revision!==job.sourceRevision||job.sourceHash!==digest(source.content)||accepted&&accepted!==job.sourceHash||action.id!==structuredKnowledgeJobId(source)||!validStructuredJobRefs(this,source,job.sourceRefs))return undefined;
+    const audit=(ref:{id:string;revision:string})=>({...ref,revision:this.auditTemporaryRevision(ref.revision)});
+    const sanitized={...job,sourceRevision:this.auditTemporaryRevision(job.sourceRevision),sourceRefs:job.sourceRefs.map(audit)};
+    return {id:action.id,projectId:action.projectId,domain:action.domain,kind:action.kind,status:'completed',payload:sanitized as unknown as Record<string,unknown>,updatedAt:action.updatedAt,
+      __hostOpaqueHold:{version:1,sourceId:job.sourceId,revision:digest(job.sourceRevision),refs:job.sourceRefs.map(ref=>({id:ref.id,revision:digest(ref.revision)}))}} as StoredAction;
+  }
   private protectTemporaryKnowledgeActions(retainReadable=true,scope?:Scope):void {
     const affected=scope?this.retentionResolution?.affected:undefined;
     for(const action of scope?this.listScope('actions',scope):this.list('actions'))if((!affected||knowledgeActionDependencies(action).refs.some(ref=>affected.has(ref.id)))&&this.temporaryKnowledgeAction(action)){
-      const hold=this.durableReadHold(action);
+      const hold=this.durableReadHold(action)??this.durableOrdinaryClassification(action);
       if(hold){this.write('actions',hold);this.deleteTemporary(`actions:${action.id}`);continue;}
       const invalid=new Set(knowledgeActionDependencies(action).refs.filter(ref=>this.temporarySourceDependency(ref.id,action,ref.revision||undefined)).map(ref=>ref.id));
       const tombstone=normalizationTombstone(this,action,invalid,{phase:'invalid',errorCode:'source_invalidated',retracted:true,sourceIds:[...invalid]});
@@ -1549,7 +1565,7 @@ export class Store {
         // The separately host-bound owner-answer identity is task material, just
         // as it was when recordOwnerDecision created it without an explicit purpose.
         const ownerAnswer = !canonical && recoverable && !this.ordinarySourceIdentity(s);
-        s.purpose = canonical ? canonical.purpose ?? 'task' : ownerAnswer || (trustedTasks ??= this.list('tasks')).some(task => task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
+        s.purpose = canonical ? canonical.purpose ?? 'task' : ownerAnswer || (trustedTasks ??= this.list('tasks')).some(task => task.kind !== 'reference_knowledge' && task.sourceId === s.id && task.sourceRevision === s.revision && task.projectId === s.projectId && task.domain === s.domain) ? 'task' : 'reference';
         if (!canonical && (!recoverable || s.kind === 'file' && s.externalId.startsWith('vault:'))) {
           // Mismatched identities and copies without host provenance cannot recover readable material.
           s.status = 'withdrawn'; s.content = ''; s.title = '[withdrawn]'; s.locator = `withdrawn:${s.id}`; s.parentSources = []; s.purpose = 'reference'; sourceEdited = false;

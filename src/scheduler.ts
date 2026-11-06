@@ -84,7 +84,7 @@ export class Scheduler {
   private current(task: Task): Task { const current = this.store.get('tasks', task.id); if (!current || !this.isCurrent(task)) throw new DomainError('Task or source changed.', 'stale_attempt', 409); return current; }
   private isCurrent(task: Task): boolean {
     const current = this.store.get('tasks', task.id); const source = this.store.get('sources', task.sourceId);
-    return !!current && current.version === task.version && current.stage === task.stage && !['cancelled', 'delivered', 'archived'].includes(current.status) && source?.status === 'active' && source.revision === task.sourceRevision;
+    return !!current && current.kind === task.kind && current.version === task.version && current.stage === task.stage && !['cancelled', 'delivered', 'completed', 'archived'].includes(current.status) && source?.status === 'active' && source.revision === task.sourceRevision && (current.kind === 'reference_knowledge' ? current.stage === 'knowledge_extract' && source.purpose === 'reference' : source.purpose !== 'reference');
   }
   private block(task: Task, message: string, code: string): void {
     this.store.transaction(() => {

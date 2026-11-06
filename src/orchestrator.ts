@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { ingestStructuredKnowledge, publishKnowledge, type StructuredCurrentReceipt } from './knowledge.js';
-import { consumedStageResult, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
+import { consumedStageResult, enqueueReferenceKnowledge, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, reconcileReferenceKnowledge, referenceKnowledgeBinding, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
 import { knowledgePolicyHash } from './knowledge-identity.js';
 import { canonicalFactualContextPayloadSchema, knowledgeRequestSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
@@ -15,6 +15,7 @@ import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, 
 import { Scheduler } from './scheduler.js';
 import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
 import { BillingAuthority } from './billing.js';
+import { captureNoQuestionCaseVersion, captureOwnerCaseVersion, refreshCasesForSnapshot, refreshCaseVersions } from './cases.js';
 import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
 export interface WorkbenchOptions {
@@ -49,7 +50,7 @@ export async function prepareFactualContext(store:Store,reader:RepositoryKnowled
 }
 
 const stageStatus: Record<Task['stage'], TaskStatus> = { knowledge_extract: 'extracting', case_extract: 'extracting', decide: 'deciding', research: 'researching', plan: 'planning', execute: 'executing', check: 'checking', delivery: 'publishing', feedback: 'feedback' };
-const stopped = new Set<TaskStatus>(['awaiting_answer', 'delivered', 'archived', 'cancelled']);
+const stopped = new Set<TaskStatus>(['awaiting_answer', 'delivered', 'completed', 'archived', 'cancelled']);
 
 /** A task is a durable state machine. Waiting never holds a worker or an open DB transaction. */
 export class Workbench {
@@ -93,6 +94,8 @@ export class Workbench {
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
     this.store.rebuildIndex();
     linkRetainedExperienceEvidence(this.store);
+    for (const project of this.config.projects) refreshCaseVersions(this.store, this.config, project);
+    reconcileReferenceKnowledge(this.store, this.config);
     // Only leased runtime initialization may reconcile a previous authority's attempts.
     // Constructing a Workbench must never close work owned by the live authority.
   }
@@ -122,9 +125,10 @@ export class Workbench {
         return task;
       }
       if (task.status !== 'awaiting_answer' || task.questionId !== question.id || task.version !== question.taskVersion) throw new DomainError('The task has moved beyond this question.', 'stale_answer', 409);
-      const at = now(); recordOwnerDecision(this.store, task, question, answer);
+      const at = now(); const ownerCase = recordOwnerDecision(this.store, task, question, answer);
       this.store.save('questions', { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } });
       this.store.save('cursors', { id: eventId, projectId: task.projectId, domain: task.domain, value: fingerprint, updatedAt: at });
+      captureOwnerCaseVersion(this.store, this.config, ownerCase.id);
       const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
       this.store.save('tasks', resumed);
       this.event(task, 'answer.accepted', 'Owner answer accepted; the original task resumed once.', { questionId: question.id, choice: answer.choice });
@@ -207,7 +211,7 @@ export class Workbench {
   cancel(taskId: string): Task {
     return this.store.transaction(() => {
       const task = this.task(taskId);
-      if (task.status === 'delivered') throw new DomainError('Delivered work cannot be cancelled.', 'invalid_transition', 409);
+      if (task.status === 'delivered' || task.status === 'completed') throw new DomainError('Completed work cannot be cancelled.', 'invalid_transition', 409);
       if (task.status === 'cancelled') return task;
       const next: Task = { ...task, status: 'cancelled', version: task.version + 1, updatedAt: now(), error: 'Cancelled by owner.' };
       this.store.save('tasks', next);
@@ -232,7 +236,8 @@ export class Workbench {
     this.busy = true;
     try {
       this.store.reconcileVault();
-      const ready = (preferredTaskId?this.readyTask(undefined,preferredTaskId):undefined)??this.readyTask();
+      reconcileReferenceKnowledge(this.store, this.config);
+      const ready = this.readyTask(undefined,undefined,true) ?? (preferredTaskId?this.readyTask(undefined,preferredTaskId):undefined) ?? this.readyTask();
       const source = ready?.stage==='knowledge_extract' ? this.store.get('sources',ready.sourceId) : undefined;
       if(source)enqueueStructuredKnowledge(this.store,source);
       const preferred=source?await this.drainHostJobs(1,structuredKnowledgeJobId(source),true,ready?.id):{count:0,aborted:false};
@@ -251,7 +256,10 @@ export class Workbench {
             if(!action||!job?.success)throw new DomainError('Structured knowledge job is invalid.','invalid_structured_knowledge',400);
             if(action.status==='pending')handled=true;
             if(job.data.phase==='invalid')throw new DomainError('Invalid structured knowledge envelope.','invalid_structured_knowledge',400);
-            if(job.data.phase==='processed'){this.beginAction(task);this.store.transaction(()=>this.advance(task,'case_extract'));handled=true;}
+            if(job.data.phase==='processed'){
+              if(task.kind==='reference_knowledge')throw new DomainError('Reference classification changed.','stale_source',409);
+              this.beginAction(task);this.store.transaction(()=>this.advance(task,'case_extract'));handled=true;
+            }
             if(job.data.phase!=='ordinary')handled=true;
           }
           if(!handled){this.beginAction(task);this.localRetryOnce.delete(this.actionId(task));if(await this.process(task, project)==='preempted')return;}
@@ -286,7 +294,9 @@ export class Workbench {
       const payload=structuredIngestJobSchema.safeParse(job.payload),project=this.store.get('projects',job.projectId);
       if(!payload.success||!project||project.domain!==job.domain)return;
       const denied=!!this.canRun&&!this.canRun(project);
-      try{await ingestStructuredKnowledge(this.store,denied?undefined:this.repositoryKnowledgeReader,payload.data.sourceId,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]),denied?{readbackUnavailableReason:'host_egress_unavailable'}:{});}catch(error){
+      try{const result=await ingestStructuredKnowledge(this.store,denied?undefined:this.repositoryKnowledgeReader,payload.data.sourceId,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]),denied?{readbackUnavailableReason:'host_egress_unavailable'}:{});
+        if(result==='ordinary')this.store.transaction(()=>{const source=this.store.get('sources',payload.data.sourceId);if(source?.purpose==='reference')enqueueReferenceKnowledge(this.store,this.config,source);});
+      }catch(error){
         if(isKnowledgeSnapshotFailure(error))throw error;
         // An unexpected pre-read failure must not leave a ready job in a tight retry loop.
         const current=this.store.get('actions',job.id),state=current&&structuredIngestJobSchema.safeParse(current.payload);
@@ -329,7 +339,7 @@ export class Workbench {
     if (task.stage === 'research') return this.performResearch(task, project);
     if (task.stage === 'delivery') return this.deliver(task, project);
     let context:FactualContext|undefined;
-    if(this.repositoryKnowledgeReader&&(!this.canRun||this.canRun(project))){
+    if(task.kind!=='reference_knowledge'&&this.repositoryKnowledgeReader&&(!this.canRun||this.canRun(project))){
       const controller=new AbortController();this.hostAbort=controller;this.hostPreferredTaskId=task.id;
       try{context=await prepareFactualContext(this.store,this.repositoryKnowledgeReader,task,AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]));}
       finally{if(this.hostAbort===controller){this.hostAbort=undefined;this.hostPreferredTaskId=undefined;}}
@@ -355,12 +365,17 @@ export class Workbench {
     this.current(task);
     this.store.transaction(() => {
       if (task.stage === 'knowledge_extract') {
-        publishKnowledge(this.store, input.source, output); this.advance(task, 'case_extract');
+        if(task.kind==='reference_knowledge'){
+          const binding=referenceKnowledgeBinding(this.store,this.config,this.task(task.id));
+          if(!binding||!input.referenceKnowledge||digest(binding)!==digest(input.referenceKnowledge))throw new DomainError('Reference source changed during extraction.','stale_source',409);
+          publishKnowledge(this.store, input.source, output, this.config); this.advance(task, 'knowledge_extract', { status: 'completed' });
+        } else { publishKnowledge(this.store, input.source, output, this.config); this.advance(task, 'case_extract'); }
       } else if (task.stage === 'case_extract') {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
         const decision = decisionSchema.parse(output); const factualUse=this.validateDecision(task, decision, input);
         const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
+        if (decision.action !== 'ask' && !this.store.list('questions').some(q => q.taskId === task.id && q.status === 'answered')) try { captureNoQuestionCaseVersion(this.store, this.config, snapshot.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
         if (decision.action === 'archive') this.advance(task, 'decide', { status: 'archived', decision, decisionSnapshotId: snapshot.id });
         else if (decision.action === 'proceed') this.advance(task, 'plan', { decision, decisionSnapshotId: snapshot.id });
         else if (!input.research) this.advance(task, 'research', { decision, decisionSnapshotId: snapshot.id });
@@ -384,7 +399,7 @@ export class Workbench {
         const feedback = feedbackSchema.parse(output); const receipt = this.store.get('receipts', task.receiptId ?? '');
         if (!receipt) throw new DomainError('Feedback cannot complete work without a verified receipt.', 'missing_receipt');
         this.validateReceipt(task, project, receipt);
-        appendCaseOutcome(this.store, task, receipt, feedback.summary);
+        appendCaseOutcome(this.store, task, receipt, feedback.summary, this.config);
         this.advance(task, 'feedback', { status: 'delivered', feedback: feedback.summary, error: undefined });
         this.enqueue(task, stableId('delivered', task.id, task.version), `${task.title} 已交付：${receipt.pullRequestUrl}\n${feedback.summary}`);
       }
@@ -418,13 +433,18 @@ export class Workbench {
   private input(task: Task, project: Project, role: Role, context?: FactualContext): WorkerInput {return this.store.readSnapshot(()=>{const live=this.store.get('projects',project.id);if(!live||digest(live)!==digest(project))throw new DomainError('Project state changed; retry.','stale_project_state',409);return this.inputBody(task,live,role,context);});}
   private inputBody(task: Task, project: Project, role: Role, context?: FactualContext): WorkerInput {
     const current = this.task(task.id); const source = this.store.get('sources', task.sourceId)!;
+    if(current.kind==='reference_knowledge'){
+      const referenceKnowledge=referenceKnowledgeBinding(this.store,this.config,current);
+      if(!referenceKnowledge||role!=='knowledge_extract')throw new DomainError('Reference source or classification changed.','stale_source',409);
+      return {task:current,project,role,source,cards:[],facts:[],rules:[],referenceKnowledge};
+    }
     const question = current.questionId ? this.store.get('questions', current.questionId) : undefined;
     const completedResearch = this.store.list('actions').find(a => a.taskId === task.id && a.kind === 'research' && a.status === 'completed' && a.payload.taskVersion === task.version && a.payload.sourceRevision === task.sourceRevision)?.payload.research as ResearchRecord | undefined;
     const activeCards = this.store.list('cards').filter(card=>card.sourceId===source.id).flatMap(card=>{const view=knowledgeReference(this.store,card,project);return view?[view]:[];});
     const relevant=this.store.searchCards(`${current.title}\n${current.description}`,project,30);
     const cards=[...new Map([...activeCards,...relevant].map(card=>[card.id,card])).values()].slice(0,30);
     const facts=cards.flatMap(card=>{const historical=card.factual?.eligible?[card.factual.fact]:[];const current=context?factualEligibility(this.store,card,project,{temporal:'current',contextId:context.id},context):undefined;return current?.eligible?[...historical,current.fact]:historical;});
-    return { task: current, project, role, source, cards, facts, ...(context?{factualContext:context}:{}), ...(current.decision?{decisionInterpretation:decisionInterpretationFor(current)}:{}), rules: applicableRules(this.store, current), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
+    return { task: current, project, role, source, cards, facts, ...(context?{factualContext:context}:{}), ...(current.decision?{decisionInterpretation:decisionInterpretationFor(current)}:{}), rules: applicableRules(this.store, current, this.config), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
   }
 
   private validateDecision(task: Task, decision: ReturnType<typeof decisionSchema.parse>, input:WorkerInput): FactualUseView {
@@ -436,7 +456,7 @@ export class Workbench {
       const source = this.store.get('sources', citation.sourceId);
       if (source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !source.content.includes(citation.quote) || source.locator !== citation.locator || !temporaryTask && this.store.sourceRequiresTemporaryRetention(source)) throw new DomainError('Decision cites unavailable, out-of-scope or temporary-only evidence.', 'invalid_citation', 403);
     }
-    const rules = new Set(applicableRules(this.store, task).map(rule => rule.id));
+    const rules = new Set(applicableRules(this.store, task, this.config).map(rule => rule.id));
     if (decision.ruleIds.some(id => !rules.has(id))) throw new DomainError('Decision cites a rule outside its current authorized scope.', 'invalid_rule', 403);
     const hasCitation=(citation:typeof decision.citations[number])=>decision.citations.some(item=>digest(item)===digest(citation));
     for(const statement of decision.grounds.statements){
@@ -530,6 +550,11 @@ export class Workbench {
 
   private advance(task: Task, stage: Task['stage'], values: Partial<Task> = {}): void {
     const current = this.current(task);
+    if (current.kind === 'reference_knowledge' || values.status === 'completed') {
+      const action = this.store.get('actions', this.actionId(task));
+      const attempt = this.store.list('attempts').filter(item => item.taskId === task.id && item.taskVersion === task.version && item.role === 'knowledge_extract').at(-1);
+      if (current.kind !== 'reference_knowledge' || current.stage !== 'knowledge_extract' || stage !== 'knowledge_extract' || values.status !== 'completed' || !referenceKnowledgeBinding(this.store,this.config,current) || !action || action.kind !== 'knowledge_extract' || action.status !== 'pending' || action.taskId !== task.id || action.payload.taskVersion !== task.version || action.payload.sourceRevision !== task.sourceRevision || !attempt || attempt.status !== 'succeeded' || attempt.projectId !== task.projectId || attempt.domain !== task.domain) throw new DomainError('Reference completion lacks an accepted extraction.', 'invalid_transition', 409);
+    }
     this.completeAction(task);
     this.store.save('tasks', { ...current, stage, status: stageStatus[stage], updatedAt: now(), runAfter: now(), error: undefined, ...values });
     this.event(task, 'stage.completed', `${task.stage} completed.`, { next: stage, status: values.status ?? stageStatus[stage] });
@@ -551,11 +576,11 @@ export class Workbench {
     });
   }
 
-  private readyTask(excludeId?:string,preferredId?:string): Task | undefined {
+  private readyTask(excludeId?:string,preferredId?:string,foregroundOnly=false): Task | undefined {
     if (this.stopping) return undefined;
     const attempts=this.store.list('attempts');
     return this.store.list('tasks').filter(task => {
-      if (task.id===excludeId || preferredId!==undefined&&task.id!==preferredId || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if (task.id===excludeId || preferredId!==undefined&&task.id!==preferredId || foregroundOnly&&task.kind==='reference_knowledge' || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
       const project = this.store.get('projects', task.projectId);
       const feedbackSource=task.stage==='feedback'?this.store.get('sources',task.sourceId):undefined;
       if(task.stage==='feedback'&&project&&(!feedbackSource||!this.feedbackContextAvailable(task,feedbackSource,project))){
@@ -575,13 +600,13 @@ export class Workbench {
         if(action?.status==='completed'&&job?.success&&job.data.phase==='invalid'&&task.status==='blocked')return false;
       }
       return !!project && project.domain === task.domain && (!this.canRun || this.canRun(project));
-    }).sort((a, b) => a.runAfter.localeCompare(b.runAfter) || a.createdAt.localeCompare(b.createdAt))[0];
+    }).sort((a, b) => Number(a.kind==='reference_knowledge')-Number(b.kind==='reference_knowledge') || a.runAfter.localeCompare(b.runAfter) || a.createdAt.localeCompare(b.createdAt))[0];
   }
   private task(id: string): Task { const task = this.store.get('tasks', id); if (!task) throw new DomainError('Task not found.', 'unknown_task', 404); return task; }
   private project(task: Task): Project { const project = this.store.get('projects', task.projectId); if (!project || project.domain !== task.domain) throw new DomainError('The project scope is no longer authorized.', 'project_not_authorized', 403); return project; }
   private current(task: Task): Task {
     const current = this.task(task.id); const source = this.store.get('sources', task.sourceId);
-    if (current.version !== task.version || current.stage !== task.stage || current.status === 'cancelled' || source?.status !== 'active' || source.revision !== task.sourceRevision || source.projectId !== task.projectId || source.domain !== task.domain) throw new DomainError('Task input or source is obsolete.', 'stale_attempt', 409);
+    if (current.kind !== task.kind || current.version !== task.version || current.stage !== task.stage || current.status === 'cancelled' || current.status === 'completed' || source?.status !== 'active' || source.revision !== task.sourceRevision || source.projectId !== task.projectId || source.domain !== task.domain || (current.kind === 'reference_knowledge' ? current.stage !== 'knowledge_extract' || source.purpose !== 'reference' : source.purpose === 'reference')) throw new DomainError('Task input or source is obsolete.', 'stale_attempt', 409);
     return current;
   }
   /** Only validated stage results enter the host ledger, before a repair replaces task buffers. */
@@ -594,6 +619,7 @@ export class Workbench {
     if (this.store.get('actions', id)) return;
     const recordedAt = now();
     this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'decision.tests', status: 'completed', payload: { testObservation: { schemaVersion: 1, snapshotId: task.decisionSnapshotId, taskVersion: task.version, attemptId: attempt.id, inputHash: attempt.inputHash, stage: input.role, plannedTests: task.plan!.tests, tests: failed, recordedAt } }, updatedAt: recordedAt });
+    refreshCasesForSnapshot(this.store, this.config, task.decisionSnapshotId);
   }
   private actionId(task: Task): string { return stableId('stage-action', task.id, task.version, task.stage, task.repairCount); }
   private beginAction(task: Task): void {

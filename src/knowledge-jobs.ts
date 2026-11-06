@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { digest, now, stableId, type ActionRecord, type Attempt, type KnowledgeCard, type SourceRevision, type Task } from './domain.js';
+import { digest, now, stableId, type ActionRecord, type AppConfig, type Attempt, type KnowledgeCard, type ReferenceKnowledgeBinding, type SourceRevision, type Task } from './domain.js';
 import type { SourceRef } from './knowledge-contract.js';
 import { knowledgeSourceRefs } from './knowledge-records.js';
 import type { Store } from './store.js';
@@ -41,6 +41,51 @@ export function consumedStageResult(store:Store,task:Task,attempts:Attempt[]=sto
 
 export function structuredKnowledgeJobId(source: SourceRevision): string {
   return stableId('knowledge.structured-ingest', source.id, source.revision, digest(source.content));
+}
+export function referenceKnowledgeTaskId(source: SourceRevision): string {
+  return stableId('reference-knowledge-task', source.id, source.revision, digest(source.content));
+}
+
+/** Resolve a completed ordinary classification and the entire live source closure. */
+function ordinaryReference(store: Store, config: AppConfig, source: SourceRevision): { jobId: string; jobHash: string; sourceRefs: ReferenceKnowledgeBinding['sourceRefs'] } | undefined {
+  const project = store.get('projects', source.projectId), configured = config.projects.find(p => p.id === source.projectId && p.domain === source.domain && p.ownerId === config.ownerId);
+  const current = store.get('sources', source.id), action = current && store.get('actions', structuredKnowledgeJobId(current)), parsed = action && structuredIngestJobSchema.safeParse(action.payload);
+  const accepted = store.get('cursors', stableId('source-hash', source.id))?.value;
+  if (!current || digest(current) !== digest(source) || current.status !== 'active' || current.purpose !== 'reference' || !current.content.trim() || !project || !configured || project.id !== project.projectId || project.id !== current.projectId || project.domain !== current.domain || project.ownerId !== config.ownerId || accepted && accepted !== digest(current.content) || !action || action.kind !== 'knowledge.structured-ingest' || action.status !== 'completed' || action.projectId !== current.projectId || action.domain !== current.domain || !parsed?.success || parsed.data.phase !== 'ordinary' || parsed.data.sourceId !== current.id || parsed.data.sourceRevision !== current.revision || parsed.data.sourceHash !== digest(current.content) || action.id !== structuredKnowledgeJobId(current) || !validStructuredJobRefs(store, current, parsed.data.sourceRefs)) return;
+  const refs = knowledgeSourceRefs(store, current.id, current);
+  if (!refs || digest(refs) !== digest(parsed.data.sourceRefs)) return;
+  const sourceRefs = refs.map(ref => { const dependency = store.get('sources', ref.id), acceptedHash = store.get('cursors', stableId('source-hash', ref.id))?.value; return dependency?.content && (!acceptedHash || acceptedHash === digest(dependency.content)) ? { ...ref, hash: digest(dependency) } : undefined; });
+  if (sourceRefs.some(ref => !ref)) return;
+  return { jobId: action.id, jobHash: digest(parsed.data), sourceRefs: sourceRefs as ReferenceKnowledgeBinding['sourceRefs'] };
+}
+
+export function referenceKnowledgeBinding(store: Store, config: AppConfig, task: Task): ReferenceKnowledgeBinding | undefined {
+  if (task.kind !== 'reference_knowledge' || task.stage !== 'knowledge_extract') return;
+  const source = store.get('sources', task.sourceId), binding = source && ordinaryReference(store, config, source);
+  if (!source || !binding || task.id !== referenceKnowledgeTaskId(source) || task.sourceRevision !== source.revision || task.projectId !== source.projectId || task.domain !== source.domain) return;
+  return { schemaVersion: 1, ...binding };
+}
+
+/** Host-only admission; one task identity survives scans, crashes and retries. */
+export function enqueueReferenceKnowledge(store: Store, config: AppConfig, source: SourceRevision): Task | undefined {
+  if (source.status !== 'active' || source.purpose !== 'reference' || !source.content) return;
+  const id = referenceKnowledgeTaskId(source), existing = store.get('tasks', id);
+  if (existing) return existing.kind === 'reference_knowledge' ? existing : undefined;
+  if (!ordinaryReference(store, config, source)) return;
+  const project = store.get('projects', source.projectId)!;
+  const at = now(), task: Task = { kind: 'reference_knowledge', projectId: source.projectId, domain: source.domain, billingBoundary: config.billingBoundary ?? 'metered-only', id, sourceId: source.id, sourceRevision: source.revision, title: source.title, description: store.sourceRequiresTemporaryRetention(source) ? '' : source.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt: at, updatedAt: at, runAfter: at, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
+  store.save('tasks', task);
+  return task;
+}
+
+export function reconcileReferenceKnowledge(store: Store, config: AppConfig): void {
+  store.transaction(() => {
+    for (const action of store.list('actions')) {
+      if (action.kind !== 'knowledge.structured-ingest' || action.status !== 'completed') continue;
+      const parsed = structuredIngestJobSchema.safeParse(action.payload), source = parsed.success ? store.get('sources', parsed.data.sourceId) : undefined;
+      if (source?.purpose === 'reference' && parsed.success && parsed.data.phase === 'ordinary') enqueueReferenceKnowledge(store, config, source);
+    }
+  });
 }
 export function structuredKnowledgeCardId(card:Pick<KnowledgeCard,'sourceId'|'sourceRevision'|'kind'|'title'|'quote'>):string {
   return `knowledge-structured-card:${stableId('knowledge.structured-card',card.sourceId,card.sourceRevision,card.kind,card.title,card.quote)}`;

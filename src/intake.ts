@@ -8,10 +8,20 @@ export interface IngestInput {
   locator?: string; authorId?: string; retention?: SourceRevision['retention']; revision?: string;
   purpose?: 'task' | 'reference'; status?: 'active' | 'withdrawn';
 }
-const finished = new Set(['delivered', 'archived', 'cancelled']);
+const finished = new Set(['delivered', 'completed', 'archived', 'cancelled']);
 
 /** Preserve no evidence content or authority when a normalization link is sanitized. */
 export function normalizationTombstone(store:Store,action:Entities['actions'],invalid:Set<string>,base:Record<string,unknown>):Record<string,unknown> {
+  if(action.kind==='decision.case-version'){
+    const value=action.payload.case as {id?:unknown;version?:unknown;hash?:unknown}|undefined;
+    if(value&&typeof value.id==='string'&&Number.isSafeInteger(value.version)&&typeof value.hash==='string'&&/^[a-f0-9]{64}$/.test(value.hash))return {retracted:true,caseId:value.id,version:value.version,hash:value.hash};
+    if(action.payload.retracted===true&&typeof action.payload.caseId==='string'&&Number.isSafeInteger(action.payload.version)&&typeof action.payload.hash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.hash))return action.payload;
+  }
+  if(action.kind==='decision.rule-version'){
+    const history=action.payload.history as {id?:unknown;ruleId?:unknown;version?:unknown;ruleHash?:unknown;confirmation?:{hash?:unknown}}|undefined;
+    if(history&&history.id===action.id&&typeof history.ruleId==='string'&&Number.isSafeInteger(history.version)&&typeof history.ruleHash==='string'&&/^[a-f0-9]{64}$/.test(history.ruleHash)&&typeof history.confirmation?.hash==='string'&&/^[a-f0-9]{64}$/.test(history.confirmation.hash)&&action.id===stableId('decision.rule-version',history.ruleId,history.version,history.confirmation.hash))return {retracted:true,ruleId:history.ruleId,version:history.version,hash:history.ruleHash,caseHash:history.confirmation.hash};
+    if(action.payload.retracted===true&&typeof action.payload.ruleId==='string'&&Number.isSafeInteger(action.payload.version)&&typeof action.payload.hash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.hash)&&typeof action.payload.caseHash==='string'&&/^[a-f0-9]{64}$/.test(action.payload.caseHash))return action.payload;
+  }
   if(action.kind!=='experience.evidence-link'||action.status!=='completed')return base;
   const parsed=canonicalExperiencePayloadSchema.safeParse(action.payload);if(!parsed.success)return base;
   const association=parsed.data.association,binding=association.versionBinding,card=store.get('cards',association.cardId);
@@ -49,7 +59,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     const payload=factualContextTombstone(store,action,sourceId);return payload?[[action.id,payload] as const]:[];
   }));
   store.save('sources', { ...source, status });
-  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','knowledge.factual-context','experience.test-observation','experience.evidence-link'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
+  for (const action of store.list('actions')) if (['knowledge.structured-ingest','knowledge.host-observation','knowledge.evidence-link','knowledge.factual-context','experience.test-observation','experience.evidence-link','decision.case-version','decision.owner-origin','decision.case-alias','decision.rule-version'].includes(action.kind) && knowledgeActionSourceRefs(action).some(ref => ref.id === sourceId)) {
     // A previously sanitized context stays tied to its first invalidation.
     if(action.kind==='knowledge.factual-context'&&factualContextTombstonePayloadSchema.safeParse(action.payload).success&&!knowledgeActionDependencies(action,store).unresolved)continue;
     const payload=contexts.get(action.id)??normalizationTombstone(store,action,new Set([sourceId]),{ phase: 'invalid', errorCode: 'source_invalidated', retracted: true, sourceIds: [sourceId] });
@@ -199,13 +209,21 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
         if(existing.externalId!==identity.externalId||existing.revision!==identity.revision||existing.authorId!==identity.authorId||existing.locator!==identity.locator||
           parentSources!==undefined&&(store.sourceHasOpaqueIdentity(existing)?!store.sourceIdentityMatches(existing,identity,parentSources):digest(existing.parentSources??[])!==digest(parentSources)))throw new DomainError('This source revision already has different identity metadata.','revision_conflict',409);
       }
-      const task = purpose === 'reference' ? undefined : store.list('tasks').find(t => t.sourceId === id);
+      const task = store.list('tasks').find(t => t.sourceId === id && (purpose === 'reference' ? t.kind === 'reference_knowledge' : t.kind !== 'reference_knowledge'));
       if (!existing.content && (existing.retention === 'ephemeral' || store.sourceHasOpaqueIdentity(existing) || existing.title==='Temporary source')) {
         const locator=input.locator??`${kind}:${input.externalId}`,authorId=input.authorId??'';
         if(!store.sourceIdentityMatches(existing,{externalId:input.externalId,revision,authorId,locator},parentSources))throw new DomainError('This source revision has unavailable or different identity metadata.','revision_conflict',409);
         const restored = { ...existing, externalId:input.externalId,authorId,revision, title: input.title, content: input.content, locator, ...(parentSources?{parentSources}:{}) };
         store.save('sources', restored);
         enqueueStructuredKnowledge(store, store.get('sources',id)!);
+        if(task?.kind==='reference_knowledge'){
+          const restoredTask:Task={...task,sourceRevision:revision,title:input.title,description:''};
+          if(task.status==='completed'&&!task.billingStop){store.save('tasks',{...restoredTask,version:task.version+1,status:'queued',error:undefined,runAfter:now(),updatedAt:now()});return undefined;}
+          if(finished.has(task.status)){store.save('tasks',restoredTask);return undefined;}
+          const consumed=consumedStageResult(store,restoredTask);
+          store.save('tasks',{...restoredTask,...(task.billingStop?{}:consumed?{status:'blocked' as const,error:'knowledge_snapshot_unavailable'}:{status:'queued' as const,error:undefined,runAfter:now()}),updatedAt:now()});
+          return undefined;
+        }
         if (task && !finished.has(task.status)) {
           const restoredTask={...task,sourceRevision:revision};
           if(task.stage==='feedback'){
@@ -224,7 +242,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
         }
       }
       enqueueStructuredKnowledge(store, store.get('sources', id)!);
-      return task;
+      return purpose === 'reference' ? undefined : task;
     }
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
     const createdAt = now();

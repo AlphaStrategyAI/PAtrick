@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { policySchema } from './config.js';
 import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, roleSchemas, stableId, type AppConfig, type Attempt, type BillingBoundary, type HostSubscriptionObservation, type Project, type Runner, type RunnerPolicy, type Task, type WorkerAdapter, type WorkerInput, type WorkerResult } from './domain.js';
 import { Store } from './store.js';
+import { referenceKnowledgeBinding } from './knowledge-jobs.js';
 
 const idSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
 const text = z.string().min(1).max(1024);
@@ -137,7 +138,7 @@ export function evaluateBilling(policy: RunnerPolicy, task: Task, project: Proje
   if ((mode === 'included-subscription') !== (boundary === 'included-only')) return deny('billing_route_forbidden');
   if (task.projectId !== project.id || project.projectId !== project.id || task.domain !== project.domain || !policy.domains.includes(project.domain) || !policy.roles.some(role => role === task.stage)) return deny('subscription_scope');
   if (task.billingStop) return deny(task.billingStop.code);
-  if (['cancelled', 'archived', 'delivered'].includes(task.status)) return deny('billing_task_inactive');
+  if (['cancelled', 'archived', 'delivered', 'completed'].includes(task.status)) return deny('billing_task_inactive');
   const limit = task.attemptLimit === undefined ? 32 : task.attemptLimit;
   if (!Number.isSafeInteger(task.attempts) || task.attempts < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256) return deny('billing_counter_invalid');
   if (task.attempts >= limit) return deny('subscription_attempt_limit');
@@ -175,7 +176,7 @@ const availabilitySchema = z.object({ schemaVersion: z.literal(1), profileHash: 
 type Evidence = { admission?: IncludedAdmission; current?: CurrentBillingContext };
 type PermitRecord = {
   authority: BillingAuthority; store: Store; epoch: string; attempt: Attempt; policy: RunnerPolicy;
-  inputHash: string; sourceHash: string; runtimeHash: string; proofHash?: string; profileHash?: string;
+  inputHash: string; sourceHash: string; runtimeHash: string; runtimeAuthorizationHash: string; proofHash?: string; profileHash?: string;
   state: 'reserved' | 'dispatching' | 'dispatched' | 'entering' | 'adapter-entered' | 'settled'; owner: 'scheduler' | 'direct';
 };
 type RegistrationSnapshot = { taskHash: string; attemptsHash: string; switchRows?: { noticeId: string; noticeHash: string; eventId: string; eventHash: string } };
@@ -191,7 +192,7 @@ export function assertBillingAuthorityBinding(authority: BillingAuthority, store
   const binding = authorityBindings.get(authority);
   if (!binding || binding.store !== store || binding.config !== config) throw error('billing_authority_mismatch');
 }
-const terminal = new Set(['cancelled', 'archived', 'delivered']);
+const terminal = new Set(['cancelled', 'archived', 'delivered', 'completed']);
 function error(code: string): DomainError { return new DomainError(`Billing authorization denied: ${code}.`, code, 409); }
 function profileHash(proof: IncludedAdmission): string {
   return digest({ projectId: proof.projectId, domain: proof.domain, owner: proof.ownerFingerprint, account: proof.accountFingerprint, workspace: proof.workspaceFingerprint, provider: proof.provider, authRoute: proof.authRouteFingerprint, authMode: proof.authMode });
@@ -267,7 +268,7 @@ export class BillingAuthority {
         billing: { mode: decision.mode, reserveUsd: decision.reserveUsd, ordinal, attemptLimit: limit, policyHash: digest(policy), billingBoundary: hostBoundary, authorityEpoch: this.epoch, dispatchState: 'reserved', switchInputHash, ...(evidence.admission ? { admissionId: evidence.admission.id, evidenceDigest: evidence.admission.evidenceDigest, profileHash: profileHash(evidence.admission) } : {}) } };
       const switchRows = prior ? { noticeId: stableId('fallback', prior.id, attempt.id), eventId: stableId('switch-event', prior.id, attempt.id) } : undefined;
       snapshot = { taskHash: digest(task), attemptsHash: digest(this.store.list('attempts').filter(a => a.taskId === task.id)), ...(switchRows ? { switchRows: { ...switchRows, noticeHash: digest(this.store.get('outbox', switchRows.noticeId) ?? {}), eventHash: digest(this.store.get('events', switchRows.eventId) ?? {}) } } : {}) };
-      pending = { authority: this, store: this.store, epoch: this.epoch, attempt: structuredClone(attempt), policy: structuredClone(policy), inputHash, sourceHash: digest(input.source), runtimeHash: this.runtimeHash(runner), ...(evidence.admission ? { proofHash: digest(evidence.admission), profileHash: profileHash(evidence.admission) } : {}), state: 'reserved', owner: 'scheduler' };
+      pending = { authority: this, store: this.store, epoch: this.epoch, attempt: structuredClone(attempt), policy: structuredClone(policy), inputHash, sourceHash: digest(input.source), runtimeHash: this.runtimeHash(runner), runtimeAuthorizationHash: this.runtimeAuthorizationHash(runner), ...(evidence.admission ? { proofHash: digest(evidence.admission), profileHash: profileHash(evidence.admission) } : {}), state: 'reserved', owner: 'scheduler' };
       this.store.save('attempts', attempt);
       this.store.save('tasks', { ...task, attempts: ordinal, spentUsd: task.spentUsd + decision.reserveUsd, updatedAt: at });
       if (prior && switchRows) {
@@ -387,6 +388,11 @@ export class BillingAuthority {
     const task = this.store.get('tasks', input.task.id), project = task && this.store.get('projects', task.projectId), source = task && this.store.get('sources', task.sourceId);
     if (project && digest(projectRoute(project)) !== digest(projectRoute(input.project))) throw error('subscription_scope');
     if (!task || !project || !source || task.projectId !== project.id || project.projectId !== project.id || task.domain !== project.domain || source.projectId !== project.id || source.domain !== project.domain || input.project.id !== project.id || input.project.projectId !== project.id || input.project.domain !== project.domain || input.task.projectId !== task.projectId || input.task.domain !== task.domain || task.version !== input.task.version || task.stage !== input.task.stage || task.stage !== input.role || task.sourceId !== input.task.sourceId || task.sourceRevision !== input.task.sourceRevision || source.status !== 'active' || source.revision !== task.sourceRevision || digest(source) !== digest(input.source) || terminal.has(task.status)) throw error('stale_attempt');
+    if (task.kind !== input.task.kind) throw error('stale_attempt');
+    if (task.kind === 'reference_knowledge') {
+      const binding = referenceKnowledgeBinding(this.store, this.config, task);
+      if (!binding || !input.referenceKnowledge || digest(binding) !== digest(input.referenceKnowledge)) throw error('stale_attempt');
+    } else if (task.kind !== undefined && task.kind !== 'delivery' || source.purpose === 'reference' || input.referenceKnowledge !== undefined) throw error('stale_attempt');
     return task;
   }
   private assertBoundary(task: Task, input: WorkerInput, policy: RunnerPolicy): void {
@@ -438,6 +444,10 @@ export class BillingAuthority {
     if (policy.billing?.mode === 'included-subscription' && digest(this.proof(policy) ?? {}) !== digest(evidence.admission ?? {})) throw error('subscription_unverified');
   }
   private runtimeHash(runner: Runner): string { return digest(this.config.workers[runner] ?? {}); }
+  private runtimeAuthorizationHash(runner: Runner): string {
+    const worker = this.config.workers[runner];
+    return digest(worker ? { command: worker.command, args: worker.args, isolation: worker.isolation, instance: worker.instance, guestUser: worker.guestUser } : {});
+  }
 
   private checkHolds(project: Project, policy: RunnerPolicy, evidence: Evidence, restore: boolean): void {
     if (policy.billing?.mode !== 'included-subscription') return;
@@ -504,6 +514,18 @@ export class BillingAuthority {
     if (includedCharge) throw this.incident(record, 'positive-included-cost');
     if (digest(input) !== record.inputHash) throw error('input_mutated');
     const task = this.scope(input), attempt = this.store.get('attempts', record.attempt.id);
+    // The reservation remains charged at its captured price, but publication
+    // requires the same runner/model/route to remain currently authorized.
+    const policy = this.policy(record.attempt.runner, input), captured = record.policy;
+    if (policy.provider !== captured.provider || policy.model !== captured.model || (policy.billing?.mode ?? 'metered-api') !== (captured.billing?.mode ?? 'metered-api') || (policy.billing?.mode === 'included-subscription' ? policy.billing.admissionId : undefined) !== (captured.billing?.mode === 'included-subscription' ? captured.billing.admissionId : undefined) || this.runtimeAuthorizationHash(record.attempt.runner) !== record.runtimeAuthorizationHash) throw error('billing_permit_invalid');
+    this.assertBoundary(task, input, policy); this.assertChecker(task, policy);
+    if (task.billingStop && task.billingStop.code !== 'subscription_attempt_limit') throw error(task.billingStop.code);
+    if (record.attempt.billing?.mode === 'included-subscription') {
+      // This is the allocated local proof, not another provider/context probe.
+      const proof = this.proof(policy), at = this.clock().getTime();
+      if (!proof || !record.proofHash || !record.profileHash || !Number.isFinite(at) || !validReceiptDates(proof, at)) throw error('subscription_unverified');
+      if (digest(proof) !== record.proofHash || profileHash(proof) !== record.profileHash || proof.id !== record.attempt.billing.admissionId || proof.projectId !== task.projectId || proof.domain !== task.domain || proof.runner !== record.attempt.runner || proof.provider !== record.attempt.provider || proof.model !== record.attempt.model) throw error('subscription_scope');
+    }
     const latest = this.store.list('attempts').filter(a => a.taskId === task.id && a.taskVersion === task.version && a.role === input.role).at(-1);
     if (attempt?.status !== 'running' || attempt.inputHash !== record.inputHash || attempt.taskId !== record.attempt.taskId || attempt.taskVersion !== record.attempt.taskVersion || attempt.role !== record.attempt.role || attempt.runner !== record.attempt.runner || attempt.projectId !== record.attempt.projectId || attempt.domain !== record.attempt.domain || attempt.provider !== record.attempt.provider || attempt.model !== record.attempt.model || latest?.id !== attempt.id) throw error('stale_attempt');
     if (!Number.isFinite(result?.costUsd) || result.costUsd < 0) throw error('invalid_cost');

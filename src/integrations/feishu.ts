@@ -5,6 +5,8 @@ import { DomainError, digest, now, stableId, type AppConfig, type NotificationAd
 import type { Workbench } from '../orchestrator.js';
 import type { Store } from '../store.js';
 import { canExport } from '../permissions.js';
+import { admitOriginalOwnerDecision, clearNativeDecision } from '../cases.js';
+import { knowledgeSourceRefs } from '../knowledge-records.js';
 
 type Json = Record<string, any>;
 export interface FeishuSdkClient {
@@ -14,7 +16,7 @@ export interface FeishuSdkClient {
     get?(input: any): Promise<any>;
   } };
 }
-interface MessageCursor { revision: string; time: number; sourceIds: string[]; withdrawn?: boolean }
+interface MessageCursor { revision: string; time: number; sourceIds: string[]; watermark?: number; withdrawn?: boolean }
 const silentLogger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 function equal(left: unknown, right: string): boolean { if (typeof left !== 'string' || !left || !right) return false; const a = Buffer.from(left); const b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }
 
@@ -88,8 +90,26 @@ export class FeishuChannel implements NotificationAdapter {
     const scope = this.scope(); const previous = this.messageCursor(cursorId);
     if (previous?.withdrawn || this.store.get('actions', id)?.status === 'completed') return;
     const time = Number(message.update_time ?? message.create_time) || 0;
-    if (previous && previous.time > time) return;
+    if (previous && (previous.watermark ?? previous.time) > time) return;
     this.store.transaction(() => {
+      // A withdrawn or no longer readable source cannot prove a new semantic edit.
+      // Do not recreate its evidence merely because transport metadata changed.
+      if (previous?.sourceIds.some(sourceId => { const source = this.store.get('sources', sourceId); return !source || source.status !== 'active' || !source.content; })) return;
+      // Legacy receipts retained the original revision, which hashes the native
+      // timestamp and body. Compare both timestamp representations supported by
+      // the receiver; if neither proves equality, let the edit revoke the answer.
+      if (previous && this.legacyAnswerReceipt(previous, messageId) && Number.isFinite(previous.time) && [previous.time, String(previous.time)].some(originalTime => digest([originalTime, text]) === previous.revision)) {
+        this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ ...previous, watermark: time } satisfies MessageCursor), updatedAt: now() });
+        return;
+      }
+      const retainedSource = previous && (this.unchangedMessageSource(previous, messageId, text, message) ?? this.unchangedAnswerSource(previous, messageId, text, message));
+      if (previous && retainedSource) {
+        const receivedAt = now(), directOriginal = !message.parent_id && !message.root_id;
+        this.store.save('actions', { projectId: retainedSource.projectId, domain: retainedSource.domain, id, kind: 'feishu_receive', status: 'completed', payload: { messageId, chatId: f.chatId, revision, semanticRevision: previous.revision, sourceIds: previous.sourceIds, ownerId: this.config.ownerId, principal: sender.sender_id.open_id, nativeTime: time, nativeBodyHash: digest(text), directOriginal }, updatedAt: receivedAt });
+        // Keep the semantic revision and its original receipt valid while advancing transport ordering.
+        this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ ...previous, watermark: time } satisfies MessageCursor), updatedAt: receivedAt });
+        return;
+      }
       this.store.save('actions', { ...scope, id, kind: 'feishu_receive', status: 'pending', payload: { messageId, chatId: f.chatId, revision }, updatedAt: now() });
       if (previous && previous.revision !== revision) for (const sourceId of previous.sourceIds) this.workbench.withdraw(sourceId);
       let sourceIds: string[] = [];
@@ -98,9 +118,65 @@ export class FeishuChannel implements NotificationAdapter {
         if (!(error instanceof DomainError) && !(error instanceof ZodError)) throw error;
         this.reply(scope, messageId, revision, `未接纳这条指令：${error instanceof ZodError ? error.issues.map(issue => issue.message).join('；') : error.message}`);
       }
-      this.store.save('actions', { ...scope, id, kind: 'feishu_receive', status: 'completed', payload: { messageId, chatId: f.chatId, revision, sourceIds }, updatedAt: now() });
-      this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ revision, time, sourceIds } satisfies MessageCursor), updatedAt: now() });
+      const receivedAt = now(), directOriginal = !message.parent_id && !message.root_id;
+      const receiptScope = sourceIds.length ? this.store.get('sources', sourceIds[0]!) ?? scope : scope;
+      this.store.save('actions', { projectId: receiptScope.projectId, domain: receiptScope.domain, id, kind: 'feishu_receive', status: 'completed', payload: { messageId, chatId: f.chatId, revision, sourceIds, ownerId: this.config.ownerId, principal: sender.sender_id.open_id, nativeTime: time, nativeBodyHash: digest(text), directOriginal }, updatedAt: receivedAt });
+      this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ revision, time, sourceIds } satisfies MessageCursor), updatedAt: receivedAt });
+      if (directOriginal) for (const sourceId of sourceIds) {
+        const source = this.store.get('sources', sourceId), clear = source && clearNativeDecision(source.content);
+        if (!source || source.kind !== 'feishu' || !clear) continue;
+        const sourceRefs = knowledgeSourceRefs(this.store, source.id, source);
+        if (!sourceRefs) continue;
+        const binding = { schemaVersion: 1 as const, provider: 'feishu' as const, tenant: f.appId, chatId: f.chatId!, messageId, nativeRevision: revision, ownerId: this.config.ownerId, principal: sender.sender_id.open_id as string, nativeTime: time, receiveId: id, receivedAt, nativeBodyHash: digest(text), businessBodyHash: digest(source.content), source: { id: source.id, revision: source.revision }, sourceRefs, projectId: source.projectId, domain: source.domain };
+        const originId = stableId('decision.owner-origin', binding.tenant, binding.chatId, binding.messageId, binding.nativeRevision, source.id), hash = digest(binding);
+        this.store.save('actions', { projectId: source.projectId, domain: source.domain, id: originId, kind: 'decision.owner-origin', status: 'completed', payload: { binding, hash, sourceRefs }, updatedAt: receivedAt });
+        admitOriginalOwnerDecision(this.store, this.config, { id: originId, hash }, { source: binding.source, quote: source.content, scopeQuote: clear.scopeQuote, declaredScope: { projectId: source.projectId, domain: source.domain } });
+      }
     });
+  }
+
+  private unchangedMessageSource(previous: MessageCursor, messageId: string, text: string, message: Json) {
+    const f = this.config.feishu!;
+    if (!Number.isFinite(previous.time) || !Array.isArray(previous.sourceIds) || previous.sourceIds.length !== 1) return;
+    const source = this.store.get('sources', previous.sourceIds[0]!), receipt = this.store.get('actions', stableId('feishu-receive', f.chatId, messageId, previous.revision));
+    if (!source || !receipt || receipt.kind !== 'feishu_receive' || receipt.status !== 'completed' || receipt.payload.messageId !== messageId || receipt.payload.chatId !== f.chatId || receipt.payload.revision !== previous.revision || !Array.isArray(receipt.payload.sourceIds) || digest(receipt.payload.sourceIds) !== digest(previous.sourceIds)) return;
+    const command = text.match(/^\/task\s+(\S+)\s+([\s\S]+)$/), projectId = command?.[1] ?? (this.config.projects.length === 1 ? this.config.projects[0]!.id : undefined);
+    if (text.startsWith('/') && !command || projectId !== source.projectId || source.kind !== 'feishu' || source.externalId !== `${f.chatId}:${messageId}` || source.authorId !== this.config.ownerId || source.revision !== previous.revision || source.status !== 'active' || source.content !== (command?.[2] ?? text) || receipt.projectId !== source.projectId || receipt.domain !== source.domain) return;
+    const current = this.store.get('projects', source.projectId), configured = this.config.projects.find(project => project.id === source.projectId);
+    const acceptedHash = this.store.get('cursors', stableId('source-hash', source.id))?.value;
+    if (!current || !configured || current.domain !== configured.domain || current.domain !== source.domain || current.ownerId !== this.config.ownerId || !canExport(this.config, source.domain, 'feishu') || acceptedHash && acceptedHash !== digest(source.content) || !knowledgeSourceRefs(this.store, source.id, source)) return;
+    const p = receipt.payload, legacy = p.nativeBodyHash === undefined && p.ownerId === undefined && p.principal === undefined && p.nativeTime === undefined && p.directOriginal === undefined;
+    if (!legacy && (p.ownerId !== this.config.ownerId || p.principal !== f.ownerOpenId || p.nativeTime !== previous.time || p.nativeBodyHash !== digest(text) || p.directOriginal !== (!message.parent_id && !message.root_id))) return;
+    return source;
+  }
+
+  private unchangedAnswerSource(previous: MessageCursor, messageId: string, text: string, message: Json) {
+    const f = this.config.feishu!;
+    if (!Number.isFinite(previous.time) || previous.sourceIds.length !== 1) return;
+    const receipt = this.store.get('actions', stableId('feishu-receive', f.chatId, messageId, previous.revision));
+    const p = receipt?.payload;
+    if (!receipt || receipt.kind !== 'feishu_receive' || receipt.status !== 'completed' || p?.messageId !== messageId || p.chatId !== f.chatId || p.revision !== previous.revision || !Array.isArray(p.sourceIds) || digest(p.sourceIds) !== digest(previous.sourceIds) || p.ownerId !== this.config.ownerId || p.principal !== f.ownerOpenId || p.nativeTime !== previous.time || p.nativeBodyHash !== digest(text) || p.directOriginal !== (!message.parent_id && !message.root_id)) return;
+    const explicit = text.match(/^\/answer\s+(\S+)\s+(\d+)\.(\d+)\s+([ABC])(?:\s+([\s\S]*))?$/i);
+    const replyChoice = text.match(/^\s*([ABC])(?:\s+([\s\S]*))?\s*$/i);
+    const question = explicit ? this.store.get('questions', explicit[1]!) : replyChoice ? this.questionForRemote(message.parent_id ?? message.root_id) : undefined;
+    if (!question || question.status !== 'answered' || !question.answer || question.ownerId !== this.config.ownerId || question.answer.actorId !== this.config.ownerId || question.answer.eventId !== `feishu:${f.chatId}:${messageId}:${previous.revision}` || question.answer.choice !== (explicit?.[4] ?? replyChoice?.[1])?.toUpperCase() || explicit && (question.taskVersion !== Number(explicit[2]) || question.version !== Number(explicit[3]))) return;
+    const source = this.store.get('sources', previous.sourceIds[0]!);
+    const task = this.store.get('tasks', question.taskId), project = this.store.get('projects', question.projectId), configured = this.config.projects.find(item => item.id === question.projectId);
+    const primary = task && this.store.get('sources', task.sourceId);
+    const event = this.store.get('cursors', stableId('answer-event', question.projectId, question.domain, question.answer.eventId));
+    if (!source || source.id !== stableId('owner-answer', question.id) || source.kind !== 'conversation' || source.status !== 'active' || source.projectId !== question.projectId || source.domain !== question.domain || source.authorId !== this.config.ownerId || source.content !== question.answer.text || source.revision !== digest(source.content) || source.locator !== `question:${question.id}@${question.version}` || !task || task.projectId !== question.projectId || task.domain !== question.domain || !primary || primary.status !== 'active' || primary.revision !== task.sourceRevision || !project || !configured || project.ownerId !== this.config.ownerId || project.domain !== question.domain || configured.domain !== question.domain || receipt.projectId !== question.projectId || receipt.domain !== question.domain || !canExport(this.config, question.domain, 'feishu') || event?.value !== digest({ questionId: question.id, choice: question.answer.choice, words: question.answer.text }) || !knowledgeSourceRefs(this.store, source.id, source)) return;
+    return source;
+  }
+
+  private legacyAnswerReceipt(previous: MessageCursor, messageId: string): boolean {
+    const f = this.config.feishu!;
+    if (!Array.isArray(previous.sourceIds) || previous.sourceIds.length !== 1) return false;
+    const receipt = this.store.get('actions', stableId('feishu-receive', f.chatId, messageId, previous.revision));
+    const p = receipt?.payload;
+    if (!receipt || receipt.kind !== 'feishu_receive' || receipt.status !== 'completed' || p?.messageId !== messageId || p.chatId !== f.chatId || p.revision !== previous.revision || !Array.isArray(p.sourceIds) || digest(p.sourceIds) !== digest(previous.sourceIds) || p.nativeBodyHash !== undefined || p.ownerId !== undefined || p.principal !== undefined || p.nativeTime !== undefined || p.directOriginal !== undefined) return false;
+    const source = this.store.get('sources', previous.sourceIds[0]!);
+    if (!source || source.kind !== 'conversation') return false;
+    return this.store.list('questions').some(question => question.status === 'answered' && question.answer?.eventId === `feishu:${f.chatId}:${messageId}:${previous.revision}` && source.id === stableId('owner-answer', question.id));
   }
 
   async send(message: OutboxMessage): Promise<{ remoteId: string }> {

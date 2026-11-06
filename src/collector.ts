@@ -4,6 +4,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import { digest, now, stableId, type AppConfig, type Project } from './domain.js';
 import type { Workbench } from './orchestrator.js';
 import type { Store } from './store.js';
+import { refreshCaseVersions } from './cases.js';
 
 /** Watch notifications accelerate capture; complete scans own deletion detection and recovery. */
 export class SourceCollector {
@@ -15,6 +16,7 @@ export class SourceCollector {
     if(this.scanning||this.stopping)return;this.scanning=true;
     try {
       this.store.rebuildIndex();
+      for(const project of this.config.projects)refreshCaseVersions(this.store,this.config,project);
       for(const project of this.store.list('projects')) {
         if(!project.sourceDir)continue;
         try {
