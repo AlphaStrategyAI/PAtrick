@@ -3,7 +3,7 @@ import { expandFactRefs, factualEligibility, knowledgeReference } from './knowle
 import type { FactualContext, FactualUseView } from './knowledge-contract.js';
 import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, knowledgeOutputSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { ingestStructuredKnowledge, publishKnowledge, type StructuredCurrentReceipt } from './knowledge.js';
 import { consumedStageResult, enqueueReferenceKnowledge, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, reconcileReferenceKnowledge, referenceKnowledgeBinding, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
@@ -16,6 +16,7 @@ import { Scheduler } from './scheduler.js';
 import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
 import { BillingAuthority } from './billing.js';
 import { captureNoQuestionCaseVersion, captureOwnerCaseVersion, refreshCasesForSnapshot, refreshCaseVersions } from './cases.js';
+import { acceptBookmarkLearning } from './learning.js';
 import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
 export interface WorkbenchOptions {
@@ -371,7 +372,10 @@ export class Workbench {
         if(task.kind==='reference_knowledge'){
           const binding=referenceKnowledgeBinding(this.store,this.config,this.task(task.id));
           if(!binding||!input.referenceKnowledge||digest(binding)!==digest(input.referenceKnowledge))throw new DomainError('Reference source changed during extraction.','stale_source',409);
-          publishKnowledge(this.store, input.source, output, this.config); this.advance(task, 'knowledge_extract', { status: 'completed' });
+          publishKnowledge(this.store, input.source, output, this.config);
+          const source = this.store.get('sources', input.source.id);
+          if (source) acceptBookmarkLearning(this.store, source, knowledgeOutputSchema.parse(output).learning);
+          this.advance(task, 'knowledge_extract', { status: 'completed' });
         } else { publishKnowledge(this.store, input.source, output, this.config); this.advance(task, 'case_extract'); }
       } else if (task.stage === 'case_extract') {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
