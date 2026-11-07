@@ -14,6 +14,7 @@ const optionalId = z.union([idText, z.literal('')]).optional();
 export const connectionSecretsSchema = z.object({
   githubToken: optionalSecret,
   gitlabToken: optionalSecret,
+  xToken: optionalSecret,
   researchUrl: z.union([z.string().trim().url().max(500), z.literal('')]).optional(),
   researchToken: optionalSecret,
   resticRepository: z.union([z.string().trim().min(1).max(500), z.literal('')]).optional(),
@@ -51,6 +52,7 @@ export function loadConnectionSecrets(config: AppConfig): void {
   catch { config.secretsUnreadable = true; return; }
   if (parsed.githubToken) config.githubToken = parsed.githubToken;
   if (parsed.gitlabToken) config.gitlabToken = parsed.gitlabToken;
+  if (parsed.xToken) config.xToken = parsed.xToken;
   if (parsed.researchUrl) config.researchUrl = parsed.researchUrl;
   if (parsed.researchToken) config.researchToken = parsed.researchToken;
   applyHostSettings(config, parsed);
@@ -63,6 +65,7 @@ function storedSecrets(config: AppConfig): ConnectionSecrets {
   return {
     ...(config.githubToken ? { githubToken: config.githubToken } : {}),
     ...(config.gitlabToken ? { gitlabToken: config.gitlabToken } : {}),
+    ...(config.xToken ? { xToken: config.xToken } : {}),
     ...(config.researchUrl ? { researchUrl: config.researchUrl } : {}),
     ...(config.researchToken ? { researchToken: config.researchToken } : {}),
     ...(config.resticRepository ? { resticRepository: config.resticRepository } : {}),
@@ -87,6 +90,7 @@ export function saveConnectionSecrets(config: AppConfig, input: ConnectionSecret
   const next: ConnectionSecrets = {
     githubToken: keep(input.githubToken, current.githubToken),
     gitlabToken: keep(input.gitlabToken, current.gitlabToken),
+    xToken: keep(input.xToken, current.xToken),
     researchUrl: keep(input.researchUrl, current.researchUrl),
     researchToken: keep(input.researchToken, current.researchToken),
     resticRepository: keep(input.resticRepository, current.resticRepository),
@@ -112,6 +116,7 @@ export function saveConnectionSecrets(config: AppConfig, input: ConnectionSecret
   renameSync(temporary, path);
   config.githubToken = clean.githubToken || undefined;
   config.gitlabToken = clean.gitlabToken || undefined;
+  config.xToken = clean.xToken || undefined;
   config.researchUrl = clean.researchUrl || undefined;
   config.researchToken = clean.researchToken || undefined;
   if (clean.feishu?.appId && clean.feishu.appSecret && clean.feishu.ownerOpenId) {

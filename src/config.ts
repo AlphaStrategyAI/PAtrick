@@ -74,7 +74,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mode,host,port,dataDir,vaultDir:resolve(env.PATRICK_VAULT_DIR ?? join(dataDir,'vault')),ownerId,authToken,
     sessionSecret:env.PATRICK_SESSION_SECRET ?? authToken, projects:parsed.projects as Project[],
     runnerPolicies:parsed.runnerPolicies ?? defaultPolicies(),workers:parsed.workers,
-    githubToken:env.PATRICK_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN,
+    githubToken:env.PATRICK_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN, xToken:env.PATRICK_X_TOKEN,
     gitlabToken:env.PATRICK_GITLAB_TOKEN, gitlabUrl:env.PATRICK_GITLAB_URL,
     ...(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.FEISHU_OWNER_OPEN_ID ? { feishu:{appId:env.FEISHU_APP_ID,appSecret:env.FEISHU_APP_SECRET,verificationToken:env.FEISHU_VERIFICATION_TOKEN,encryptKey:env.FEISHU_ENCRYPT_KEY,ownerOpenId:env.FEISHU_OWNER_OPEN_ID,chatId:env.FEISHU_CHAT_ID} } : {}),
     researchUrl:env.PATRICK_RESEARCH_URL,researchToken:env.PATRICK_RESEARCH_TOKEN,
