@@ -201,6 +201,12 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
       {focus.lesson.overlooked.length ? <ul class="content-list">{focus.lesson.overlooked.map(item => <li>{item}</li>)}</ul> : <p>没有发现当时规则里缺少的已记录例外。</p>}
       <h3>下次可以这样判断</h3>
       <p>{focus.lesson.next}</p>
+      <h3>和当初建议的关系</h3>
+      <p>{{ matched: '你接受了首选建议。这只说明当时的选择和首选一致。', different: '你没有选首选建议。', unknown: '当时没有留下可对照的初判。' }[focus.lesson.disagreement.alignment]}</p>
+      <h3>分歧归类</h3>
+      <p>{{ none: '没有需要另归类的分歧。', missed_fact: '你的原话包含一条当时没有被引用的原文。', preference: '当时引用的事实已经在，这次不同是偏好，不是新的事实。', rule_exception: '你的原话命中了当时规则已经写下的例外。', unresolved: '选择和初判不同，现有记录还不能归入漏事实、偏好或例外。' }[focus.lesson.disagreement.reason]}</p>
+      <h3>业务结果</h3>
+      <p>{focus.lesson.disagreement.effect === 'recorded' ? '回执已记下业务结果，不拿它改写当时的对照。' : '业务结果仍待观察，不从这次选择推断效果。'}</p>
     </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>

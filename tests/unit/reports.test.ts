@@ -26,5 +26,6 @@ it('shows a later recorded exception as the condition the original rules left ou
     expect(lesson?.result).toBe('草稿已按合并回执保留。');
     expect(lesson?.overlooked).toEqual(['敏感草稿需单独确认']);
     expect(lesson?.next).toBe('仅本产品，直到下次成功导出');
+    expect(lesson?.disagreement).toEqual({ alignment: 'different', reason: 'unresolved', effect: 'recorded' });
   }finally{store.close();}
 });

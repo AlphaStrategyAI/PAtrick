@@ -137,3 +137,27 @@ export function admitReplayTrial(input: { projectId: string; oldBudget: number; 
     ...counts,
   };
 }
+
+const genericExceptions = new Set([
+  'Reconfirm after source changes or outside this decision.',
+  '没有额外例外',
+  '[withdrawn]',
+]);
+
+export interface ChoiceComparison {
+  alignment: 'matched' | 'different' | 'unknown';
+  reason: 'none' | 'missed_fact' | 'preference' | 'rule_exception' | 'unresolved';
+}
+
+/** Separate a different owner choice from a later business result. A is the preferred suggestion. */
+export function classifyOwnerChoice(input: { choice: 'A' | 'B' | 'C'; words: string; citedQuotes: string[]; earlierSourceTexts: string[]; exceptions: string[]; hasSnapshot: boolean }): ChoiceComparison {
+  if (!input.hasSnapshot) return { alignment: 'unknown', reason: 'unresolved' };
+  if (input.choice === 'A') return { alignment: 'matched', reason: 'none' };
+  const specific = input.exceptions.map(item => item.trim()).filter(item => item.length >= 8 && !genericExceptions.has(item));
+  if (specific.some(item => input.words.includes(item))) return { alignment: 'different', reason: 'rule_exception' };
+  const cited = input.citedQuotes.map(item => item.trim()).filter(Boolean);
+  const missed = input.earlierSourceTexts.map(item => item.trim()).filter(item => item.length >= 12 && input.words.includes(item) && !cited.some(quote => quote.includes(item)));
+  if (missed.length) return { alignment: 'different', reason: 'missed_fact' };
+  if (cited.length) return { alignment: 'different', reason: 'preference' };
+  return { alignment: 'different', reason: 'unresolved' };
+}

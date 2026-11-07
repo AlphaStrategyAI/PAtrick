@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { admitReplayTrial, type ReplayCase } from '../../src/evaluation.js';
+import { admitReplayTrial, classifyOwnerChoice, type ReplayCase } from '../../src/evaluation.js';
 
 function replay(overrides: Partial<ReplayCase> = {}): ReplayCase {
   return {
@@ -37,7 +37,19 @@ it('keeps an owner value change as a suggestion instead of starting a trial', ()
   expect(decision.reasons).toContain('owner-value');
 });
 
-it('does not spend more than the original replay or count another product as the fix', () => {
+it('keeps an accepted recommendation separate from a later result', () => {
+  expect(classifyOwnerChoice({ choice: 'A', words: '按首选保留。', citedQuotes: ['导出失败后应恢复草稿。'], earlierSourceTexts: ['另一份当时可见的用户原文。'], exceptions: [], hasSnapshot: true })).toEqual({ alignment: 'matched', reason: 'none' });
+});
+
+it('classifies a different choice as a missed fact, a preference, or a recorded exception', () => {
+  const cited = ['导出失败后应恢复草稿。'];
+  expect(classifyOwnerChoice({ choice: 'C', words: '还要看另一份当时可见的用户原文。', citedQuotes: cited, earlierSourceTexts: ['另一份当时可见的用户原文。'], exceptions: ['没有额外例外'], hasSnapshot: true })).toEqual({ alignment: 'different', reason: 'missed_fact' });
+  expect(classifyOwnerChoice({ choice: 'B', words: '只保留七天。', citedQuotes: cited, earlierSourceTexts: [], exceptions: [], hasSnapshot: true })).toEqual({ alignment: 'different', reason: 'preference' });
+  expect(classifyOwnerChoice({ choice: 'C', words: '敏感草稿需单独确认，其余保留到下次导出。', citedQuotes: cited, earlierSourceTexts: [], exceptions: ['敏感草稿需单独确认'], hasSnapshot: true })).toEqual({ alignment: 'different', reason: 'rule_exception' });
+  expect(classifyOwnerChoice({ choice: 'C', words: '我自己决定。', citedQuotes: [], earlierSourceTexts: [], exceptions: [], hasSnapshot: false })).toEqual({ alignment: 'unknown', reason: 'unresolved' });
+});
+
+it('does not spend more than the original replay or count another project as the fix', () => {
   expect(admitReplayTrial({ ...budgets, candidateBudget: 2, cases: [replay()] }).reasons).toContain('budget');
   const other = admitReplayTrial({ ...budgets, cases: [replay({ projectId: 'other-product', crossDomain: true })] });
   expect(other.trial).toBe('none');
