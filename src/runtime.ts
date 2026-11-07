@@ -12,6 +12,7 @@ import { GitLabWriter } from './integrations/gitlab.js';
 import { createRepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { BilingualResearch } from './integrations/research.js';
 import { SourceCollector } from './collector.js';
+import { scanGithubBranch } from './integrations/github-branch.js';
 import { FeishuChannel } from './integrations/feishu.js';
 import { NetworkGuardian, readNetworkTargets, systemNetworkActions } from './integrations/network.js';
 import { acquireHostLease } from './lease.js';
@@ -59,6 +60,13 @@ export async function createRuntime(config:AppConfig=readConfig()) {
     let closing:Promise<void>|undefined;let networkCheck:Promise<unknown>|undefined;
     const checkNetwork=()=>networkCheck??=(async()=>{if(!guardian)return;const resume=await engine.pause();try{await guardian.check();}finally{resume();}})().finally(()=>{networkCheck=undefined;});
     const reviewTimer=setInterval(()=>{try{reviewOutcomes();}catch{console.error('Outcome review scan failed; retrying at the next scheduled minute.');}},60000);reviewTimer.unref();
-    return {config,store,engine,collector,feishu,guardian,checkNetwork,reviewOutcomes,close(){return closing??=(async()=>{clearInterval(reviewTimer);await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
+    const scanGithubBranches=async()=>{
+      if(config.mode!=='live'||!config.githubToken)return;
+      for(const project of store.list('projects')){
+        if(project.repositoryProvider!=='github'||project.ownerId!==config.ownerId)continue;
+        try{await scanGithubBranch(store,config,project,engine);}catch{console.error('GitHub branch scan failed; the saved commit cursor was not moved.');}
+      }
+    };
+    return {config,store,engine,collector,feishu,guardian,checkNetwork,reviewOutcomes,scanGithubBranches,close(){return closing??=(async()=>{clearInterval(reviewTimer);await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
   }catch(error){try{openedStore?.close();}finally{release();}throw error;}
 }
