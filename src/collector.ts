@@ -24,15 +24,17 @@ export class SourceCollector {
           const watching=this.watchers.has(project.id);
           if(!watching) {
             const watcher=watch(root,{ignoreInitial:true,followSymlinks:false,awaitWriteFinish:{stabilityThreshold:1000,pollInterval:100},ignored:/(^|[/\\])\.|node_modules/});
-            watcher.on('add',path=>this.trackCapture(project,path));watcher.on('change',path=>this.trackCapture(project,path));watcher.on('unlink',()=>void this.scan());watcher.on('error',()=>{if(!this.stopping)this.record(project,'Source watcher unavailable; periodic scans remain enabled.');});this.watchers.set(project.id,watcher);
+            watcher.on('add',path=>this.trackCapture(project,path));watcher.on('change',path=>this.trackCapture(project,path));watcher.on('unlink',()=>void this.scan());watcher.on('error',()=>{if(!this.stopping)this.record(project,'watcher_unavailable');});this.watchers.set(project.id,watcher);
           }
           const files=await this.walk(root),seen=new Set<string>();
           for(const file of files){const externalId=`file:${relative(root,file).split(sep).join('/')}`;if(await this.capture(project,file)&&watching&&!this.signaled.has(file))this.recordMiss(project,externalId);seen.add(externalId);}
           this.signaled.clear();
           // Only a fully successful scan can declare that an authorized file disappeared.
           for(const source of this.store.list('sources'))if(source.kind==='file'&&source.projectId===project.id&&source.domain===project.domain&&source.status==='active'&&source.externalId.startsWith('file:')&&!seen.has(source.externalId))this.engine.withdraw(source.id);
-          this.store.save('cursors',{id:stableId('file-scan',project.domain,project.id),projectId:project.id,domain:project.domain,value:now(),updatedAt:now()});
-        }catch{this.record(project,'Source scan paused. Check the authorized directory and device connection. Existing sources remain valid until a complete scan succeeds.');}
+          const noticedAt=this.store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.connection').map(event=>event.createdAt).sort().at(-1);
+          const updatedAt=laterThan(noticedAt);
+          this.store.save('cursors',{id:stableId('file-scan',project.domain,project.id),projectId:project.id,domain:project.domain,value:updatedAt,updatedAt});
+        }catch(error){this.record(project,error instanceof Error&&error.message.includes('Source root moved')?'root_moved':'scan_paused');}
       }
     }finally{this.scanning=false;this.scanWaiters.splice(0).forEach(resolve=>resolve());}
   }
@@ -63,8 +65,37 @@ export class SourceCollector {
     const createdAt=now();
     this.store.save('events',{id:stableId('source-missed',project.id,externalId,createdAt),projectId:project.id,domain:project.domain,type:'source.missed',message:'A periodic scan found a file change the watcher had not reported.',data:{externalId},createdAt});
   }
-  private record(project:Project,message:string):void {
-    const id=stableId('collector-notice',project.id,message,new Date().toISOString().slice(0,13));
-    if(!this.store.get('events',id))this.store.save('events',{id,projectId:project.id,domain:project.domain,type:'source.connection',message,createdAt:now(),data:{}});
+  private record(project:Project,code:ScanNoticeCode):void {
+    const cursor=this.store.get('cursors',stableId('file-scan',project.domain,project.id));
+    const createdAt=laterThan(cursor?.updatedAt);
+    const id=stableId('collector-notice',project.id,code,createdAt.slice(0,13));
+    if(!this.store.get('events',id))this.store.save('events',{id,projectId:project.id,domain:project.domain,type:'source.connection',message:scanNoticeCopy(code).detail,createdAt,data:{code}});
   }
+}
+
+function laterThan(previous?:string):string {
+  const current=now();
+  if(!previous||current>previous)return current;
+  return new Date(Date.parse(previous)+1).toISOString();
+}
+export type ScanNoticeCode='root_moved'|'scan_paused'|'watcher_unavailable';
+export function scanNoticeCopy(code:ScanNoticeCode):{title:string;detail:string} {
+  if(code==='root_moved')return {title:'同步目录位置变了',detail:'在设置里重新确认这个目录。下一次扫描成功前，不会读取新位置。已有资料保持有效。'};
+  if(code==='watcher_unavailable')return {title:'文件监听暂时不可用',detail:'定时补扫仍会继续。已有资料保持有效。'};
+  return {title:'同步目录这次没有扫完',detail:'确认目录还在，并且可以读取。下一次扫描成功前，已有资料保持有效。'};
+}
+export function fileScanNotice(store:Store,project:{id:string;domain:string}):{title:string;detail:string}|undefined {
+  const latest=store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.connection').sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+  const code=latest?.data.code;
+  if(code!=='root_moved'&&code!=='scan_paused'&&code!=='watcher_unavailable')return undefined;
+  const cursor=store.get('cursors',stableId('file-scan',project.domain,project.id));
+  if(cursor&&cursor.updatedAt>latest!.createdAt)return undefined;
+  return scanNoticeCopy(code);
+}
+export function fileScanStatus(store:Store,project:{id:string;domain:string;sourceDir?:string}):{title:string;detail:string} {
+  if(!project.sourceDir)return {title:'文件监听未配置',detail:'可先手动加入材料，再配置同步目录'};
+  const notice=fileScanNotice(store,project);
+  if(notice)return notice;
+  const cursor=store.get('cursors',stableId('file-scan',project.domain,project.id));
+  return cursor?{title:'文件监听已配置',detail:'最近一次扫描已完成。新增、修改和撤回会在扫描成功后入账。'}:{title:'文件监听已配置',detail:'已配置同步目录，还没有完成第一次扫描。'};
 }
