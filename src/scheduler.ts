@@ -77,7 +77,7 @@ export class Scheduler {
         throw cause;
       } finally {if(originalResult)takeHostTestRun(originalResult);}
     }
-    this.block(task, `No admitted ${input.role} runner is currently available. ${reason}`, 'workers_unavailable');
+    this.block(task, 'workers_unavailable', 'workers_unavailable');
     return undefined;
   }
 
@@ -89,9 +89,10 @@ export class Scheduler {
   private block(task: Task, message: string, code: string): void {
     this.store.transaction(() => {
       const current = this.current(task); if (current.billingStop) return; const runAfter = new Date(Date.now() + 30_000).toISOString();
-      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: message, updatedAt: now() });
-      this.notify(task, stableId('blocked', task.id, task.version, task.stage, current.attempts), `${task.title} · ${task.stage}: ${message} 下次探测：${runAfter}。无需回答。`);
-      this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type: code, message, createdAt: now(), data: { runAfter } });
+      const notice = code === 'workers_unavailable' ? `${current.title}：当前没有可接这个角色的运行器。下次探测：${runAfter}。无需回答。` : `${current.title} · ${current.stage}: ${message} 下次探测：${runAfter}。无需回答。`;
+      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: code === 'workers_unavailable' ? code : message, updatedAt: now() });
+      this.notify(task, stableId('blocked', task.id, task.version, task.stage, current.attempts), notice);
+      this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type: code, message: code === 'workers_unavailable' ? '当前没有可接这个角色的运行器。任务已保留，到点会再探测。这不需要你回答。' : message, createdAt: now(), data: { runAfter } });
     });
   }
   private notify(task: Task, id: string, text: string): void {
