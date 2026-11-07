@@ -147,6 +147,21 @@ describe('outcome reviews on real HTTP pages', () => {
     const f = setup(); vi.setSystemTime(new Date('2026-01-08T00:00:00Z')); f.evidence('correction', 'Synthetic correction');
     const html = await f.page('/sources?project=p'); expect(html).toContain('结果依据'); expect(html).toContain('仅作引用，不启动执行任务'); expect(f.store.list('tasks')).toHaveLength(1);
   });
+  it('records a quoted sentence from an existing source and does not treat it as a measurement', async () => {
+    const f = setup();
+    const source = f.store.list('sources').find(item => item.content === 'Synthetic original source')!;
+    expect(await f.page()).toContain('记入这条原文');
+    const post = () => f.app.request(`/api/judgments/${f.snapshot.id}/evidence`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ projectId: 'p', domain: 'personal', kind: 'correction', sourceId: source.id, quote: 'Synthetic original source' }) });
+    expect((await post()).status).toBe(200);
+    expect((await post()).status).toBe(200);
+    expect(f.store.list('actions').filter(action => action.kind === 'decision.evidence')).toHaveLength(1);
+    const html = reviewRegion(await f.page());
+    expect(html).toContain('Synthetic original source');
+    expect(html).toContain('尚无当前引用测量，业务结果待观察。');
+    const missing = await f.app.request(`/api/judgments/${f.snapshot.id}/evidence`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ projectId: 'p', domain: 'personal', kind: 'failure', sourceId: source.id, quote: '这句话不在资料里' }) });
+    expect(missing.status).toBe(400);
+    expect(f.store.list('actions').filter(action => action.kind === 'decision.evidence')).toHaveLength(1);
+  });
   it('renders numeric interval bounds and persists a progressive form submission into settings', async () => {
     const f = setup(), settings = await f.page('/settings?project=p');
     expect(settings).toMatch(/<input[^>]*name="reviewIntervalDays"[^>]*type="number"[^>]*min="1"[^>]*max="365"[^>]*step="1"[^>]*value="7"/);

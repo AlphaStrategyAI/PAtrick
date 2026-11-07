@@ -74,7 +74,14 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
     const {content,...metadata}=source;
     return c.json({source:metadata});
   });
-  app.post('/api/judgments/:id/evidence',async c=>c.json({evidence:recordOutcomeEvidence(store,config,c.req.param('id'),await body(c),config.ownerId)}));
+  app.post('/api/judgments/:id/evidence',async c=>{
+    const raw=await body(c);
+    const source=typeof raw.sourceId==='string'?store.get('sources',raw.sourceId):undefined;
+    if(source&&(typeof raw.sourceRevision!=='string'||raw.sourceRevision===''))raw.sourceRevision=source.revision;
+    if(source&&(typeof raw.observedAt!=='string'||raw.observedAt===''))raw.observedAt=source.createdAt;
+    const evidence=recordOutcomeEvidence(store,config,c.req.param('id'),raw,config.ownerId);
+    return respond(c,{evidence,message:'已按原文记下这条结果依据。'},`/standards?project=${encodeURIComponent(evidence.projectId)}#outcome-review-${encodeURIComponent(c.req.param('id'))}`);
+  });
   app.get('/api/reviews',c=>{
     const project=ownedProject(c.req.query('project'),c.req.query('domain')??'');
     return c.json({reviews:outcomeReviewViews(store,project)});
