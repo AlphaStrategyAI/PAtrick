@@ -4,7 +4,7 @@ import { createApp } from '../../src/app.js';
 import { readConfig } from '../../src/config.js';
 import { configureDemo } from '../../src/demo.js';
 import { digest } from '../../src/domain.js';
-import { recordHeldOutReplay, recordMaintenance, runMonthlyComparison } from '../../src/evaluation.js';
+import { monthlyComparisonMessage, recordHeldOutReplay, recordMaintenance, runMonthlyComparison } from '../../src/evaluation.js';
 import { ingestSource } from '../../src/intake.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { weeklyReport } from '../../src/reports.js';
@@ -123,7 +123,25 @@ it('refuses a recorded replay that fabricates delivery and leaves the principle 
     store.save('rules', observation);
     recordHeldOutReplay(store, project, { caseId: 'case', candidateId: observation.id, month: '2026-11', candidateCorrect: true, unauthorized: false, duplicateExternalAction: false, fakeDelivery: true, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false });
     const comparison = runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'));
-    expect(comparison).toMatchObject({ candidateAnswers: 1, trial: 'none', principle: 'unchanged' });
+    expect(comparison).toMatchObject({ candidateAnswers: 1, trial: 'none', principle: 'unchanged', ownerValue: false });
+    expect(store.get('rules', principle.id)?.statement).toBe(principle.statement);
+  } finally { store.close(); }
+});
+
+it('keeps an owner-value replay as a decision for the owner and does not change the principle', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const principle = { id: 'principle', projectId: project.id, domain: project.domain, title: '保留草稿', statement: '仅本产品保留到下次成功导出。', conditions: '仅本产品这一次', exceptions: '敏感草稿需单独确认', version: 1, kind: 'principle' as const, status: 'active' as const, caseIds: ['case'], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const observation = { id: 'observation', projectId: project.id, domain: project.domain, title: '观察', statement: '先看恢复路径。', conditions: '本页', exceptions: '没有额外例外', version: 1, kind: 'observation' as const, status: 'active' as const, caseIds: [] as string[], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  try {
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { id: 'case', projectId: project.id, domain: project.domain, taskId: 'task', questionId: 'question', decisionId: 'decision', actorId: project.ownerId, choice: 'C', originalWords: '仅本产品保留到下次成功导出。', rationale: 'Owner rationale not separately stated.', alternatives: [], ruleIds: ['principle'], sourceId: 'source', status: 'active', createdAt: at });
+    store.save('rules', principle);
+    store.save('rules', observation);
+    recordHeldOutReplay(store, project, { caseId: 'case', candidateId: observation.id, month: '2026-11', candidateCorrect: true, unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: true });
+    const comparison = runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'));
+    expect(comparison).toMatchObject({ trial: 'none', principle: 'unchanged', ownerValue: true });
+    expect(monthlyComparisonMessage(comparison)).toContain('仍要你的真实决定');
     expect(store.get('rules', principle.id)?.statement).toBe(principle.statement);
   } finally { store.close(); }
 });

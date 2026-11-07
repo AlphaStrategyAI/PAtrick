@@ -164,7 +164,7 @@ export function classifyOwnerChoice(input: { choice: 'A' | 'B' | 'C'; words: str
 
 export interface MonthlyComparison {
   month: string; sampleSize: number; ownerCorrections: number; matchedSuggestions: number; observedResults: number;
-  candidateId: string | null; candidateAnswers: number; trial: TrialDecision['trial']; principle: 'unchanged';
+  candidateId: string | null; candidateAnswers: number; trial: TrialDecision['trial']; principle: 'unchanged'; ownerValue: boolean;
 }
 
 export interface HeldOutReplay {
@@ -207,7 +207,7 @@ export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()
   }) : [];
   const unanswered = heldOut.map(item => ({ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: false, unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false }));
   const decision = admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: replayed.length ? replayed : unanswered });
-  const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged' };
+  const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged', ownerValue: replayed.some(item => item.changesOwnerValue) };
   const id = stableId('monthly-comparison', scope.projectId, scope.domain, comparison.month);
   const existing = store.get('actions', id);
   const saved = existing?.payload.comparison as MonthlyComparison | undefined;
@@ -221,6 +221,7 @@ export function monthlyComparisonMessage(monthly: MonthlyComparison | null): str
   if (!monthly) return '还没有用留出案例做过本月对照。';
   const base = `留出 ${monthly.sampleSize} 个案例，本人纠正 ${monthly.ownerCorrections} 次。`;
   if (monthly.candidateAnswers === 0) return `${base}候选版本还没有回答这些案例，原则保持不变。`;
+  if (monthly.ownerValue) return `${base}候选碰到价值取舍，仍要你的真实决定，因此还不能试用。原则保持不变。`;
   if (monthly.trial === 'single-product') return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，可以在本项目试用。原则保持不变。`;
   return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，但还不能试用。原则保持不变。`;
 }
