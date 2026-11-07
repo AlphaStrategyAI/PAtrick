@@ -16,12 +16,13 @@ const server=serve({fetch:app.fetch,hostname:runtime.config.host,port:runtime.co
 await runtime.collector.start();
 await runtime.scanGithubBranches();
 await runtime.scanBookmarks();
+await runtime.scanMail();
 await runtime.checkNetwork();
 if(runtime.feishu)void runtime.feishu.start().catch(()=>console.error('Feishu is not ready. Check the configured chat, identity, and history permissions.'));
 const timer=setInterval(()=>void runtime.engine.tick(),750);timer.unref();
 const historyTimer=setInterval(()=>void runtime.feishu?.catchup().catch(()=>{}),runtime.config.scanIntervalMs);historyTimer.unref();
 const networkTimer=setInterval(()=>void runtime.checkNetwork(),60000);networkTimer.unref();
-const githubTimer=setInterval(()=>{void runtime.scanGithubBranches();void runtime.scanBookmarks();},runtime.config.scanIntervalMs);githubTimer.unref();
+const githubTimer=setInterval(()=>{void runtime.scanGithubBranches();void runtime.scanBookmarks();void runtime.scanMail();},runtime.config.scanIntervalMs);githubTimer.unref();
 let closing=false;
 async function close(){if(closing)return;closing=true;clearInterval(timer);clearInterval(historyTimer);clearInterval(networkTimer);clearInterval(githubTimer);await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime.close();process.exit(0);}
 process.on('SIGINT',()=>void close());process.on('SIGTERM',()=>void close());
