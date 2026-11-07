@@ -187,7 +187,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
   const purpose = input.purpose ?? 'task';
   if (!['task', 'reference'].includes(purpose)) throw new DomainError('Unknown source purpose.');
   const kind = input.kind ?? 'manual';
-  if (!['file', 'feishu', 'github', 'conversation', 'manual', 'reading'].includes(kind)) throw new DomainError('Unknown source kind.');
+  if (!['file', 'feishu', 'github', 'conversation', 'manual', 'reading', 'email'].includes(kind)) throw new DomainError('Unknown source kind.');
   const scope = { projectId: project.id, domain: project.domain };
   return store.transaction(() => {
     if (!store.get('projects', project.id)) store.save('projects', project);

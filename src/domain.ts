@@ -33,7 +33,7 @@ export interface Project extends Scope {
   reviewIntervalDays?: number; ownerId: string; autoMerge: boolean; budgetUsd: number; executionRunner?: 'grok' | 'dsh'; sourceDir?: string; createdAt: string;
 }
 export interface SourceRevision extends Scope {
-  purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading';
+  purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading' | 'email';
   /** Host-recorded Vault dependencies; editable projections cannot replace these edges. */
   parentSources?: { id: string; revision: string }[];
   externalId: string; revision: string; title: string; content: string; locator: string;
@@ -205,7 +205,7 @@ export interface AppConfig {
   mode: 'live' | 'demo' | 'test'; host: string; port: number; dataDir: string; vaultDir: string; ownerId: string;
   authToken: string; sessionSecret: string; projects: Project[]; runnerPolicies: RunnerPolicy[];
   workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string; guestUser?: string }>>;
-  githubToken?: string; gitlabToken?: string; gitlabUrl?: string; xToken?: string;
+  githubToken?: string; gitlabToken?: string; gitlabUrl?: string; xToken?: string; gmailToken?: string;
   feishu?: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
   researchUrl?: string; researchToken?: string; resticRepository?: string; resticPassword?: string; limaInstance?: string;
   githubShortcutStatus?: string; githubShortcutConnect?: string; githubShortcutDisconnect?: string;

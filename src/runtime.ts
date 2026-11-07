@@ -14,6 +14,7 @@ import { BilingualResearch } from './integrations/research.js';
 import { SourceCollector } from './collector.js';
 import { scanGithubBranch } from './integrations/github-branch.js';
 import { scanXBookmarks } from './integrations/x-bookmarks.js';
+import { scanGmail } from './integrations/gmail.js';
 import { FeishuChannel } from './integrations/feishu.js';
 import { NetworkGuardian, readNetworkTargets, systemNetworkActions } from './integrations/network.js';
 import { acquireHostLease } from './lease.js';
@@ -75,6 +76,13 @@ export async function createRuntime(config:AppConfig=readConfig()) {
         try{await scanXBookmarks(store,config,project,engine);}catch{console.error('X bookmark scan failed; the saved bookmark cursor was not moved.');}
       }
     };
-    return {config,store,engine,collector,feishu,guardian,checkNetwork,reviewOutcomes,scanGithubBranches,scanBookmarks,close(){return closing??=(async()=>{clearInterval(reviewTimer);await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
+    const scanMail=async()=>{
+      if(config.mode!=='live'||!config.gmailToken)return;
+      for(const project of store.list('projects')){
+        if(project.ownerId!==config.ownerId)continue;
+        try{await scanGmail(store,config,project,engine);}catch{console.error('Gmail scan failed; the saved history cursor was not moved.');}
+      }
+    };
+    return {config,store,engine,collector,feishu,guardian,checkNetwork,reviewOutcomes,scanGithubBranches,scanBookmarks,scanMail,close(){return closing??=(async()=>{clearInterval(reviewTimer);await collector.stop();await engine.shutdown();await feishu?.shutdown();await guardian?.shutdown();await networkCheck;store.close();release();})();}};
   }catch(error){try{openedStore?.close();}finally{release();}throw error;}
 }
