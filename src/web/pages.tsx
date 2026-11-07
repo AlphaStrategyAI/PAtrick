@@ -12,6 +12,7 @@ import { commandOnPath, nextSetupStep, runnerLogins, setupSteps } from '../setup
 import type { Store } from '../store.js';
 import { Badge, date, Empty, ExternalLink, Icon, type IconName, Monogram, money, PageHead, ProjectForm, relative, roleLabels, shortHash, sourceLabels, Status, statuses, terminalStatuses } from './components.js';
 import { QuestionForm, TaskDetail } from './task.js';
+import { monthlyComparisonMessage } from '../evaluation.js';
 import { weeklyReport } from '../reports.js';
 import { outcomeReviewViews, type OutcomeEvidence, type OutcomeReviewView } from '../reviews.js';
 
@@ -217,7 +218,7 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
       <p>本周拒绝了 {report.metrics.incorrectCitations} 条不在原文中的引文。</p>
       <p>本周补扫找回了 {report.metrics.missedCaptures} 次监听没有报过的文件变化。</p>
       <h3>本月对照</h3>
-      <p>{report.monthly ? `留出 ${report.monthly.sampleSize} 个案例，本人纠正 ${report.monthly.ownerCorrections} 次。候选版本还没有回答这些案例，原则保持不变。` : '还没有用留出案例做过本月对照。'}</p>
+      <p>{monthlyComparisonMessage(report.monthly)}</p>
     </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
