@@ -165,6 +165,7 @@ export function classifyOwnerChoice(input: { choice: 'A' | 'B' | 'C'; words: str
 export interface MonthlyComparison {
   month: string; sampleSize: number; ownerCorrections: number; matchedSuggestions: number; observedResults: number;
   candidateId: string | null; candidateAnswers: number; trial: TrialDecision['trial']; principle: 'unchanged'; ownerValue: boolean;
+  reverted?: boolean;
 }
 
 export interface HeldOutReplay {
@@ -194,6 +195,26 @@ function replayFor(store: Store, scope: Scope, month: string, candidateId: strin
   return replay?.caseId === caseId && replay.candidateId === candidateId && replay.month === month ? replay : undefined;
 }
 
+const finishedTrialTask = new Set(['delivered', 'completed', 'archived', 'cancelled']);
+
+/** A withdrawn trial returns unfinished work to the standing principle. It does not rewrite that principle. */
+function reconcileRevokedTrial(store: Store, scope: Scope, comparison: MonthlyComparison): void {
+  const candidateId = comparison.candidateId;
+  if (!candidateId) return;
+  const id = stableId('trial-reconcile', scope.projectId, scope.domain, comparison.month, candidateId, digest({ ...comparison, reverted: false }));
+  if (store.get('actions', id)) return;
+  const at = now();
+  const taskIds: string[] = [];
+  for (const task of store.list('tasks')) {
+    if (task.projectId !== scope.projectId || task.domain !== scope.domain || finishedTrialTask.has(task.status) || task.receiptId) continue;
+    if (!task.decision?.ruleIds.includes(candidateId)) continue;
+    for (const question of store.list('questions')) if (question.taskId === task.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
+    store.save('tasks', { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, error: '试用已收回，未完成的任务按原来的原则重判。' });
+    taskIds.push(task.id);
+  }
+  store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.trial-reconcile', status: 'completed', payload: { month: comparison.month, candidateId, taskIds }, updatedAt: at });
+}
+
 /** Compare this month's held-out owner decisions with the current version. Only a recorded replay counts as a candidate answer, and the principle stays. */
 export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()): MonthlyComparison | null {
   const cases = store.list('cases').filter(item => item.projectId === scope.projectId && item.domain === scope.domain && item.status === 'active' && item.createdAt <= at.toISOString() && store.get('sources', item.sourceId)?.status === 'active');
@@ -210,10 +231,13 @@ export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()
   const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged', ownerValue: replayed.some(item => item.changesOwnerValue) };
   const id = stableId('monthly-comparison', scope.projectId, scope.domain, comparison.month);
   const existing = store.get('actions', id);
-  const saved = existing?.payload.comparison as MonthlyComparison | undefined;
-  if (existing?.kind === 'decision.monthly-comparison' && saved && digest(saved) === digest(comparison)) return saved;
-  store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison }, updatedAt: at.toISOString() });
-  return comparison;
+  const saved = existing?.kind === 'decision.monthly-comparison' ? existing.payload.comparison as MonthlyComparison | undefined : undefined;
+  const reverted = !!(saved?.trial === 'single-product' && saved.candidateId && saved.candidateId === comparison.candidateId && comparison.trial === 'none');
+  const next = { ...comparison, reverted };
+  if (saved && digest(saved) === digest(next)) return saved;
+  if (reverted) reconcileRevokedTrial(store, scope, next);
+  store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison: next }, updatedAt: at.toISOString() });
+  return next;
 }
 
 /** Say what the stored comparison actually decided. A trial still does not change the principle. */
@@ -221,9 +245,10 @@ export function monthlyComparisonMessage(monthly: MonthlyComparison | null): str
   if (!monthly) return '还没有用留出案例做过本月对照。';
   const base = `留出 ${monthly.sampleSize} 个案例，本人纠正 ${monthly.ownerCorrections} 次。`;
   if (monthly.candidateAnswers === 0) return `${base}候选版本还没有回答这些案例，原则保持不变。`;
-  if (monthly.ownerValue) return `${base}候选碰到价值取舍，仍要你的真实决定，因此还不能试用。原则保持不变。`;
+  const reconciled = monthly.reverted ? '先前的试用已经收回，仍用原来的原则。' : '';
+  if (monthly.ownerValue) return `${base}候选碰到价值取舍，仍要你的真实决定，因此还不能试用。原则保持不变。${reconciled}`;
   if (monthly.trial === 'single-product') return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，可以在本项目试用。原则保持不变。`;
-  return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，但还不能试用。原则保持不变。`;
+  return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，但还不能试用。原则保持不变。${reconciled}`;
 }
 
 export function latestMonthlyComparison(store: Store, scope: Scope): MonthlyComparison | null {

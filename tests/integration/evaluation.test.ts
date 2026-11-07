@@ -128,6 +128,40 @@ it('refuses a recorded replay that fabricates delivery and leaves the principle 
   } finally { store.close(); }
 });
 
+it('withdraws a failed trial and reopens only the unfinished task that used it', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const principle = { id: 'principle', projectId: project.id, domain: project.domain, title: '保留草稿', statement: '仅本产品保留到下次成功导出。', conditions: '仅本产品这一次', exceptions: '敏感草稿需单独确认', version: 1, kind: 'principle' as const, status: 'active' as const, caseIds: ['case'], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const observation = { id: 'observation', projectId: project.id, domain: project.domain, title: '观察', statement: '先看恢复路径。', conditions: '本页', exceptions: '没有额外例外', version: 1, kind: 'observation' as const, status: 'active' as const, caseIds: [] as string[], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const decision = { action: 'proceed' as const, summary: '按观察先看恢复路径', rationale: '观察被拿来试用', citations: [], ruleIds: ['observation'], grounds: { statements: [], facts: [], unresolved: [] } };
+  const task = { projectId: project.id, domain: project.domain, sourceId: 'source', sourceRevision: 'v1', title: '草稿', description: '导出失败后应恢复草稿。', version: 1, createdAt: at, updatedAt: at, runAfter: at, attempts: 1, repairCount: 0, budgetUsd: 0, spentUsd: 0, stage: 'decide' as const, decision };
+  const clean = { unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false };
+  try {
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { id: 'case', projectId: project.id, domain: project.domain, taskId: 'task', questionId: 'question', decisionId: 'decision', actorId: project.ownerId, choice: 'C', originalWords: '仅本产品保留到下次成功导出。', rationale: 'Owner rationale not separately stated.', alternatives: [], ruleIds: ['principle'], sourceId: 'source', status: 'active', createdAt: at });
+    store.save('cases', { id: 'held', projectId: project.id, domain: project.domain, taskId: 'other', questionId: 'other-question', decisionId: 'other-decision', actorId: project.ownerId, choice: 'A', originalWords: '保留到下次成功导出。', rationale: 'Owner rationale not separately stated.', alternatives: [], ruleIds: ['principle'], sourceId: 'source', status: 'active', createdAt: at });
+    store.save('rules', principle);
+    store.save('rules', observation);
+    store.save('tasks', { ...task, id: 'open-task', status: 'deciding' });
+    store.save('tasks', { ...task, id: 'done-task', status: 'delivered', stage: 'feedback' });
+    recordHeldOutReplay(store, project, { caseId: 'case', candidateId: observation.id, month: '2026-11', candidateCorrect: true, ...clean });
+    const admitted = runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'));
+    expect(admitted).toMatchObject({ trial: 'single-product', principle: 'unchanged', reverted: false });
+    recordHeldOutReplay(store, project, { caseId: 'held', candidateId: observation.id, month: '2026-11', candidateCorrect: false, ...clean });
+    const withdrawn = runMonthlyComparison(store, project, new Date('2026-11-08T00:00:00.000Z'));
+    expect(withdrawn).toMatchObject({ trial: 'none', principle: 'unchanged', reverted: true });
+    expect(monthlyComparisonMessage(withdrawn)).toContain('先前的试用已经收回，仍用原来的原则。');
+    const reopened = store.get('tasks', 'open-task');
+    expect(reopened).toMatchObject({ version: 2, status: 'deciding', stage: 'decide', error: '试用已收回，未完成的任务按原来的原则重判。' });
+    expect(reopened?.decision).toBeUndefined();
+    expect(store.get('tasks', 'done-task')).toMatchObject({ version: 1, status: 'delivered', decision });
+    expect(store.get('rules', principle.id)?.statement).toBe(principle.statement);
+    runMonthlyComparison(store, project, new Date('2026-11-09T00:00:00.000Z'));
+    expect(store.get('tasks', 'open-task')?.version).toBe(2);
+    expect(store.list('actions').filter(action => action.kind === 'decision.trial-reconcile')).toHaveLength(1);
+  } finally { store.close(); }
+});
+
 it('keeps an owner-value replay as a decision for the owner and does not change the principle', () => {
   const { store, project } = fixture();
   const at = '2026-11-02T00:00:00.000Z';

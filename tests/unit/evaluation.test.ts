@@ -64,4 +64,5 @@ it('states whether a recorded monthly replay can be tried without changing the p
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'single-product' })).toContain('可以在本项目试用');
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'none' })).toContain('还不能试用');
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'none', ownerValue: true })).toContain('仍要你的真实决定');
+  expect(monthlyComparisonMessage({ ...base, candidateAnswers: 2, trial: 'none', reverted: true })).toContain('先前的试用已经收回，仍用原来的原则。');
 });
