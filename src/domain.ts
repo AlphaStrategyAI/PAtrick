@@ -24,6 +24,7 @@ export type AttemptBilling = {
 export type Runner = 'grok' | 'dsh' | 'codex';
 export const roles = ['knowledge_extract', 'case_extract', 'decide', 'plan', 'execute', 'check', 'feedback'] as const;
 export type Role = typeof roles[number];
+export const roleLabelsZh: Record<Role | 'research' | 'delivery', string> = { knowledge_extract: '知识提取', case_extract: '案例提取', decide: '初判', plan: '规划', execute: '执行', check: '检查', feedback: '反馈', research: '查证', delivery: '交付' };
 export const taskStatuses = ['queued', 'extracting', 'deciding', 'researching', 'awaiting_answer', 'planning', 'executing', 'checking', 'publishing', 'feedback', 'delivered', 'completed', 'archived', 'blocked', 'retrying', 'cancelled'] as const;
 export type TaskStatus = typeof taskStatuses[number];
 export interface Scope { projectId: string; domain: string }

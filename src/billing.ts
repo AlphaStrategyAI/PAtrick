@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { policySchema } from './config.js';
-import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, roleSchemas, stableId, type AppConfig, type Attempt, type BillingBoundary, type HostSubscriptionObservation, type Project, type Runner, type RunnerPolicy, type Task, type WorkerAdapter, type WorkerInput, type WorkerResult } from './domain.js';
+import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, roleLabelsZh, roleSchemas, stableId, type AppConfig, type Attempt, type BillingBoundary, type HostSubscriptionObservation, type Project, type Runner, type RunnerPolicy, type Task, type WorkerAdapter, type WorkerInput, type WorkerResult } from './domain.js';
 import { Store } from './store.js';
 import { referenceKnowledgeBinding } from './knowledge-jobs.js';
 
@@ -272,8 +272,8 @@ export class BillingAuthority {
       this.store.save('attempts', attempt);
       this.store.save('tasks', { ...task, attempts: ordinal, spentUsd: task.spentUsd + decision.reserveUsd, updatedAt: at });
       if (prior && switchRows) {
-        this.store.save('outbox', { id: switchRows.noticeId, projectId: task.projectId, domain: task.domain, taskId: task.id, channel: this.config.feishu ? 'feishu' : 'origin', recipient: this.config.feishu?.ownerOpenId ?? this.config.ownerId, text: `${task.title} · ${task.stage}: ${prior.runner} → ${runner}. 原因：${prior.error}。已继续原任务。`, status: 'pending', attempts: 0, runAfter: at, createdAt: at });
-        this.store.save('events', { id: switchRows.eventId, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'worker.switched', message: `${task.stage}: ${prior.runner} → ${runner}`, createdAt: at, data: { from: prior.runner, to: runner, role: task.stage } });
+        this.store.save('outbox', { id: switchRows.noticeId, projectId: task.projectId, domain: task.domain, taskId: task.id, channel: this.config.feishu ? 'feishu' : 'origin', recipient: this.config.feishu?.ownerOpenId ?? this.config.ownerId, text: `${task.title}：${roleLabelsZh[task.stage] ?? task.stage}从 ${prior.runner} 换到 ${runner}。已继续原任务。`, status: 'pending', attempts: 0, runAfter: at, createdAt: at });
+        this.store.save('events', { id: switchRows.eventId, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'worker.switched', message: `${roleLabelsZh[task.stage] ?? task.stage}：${prior.runner} 换到 ${runner}。已继续原任务。`, createdAt: at, data: { from: prior.runner, to: runner, role: task.stage } });
       }
       return pending;
     }); } catch (cause) {
