@@ -113,6 +113,19 @@ test('workbench filters and standards navigation expose matching ledger records'
   await expect(page.locator('.decision-case').first()).toContainText('仅保留到用户下一次成功导出，最多七天。');
 });
 
+test('sources without an automatic entry stay uncovered and add no forward, tag, or export action', async ({ page }) => {
+  await page.goto('/sources');
+  const coverage = page.getByRole('region', { name: '接入范围' });
+  await expect(coverage).toBeVisible();
+  for (const name of ['公众号', '个人微信', '第三方 Grok']) {
+    await expect(coverage.getByText(name, { exact: true })).toBeVisible();
+  }
+  await expect(coverage.getByText('未覆盖', { exact: true })).toHaveCount(3);
+  await expect(page.getByRole('button', { name: '转发' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '贴标签' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '导出' })).toHaveCount(0);
+});
+
 test('withdrawing an added source removes its knowledge from active search', async ({ page, request }) => {
   const marker = `withdrawal${Date.now()}`;
   const title = `撤回验收 ${marker}`;
