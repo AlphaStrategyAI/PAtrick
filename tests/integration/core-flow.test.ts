@@ -9,6 +9,7 @@ import { Workbench } from '../../src/orchestrator.js';
 import { createBackup } from '../../src/backup.js';
 import { restoreBackup } from '../../scripts/restore.js';
 import { digest, stableId, DomainError, WorkerUnavailable, type AppConfig, type DeliveryReceipt, type Project, type Role, type Runner, type WorkerAdapter, type WorkerInput, type ResearchRecord, type OutboxMessage } from '../../src/domain.js';
+import { weeklyReport } from '../../src/reports.js';
 
 const roots: string[] = []; const stores: Store[] = [];
 const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: 'Product', description: 'Test', repository: 'owner/product', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], trustedChecks: ['test'], trustedAppIds: [123], ownerId: 'owner', autoMerge: true, budgetUsd: 10, createdAt: new Date().toISOString() };
@@ -49,6 +50,20 @@ async function workerStarted(calls: unknown[]) {
 }
 
 describe('single worker durable business flow', () => {
+  it('rejects a quote missing from the source and counts that rejection once', async () => {
+    const f = setup({ mutateOutput: (input, output) => input.role === 'knowledge_extract' ? { cards: [{ title: '伪造', body: '伪造', quote: '这句话不在原文里', aliases: [], verification: 'reported', kind: 'fact' }] } : output });
+    try {
+      const task = f.ingest();
+      await f.engine.tick();
+      expect(f.store.list('cards')).toEqual([]);
+      expect(f.store.get('tasks', task.id)?.status).toBe('blocked');
+      expect(f.store.list('events').filter(event => event.type === 'citation.rejected')).toHaveLength(1);
+      expect(weeklyReport(f.store, { projectId: 'p', domain: 'personal' }).metrics.incorrectCitations).toBe(1);
+      await f.engine.tick();
+      expect(f.store.list('events').filter(event => event.type === 'citation.rejected')).toHaveLength(1);
+    } finally { await f.engine.shutdown(); }
+  });
+
   it.each(['rule','citation'] as const)('does not admit an effective-temporary descendant as a permanent-task %s',async mode=>{
     let dependent:{id:string;revision:string;content:string;locator:string}|undefined;
     const f=setup({mutateOutput:(input,output)=>input.role==='decide'&&mode==='citation'&&dependent?{...output as object,citations:[...(output as {citations:unknown[]}).citations,{sourceId:dependent.id,revision:dependent.revision,quote:dependent.content,locator:dependent.locator}]}:output});
