@@ -34,6 +34,8 @@ it('starts one release follow-up from the task page and keeps the same task on a
     expect(await second.json()).toMatchObject({ taskId: started.taskId });
     const after = await (await app.request('/tasks/task')).text();
     expect(after).toContain('已按这次合并再派规划、执行和检查。');
+    expect(after).toContain(`href="/tasks/${started.taskId}"`);
+    expect(after).toContain('查看再派的任务');
     expect(after).not.toContain('按这次合并再派</button>');
     expect(store.list('tasks').filter(item => item.id !== task.id && item.id !== started.taskId)).toHaveLength(0);
     expect(store.list('actions').find(action => action.kind === 'operations.follow-up')?.payload).toMatchObject({ errorRate: null, rollback: null, taskId: started.taskId });
