@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { projectSchema } from '../../src/config.js';
 import { digest, roles, WorkerUnavailable, type AppConfig, type Project, type Role, type Runner, type RunnerPolicy, type SourceRevision, type Task, type WorkerAdapter, type WorkerInput } from '../../src/domain.js';
+import { createApp } from '../../src/app.js';
+import { Workbench } from '../../src/orchestrator.js';
+import { publicError } from '../../src/readiness.js';
 import { Scheduler } from '../../src/scheduler.js';
 import { Store } from '../../src/store.js';
 
@@ -169,8 +172,15 @@ describe('independent review preference', () => {
     await f.run('execute'); Object.assign(f.config.runnerPolicies.find(candidate => candidate.runner === 'codex')!, policy);
     expect(await f.run('check')).toBeUndefined();
     expect(f.runners('check')).toEqual(['grok', 'dsh']);
-    expect(f.store.get('tasks', 'task')?.status).toBe('blocked');
+    expect(f.store.get('tasks', 'task')).toMatchObject({ status: 'blocked', error: 'workers_unavailable' });
+    expect(publicError('workers_unavailable')).toContain('这不需要你回答');
+    expect(f.store.list('outbox').at(-1)?.text).toContain('下次探测');
+    expect(f.store.list('outbox').at(-1)?.text).toContain('无需回答');
     expect(f.store.list('events').at(-1)?.type).toBe('workers_unavailable');
+    const engine = new Workbench({ store: f.store, config: f.config, workers: [], writer: { baseline: async () => '', deliver: async () => { throw Error('No remote proof'); } }, research: { research: async () => { throw Error('No research'); } } });
+    const html = await (await createApp({ store: f.store, config: f.config, engine }).request('/tasks/task')).text();
+    expect(html).toContain('下次探测');
+    expect(html).toContain('无需回答');
   });
 
   it('reserves all distinct attempts before admitting the same runner against remaining budget', async () => {

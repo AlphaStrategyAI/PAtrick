@@ -71,6 +71,7 @@ export function billingMessage(status?: BillingStatus & { attempts?: number }): 
 const publicErrorCodes = new Set(['billing_policy_violation', 'subscription_attempt_limit', 'subscription_unverified', 'subscription_expired', 'subscription_scope', 'subscription_profile_unavailable', 'billing_policy_invalid', 'billing_route_forbidden', 'billing_boundary_mismatch', 'worker_unavailable', 'worker_failed', 'worker_aborted', 'invalid_cost', 'invalid_worker_output', 'provider_not_admitted', 'stale_attempt', 'attempt_abandoned_after_host_restart']);
 export function publicError(value?: string): string | undefined {
   if (value === 'baseline_changed') return '仓库基线已变化；将重新规划并验证。';
+  if (value === 'workers_unavailable') return '当前没有可接这个角色的运行器。任务已保留，到点会再探测。这不需要你回答。';
   return value === undefined ? undefined : publicErrorCodes.has(value) ? value : '运行暂时不可用；任务与账本已保留。';
 }
 export function publicTask(task: Task): Task {
