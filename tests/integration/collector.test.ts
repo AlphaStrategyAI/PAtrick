@@ -27,6 +27,7 @@ it('recovers a missed file event and withdraws a deleted source after complete s
     expect(store.list('outbox')).toHaveLength(1);
     expect(store.list('outbox')[0]?.text).toBe(missed[0]?.message);
     const page=await (await createApp({store,config,engine}).request('/')).text();
+    expect(store.list('events').some(event => event.type === 'source.received' && event.message === '已收下这份资料，并开始处理。')).toBe(true);
     expect(page).toContain('漏文件通知');
     expect(page).toContain('missed.md');
     const source=store.list('sources').find(s=>s.title==='草稿恢复')!;unlinkSync(file);await collector.scan();

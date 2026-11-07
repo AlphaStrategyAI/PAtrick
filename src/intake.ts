@@ -51,7 +51,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
   const scope = { projectId: source.projectId, domain: source.domain }; const changed = now();
   if (status === 'withdrawn') {
     redactWithdrawnEvidence(store, sourceId);
-    store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: 'source.withdrawn', message: 'Evidence retracted.', createdAt: changed, data: { sourceId } });
+    store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: 'source.withdrawn', message: '来源已撤回。相关知识和规则已停用。', createdAt: changed, data: { sourceId } });
     return;
   }
   const actions=store.list('actions');
@@ -107,7 +107,7 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
       store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
     }
   }
-  store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: `source.${status}`, message: `Source ${sourceId} ${status}; dependent evidence and actions invalidated.`, createdAt: changed, data: { sourceId } });
+  store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: `source.${status}`, message: status === 'superseded' ? '资料有了新修订。旧修订停止引用。' : '来源已撤回。相关知识和规则已停用。', createdAt: changed, data: { sourceId } });
 }
 
 /** Retraction removes readable derivatives too; a historical delivery keeps only its receipt audit. */
@@ -254,12 +254,12 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
     enqueueStructuredKnowledge(store, source);
     if (purpose === 'reference') {
-      store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: 'Reference revision accepted.', createdAt, data: { sourceId: id, revision:store.sourceRequiresTemporaryRetention(source)?store.auditTemporaryRevision(revision):revision, retention: source.retention, purpose } });
+      store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: '已收下这份引用资料。它不启动执行任务。', createdAt, data: { sourceId: id, revision:store.sourceRequiresTemporaryRetention(source)?store.auditTemporaryRevision(revision):revision, retention: source.retention, purpose } });
       return undefined;
     }
     const task: Task = { ...scope, billingBoundary, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
     store.save('tasks', task);
-    store.save('events', { ...scope, id: stableId('ingest', id), taskId: task.id, type: 'source.received', message: 'Source revision accepted.', createdAt, data: { sourceId: id, revision, retention: source.retention } });
+    store.save('events', { ...scope, id: stableId('ingest', id), taskId: task.id, type: 'source.received', message: '已收下这份资料，并开始处理。', createdAt, data: { sourceId: id, revision, retention: source.retention } });
     return task;
   });
 }

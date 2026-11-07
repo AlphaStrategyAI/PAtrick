@@ -3,7 +3,7 @@ import { expandFactRefs, factualEligibility, knowledgeReference } from './knowle
 import type { FactualContext, FactualUseView } from './knowledge-contract.js';
 import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, knowledgeOutputSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, knowledgeOutputSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roleLabelsZh, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { ingestStructuredKnowledge, publishKnowledge, type StructuredCurrentReceipt } from './knowledge.js';
 import { consumedStageResult, enqueueReferenceKnowledge, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, reconcileReferenceKnowledge, referenceKnowledgeBinding, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
@@ -135,7 +135,7 @@ export class Workbench {
       try { captureOwnerCaseVersion(this.store, this.config, ownerCase.id); } catch (error) { if (!(error instanceof DomainError) || error.code !== 'invalid_decision_snapshot') throw error; }
       const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
       this.store.save('tasks', resumed);
-      this.event(task, 'answer.accepted', 'Owner answer accepted; the original task resumed once.', { questionId: question.id, choice: answer.choice });
+      this.event(task, 'answer.accepted', '已接纳你的决定，原任务继续处理一次。', { questionId: question.id, choice: answer.choice });
       return resumed;
     });
   }
@@ -178,7 +178,7 @@ export class Workbench {
       const next: Task = reconstruct
         ? {...task,budgetUsd:project.budgetUsd,version:task.version+1,status:'queued',stage:'knowledge_extract',runAfter:now(),updatedAt:now(),repairCount:0,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,receiptId:undefined,feedback:undefined,baselineFiles:undefined,error:undefined,blockedFrom:undefined}
         : { ...task, budgetUsd: project.budgetUsd, status: stageStatus[task.stage], error: undefined, runAfter: now(), updatedAt: now() };
-      this.store.save('tasks', next); this.event(task, 'task.retried', 'Task explicitly retried.'); return next;
+      this.store.save('tasks', next); this.event(task, 'task.retried', '已安排重新尝试。'); return next;
     });
     const actionId=this.actionId(task);this.localHolds.delete(actionId);if(retried.version===task.version)this.localRetryOnce.add(actionId);return retried;
   }
@@ -222,7 +222,7 @@ export class Workbench {
       for (const question of this.store.list('questions')) if (question.taskId === task.id && question.status === 'open') this.store.save('questions', { ...question, status: 'stale' });
       for (const attempt of this.store.list('attempts')) if (attempt.taskId === task.id && attempt.status === 'running') this.store.save('attempts', { ...attempt, status: 'stale', finishedAt: now(), error: 'Task cancelled.' });
       for (const action of this.store.list('actions')) if (action.taskId === task.id && action.status === 'pending') this.store.save('actions', { ...action, status: 'completed', payload: { cancelled: true }, updatedAt: now() });
-      this.event(task, 'task.cancelled', 'Task cancelled.'); return next;
+      this.event(task, 'task.cancelled', '任务已取消。现有记录仍保留。'); return next;
     });
   }
 
@@ -566,12 +566,12 @@ export class Workbench {
     }
     this.completeAction(task);
     this.store.save('tasks', { ...current, stage, status: stageStatus[stage], updatedAt: now(), runAfter: now(), error: undefined, ...values });
-    this.event(task, 'stage.completed', `${task.stage} completed.`, { next: stage, status: values.status ?? stageStatus[stage] });
+    this.event(task, 'stage.completed', `${roleLabelsZh[task.stage] ?? task.stage}已完成。`, { next: stage, status: values.status ?? stageStatus[stage] });
   }
   private recordRejectedCitation(task: Task): void {
     const id = stableId('citation-rejected', task.id, task.version, task.stage);
     if (this.store.get('events', id)) return;
-    this.store.save('events', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'citation.rejected', message: 'An extracted quote was not in the authorized source.', data: { stage: task.stage }, createdAt: now() });
+    this.store.save('events', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'citation.rejected', message: '提取的引文不在获准原文里，已拒绝。', data: { stage: task.stage }, createdAt: now() });
   }
 
   private fail(task: Task, error: unknown): void {
