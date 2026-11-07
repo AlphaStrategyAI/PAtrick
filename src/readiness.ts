@@ -70,9 +70,28 @@ export function billingMessage(status?: BillingStatus & { attempts?: number }): 
   return '订阅费用边界待核验；0 美元不会自动准入。';
 }
 const publicErrorCodes = new Set(['billing_policy_violation', 'subscription_attempt_limit', 'subscription_unverified', 'subscription_expired', 'subscription_scope', 'subscription_profile_unavailable', 'billing_policy_invalid', 'billing_route_forbidden', 'billing_boundary_mismatch', 'worker_unavailable', 'worker_failed', 'worker_aborted', 'invalid_cost', 'invalid_worker_output', 'provider_not_admitted', 'stale_attempt', 'attempt_abandoned_after_host_restart']);
+const ownerStopMessages: Record<string, string> = {
+  baseline_changed: '仓库基线已变化；将重新规划并验证。',
+  workers_unavailable: '当前没有可接这个角色的运行器。任务已保留，到点会再探测。这不需要你回答。',
+  repairs_exhausted: '已返修两轮，检查仍未通过。没有发布未经验证的改动。任务已保留。',
+  invalid_plan: '执行方案未通过校验。任务已保留，没有开始改动文件。',
+  invalid_artifact: '执行结果未通过校验。没有发布未经验证的改动。',
+  invalid_review: '检查结果未通过校验。没有发布未经验证的改动。',
+  invalid_receipt: '交付回执与合并后的文件不一致。这次没有记成已交付。',
+  nonindependent_review: '检查和执行用了同一个未获准独立复核的运行器。没有发布。',
+  missing_test_evidence: '方案要求的检查没有完整记录。没有发布。',
+  insufficient_research: '中英文查证还不足以提出两个可行建议。任务已保留。',
+  invalid_recommendations: '决策卡不完整。任务已保留，还没有提问。',
+  baseline_unavailable: '读不到仓库基线。任务已保留，没有改动文件。',
+  pending_ci: '必需检查还没完成。到点会再查。这不需要你回答。',
+  remote_unavailable: '仓库暂时连不上。到点会再试。这不需要你回答。',
+  technical_failure: '运行暂时不可用；任务与账本已保留。',
+  ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
+  stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
+  invalid_test_observation: '检查记录对不上这次执行。没有把它当成通过。',
+};
 export function publicError(value?: string): string | undefined {
-  if (value === 'baseline_changed') return '仓库基线已变化；将重新规划并验证。';
-  if (value === 'workers_unavailable') return '当前没有可接这个角色的运行器。任务已保留，到点会再探测。这不需要你回答。';
+  if (value && ownerStopMessages[value]) return ownerStopMessages[value];
   return value === undefined ? undefined : publicErrorCodes.has(value) ? value : '运行暂时不可用；任务与账本已保留。';
 }
 export function publicTask(task: Task): Task {

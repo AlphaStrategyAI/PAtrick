@@ -585,7 +585,7 @@ export class Workbench {
       const current = this.current(task);
       if (current.billingStop) return;
       const runAfter = new Date(Date.now() + 30_000).toISOString();
-      this.store.save('tasks', { ...current, status: retrying ? 'retrying' : 'blocked', blockedFrom: stageStatus[task.stage], updatedAt: now(), runAfter, error: message });
+      this.store.save('tasks', { ...current, status: retrying ? 'retrying' : 'blocked', blockedFrom: stageStatus[task.stage], updatedAt: now(), runAfter, error: code });
       this.event(task, code, message, { stage: task.stage, runAfter });
       this.enqueue(task, stableId('error', task.id, task.version, task.stage, code, current.attempts), `${task.title} · ${task.stage} 暂停：${message}\n保留原任务，下次重试 ${runAfter}。无需回答。`);
     });
