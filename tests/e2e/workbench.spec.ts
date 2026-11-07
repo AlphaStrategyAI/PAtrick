@@ -246,6 +246,7 @@ test('weekly reflection uses the scoped owner decision and keeps budget and conn
   await expect(weekly.getByRole('heading', { name: '业务结果', exact: true })).toBeVisible();
   await expect(weekly.getByRole('heading', { name: '本月对照', exact: true })).toBeVisible();
   await expect(weekly).toContainText('本周拒绝了 0 条不在原文中的引文。');
+  await expect(weekly).toContainText('本周补扫找回了 0 次监听没有报过的文件变化。');
   await page.goto(`/standards?project=${project.id}`);
   const reflection = page.getByRole('region', { name: '每周回看' });
   await expect(reflection).toBeVisible();
