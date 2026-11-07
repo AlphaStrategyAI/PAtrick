@@ -63,7 +63,13 @@ export class SourceCollector {
   }
   private recordMiss(project:Project,externalId:string):void {
     const createdAt=now();
-    this.store.save('events',{id:stableId('source-missed',project.id,externalId,createdAt),projectId:project.id,domain:project.domain,type:'source.missed',message:'A periodic scan found a file change the watcher had not reported.',data:{externalId},createdAt});
+    const name=externalId.replace(/^file:/,'');
+    const message=`补扫已收下监听没有报过的文件：${name}。这份资料已经入账，不用再添加一次。`;
+    const source=this.store.list('sources').find(item=>item.projectId===project.id&&item.domain===project.domain&&item.kind==='file'&&item.status==='active'&&this.store.sourceExternalIdMatches(item,externalId));
+    const task=source?this.store.list('tasks').find(item=>item.sourceId===source.id&&item.kind!=='reference_knowledge'):undefined;
+    this.store.save('events',{id:stableId('source-missed',project.id,externalId,createdAt),projectId:project.id,domain:project.domain,...(task?{taskId:task.id}:{}),type:'source.missed',message,data:{externalId},createdAt});
+    const noticeId=stableId('missed-file-notice',project.id,externalId,createdAt);
+    if(!this.store.get('outbox',noticeId))this.store.save('outbox',{id:noticeId,projectId:project.id,domain:project.domain,...(task?{taskId:task.id}:{}),channel:this.config.feishu?'feishu':'origin',recipient:this.config.feishu?.ownerOpenId??this.config.ownerId,text:message,status:'pending',attempts:0,createdAt,runAfter:createdAt});
   }
   private record(project:Project,code:ScanNoticeCode):void {
     const cursor=this.store.get('cursors',stableId('file-scan',project.domain,project.id));
@@ -84,12 +90,17 @@ export function scanNoticeCopy(code:ScanNoticeCode):{title:string;detail:string}
   if(code==='watcher_unavailable')return {title:'文件监听暂时不可用',detail:'定时补扫仍会继续。已有资料保持有效。'};
   return {title:'同步目录这次没有扫完',detail:'确认目录还在，并且可以读取。下一次扫描成功前，已有资料保持有效。'};
 }
+export function missedFileNotice(store:Store,project:{id:string;domain:string},at=new Date()):{title:string;detail:string}|undefined {
+  const since=new Date(at.getTime()-7*86400000).toISOString();
+  const latest=store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.missed'&&event.createdAt>=since).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+  return latest?{title:'补扫补上了一次漏通知',detail:latest.message}:undefined;
+}
 export function fileScanNotice(store:Store,project:{id:string;domain:string}):{title:string;detail:string}|undefined {
-  const latest=store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.connection').sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
-  const code=latest?.data.code;
-  if(code!=='root_moved'&&code!=='scan_paused'&&code!=='watcher_unavailable')return undefined;
   const cursor=store.get('cursors',stableId('file-scan',project.domain,project.id));
-  if(cursor&&cursor.updatedAt>latest!.createdAt)return undefined;
+  const unresolved=store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.connection'&&(!cursor||event.createdAt>cursor.updatedAt)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const chosen=unresolved.find(event=>event.data.code==='scan_paused'||event.data.code==='root_moved')??unresolved.find(event=>event.data.code==='watcher_unavailable');
+  const code=chosen?.data.code;
+  if(code!=='root_moved'&&code!=='scan_paused'&&code!=='watcher_unavailable')return undefined;
   return scanNoticeCopy(code);
 }
 export function fileScanStatus(store:Store,project:{id:string;domain:string;sourceDir?:string}):{title:string;detail:string} {

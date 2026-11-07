@@ -21,7 +21,14 @@ it('recovers a missed file event and withdraws a deleted source after complete s
     await collector.scan();expect(store.list('events').filter(event=>event.type==='source.missed')).toHaveLength(0);
     await collector.scan();expect(store.list('tasks')).toHaveLength(1);expect(store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest')).toHaveLength(1);
     writeFileSync(join(root,'missed.md'),'# 漏通知\n由全量补扫恢复。');await collector.scan();expect(store.list('tasks')).toHaveLength(2);expect(store.list('actions').filter(a=>a.kind==='knowledge.structured-ingest')).toHaveLength(2);
-    expect(store.list('events').filter(event=>event.type==='source.missed')).toHaveLength(1);
+    const missed=store.list('events').filter(event=>event.type==='source.missed');
+    expect(missed).toHaveLength(1);
+    expect(missed[0]?.message).toContain('补扫已收下监听没有报过的文件：missed.md');
+    expect(store.list('outbox')).toHaveLength(1);
+    expect(store.list('outbox')[0]?.text).toBe(missed[0]?.message);
+    const page=await (await createApp({store,config,engine}).request('/')).text();
+    expect(page).toContain('漏文件通知');
+    expect(page).toContain('missed.md');
     const source=store.list('sources').find(s=>s.title==='草稿恢复')!;unlinkSync(file);await collector.scan();
     expect(store.get('sources',source.id)).toMatchObject({status:'withdrawn',content:'',externalId:store.auditTemporaryRevision(source.externalId),revision:store.auditTemporaryRevision(source.revision),authorId:store.auditTemporaryRevision(source.authorId)});
     expect(store.get('sources',source.id)?.locator).not.toBe(source.locator);
