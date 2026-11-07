@@ -274,6 +274,13 @@ export function refreshCasesForSnapshot(store: Store, config: AppConfig, snapsho
   if (!store.list('questions').some(q => q.taskId === snapshot.taskId && q.status === 'answered')) try { captureNoQuestionCaseVersion(store, config, snapshotId, at); } catch (error) { if (!(error instanceof DomainError)) throw error; }
 }
 
+/** Newest host judgment in the last week that did not ask the owner. The summary is the assistant's, not the owner's words. */
+export function latestUnaskedJudgment(store: Store, config: AppConfig, scope: Scope, at = new Date()): { taskId: string; summary: string } | undefined {
+  const since = at.getTime() - 7 * 86400000;
+  const found = caseVersions(store, config, scope, at).filter(item => item.original.kind === 'source-fragment' && item.authority === 'source-report' && item.taskId && Date.parse(item.recordedAt) >= since).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0];
+  return found?.taskId ? { taskId: found.taskId, summary: found.choiceText } : undefined;
+}
+
 export function caseVersions(store: Store, config: AppConfig, scope: Scope, at = new Date()): CanonicalCaseVersion[] {
   const project = store.get('projects', scope.projectId);
   if (!project || !sameScope(project, scope) || project.ownerId !== config.ownerId) return [];
