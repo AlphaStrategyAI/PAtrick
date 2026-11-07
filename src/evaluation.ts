@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DomainError, now, stableId, type Scope } from './domain.js';
+import { digest, DomainError, now, stableId, type Scope } from './domain.js';
 import type { Store } from './store.js';
 
 const WEEK_MS = 7 * 86400000;
@@ -160,4 +160,30 @@ export function classifyOwnerChoice(input: { choice: 'A' | 'B' | 'C'; words: str
   if (missed.length) return { alignment: 'different', reason: 'missed_fact' };
   if (cited.length) return { alignment: 'different', reason: 'preference' };
   return { alignment: 'different', reason: 'unresolved' };
+}
+
+export interface MonthlyComparison {
+  month: string; sampleSize: number; ownerCorrections: number; matchedSuggestions: number; observedResults: number;
+  candidateId: string | null; candidateAnswers: 0; trial: TrialDecision['trial']; principle: 'unchanged';
+}
+
+/** Compare this month's held-out owner decisions with the current version. A candidate has not answered them, so the principle stays. */
+export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()): MonthlyComparison | null {
+  const cases = store.list('cases').filter(item => item.projectId === scope.projectId && item.domain === scope.domain && item.status === 'active' && item.createdAt <= at.toISOString() && store.get('sources', item.sourceId)?.status === 'active');
+  if (!cases.length) return latestMonthlyComparison(store, scope);
+  const candidate = store.list('rules').filter(rule => rule.projectId === scope.projectId && rule.domain === scope.domain && rule.kind === 'observation' && rule.status === 'active').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const heldOut = cases.filter(item => !candidate?.caseIds.includes(item.id));
+  const decision = admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: heldOut.map(item => ({ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: false, unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false })) });
+  const comparison: MonthlyComparison = { month: at.toISOString().slice(0, 7), sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: 0, trial: decision.trial, principle: 'unchanged' };
+  const id = stableId('monthly-comparison', scope.projectId, scope.domain, comparison.month);
+  const existing = store.get('actions', id);
+  const saved = existing?.payload.comparison as MonthlyComparison | undefined;
+  if (existing?.kind === 'decision.monthly-comparison' && saved && digest(saved) === digest(comparison)) return saved;
+  store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison }, updatedAt: at.toISOString() });
+  return comparison;
+}
+
+export function latestMonthlyComparison(store: Store, scope: Scope): MonthlyComparison | null {
+  const saved = store.list('actions').filter(action => action.kind === 'decision.monthly-comparison' && action.projectId === scope.projectId && action.domain === scope.domain).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.payload.comparison as MonthlyComparison | undefined;
+  return saved ?? null;
 }

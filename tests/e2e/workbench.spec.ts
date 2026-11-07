@@ -244,6 +244,7 @@ test('weekly reflection uses the scoped owner decision and keeps budget and conn
   await expect(weekly.getByRole('heading', { name: '下次可以这样判断', exact: true })).toBeVisible();
   await expect(weekly.getByRole('heading', { name: '和当初建议的关系', exact: true })).toBeVisible();
   await expect(weekly.getByRole('heading', { name: '业务结果', exact: true })).toBeVisible();
+  await expect(weekly.getByRole('heading', { name: '本月对照', exact: true })).toBeVisible();
   await page.goto(`/standards?project=${project.id}`);
   const reflection = page.getByRole('region', { name: '每周回看' });
   await expect(reflection).toBeVisible();

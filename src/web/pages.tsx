@@ -207,6 +207,8 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
       <p>{{ none: '没有需要另归类的分歧。', missed_fact: '你的原话包含一条当时没有被引用的原文。', preference: '当时引用的事实已经在，这次不同是偏好，不是新的事实。', rule_exception: '你的原话命中了当时规则已经写下的例外。', unresolved: '选择和初判不同，现有记录还不能归入漏事实、偏好或例外。' }[focus.lesson.disagreement.reason]}</p>
       <h3>业务结果</h3>
       <p>{focus.lesson.disagreement.effect === 'recorded' ? '回执已记下业务结果，不拿它改写当时的对照。' : '业务结果仍待观察，不从这次选择推断效果。'}</p>
+      <h3>本月对照</h3>
+      <p>{report.monthly ? `留出 ${report.monthly.sampleSize} 个案例，本人纠正 ${report.monthly.ownerCorrections} 次。候选版本还没有回答这些案例，原则保持不变。` : '还没有用留出案例做过本月对照。'}</p>
     </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
