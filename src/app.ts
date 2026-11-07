@@ -16,6 +16,7 @@ import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './
 import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
 import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
+import { openReleaseFollowUp } from './operations.js';
 import { connectionSecretsSchema, openRunnerLogin, saveConnectionSecrets } from './setup-guide.js';
 
 export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>};launchRunnerLogin?:(runner:Runner)=>Promise<void>}
@@ -145,6 +146,13 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
   });
   const ownedTask=(id:string)=>{const task=store.get('tasks',id);if(!task)throw new DomainError('Task not found.','not_found',404);ownedProject(task.projectId,task.domain);return task;};
   app.post('/api/tasks/:id/retry',c=>{const task=engine.retry(ownedTask(c.req.param('id')).id);return respond(c,{task,message:'已安排重试。'},`/tasks/${task.id}`);});
+  app.post('/api/receipts/:id/follow-up',async c=>{
+    const receipt=store.get('receipts',c.req.param('id'));if(!receipt)throw new DomainError('Receipt not found.','not_found',404);
+    ownedProject(receipt.projectId,receipt.domain);
+    const value=await body(c);
+    const task=openReleaseFollowUp(store,config,{receiptId:receipt.id,evidenceSourceId:z.string().min(1).parse(value.sourceId)});
+    return respond(c,{taskId:task.id,message:'已按这次合并再派一条处理。'},`/tasks/${task.id}`);
+  });
   app.post('/api/tasks/:id/cancel',c=>{const task=engine.cancel(ownedTask(c.req.param('id')).id);return respond(c,{task,message:'任务已取消。'},`/tasks/${task.id}`);});
   app.post('/api/sources/:id/withdraw',c=>{
     const source=store.get('sources',c.req.param('id'));if(!source)throw new DomainError('Source not found.','not_found',404);

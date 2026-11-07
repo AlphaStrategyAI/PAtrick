@@ -9,6 +9,7 @@ import { Workbench } from '../../src/orchestrator.js';
 import { createBackup } from '../../src/backup.js';
 import { restoreBackup } from '../../scripts/restore.js';
 import { digest, stableId, DomainError, WorkerUnavailable, type AppConfig, type DeliveryReceipt, type Project, type Role, type Runner, type WorkerAdapter, type WorkerInput, type ResearchRecord, type OutboxMessage } from '../../src/domain.js';
+import { openReleaseFollowUp } from '../../src/operations.js';
 import { weeklyReport } from '../../src/reports.js';
 
 const roots: string[] = []; const stores: Store[] = [];
@@ -734,6 +735,22 @@ describe('single worker durable business flow', () => {
     expect(f.calls).toHaveLength(2); expect(f.store.get('tasks', task.id)?.spentUsd).toBeCloseTo(.02);
     const zero = setup(); zero.config.runnerPolicies.forEach(policy => { policy.costPerRunUsd = 0; }); const tiny = zero.ingest(); await zero.engine.tick();
     expect(zero.calls).toHaveLength(0); expect(zero.store.get('tasks', tiny.id)?.status).toBe('blocked');
+  });
+
+  it('dispatches one follow-up chain from a merged receipt and recorded evidence', async () => {
+    const f = setup();
+    try {
+      const task = f.ingest();
+      await f.engine.runUntilIdle();
+      const delivered = f.store.get('tasks', task.id)!;
+      const followUp = openReleaseFollowUp(f.store, f.config, { receiptId: delivered.receiptId!, evidenceSourceId: delivered.sourceId });
+      expect(openReleaseFollowUp(f.store, f.config, { receiptId: delivered.receiptId!, evidenceSourceId: delivered.sourceId }).id).toBe(followUp.id);
+      await f.engine.runUntilIdle();
+      expect(f.store.get('tasks', followUp.id)?.status).toBe('delivered');
+      expect(f.deliveryCount()).toBe(2);
+      expect(f.store.list('actions').find(action => action.kind === 'operations.follow-up')?.payload).toMatchObject({ receiptId: delivered.receiptId, mergeSha: 'merged', taskId: followUp.id, errorRate: null, rollback: null });
+      expect(f.store.list('tasks').filter(item => item.kind !== 'reference_knowledge' && item.id !== task.id && item.id !== followUp.id)).toHaveLength(0);
+    } finally { await f.engine.shutdown(); }
   });
 
   it('retains a paid attempt reservation when source withdrawal rejects a late result', async () => {
