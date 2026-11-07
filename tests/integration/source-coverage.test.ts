@@ -77,6 +77,8 @@ it('stores a GitHub token and Feishu secret from settings without sending them b
     expect(page).not.toContain(password);
     expect(page).toContain('patrick-local');
     expect(page).toContain('隔离、备份和网络');
+    expect(page).toContain('在本页「连接」里保存仓库、飞书、检索、X 书签和 Gmail 令牌。');
+    expect(page).not.toContain('通过环境变量提供仓库、飞书和研究服务凭据');
     expect(page).toContain('已保存。留空则不修改。');
     expect(page).toContain('打开终端登录');
     const login = await app.request('/api/settings/runners/codex/login', { method: 'POST', headers: { Accept: 'application/json' } });
