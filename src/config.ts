@@ -3,6 +3,7 @@ import { homedir, platform, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { DomainError, now, pathAllowed, roles, safeRelativePath, type AppConfig, type Project, type RunnerPolicy } from './domain.js';
+import { loadConnectionSecrets } from './setup-guide.js';
 
 const repoPath = z.string().min(1).refine(value => { try { safeRelativePath(value); return true; } catch { return false; } }, 'Unsafe repository path');
 export const projectSchema = z.object({
@@ -68,7 +69,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = fileSchema.parse(file ? JSON.parse(readFileSync(file,'utf8')) : {});
   const port = z.coerce.number().int().min(1).max(65535).parse(env.PATRICK_PORT ?? 4317);
   const ownerId = env.PATRICK_OWNER_ID ?? 'owner';
-  return {
+  const config: AppConfig = {
     billingBoundary: parsed.billingBoundary, maxAttemptsPerTask: parsed.maxAttemptsPerTask,
     mode,host,port,dataDir,vaultDir:resolve(env.PATRICK_VAULT_DIR ?? join(dataDir,'vault')),ownerId,authToken,
     sessionSecret:env.PATRICK_SESSION_SECRET ?? authToken, projects:parsed.projects as Project[],
@@ -80,4 +81,6 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     egressPolicies:parsed.egressPolicies,networkFile:env.PATRICK_NETWORK_CONFIG,
     scanIntervalMs:z.coerce.number().min(1000).parse(env.PATRICK_SCAN_INTERVAL_MS ?? 60000),
   };
+  loadConnectionSecrets(config);
+  return config;
 }

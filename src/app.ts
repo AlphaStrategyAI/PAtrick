@@ -6,7 +6,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { bodyLimit } from 'hono/body-limit';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { z, ZodError } from 'zod';
-import { DomainError, digest, now, stableId, type AppConfig, type Project, type QuestionAnswer } from './domain.js';
+import { DomainError, digest, now, stableId, type AppConfig, type Project, type QuestionAnswer, type Runner } from './domain.js';
 import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
@@ -16,9 +16,10 @@ import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './
 import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
 import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
+import { connectionSecretsSchema, openRunnerLogin, saveConnectionSecrets } from './setup-guide.js';
 
-export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>}}
-export function createApp({store,config,engine,feishu}:AppOptions):Hono {
+export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>};launchRunnerLogin?:(runner:Runner)=>Promise<void>}
+export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOptions):Hono {
   const app=new Hono();let loginAttempts:number[]=[];
   app.use('*',async(c,next)=>{
     c.header('X-Content-Type-Options','nosniff');c.header('Referrer-Policy','same-origin');c.header('X-Frame-Options','DENY');
@@ -151,6 +152,19 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     engine.withdraw(source.id);return respond(c,{message:'来源已撤回，相关知识与规则已停用。'},`/sources?project=${source.projectId}`);
   });
   app.post('/api/search/rebuild',async c=>{store.rebuildIndex();return respond(c,{message:'已从当前有效资料重建搜索索引。'},'/knowledge');});
+  app.post('/api/settings/connections',async c=>{
+    const value=await body(c);
+    const text=(key:string)=>typeof value[key]==='string'?value[key]:typeof value.feishu==='object'&&value.feishu&&typeof (value.feishu as Record<string,unknown>)[key]==='string'?(value.feishu as Record<string,string>)[key]:undefined;
+    const input=connectionSecretsSchema.parse({githubToken:value.githubToken,gitlabToken:value.gitlabToken,researchUrl:value.researchUrl,researchToken:value.researchToken,feishu:{appId:text('feishuAppId')??text('appId'),appSecret:text('feishuAppSecret')??text('appSecret'),ownerOpenId:text('feishuOwnerOpenId')??text('ownerOpenId'),chatId:text('feishuChatId')??text('chatId'),verificationToken:text('feishuVerificationToken')??text('verificationToken'),encryptKey:text('feishuEncryptKey')??text('encryptKey')}});
+    saveConnectionSecrets(config,input);
+    return respond(c,{saved:true,message:'连接已保存在本机。页面不会显示密钥。'},'/settings#connections');
+  });
+  app.post('/api/settings/runners/:runner/login',async c=>{
+    const runner=z.enum(['grok','codex','dsh']).parse(c.req.param('runner'));
+    if(launchRunnerLogin)await launchRunnerLogin(runner);
+    else await openRunnerLogin(runner);
+    return respond(c,{opened:true,message:'已打开终端。请在那里完成登录，不要把密码填回这个页面。'},'/settings#runners');
+  });
   app.post('/api/projects',async c=>{
     const value=await body(c),name=String(value.name??'').trim(),id=stableId('project',name,randomUUID()).slice(0,12);
     const array=(v:unknown)=>Array.isArray(v)?v.map(String):String(v??'').split(/[,\n]/).map(x=>x.trim()).filter(Boolean);

@@ -207,7 +207,7 @@ export interface AppConfig {
   workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string; guestUser?: string }>>;
   githubToken?: string; gitlabToken?: string; gitlabUrl?: string;
   feishu?: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
-  researchUrl?: string; researchToken?: string; scanIntervalMs: number;
+  researchUrl?: string; researchToken?: string; scanIntervalMs: number; secretsUnreadable?: boolean;
   egressPolicies?: {domain:string;research:boolean;feishu:boolean}[]; networkFile?:string;
 }
 

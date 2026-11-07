@@ -113,6 +113,45 @@ test('workbench filters and standards navigation expose matching ledger records'
   await expect(page.locator('.decision-case').first()).toContainText('仅保留到用户下一次成功导出，最多七天。');
 });
 
+test('the workbench question shows both language searches before answering', async ({ page, request }) => {
+  const state = await (await request.get('/api/state')).json();
+  const project = state.projects[0];
+  const title = `查证可见 ${Date.now()}`;
+  const created = await request.post('/api/tasks', {
+    headers: { Accept: 'application/json' },
+    form: { projectId: project.id, title, externalId: `research-question-${Date.now()}`, content: '用户报告：导出失败后需要恢复草稿。相同范围的要求存在失败即删与保留七天的冲突，请确定保留时间。' },
+  });
+  expect(created.ok()).toBe(true);
+  const { task } = await created.json();
+  await expect.poll(async () => (await (await request.get(`/api/tasks/${task.id}`)).json()).task.status, { timeout: 30_000 }).toBe('awaiting_answer');
+  await page.goto(`/?project=${project.id}`);
+  const card = page.locator('.task-card', { hasText: title });
+  await expect(card).toBeVisible();
+  await card.getByText('中英文查证记录', { exact: false }).click();
+  await expect(card.getByText('中文', { exact: true })).toBeVisible();
+  await expect(card.getByText('English', { exact: true })).toBeVisible();
+});
+
+test('settings stores a token without showing it again', async ({ page }) => {
+  await page.goto('/settings#connections');
+  await expect(page.getByRole('heading', { name: '连接', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开终端登录' })).toHaveCount(3);
+  const token = `github-token-${Date.now()}-not-shown`;
+  await page.getByLabel('GitHub 令牌').fill(token);
+  await page.getByRole('button', { name: '保存连接' }).click();
+  await expect(page).toHaveURL(/saved=1/);
+  await expect(page.getByLabel('GitHub 令牌')).toHaveValue('');
+  await expect(page.getByText(token)).toHaveCount(0);
+  await expect(page.getByLabel('GitHub 令牌')).toHaveAttribute('placeholder', '已保存。留空则不修改。');
+});
+
+test('the workbench lists channels without an automatic entry as uncovered', async ({ page }) => {
+  await page.goto('/');
+  const uncovered = page.getByRole('region', { name: '未覆盖的来源' });
+  await expect(uncovered).toBeVisible();
+  for (const name of ['公众号', '个人微信', '第三方 Grok']) await expect(uncovered.getByText(name, { exact: true })).toBeVisible();
+});
+
 test('sources without an automatic entry stay uncovered and add no forward, tag, or export action', async ({ page }) => {
   await page.goto('/sources');
   const coverage = page.getByRole('region', { name: '接入范围' });
