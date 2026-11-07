@@ -15,6 +15,7 @@ import { SourceCollector } from './collector.js';
 import { FeishuChannel } from './integrations/feishu.js';
 import { NetworkGuardian, readNetworkTargets, systemNetworkActions } from './integrations/network.js';
 import { acquireHostLease } from './lease.js';
+import { runMonthlyComparison } from './evaluation.js';
 import { runOutcomeReviews } from './reviews.js';
 import { BillingAuthority } from './billing.js';
 
@@ -51,7 +52,7 @@ export async function createRuntime(config:AppConfig=readConfig()) {
     if(config.mode==='demo')await seedDemo(store,config,engine);
     const reviewOutcomes=(scope?:Scope)=>{
       const at=new Date();
-      return store.list('projects').filter(project=>project.ownerId===config.ownerId&&(!scope||project.id===scope.projectId&&project.domain===scope.domain)).reduce((count,project)=>count+runOutcomeReviews(store,at,project),0);
+      return store.list('projects').filter(project=>project.ownerId===config.ownerId&&(!scope||project.id===scope.projectId&&project.domain===scope.domain)).reduce((count,project)=>{runMonthlyComparison(store,project,at);return count+runOutcomeReviews(store,at,project);},0);
     };
     reviewOutcomes();
     const collector=new SourceCollector(store,config,engine);

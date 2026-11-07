@@ -3,7 +3,8 @@ import { expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { readConfig } from '../../src/config.js';
 import { configureDemo } from '../../src/demo.js';
-import { recordMaintenance } from '../../src/evaluation.js';
+import { digest } from '../../src/domain.js';
+import { recordMaintenance, runMonthlyComparison } from '../../src/evaluation.js';
 import { ingestSource } from '../../src/intake.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { weeklyReport } from '../../src/reports.js';
@@ -64,5 +65,28 @@ it('records one maintenance session through the owner API and shows it on the we
     expect(body.report.metrics.sourceExpansionPaused).toBe(false);
     const again = await app.request(`/api/reports/weekly?project=${project.id}&domain=${project.domain}`, { headers });
     expect((await again.json()).metrics.maintenanceMinutes).toBe(25);
+  } finally { store.close(); }
+});
+
+it('records one monthly held-out comparison and leaves the current principle unchanged', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const rule = { id: 'principle', projectId: project.id, domain: project.domain, title: '保留草稿', statement: '仅本产品保留到下次成功导出。', conditions: '仅本产品这一次', exceptions: '敏感草稿需单独确认', version: 1, kind: 'principle' as const, status: 'active' as const, caseIds: ['case'], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  try {
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { id: 'case', projectId: project.id, domain: project.domain, taskId: 'task', questionId: 'question', decisionId: 'decision', actorId: project.ownerId, choice: 'C', originalWords: '仅本产品保留到下次成功导出。', rationale: 'Owner rationale not separately stated.', alternatives: [], ruleIds: ['principle'], sourceId: 'source', status: 'active', createdAt: at });
+    store.save('rules', rule);
+    const savedRule = store.get('rules', rule.id);
+    if (!savedRule) throw new Error('principle missing');
+    const before = digest(savedRule);
+    const first = runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'));
+    const second = runMonthlyComparison(store, project, new Date('2026-11-20T00:00:00.000Z'));
+    expect(first).toMatchObject({ month: '2026-11', sampleSize: 1, ownerCorrections: 1, matchedSuggestions: 0, candidateAnswers: 0, trial: 'none', principle: 'unchanged' });
+    expect(second).toEqual(first);
+    expect(store.list('actions').filter(action => action.kind === 'decision.monthly-comparison')).toHaveLength(1);
+    const after = store.get('rules', rule.id);
+    if (!after) throw new Error('principle missing');
+    expect(digest(after)).toBe(before);
+    expect(store.get('rules', rule.id)?.statement).toBe(rule.statement);
   } finally { store.close(); }
 });
