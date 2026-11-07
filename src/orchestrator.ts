@@ -17,6 +17,7 @@ import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
 import { BillingAuthority } from './billing.js';
 import { captureNoQuestionCaseVersion, captureOwnerCaseVersion, refreshCasesForSnapshot, refreshCaseVersions } from './cases.js';
 import { acceptBookmarkLearning } from './learning.js';
+import { retainPrimaryResearch } from './research-sources.js';
 import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
 export interface WorkbenchOptions {
@@ -420,6 +421,7 @@ export class Workbench {
     this.current(task); this.validateResearch(research);
     this.store.transaction(() => {
       this.store.save('actions', { id: this.actionId(task), projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'research', status: 'completed', payload: { taskVersion: task.version, sourceRevision: task.sourceRevision, research }, updatedAt: now() });
+      retainPrimaryResearch(this.store, project, research);
       this.advance(task, 'decide');
     });
   }
