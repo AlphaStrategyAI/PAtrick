@@ -1,4 +1,5 @@
 import type { AppConfig, Attempt, AuditEvent, Runner, RunnerPolicy, Task } from './domain.js';
+import { setupSteps } from './setup-guide.js';
 import type { BillingStatus } from './billing.js';
 const exactPolicies = Symbol('current-policy-statuses');
 export type BillingStatuses = Record<string, Partial<Record<Runner, BillingStatus>>> & {
@@ -45,6 +46,7 @@ export function readiness(config:AppConfig,billing:BillingStatuses={}):Readiness
     {name:'隔离 worker',ready:config.projects.some(project=>config.runnerPolicies.some(policy=>policy.admitted&&policy.domains.includes(project.domain)&&!!config.workers[policy.runner]&&['included-admitted','positive-reservation'].includes(policyBillingStatus(billing,project.id,policy)?.state??''))),detail:'每个角色须在 Lima 内验证模型、授权域、权限与费用，并准入备选运行器。'},
     {name:'飞书连接配置',ready:!!config.feishu?.chatId,detail:'配置应用、本人私聊和历史权限；HTTP 回调另需验证凭据，实际收发仍须联调。'},
     {name:'双语查证',ready:!!config.researchUrl,detail:'配置获准的检索网关；宿主逐条打开中英文原始资料，保留证据缺口。'},
+    ...setupSteps(config).filter(step => ['isolation', 'backup', 'network'].includes(step.id)).map(step => ({ name: step.title, ready: step.done, detail: step.detail })),
   ];
 }
 

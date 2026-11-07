@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { readConfig } from '../../src/config.js';
+import { readiness } from '../../src/readiness.js';
 import { commandOnPath, nextSetupStep, saveConnectionSecrets, setupSteps } from '../../src/setup-guide.js';
 
 it('saves connection secrets on this machine and does not replace them with a blank form', () => {
@@ -40,6 +41,10 @@ it('guides the first launch through project, credential, Feishu, and an installe
   const reloaded = readConfig({ PATRICK_MODE: 'live', PATRICK_DATA_DIR: config.dataDir, PATRICK_TOKEN: 'test-owner-token-at-least-32-characters' });
   expect(reloaded.limaInstance).toBe('patrick-local');
   expect(reloaded.resticPassword).toBe('restic-password-value');
+  const listed = readiness(reloaded);
+  expect(listed.find(item => item.name === '准备隔离环境')?.detail).toContain('Lima');
+  expect(listed.find(item => item.name === '设置异机备份')?.detail).toContain('restic');
+  expect(listed.find(item => item.name === '填写 GitHub 网络快捷指令')?.ready).toBe(true);
   expect(commandOnPath('grok', '/usr/bin', path => path === '/usr/bin/grok')).toBe(true);
   expect(commandOnPath('../grok', '/usr/bin', () => true)).toBe(false);
 });
