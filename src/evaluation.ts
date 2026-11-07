@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { digest, DomainError, now, stableId, type Scope } from './domain.js';
+import { digest, DomainError, now, stableId, type DecisionCase, type Scope } from './domain.js';
 import type { Store } from './store.js';
 
 const WEEK_MS = 7 * 86400000;
@@ -215,19 +215,35 @@ function reconcileRevokedTrial(store: Store, scope: Scope, comparison: MonthlyCo
   store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.trial-reconcile', status: 'completed', payload: { month: comparison.month, candidateId, taskIds }, updatedAt: at });
 }
 
+function recordedReplays(store: Store, scope: Scope, month: string, candidateId: string, heldOut: { id: string; projectId: string; choice: 'A' | 'B' | 'C' }[]): ReplayCase[] {
+  return heldOut.flatMap(item => {
+    const replay = replayFor(store, scope, month, candidateId, item.id);
+    return replay ? [{ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: replay.candidateCorrect, unauthorized: replay.unauthorized, duplicateExternalAction: replay.duplicateExternalAction, fakeDelivery: replay.fakeDelivery, withdrawalLeak: replay.withdrawalLeak, crossDomain: replay.crossDomain, changesOwnerValue: replay.changesOwnerValue }] : [];
+  });
+}
+
+/** Prefer an observation that already solves a held-out miss. A newer observation with no replay does not replace it. */
+function selectMonthlyCandidate(store: Store, scope: Scope, cases: DecisionCase[], month: string) {
+  const observations = store.list('rules').filter(rule => rule.projectId === scope.projectId && rule.domain === scope.domain && rule.kind === 'observation' && rule.status === 'active').sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  const scored = observations.map(candidate => {
+    const heldOut = cases.filter(item => !candidate.caseIds.includes(item.id));
+    const replayed = recordedReplays(store, scope, month, candidate.id, heldOut);
+    const unanswered = heldOut.map(item => ({ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: false, unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false }));
+    return { candidate, heldOut, replayed, decision: admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: replayed.length ? replayed : unanswered }) };
+  });
+  return scored.find(item => item.replayed.length > 0 && item.decision.trial === 'single-product') ?? scored.find(item => item.replayed.length > 0) ?? scored[0];
+}
+
 /** Compare this month's held-out owner decisions with the current version. Only a recorded replay counts as a candidate answer, and the principle stays. */
 export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()): MonthlyComparison | null {
   const cases = store.list('cases').filter(item => item.projectId === scope.projectId && item.domain === scope.domain && item.status === 'active' && item.createdAt <= at.toISOString() && store.get('sources', item.sourceId)?.status === 'active');
   if (!cases.length) return latestMonthlyComparison(store, scope);
-  const candidate = store.list('rules').filter(rule => rule.projectId === scope.projectId && rule.domain === scope.domain && rule.kind === 'observation' && rule.status === 'active').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const heldOut = cases.filter(item => !candidate?.caseIds.includes(item.id));
   const month = at.toISOString().slice(0, 7);
-  const replayed = candidate ? heldOut.flatMap(item => {
-    const replay = replayFor(store, scope, month, candidate.id, item.id);
-    return replay ? [{ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: replay.candidateCorrect, unauthorized: replay.unauthorized, duplicateExternalAction: replay.duplicateExternalAction, fakeDelivery: replay.fakeDelivery, withdrawalLeak: replay.withdrawalLeak, crossDomain: replay.crossDomain, changesOwnerValue: replay.changesOwnerValue }] : [];
-  }) : [];
-  const unanswered = heldOut.map(item => ({ id: item.id, projectId: item.projectId, heldOut: true, critical: true, previouslyWrong: item.choice !== 'A', oldCorrect: item.choice === 'A', candidateCorrect: false, unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false }));
-  const decision = admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: replayed.length ? replayed : unanswered });
+  const selected = selectMonthlyCandidate(store, scope, cases, month);
+  const candidate = selected?.candidate;
+  const heldOut = selected?.heldOut ?? cases;
+  const replayed = selected?.replayed ?? [];
+  const decision = selected?.decision ?? admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: [] });
   const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged', ownerValue: replayed.some(item => item.changesOwnerValue) };
   const id = stableId('monthly-comparison', scope.projectId, scope.domain, comparison.month);
   const existing = store.get('actions', id);
