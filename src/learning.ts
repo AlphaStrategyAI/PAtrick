@@ -47,6 +47,12 @@ export function learningView(store: Store, source: SourceRevision): LearningReco
   return { sourceId: source.id, bookmarkId: String(saved.bookmarkId ?? ''), state: action.status === 'completed' ? 'checked' : 'pending', explanation: saved.explanation ?? null, association: saved.association ?? null, counterexample: saved.counterexample ?? null, reviewAt: saved.reviewAt ?? null };
 }
 
+/** Record a bookmark learning note from extraction. Other sources ignore it. A missing note stays pending. */
+export function acceptBookmarkLearning(store: Store, source: SourceRevision, learning: { explanation: string; association: string; counterexample: string; reviewAt: string } | undefined): void {
+  if (!learning || !source.externalId.startsWith('x-bookmark:')) return;
+  completeLearning(store, source.id, learning);
+}
+
 /** Accept a learning note only when its explanation repeats the bookmark and the review date is still ahead. */
 export function completeLearning(store: Store, sourceId: string, input: { explanation: string; association: string; counterexample: string; reviewAt: string }, at = new Date()): LearningRecord {
   const source = store.get('sources', sourceId);
