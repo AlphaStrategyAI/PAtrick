@@ -273,6 +273,7 @@ export class Workbench {
             if (error instanceof DomainError && error.code === 'baseline_changed') this.replan(task);
             else if (!(error instanceof DomainError && error.code === 'stale_attempt')) this.fail(task, error);
           }
+          if (error instanceof DomainError && error.code === 'invalid_quote') this.recordRejectedCitation(task);
         }
       }
       if(!this.stopping&&this.pauseDepth===0)await this.drainHostJobs(4-preferred.count);
@@ -561,6 +562,12 @@ export class Workbench {
     this.store.save('tasks', { ...current, stage, status: stageStatus[stage], updatedAt: now(), runAfter: now(), error: undefined, ...values });
     this.event(task, 'stage.completed', `${task.stage} completed.`, { next: stage, status: values.status ?? stageStatus[stage] });
   }
+  private recordRejectedCitation(task: Task): void {
+    const id = stableId('citation-rejected', task.id, task.version, task.stage);
+    if (this.store.get('events', id)) return;
+    this.store.save('events', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'citation.rejected', message: 'An extracted quote was not in the authorized source.', data: { stage: task.stage }, createdAt: now() });
+  }
+
   private fail(task: Task, error: unknown): void {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
     const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation']);
