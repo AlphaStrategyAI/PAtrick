@@ -26,6 +26,9 @@ it('renders uncovered channels on the sources page without forward, tag, or expo
     expect(html).not.toContain('>转发<');
     expect(html).not.toContain('>贴标签<');
     expect(html).not.toContain('>导出<');
+    for (const name of ['GitHub 远端分支', 'X 书签', '邮箱', 'Grok Bot']) expect(html).toContain(name);
+    expect(html).toContain('未接入');
+    expect(html).toContain('还没有接入');
   } finally { await engine.shutdown(); store.close(); }
 });
 

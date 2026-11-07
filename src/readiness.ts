@@ -19,7 +19,7 @@ export function policyBillingStatus(statuses: BillingStatuses | undefined, proje
 export type TaskBillingStatus = BillingStatus & { attempts: number; additionalSpendingCapUsd: number };
 
 export interface ReadinessItem {name:string;ready:boolean;detail:string}
-export type SourceCoverageState = 'ready' | 'unset' | 'uncovered';
+export type SourceCoverageState = 'ready' | 'unset' | 'uncovered' | 'unconnected';
 export interface SourceCoverageItem { name: string; detail: string; state: SourceCoverageState }
 /** Channels without an authorized automatic entry stay uncovered. Daily work does not add forward, tag, or export actions. */
 export function sourceCoverage(project: { sourceDir?: string } | undefined, feishuConfigured: boolean): SourceCoverageItem[] {
@@ -31,6 +31,10 @@ export function sourceCoverage(project: { sourceDir?: string } | undefined, feis
     { name: '公众号', detail: uncovered, state: 'uncovered' },
     { name: '个人微信', detail: uncovered, state: 'uncovered' },
     { name: '第三方 Grok', detail: uncovered, state: 'uncovered' },
+    { name: 'GitHub 远端分支', detail: '设计里有增量与补扫，这一版还没有接入，所以不能算已覆盖。网页上的修改不会自动进来。', state: 'unconnected' },
+    { name: 'X 书签', detail: '设计里有获准的阅读入口，这一版还没有接入，所以不能算已覆盖。接入后才产出解释、关联、反例和到期复核。', state: 'unconnected' },
+    { name: '邮箱', detail: '设计里按服务商增量接口接入，这一版还没有接入，所以不能算已覆盖。', state: 'unconnected' },
+    { name: 'Grok Bot', detail: '设计里可以采集获准对话，这一版还没有接入，所以不能算已覆盖。', state: 'unconnected' },
   ];
 }
 export function readiness(config:AppConfig,billing:BillingStatuses={}):ReadinessItem[] {

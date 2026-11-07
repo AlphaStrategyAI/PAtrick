@@ -40,6 +40,10 @@ test('task details retain a seven layer trace and delivery evidence', async ({ p
   await expect(drawer.locator('.layer-list > li')).toHaveCount(7);
   await expect(drawer.getByRole('heading', { name: '交付回执', exact: true })).toBeVisible();
   await expect(drawer.getByText('合并 SHA', { exact: true })).toBeVisible();
+  const followUp = drawer.getByRole('region', { name: '发布后运维' });
+  await expect(followUp).toBeVisible();
+  await expect(followUp.getByText('错误率尚未测量。')).toBeVisible();
+  await expect(followUp.getByText('还没有按这次合并再派规划、执行和检查。')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(drawer).not.toBeVisible();
 });
@@ -161,6 +165,10 @@ test('sources without an automatic entry stay uncovered and add no forward, tag,
     await expect(coverage.getByText(name, { exact: true })).toBeVisible();
   }
   await expect(coverage.getByText('未覆盖', { exact: true })).toHaveCount(3);
+  for (const name of ['GitHub 远端分支', 'X 书签', '邮箱', 'Grok Bot']) {
+    await expect(coverage.getByText(name, { exact: true })).toBeVisible();
+  }
+  await expect(coverage.getByText('未接入', { exact: true })).toHaveCount(4);
   await expect(page.getByRole('button', { name: '转发' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '贴标签' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '导出' })).toHaveCount(0);
