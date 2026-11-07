@@ -205,7 +205,7 @@ export interface AppConfig {
   mode: 'live' | 'demo' | 'test'; host: string; port: number; dataDir: string; vaultDir: string; ownerId: string;
   authToken: string; sessionSecret: string; projects: Project[]; runnerPolicies: RunnerPolicy[];
   workers: Partial<Record<Runner, { command: string; args: string[]; timeoutMs: number; isolation: 'lima'; instance: string; guestUser?: string }>>;
-  githubToken?: string; gitlabToken?: string; gitlabUrl?: string;
+  githubToken?: string; gitlabToken?: string; gitlabUrl?: string; xToken?: string;
   feishu?: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; ownerOpenId: string; chatId?: string };
   researchUrl?: string; researchToken?: string; resticRepository?: string; resticPassword?: string; limaInstance?: string;
   githubShortcutStatus?: string; githubShortcutConnect?: string; githubShortcutDisconnect?: string;

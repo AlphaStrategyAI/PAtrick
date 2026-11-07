@@ -13,4 +13,5 @@ it('keeps channels without an automatic entry uncovered even when the project an
   const scanned = sourceCoverage({ sourceDir: '/tmp/productIdeas' }, true, true);
   expect(scanned.find(item => item.name === 'GitHub 远端分支')?.state).toBe('ready');
   expect(scanned.filter(item => item.state === 'unconnected').map(item => item.name)).toEqual(['X 书签', '邮箱', 'Grok Bot']);
+  expect(sourceCoverage({ sourceDir: '/tmp/productIdeas' }, true, { xBookmarks: true }).find(item => item.name === 'X 书签')?.state).toBe('ready');
 });

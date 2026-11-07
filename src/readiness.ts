@@ -23,7 +23,8 @@ export interface ReadinessItem {name:string;ready:boolean;detail:string}
 export type SourceCoverageState = 'ready' | 'unset' | 'uncovered' | 'unconnected';
 export interface SourceCoverageItem { name: string; detail: string; state: SourceCoverageState }
 /** Channels without an authorized automatic entry stay uncovered. Daily work does not add forward, tag, or export actions. */
-export function sourceCoverage(project: { sourceDir?: string } | undefined, feishuConfigured: boolean, githubBranchReady = false): SourceCoverageItem[] {
+export function sourceCoverage(project: { sourceDir?: string } | undefined, feishuConfigured: boolean, connected: boolean | { githubBranch?: boolean; xBookmarks?: boolean } = {}): SourceCoverageItem[] {
+  const flags = typeof connected === 'boolean' ? { githubBranch: connected } : connected;
   const uncovered = '没有获准的自动入口。日常不增加转发、贴标签或导出。';
   return [
     { name: '手动输入', detail: '直接加入获准的原始资料', state: project ? 'ready' : 'unset' },
@@ -32,8 +33,8 @@ export function sourceCoverage(project: { sourceDir?: string } | undefined, feis
     { name: '公众号', detail: uncovered, state: 'uncovered' },
     { name: '个人微信', detail: uncovered, state: 'uncovered' },
     { name: '第三方 Grok', detail: uncovered, state: 'uncovered' },
-    { name: 'GitHub 远端分支', detail: githubBranchReady ? '默认分支已有一次成功扫描。之后只导入授权路径上的新提交，并跳过本程序自己的交付。' : '实时模式会在保存 GitHub 令牌后扫描默认分支。还没有一次成功扫描，所以还没有接入，不能算已覆盖。', state: githubBranchReady ? 'ready' : 'unconnected' },
-    { name: 'X 书签', detail: '设计里有获准的阅读入口，这一版还没有接入，所以不能算已覆盖。接入后才产出解释、关联、反例和到期复核。', state: 'unconnected' },
+    { name: 'GitHub 远端分支', detail: flags.githubBranch ? '默认分支已有一次成功扫描。之后只导入授权路径上的新提交，并跳过本程序自己的交付。' : '实时模式会在保存 GitHub 令牌后扫描默认分支。还没有一次成功扫描，所以还没有接入，不能算已覆盖。', state: flags.githubBranch ? 'ready' : 'unconnected' },
+    { name: 'X 书签', detail: flags.xBookmarks ? '已读到最新一页书签。解释、关联、反例和到期复核仍要逐条核验后才算完成。' : '在设置页保存 X 书签令牌后，实时模式读取最新一页。还没有一次成功扫描，所以还没有接入，不能算已覆盖。', state: flags.xBookmarks ? 'ready' : 'unconnected' },
     { name: '邮箱', detail: '设计里按服务商增量接口接入，这一版还没有接入，所以不能算已覆盖。', state: 'unconnected' },
     { name: 'Grok Bot', detail: '设计里可以采集获准对话，这一版还没有接入，所以不能算已覆盖。', state: 'unconnected' },
   ];
