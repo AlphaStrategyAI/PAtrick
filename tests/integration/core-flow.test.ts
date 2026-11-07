@@ -10,6 +10,7 @@ import { createBackup } from '../../src/backup.js';
 import { restoreBackup } from '../../scripts/restore.js';
 import { digest, stableId, DomainError, WorkerUnavailable, type AppConfig, type DeliveryReceipt, type Project, type Role, type Runner, type WorkerAdapter, type WorkerInput, type ResearchRecord, type OutboxMessage } from '../../src/domain.js';
 import { openReleaseFollowUp } from '../../src/operations.js';
+import { createApp } from '../../src/app.js';
 import { weeklyReport } from '../../src/reports.js';
 
 const roots: string[] = []; const stores: Store[] = [];
@@ -630,7 +631,11 @@ describe('single worker durable business flow', () => {
 
   it('bounds repairs at two and never treats business test failure as runner unavailability', async () => {
     const f = setup({ badReview: true }); const task = f.ingest(); await f.engine.runUntilIdle();
-    expect(f.store.get('tasks', task.id)?.status).toBe('blocked'); expect(f.store.get('tasks', task.id)?.repairCount).toBe(2);
+    expect(f.store.get('tasks', task.id)?.status).toBe('blocked'); expect(f.store.get('tasks', task.id)?.repairCount).toBe(2); expect(f.store.get('tasks', task.id)?.error).toBe('repairs_exhausted');
+    expect(f.store.list('events').some(event => event.type === 'repairs_exhausted' && event.message.includes('没有发布未经验证的改动'))).toBe(true);
+    const html = await (await createApp({ store: f.store, config: f.config, engine: f.engine }).request(`/tasks/${task.id}`)).text();
+    expect(html).toContain('已返修两轮，检查仍未通过。');
+    expect(html).toContain('没有发布未经验证的改动');
     expect(f.calls.filter(c => c.role === 'execute')).toHaveLength(3); expect(f.store.list('attempts').some(a => a.status === 'unavailable')).toBe(false); expect(f.deliveryCount()).toBe(0);
   });
 
