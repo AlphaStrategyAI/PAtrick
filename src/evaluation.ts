@@ -216,6 +216,15 @@ export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()
   return comparison;
 }
 
+/** Say what the stored comparison actually decided. A trial still does not change the principle. */
+export function monthlyComparisonMessage(monthly: MonthlyComparison | null): string {
+  if (!monthly) return '还没有用留出案例做过本月对照。';
+  const base = `留出 ${monthly.sampleSize} 个案例，本人纠正 ${monthly.ownerCorrections} 次。`;
+  if (monthly.candidateAnswers === 0) return `${base}候选版本还没有回答这些案例，原则保持不变。`;
+  if (monthly.trial === 'single-product') return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，可以在本项目试用。原则保持不变。`;
+  return `${base}候选已回答 ${monthly.candidateAnswers} 个留出案例，但还不能试用。原则保持不变。`;
+}
+
 export function latestMonthlyComparison(store: Store, scope: Scope): MonthlyComparison | null {
   const saved = store.list('actions').filter(action => action.kind === 'decision.monthly-comparison' && action.projectId === scope.projectId && action.domain === scope.domain).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.payload.comparison as MonthlyComparison | undefined;
   return saved ?? null;
