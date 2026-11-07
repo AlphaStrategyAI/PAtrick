@@ -23,13 +23,14 @@ export interface ReadinessItem {name:string;ready:boolean;detail:string}
 export type SourceCoverageState = 'ready' | 'unset' | 'uncovered' | 'unconnected';
 export interface SourceCoverageItem { name: string; detail: string; state: SourceCoverageState }
 /** Channels without an authorized automatic entry stay uncovered. Daily work does not add forward, tag, or export actions. */
-export function sourceCoverage(project: { sourceDir?: string } | undefined, feishuConfigured: boolean, connected: boolean | { githubBranch?: boolean; xBookmarks?: boolean; gmail?: boolean } = {}): SourceCoverageItem[] {
+export function sourceCoverage(project: { sourceDir?: string } | undefined, feishuConfigured: boolean, connected: boolean | { githubBranch?: boolean; xBookmarks?: boolean; gmail?: boolean; feishu?: boolean } = {}): SourceCoverageItem[] {
   const flags = typeof connected === 'boolean' ? { githubBranch: connected } : connected;
   const uncovered = '没有获准的自动入口。日常不增加转发、贴标签或导出。';
+  const feishuState = !feishuConfigured ? 'unset' : flags.feishu ? 'ready' : 'unconnected';
   return [
     { name: '手动输入', detail: '直接加入获准的原始资料', state: project ? 'ready' : 'unset' },
     { name: '本地同步目录', detail: project?.sourceDir ? '按配置路径监听与补扫' : '在项目配置中设置 sourceDir', state: project?.sourceDir ? 'ready' : 'unset' },
-    { name: '飞书', detail: feishuConfigured ? '仍以设置页准入检查为准' : '尚未配置应用与本人身份', state: feishuConfigured ? 'ready' : 'unset' },
+    { name: '飞书', detail: feishuState === 'ready' ? '已完成一次历史补读。之后的消息按同一条来源修订入账。' : feishuState === 'unconnected' ? '已保存飞书应用和本人身份。还没有一次成功的历史补读，所以还没有接入，不能算已覆盖。' : '尚未配置应用与本人身份', state: feishuState },
     { name: '公众号', detail: uncovered, state: 'uncovered' },
     { name: '个人微信', detail: uncovered, state: 'uncovered' },
     { name: '第三方 Grok', detail: uncovered, state: 'uncovered' },

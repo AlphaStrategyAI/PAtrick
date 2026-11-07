@@ -20,6 +20,8 @@ interface MessageCursor { revision: string; time: number; sourceIds: string[]; w
 const silentLogger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 function equal(left: unknown, right: string): boolean { if (typeof left !== 'string' || !left || !right) return false; const a = Buffer.from(left); const b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }
 
+export function feishuHistoryCursor(chatId: string): string { return stableId('feishu-history', chatId); }
+
 /** Official SDK transport with a host-owned inbox/outbox and authenticated owner mapping. */
 export class FeishuChannel implements NotificationAdapter {
   readonly dispatcher: EventDispatcher;
@@ -320,7 +322,7 @@ export class FeishuChannel implements NotificationAdapter {
       if (data.has_more && (!token || seen.has(token))) throw new DomainError('Feishu history pagination could not be completed.', 'feishu_unready', 503);
       if (token) seen.add(token);
     } while (token);
-    this.store.save('cursors', { ...this.scope(), id: stableId('feishu-history', f.chatId), value: snapshot, updatedAt: now() });
+    this.store.save('cursors', { ...this.scope(), id: feishuHistoryCursor(f.chatId), value: snapshot, updatedAt: now() });
   }
 
   private async history(extra: Json): Promise<Json> {
