@@ -1,4 +1,5 @@
 import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Entities, type SourceRevision, type Table, type Task } from './domain.js';
+import { sourceExpansionPaused } from './evaluation.js';
 import type { Store } from './store.js';
 import { consumedStageResult, enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
 import { canonicalExperiencePayloadSchema, factualContextTombstone, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs, wellFormedParentSources } from './knowledge-records.js';
@@ -244,6 +245,8 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
       enqueueStructuredKnowledge(store, store.get('sources', id)!);
       return purpose === 'reference' ? undefined : task;
     }
+    const githubAlreadyUsed = kind === 'github' && store.list('sources').some(source => source.projectId === scope.projectId && source.domain === scope.domain && source.kind === 'github');
+    if (kind === 'github' && !githubAlreadyUsed && sourceExpansionPaused(store, scope)) throw new DomainError('Source expansion is paused after two measured weeks over 60 maintenance minutes. Keep the current product source and repair the slowest recorded step before adding GitHub.', 'source_expansion_paused', 409);
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
     const createdAt = now();
     const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };

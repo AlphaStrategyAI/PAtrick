@@ -41,6 +41,7 @@ function renderContent(page: string, context: ViewContext) {
 }
 function Workbench({ context }: { context: ViewContext }) {
   const { scoped, project, href, url, config } = context;
+  const reflection = project ? weeklyReport(context.store, { projectId: project.id, domain: project.domain }) : null;
   const all = scoped('tasks').filter(task => task.kind !== 'reference_knowledge').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const view = url.searchParams.get('view') ?? 'all';
   const tasks = all.filter(task => view === 'attention' ? ['awaiting_answer', 'blocked', 'retrying'].includes(task.status) : view === 'delivered' ? task.status === 'delivered' : true);
@@ -54,7 +55,7 @@ function Workbench({ context }: { context: ViewContext }) {
     { label: '等你决定', value: all.filter(task => task.status === 'awaiting_answer').length, icon: 'spark', note: '真正需要你判断的事' },
     { label: '已交付', value: all.filter(task => task.status === 'delivered').length, icon: 'check', note: config.mode === 'demo' ? '已有演示回执' : '均有可核验的回执' },
     { label: '知识卡片', value: knowledge.length, icon: 'book', note: '有来源、可追溯' },
-  ].map(stat => <div class="stat-item"><div class="stat-label"><span>{stat.label}</span><Icon name={stat.icon as IconName}/></div><strong class="stat-value">{String(stat.value).padStart(2, '0')}</strong><span class="stat-note">{stat.note}</span></div>)}</section><div class="board-toolbar"><div class="segmented-control" aria-label="任务筛选">{[{ id: 'all', text: '全部任务' }, { id: 'attention', text: '需要关注' }, { id: 'delivered', text: '已交付' }].map(item => <a href={href('/', item.id === 'all' ? {} : { view: item.id })} class={view === item.id ? 'selected' : ''} aria-current={view === item.id ? 'true' : undefined}>{item.text}</a>)}</div><span class="board-hint"><span class="status-dot"/>状态与账本同步<Icon name="refresh"/></span></div><section class="workbench-board" aria-label="工作流看板"><BoardColumn title="正在处理" eyebrow="IN MOTION" type="processing" icon="activity" tasks={processing} context={context} empty="还没有正在处理的任务" body={view === 'delivered' ? '切换到全部任务，查看进行中的工作。' : '交给 PAtrick 一份材料，工作会从这里开始。'}/><BoardColumn title="等我回答" eyebrow="YOUR CALL" type="waiting" icon="spark" tasks={waiting} context={context} empty="暂时不需要你做决定" body="已有证据能够支持的工作，PAtrick 会继续向前。"/><BoardColumn title="建议与结果" eyebrow="WORTH KEEPING" type="results" icon="check" tasks={results} context={context} empty="结果正在路上" body="经过核验的交付、反馈与待验证想法会留在这里。"/></section><div class="workbench-note"><Icon name="layers"/><p>来源 → 知识 → 标准 → 判断 → 执行 → 回执。<span> 每一步，都有迹可循。</span></p><a href={href('/activity')}>查看完整轨迹<Icon name="arrow"/></a></div></>}{url.searchParams.get('compose') === '1' && <section class="compose-fallback"><h2>新建任务</h2><NewTaskForm context={context}/></section>}</>;
+  ].map(stat => <div class="stat-item"><div class="stat-label"><span>{stat.label}</span><Icon name={stat.icon as IconName}/></div><strong class="stat-value">{String(stat.value).padStart(2, '0')}</strong><span class="stat-note">{stat.note}</span></div>)}</section>{reflection?.metrics.sourceExpansionPaused && <p class="card-warning" role="status">近两周已记录的维护都超过 60 分钟，已暂停新增 GitHub 来源。先处理耗时最长的一次记录。</p>}{reflection?.focus && <WeeklyReflection report={reflection} context={context}/>}<div class="board-toolbar"><div class="segmented-control" aria-label="任务筛选">{[{ id: 'all', text: '全部任务' }, { id: 'attention', text: '需要关注' }, { id: 'delivered', text: '已交付' }].map(item => <a href={href('/', item.id === 'all' ? {} : { view: item.id })} class={view === item.id ? 'selected' : ''} aria-current={view === item.id ? 'true' : undefined}>{item.text}</a>)}</div><span class="board-hint"><span class="status-dot"/>状态与账本同步<Icon name="refresh"/></span></div><section class="workbench-board" aria-label="工作流看板"><BoardColumn title="正在处理" eyebrow="IN MOTION" type="processing" icon="activity" tasks={processing} context={context} empty="还没有正在处理的任务" body={view === 'delivered' ? '切换到全部任务，查看进行中的工作。' : '交给 PAtrick 一份材料，工作会从这里开始。'}/><BoardColumn title="等我回答" eyebrow="YOUR CALL" type="waiting" icon="spark" tasks={waiting} context={context} empty="暂时不需要你做决定" body="已有证据能够支持的工作，PAtrick 会继续向前。"/><BoardColumn title="建议与结果" eyebrow="WORTH KEEPING" type="results" icon="check" tasks={results} context={context} empty="结果正在路上" body="经过核验的交付、反馈与待验证想法会留在这里。"/></section><div class="workbench-note"><Icon name="layers"/><p>来源 → 知识 → 标准 → 判断 → 执行 → 回执。<span> 每一步，都有迹可循。</span></p><a href={href('/activity')}>查看完整轨迹<Icon name="arrow"/></a></div></>}{url.searchParams.get('compose') === '1' && <section class="compose-fallback"><h2>新建任务</h2><NewTaskForm context={context}/></section>}</>;
 }
 function BoardColumn({ title, eyebrow, type, icon, tasks, context, empty, body }: { title: string; eyebrow: string; type: string; icon: IconName; tasks: Task[]; context: ViewContext; empty: string; body: string }) {
   return <section class={`board-column board-${type}`} aria-label={title}><header class="column-heading"><div class="column-title"><span class="column-indicator"><Icon name={icon}/></span><h2>{title}</h2><span class="column-count">{tasks.length}</span></div><span class="column-eyebrow">{eyebrow}</span></header><div class="column-cards">{tasks.length ? tasks.map(task => <TaskCard task={task} context={context}/>) : <div class="board-empty"><Icon name={icon}/><h3>{empty}</h3><p>{body}</p></div>}</div></section>;
@@ -191,8 +192,19 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
     <header class="weekly-reflection-heading"><div><p class="eyebrow">ONE DECISION, IN RETROSPECT</p><h2 id="weekly-reflection-title">每周回看</h2></div><span class="metadata">近七天 · 来自 {report.sampleSize} 个有效案例</span></header>
     <p class="small-label">当时，你的决定</p>
     <blockquote>{focus.case.originalWords}</blockquote>
+    <section aria-label="每周教训">
+      <h3>当时依据的规则</h3>
+      {focus.lesson.usedRules.length ? <ul class="content-list">{focus.lesson.usedRules.map(rule => <li><strong>{rule.title} · v{rule.version}</strong><p>适用范围：{rule.conditions || '未记录'}</p></li>)}</ul> : <p>当时未引用个人规则</p>}
+      <h3>后来的结果</h3>
+      <p>{focus.lesson.result ?? '待观察，尚无回执结果。'}</p>
+      <h3>当时没有写下的条件</h3>
+      {focus.lesson.overlooked.length ? <ul class="content-list">{focus.lesson.overlooked.map(item => <li>{item}</li>)}</ul> : <p>没有发现当时规则里缺少的已记录例外。</p>}
+      <h3>下次可以这样判断</h3>
+      <p>{focus.lesson.next}</p>
+    </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
+    <p class="metadata">{report.metrics.maintenanceMinutes === null ? '本周维护时间尚未记录' : `本周已记录维护 ${report.metrics.maintenanceMinutes} 分钟`}{report.metrics.slowestRecordedMaintenance ? ` · 最长一次 ${report.metrics.slowestRecordedMaintenance.minutes} 分钟${report.metrics.slowestRecordedMaintenance.note ? `：${report.metrics.slowestRecordedMaintenance.note}` : ''}` : ''}{report.metrics.sourceExpansionPaused ? ' · 已暂停新增 GitHub 来源' : ''}</p>
     <footer><time datetime={focus.case.createdAt}>{date(focus.case.createdAt, true)}</time><a href={context.href(`/tasks/${focus.case.taskId}`)} class="text-link" data-task-link>回看这次决定<Icon name="arrow"/></a></footer>
   </section>;
 }

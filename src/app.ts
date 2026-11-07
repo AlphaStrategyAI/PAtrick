@@ -10,6 +10,7 @@ import { DomainError, digest, now, stableId, type AppConfig, type Project, type 
 import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
+import { recordMaintenance } from './evaluation.js';
 import { weeklyReport } from './reports.js';
 import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
 import { isKnowledgeSnapshotFailure, PrivacyCheckpointError, VaultSyncError, type Store } from './store.js';
@@ -104,6 +105,12 @@ export function createApp({store,config,engine,feishu}:AppOptions):Hono {
     });return c.json(data);
   });
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
+  app.post('/api/maintenance',async c=>{
+    const data=z.object({projectId:z.string().min(1),domain:z.string().min(1),minutes:z.number().int().min(1).max(1440),note:z.string().max(500).optional(),eventId:z.string().uuid()}).strict().parse(await body(c));
+    const project=ownedProject(data.projectId,data.domain);
+    const record=recordMaintenance(store,project,{eventId:data.eventId,minutes:data.minutes,note:data.note});
+    return c.json({record,report:weeklyReport(store,project)});
+  });
   app.get('/api/questions/:id',c=>{const question=store.get('questions',c.req.param('id'));if(!question||c.req.query('project')&&question.projectId!==c.req.query('project')||c.req.query('domain')&&question.domain!==c.req.query('domain'))return c.json({error:'Question not found.'},404);ownedProject(question.projectId,question.domain);return c.json({question});});
   app.post('/api/tasks',async c=>{
     const value=await body(c),data=z.object({projectId:z.string().min(1),domain:z.string().optional(),requestId:z.string().uuid().optional(),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional(),kind:z.literal('manual').optional()}).strict().parse(value);
