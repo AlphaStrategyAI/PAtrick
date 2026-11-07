@@ -135,6 +135,7 @@ test('the workbench question shows both language searches before answering', asy
 test('settings stores a token without showing it again', async ({ page }) => {
   await page.goto('/settings#connections');
   await expect(page.getByRole('heading', { name: '连接', exact: true })).toBeVisible();
+  await expect(page.getByText('隔离、备份和网络', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开终端登录' })).toHaveCount(3);
   const token = `github-token-${Date.now()}-not-shown`;
   await page.getByLabel('GitHub 令牌').fill(token);

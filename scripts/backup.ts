@@ -12,4 +12,6 @@ if(!existsSync(join(config.dataDir,'patrick.db')))throw Error('Start PAtrick bef
 const source=openReadOnlyBackupSource(join(config.dataDir,'patrick.db'));
 try{await createBackup(source,target,{mode:config.mode,vaultDir:config.vaultDir});}finally{source.close();}
 verifyBackup(target);console.log(`Verified snapshot: ${target}`);
+if(config.resticRepository && !process.env.RESTIC_REPOSITORY) process.env.RESTIC_REPOSITORY = config.resticRepository;
+if(config.resticPassword && !process.env.RESTIC_PASSWORD) process.env.RESTIC_PASSWORD = config.resticPassword;
 if(process.env.RESTIC_REPOSITORY){await promisify(execFile)('restic',['backup',target],{timeout:600000});console.log('Encrypted restic backup completed.');}

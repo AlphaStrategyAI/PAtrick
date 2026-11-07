@@ -16,6 +16,12 @@ export const connectionSecretsSchema = z.object({
   gitlabToken: optionalSecret,
   researchUrl: z.union([z.string().trim().url().max(500), z.literal('')]).optional(),
   researchToken: optionalSecret,
+  resticRepository: z.union([z.string().trim().min(1).max(500), z.literal('')]).optional(),
+  resticPassword: optionalSecret,
+  limaInstance: z.union([z.string().trim().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/), z.literal('')]).optional(),
+  githubShortcutStatus: optionalId,
+  githubShortcutConnect: optionalId,
+  githubShortcutDisconnect: optionalId,
   feishu: z.object({
     appId: optionalId,
     appSecret: optionalSecret,
@@ -47,6 +53,7 @@ export function loadConnectionSecrets(config: AppConfig): void {
   if (parsed.gitlabToken) config.gitlabToken = parsed.gitlabToken;
   if (parsed.researchUrl) config.researchUrl = parsed.researchUrl;
   if (parsed.researchToken) config.researchToken = parsed.researchToken;
+  applyHostSettings(config, parsed);
   if (parsed.feishu?.appId && parsed.feishu.appSecret && parsed.feishu.ownerOpenId) {
     config.feishu = { appId: parsed.feishu.appId, appSecret: parsed.feishu.appSecret, ownerOpenId: parsed.feishu.ownerOpenId, chatId: parsed.feishu.chatId || undefined, verificationToken: parsed.feishu.verificationToken || undefined, encryptKey: parsed.feishu.encryptKey || undefined };
   }
@@ -58,6 +65,12 @@ function storedSecrets(config: AppConfig): ConnectionSecrets {
     ...(config.gitlabToken ? { gitlabToken: config.gitlabToken } : {}),
     ...(config.researchUrl ? { researchUrl: config.researchUrl } : {}),
     ...(config.researchToken ? { researchToken: config.researchToken } : {}),
+    ...(config.resticRepository ? { resticRepository: config.resticRepository } : {}),
+    ...(config.resticPassword ? { resticPassword: config.resticPassword } : {}),
+    ...(config.limaInstance ? { limaInstance: config.limaInstance } : {}),
+    ...(config.githubShortcutStatus ? { githubShortcutStatus: config.githubShortcutStatus } : {}),
+    ...(config.githubShortcutConnect ? { githubShortcutConnect: config.githubShortcutConnect } : {}),
+    ...(config.githubShortcutDisconnect ? { githubShortcutDisconnect: config.githubShortcutDisconnect } : {}),
     ...(config.feishu ? { feishu: { appId: config.feishu.appId, appSecret: config.feishu.appSecret, ownerOpenId: config.feishu.ownerOpenId, chatId: config.feishu.chatId ?? '', verificationToken: config.feishu.verificationToken ?? '', encryptKey: config.feishu.encryptKey ?? '' } } : {}),
   };
 }
@@ -76,6 +89,12 @@ export function saveConnectionSecrets(config: AppConfig, input: ConnectionSecret
     gitlabToken: keep(input.gitlabToken, current.gitlabToken),
     researchUrl: keep(input.researchUrl, current.researchUrl),
     researchToken: keep(input.researchToken, current.researchToken),
+    resticRepository: keep(input.resticRepository, current.resticRepository),
+    resticPassword: keep(input.resticPassword, current.resticPassword),
+    limaInstance: keep(input.limaInstance, current.limaInstance),
+    githubShortcutStatus: keep(input.githubShortcutStatus, current.githubShortcutStatus),
+    githubShortcutConnect: keep(input.githubShortcutConnect, current.githubShortcutConnect),
+    githubShortcutDisconnect: keep(input.githubShortcutDisconnect, current.githubShortcutDisconnect),
     feishu: {
       appId: keep(feishu?.appId, current.feishu?.appId),
       appSecret: keep(feishu?.appSecret, current.feishu?.appSecret),
@@ -98,6 +117,22 @@ export function saveConnectionSecrets(config: AppConfig, input: ConnectionSecret
   if (clean.feishu?.appId && clean.feishu.appSecret && clean.feishu.ownerOpenId) {
     config.feishu = { appId: clean.feishu.appId, appSecret: clean.feishu.appSecret, ownerOpenId: clean.feishu.ownerOpenId, chatId: clean.feishu.chatId || undefined, verificationToken: clean.feishu.verificationToken || undefined, encryptKey: clean.feishu.encryptKey || undefined };
   }
+  applyHostSettings(config, clean);
+}
+
+function applyHostSettings(config: AppConfig, parsed: ConnectionSecrets): void {
+  if (parsed.resticRepository) config.resticRepository = parsed.resticRepository;
+  if (parsed.resticPassword) config.resticPassword = parsed.resticPassword;
+  if (parsed.limaInstance) config.limaInstance = parsed.limaInstance;
+  if (parsed.githubShortcutStatus) config.githubShortcutStatus = parsed.githubShortcutStatus;
+  if (parsed.githubShortcutConnect) config.githubShortcutConnect = parsed.githubShortcutConnect;
+  if (parsed.githubShortcutDisconnect) config.githubShortcutDisconnect = parsed.githubShortcutDisconnect;
+  if (config.githubShortcutStatus && config.githubShortcutConnect && config.githubShortcutDisconnect) {
+    const file = join(config.dataDir, 'network-targets.json');
+    const domain = config.projects[0]?.domain ?? 'personal';
+    writeFileSync(file, JSON.stringify([{ id: 'github', url: 'https://github.com', domain, heartbeat: true, adapter: { kind: 'shortcuts', status: config.githubShortcutStatus, connect: config.githubShortcutConnect, disconnect: config.githubShortcutDisconnect } }]), { mode: 0o600 });
+    config.networkFile = file;
+  }
 }
 
 export function commandOnPath(name: string, pathEnv = process.env.PATH ?? '', exists: (path: string) => boolean = existsSync): boolean {
@@ -116,6 +151,9 @@ export function setupSteps(config: AppConfig, installed: Record<Runner, boolean>
     { id: 'feishu', title: '连接飞书', detail: '填写应用编号、密钥和你的 Open ID。密钥保存后不再显示。', href: '/settings#connections', done: !!config.feishu?.appId && !!config.feishu.appSecret && !!config.feishu.ownerOpenId, required: true },
     { id: 'runner', title: '登录一个运行器', detail: installed.grok || installed.codex ? '命令已安装。若还没登录，打开终端完成登录，不会在这里输入模型密码。' : '先安装 Grok Build 或 Codex，再在终端登录。', href: '/settings#runners', done: installed.grok || installed.codex, required: true },
     { id: 'research', title: '检索网关（需要提问时）', detail: '做中英文查证前再填写。不填也可以先整理本地资料。', href: '/settings#connections', done: !!config.researchUrl, required: false },
+    { id: 'isolation', title: '准备隔离环境', detail: config.limaInstance ? '实例名已保存。安装并启动 Lima 后，执行才会进隔离环境；保存本身不会切换正在运行的虚拟机。' : '安装 Lima，并在设置页填写实例名。', href: '/settings#host', done: !!config.limaInstance && commandOnPath('limactl'), required: false },
+    { id: 'backup', title: '设置异机备份', detail: '填写 restic 仓库和密码。密码只留在本机。', href: '/settings#host', done: !!config.resticRepository && !!config.resticPassword && commandOnPath('restic'), required: false },
+    { id: 'network', title: '填写 GitHub 网络快捷指令', detail: '填写 Shadowrocket 的状态、连接和断开指令名。保存后重新启动，才会开始探测。', href: '/settings#host', done: !!config.networkFile, required: false },
   ];
 }
 

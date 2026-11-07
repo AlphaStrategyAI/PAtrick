@@ -65,11 +65,15 @@ it('stores a GitHub token and Feishu secret from settings without sending them b
   const token = 'github-token-should-not-echo';
   const secret = 'feishu-secret-should-not-echo';
   try {
-    const saved = await app.request('/api/settings/connections', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ githubToken: token, feishu: { appId: 'cli_app', appSecret: secret, ownerOpenId: 'ou_owner' } }) });
+    const password = 'restic-password-should-not-echo';
+    const saved = await app.request('/api/settings/connections', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ githubToken: token, resticPassword: password, resticRepository: '/tmp/patrick-restic', limaInstance: 'patrick-local', feishu: { appId: 'cli_app', appSecret: secret, ownerOpenId: 'ou_owner' } }) });
     expect(saved.status).toBe(200);
     const page = await (await app.request('/settings')).text();
     expect(page).not.toContain(token);
     expect(page).not.toContain(secret);
+    expect(page).not.toContain(password);
+    expect(page).toContain('patrick-local');
+    expect(page).toContain('隔离、备份和网络');
     expect(page).toContain('已保存。留空则不修改。');
     expect(page).toContain('打开终端登录');
     const login = await app.request('/api/settings/runners/codex/login', { method: 'POST', headers: { Accept: 'application/json' } });

@@ -33,6 +33,13 @@ it('guides the first launch through project, credential, Feishu, and an installe
   expect(nextSetupStep(config, installed)?.id).toBe('runner');
   expect(nextSetupStep(config, { grok: true, codex: false, dsh: false })).toBeUndefined();
   expect(setupSteps(config, { grok: true, codex: false, dsh: false }).find(step => step.id === 'research')?.required).toBe(false);
+  expect(setupSteps(config).filter(step => ['isolation', 'backup', 'network'].includes(step.id)).every(step => !step.required)).toBe(true);
+  saveConnectionSecrets(config, { resticRepository: 's3:example/patrick', resticPassword: 'restic-password-value', limaInstance: 'patrick-local', githubShortcutStatus: '状态', githubShortcutConnect: '连接', githubShortcutDisconnect: '断开' });
+  expect(config.networkFile).toContain('network-targets.json');
+  expect(config.resticPassword).toBe('restic-password-value');
+  const reloaded = readConfig({ PATRICK_MODE: 'live', PATRICK_DATA_DIR: config.dataDir, PATRICK_TOKEN: 'test-owner-token-at-least-32-characters' });
+  expect(reloaded.limaInstance).toBe('patrick-local');
+  expect(reloaded.resticPassword).toBe('restic-password-value');
   expect(commandOnPath('grok', '/usr/bin', path => path === '/usr/bin/grok')).toBe(true);
   expect(commandOnPath('../grok', '/usr/bin', () => true)).toBe(false);
 });
