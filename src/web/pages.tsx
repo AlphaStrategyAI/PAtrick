@@ -192,6 +192,16 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
     <header class="weekly-reflection-heading"><div><p class="eyebrow">ONE DECISION, IN RETROSPECT</p><h2 id="weekly-reflection-title">每周回看</h2></div><span class="metadata">近七天 · 来自 {report.sampleSize} 个有效案例</span></header>
     <p class="small-label">当时，你的决定</p>
     <blockquote>{focus.case.originalWords}</blockquote>
+    <section aria-label="每周教训">
+      <h3>当时依据的规则</h3>
+      {focus.lesson.usedRules.length ? <ul class="content-list">{focus.lesson.usedRules.map(rule => <li><strong>{rule.title} · v{rule.version}</strong><p>适用范围：{rule.conditions || '未记录'}</p></li>)}</ul> : <p>当时未引用个人规则</p>}
+      <h3>后来的结果</h3>
+      <p>{focus.lesson.result ?? '待观察，尚无回执结果。'}</p>
+      <h3>当时没有写下的条件</h3>
+      {focus.lesson.overlooked.length ? <ul class="content-list">{focus.lesson.overlooked.map(item => <li>{item}</li>)}</ul> : <p>没有发现当时规则里缺少的已记录例外。</p>}
+      <h3>下次可以这样判断</h3>
+      <p>{focus.lesson.next}</p>
+    </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
     <p class="metadata">{report.metrics.maintenanceMinutes === null ? '本周维护时间尚未记录' : `本周已记录维护 ${report.metrics.maintenanceMinutes} 分钟`}{report.metrics.slowestRecordedMaintenance ? ` · 最长一次 ${report.metrics.slowestRecordedMaintenance.minutes} 分钟${report.metrics.slowestRecordedMaintenance.note ? `：${report.metrics.slowestRecordedMaintenance.note}` : ''}` : ''}{report.metrics.sourceExpansionPaused ? ' · 已暂停新增 GitHub 来源' : ''}</p>

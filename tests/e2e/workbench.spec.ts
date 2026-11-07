@@ -237,8 +237,11 @@ test('weekly reflection uses the scoped owner decision and keeps budget and conn
   const report = await (await request.get(`/api/reports/weekly?project=${project.id}`)).json();
   expect(report.focus).not.toBeNull();
   await page.goto(`/?project=${project.id}`);
-  await expect(page.getByRole('region', { name: '每周回看' })).toBeVisible();
-  await expect(page.getByRole('region', { name: '每周回看' })).toContainText('本周维护时间尚未记录');
+  const weekly = page.getByRole('region', { name: '每周回看' });
+  await expect(weekly).toBeVisible();
+  await expect(weekly).toContainText('本周维护时间尚未记录');
+  await expect(weekly.getByRole('heading', { name: '当时依据的规则', exact: true })).toBeVisible();
+  await expect(weekly.getByRole('heading', { name: '下次可以这样判断', exact: true })).toBeVisible();
   await page.goto(`/standards?project=${project.id}`);
   const reflection = page.getByRole('region', { name: '每周回看' });
   await expect(reflection).toBeVisible();
