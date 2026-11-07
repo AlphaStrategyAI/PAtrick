@@ -58,9 +58,10 @@ it('does not spend more than the original replay or count another project as the
 });
 
 it('states whether a recorded monthly replay can be tried without changing the principle', () => {
-  const base = { month: '2026-11', sampleSize: 1, ownerCorrections: 1, matchedSuggestions: 0, observedResults: 0, candidateId: 'observation', principle: 'unchanged' as const };
+  const base = { month: '2026-11', sampleSize: 1, ownerCorrections: 1, matchedSuggestions: 0, observedResults: 0, candidateId: 'observation', principle: 'unchanged' as const, ownerValue: false };
   expect(monthlyComparisonMessage(null)).toBe('还没有用留出案例做过本月对照。');
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 0, trial: 'none' })).toContain('还没有回答这些案例');
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'single-product' })).toContain('可以在本项目试用');
   expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'none' })).toContain('还不能试用');
+  expect(monthlyComparisonMessage({ ...base, candidateAnswers: 1, trial: 'none', ownerValue: true })).toContain('仍要你的真实决定');
 });
