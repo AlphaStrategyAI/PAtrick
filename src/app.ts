@@ -118,11 +118,16 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
     const value=await body(c),data=z.object({projectId:z.string().min(1),domain:z.string().optional(),requestId:z.string().uuid().optional(),title:z.string().trim().min(1).max(200),content:z.string().trim().min(1).max(1_000_000),externalId:z.string().optional(),kind:z.literal('manual').optional()}).strict().parse(value);
     const project=ownedProject(data.projectId,data.domain);
     const externalId=data.requestId?`mcp:${data.requestId}`:data.externalId??`manual:${randomUUID()}`;
-    const revision=data.requestId?digest({title:data.title,content:data.content}):undefined;
+    const current=!data.requestId&&data.externalId?store.list('sources').find(source=>source.projectId===project.id&&source.domain===project.domain&&source.kind==='manual'&&source.status==='active'&&(source.purpose??'task')==='task'&&store.sourceExternalIdMatches(source,externalId)):undefined;
+    if(current&&current.title===data.title&&current.content===data.content){
+      const task=store.list('tasks').find(item=>item.sourceId===current.id&&item.kind!=='reference_knowledge'&&item.status!=='cancelled');
+      return respond(c,{task,unchanged:true,message:'内容没有变化，沿用当前任务。'},task?`/tasks/${task.id}`:`/sources?project=${project.id}`);
+    }
+    const revision=data.requestId?digest({title:data.title,content:data.content}):current?digest({title:data.title,content:data.content,prior:current.revision}):undefined;
     if(data.requestId&&store.list('sources').some(source=>source.projectId===project.id&&source.domain===project.domain&&source.kind==='manual'&&store.sourceExternalIdMatches(source,externalId)&&source.revision!==revision))throw new DomainError('Request identity already used for different content.','request_conflict',409);
     try {
       const task=engine.ingest({projectId:data.projectId,title:data.title,content:data.content,kind:'manual',externalId,revision,authorId:config.ownerId,retention:'permanent'});
-      return respond(c,{task,message:'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
+      return respond(c,{task,message:current?'已按新材料处理一次。':'资料已接收，PAtrick 会继续处理。'},task?`/tasks/${task.id}`:'/');
     } catch(error) {
       if(error instanceof PrivacyCheckpointError&&data.requestId&&revision){
         const sourceId=stableId('source',{projectId:project.id,domain:project.domain},'manual',externalId,revision),taskId=stableId('task',sourceId),task=store.get('tasks',taskId);
