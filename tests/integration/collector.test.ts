@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync, unlinkSync, rmSync, utimesSync, statSync } 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
-import { SourceCollector } from '../../src/collector.js';
+import { createApp } from '../../src/app.js';
+import { fileScanNotice, SourceCollector } from '../../src/collector.js';
 import { Store } from '../../src/store.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { ingestSource } from '../../src/intake.js';
@@ -31,5 +32,33 @@ it('recovers a missed file event and withdraws a deleted source after complete s
     writeAtSameTime(original);await collector.scan();await collector.scan();
     expect(lineage()).toHaveLength(4);expect(new Set(lineage().map(s=>s.id)).size).toBe(4);expect(lineage().filter(s=>s.status==='active')).toHaveLength(1);
     expect(store.get('sources',source.id)?.status).toBe('withdrawn');
+  }finally{await collector.stop();store.close();rmSync(root,{recursive:true,force:true});}
+});
+it('keeps existing notes when a scan cannot read the directory and clears the notice after the next complete scan',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'patrick-collector-paused-')),store=new Store(':memory:'),config=readConfig({PATRICK_MODE:'demo'});configureDemo(config);
+  config.projects[0]!.sourceDir=root;
+  const engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch});const collector=new SourceCollector(store,config,engine);
+  const app=createApp({store,config,engine});
+  try{
+    writeFileSync(join(root,'idea.md'),'# 草稿恢复\n导出失败后应恢复草稿。');
+    await collector.scan();
+    const source=store.list('sources').find(item=>item.externalId==='file:idea.md')!;
+    expect(source.status).toBe('active');
+    expect(fileScanNotice(store,config.projects[0]!)).toBeUndefined();
+    store.save('projects',{...store.get('projects',source.projectId)!,sourceDir:join(root,'gone')});
+    await collector.scan();
+    expect(store.get('sources',source.id)?.status).toBe('active');
+    expect(fileScanNotice(store,config.projects[0]!)?.title).toBe('同步目录这次没有扫完');
+    const paused=await (await app.request('/')).text();
+    expect(paused).toContain('同步目录这次没有扫完');
+    expect(paused).toContain('已有资料保持有效');
+    expect(paused).toContain('#projects');
+    expect(await (await app.request('/sources')).text()).toContain('确认目录还在，并且可以读取');
+    store.save('projects',{...store.get('projects',source.projectId)!,sourceDir:root});
+    await collector.scan();
+    expect(fileScanNotice(store,config.projects[0]!)).toBeUndefined();
+    const recovered=await (await app.request('/sources')).text();
+    expect(recovered).toContain('最近一次扫描已完成');
+    expect(recovered).not.toContain('同步目录这次没有扫完');
   }finally{await collector.stop();store.close();rmSync(root,{recursive:true,force:true});}
 });
