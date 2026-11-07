@@ -4,7 +4,7 @@ import { html } from 'hono/html';
 import type { Child } from 'hono/jsx';
 import type { AppConfig, AuditEvent, DecisionCase, Entities, KnowledgeCard, Project, Rule, SourceRevision, Table, Task } from '../domain.js';
 import { billingMessage, policyBillingStatus, publicTask, publicAttempt, publicEvent, sourceCoverage, taskBillingStatus, type BillingStatuses } from '../readiness.js';
-import { commandOnPath, nextSetupStep, runnerLogins } from '../setup-guide.js';
+import { commandOnPath, nextSetupStep, runnerLogins, setupSteps } from '../setup-guide.js';
 import type { Store } from '../store.js';
 import { Badge, date, Empty, ExternalLink, Icon, type IconName, Monogram, money, PageHead, ProjectForm, relative, roleLabels, shortHash, sourceLabels, Status, statuses, terminalStatuses } from './components.js';
 import { QuestionForm, TaskDetail } from './task.js';
@@ -44,6 +44,7 @@ function Workbench({ context }: { context: ViewContext }) {
   const { scoped, project, href, url, config } = context;
   const reflection = project ? weeklyReport(context.store, { projectId: project.id, domain: project.domain }) : null;
   const nextStep = config.mode === 'live' ? nextSetupStep(config) : undefined;
+  const hostStep = config.mode === 'live' && !nextStep ? setupSteps(config).find(step => ['isolation', 'backup', 'network'].includes(step.id) && !step.done) : undefined;
   const all = scoped('tasks').filter(task => task.kind !== 'reference_knowledge').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const view = url.searchParams.get('view') ?? 'all';
   const tasks = all.filter(task => view === 'attention' ? ['awaiting_answer', 'blocked', 'retrying'].includes(task.status) : view === 'delivered' ? task.status === 'delivered' : true);
@@ -52,7 +53,7 @@ function Workbench({ context }: { context: ViewContext }) {
   const results = tasks.filter(task => terminalStatuses.has(task.status));
   const knowledge = scoped('cards').filter(card => card.status === 'active');
   const today = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
-  return <><PageHead eyebrow={today} title="工作台" description="让工作向前，把判断留给你。"><a href={href('/', { compose: '1' })} data-open="new-task-dialog" class="button button-primary"><Icon name="plus"/>新建任务</a></PageHead>{!project ? <section class="onboarding"><div class="onboarding-intro"><Badge tone="green">从一个真实项目开始</Badge><h2>把第一件事，<br/>交给 PAtrick<span>.</span></h2><p>连接资料、你的判断标准和目标仓库。PAtrick 会记录每一步，只把真正需要取舍的问题交给你。</p><ol><li><span>01</span><div><strong>定义工作范围</strong><p>选一个项目，明确允许修改的文件。</p></div></li><li><span>02</span><div><strong>核对连接状态</strong><p>配置运行器、可信检查和交付凭据。</p></div></li><li><span>03</span><div><strong>加入第一份材料</strong><p>从一段产品想法或讨论开始。</p></div></li></ol></div><div class="onboarding-form"><h3>创建你的第一个项目</h3><ProjectForm config={config} compact/></div></section> : <>{nextStep && <section class="inline-notice notice-warning" aria-label="继续完成设置"><Icon name="alert"/><div><strong>先完成：{nextStep.title}</strong><p>{nextStep.detail}</p><a class="button button-primary button-small" href={nextStep.href}>去完成<Icon name="arrow"/></a></div></section>}<section class="stats-row" aria-label="项目概况">{[
+  return <><PageHead eyebrow={today} title="工作台" description="让工作向前，把判断留给你。"><a href={href('/', { compose: '1' })} data-open="new-task-dialog" class="button button-primary"><Icon name="plus"/>新建任务</a></PageHead>{!project ? <section class="onboarding"><div class="onboarding-intro"><Badge tone="green">从一个真实项目开始</Badge><h2>把第一件事，<br/>交给 PAtrick<span>.</span></h2><p>连接资料、你的判断标准和目标仓库。PAtrick 会记录每一步，只把真正需要取舍的问题交给你。</p><ol><li><span>01</span><div><strong>定义工作范围</strong><p>选一个项目，明确允许修改的文件。</p></div></li><li><span>02</span><div><strong>核对连接状态</strong><p>配置运行器、可信检查和交付凭据。</p></div></li><li><span>03</span><div><strong>加入第一份材料</strong><p>从一段产品想法或讨论开始。</p></div></li></ol></div><div class="onboarding-form"><h3>创建你的第一个项目</h3><ProjectForm config={config} compact/></div></section> : <>{nextStep && <section class="inline-notice notice-warning" aria-label="继续完成设置"><Icon name="alert"/><div><strong>先完成：{nextStep.title}</strong><p>{nextStep.detail}</p><a class="button button-primary button-small" href={nextStep.href}>去完成<Icon name="arrow"/></a></div></section>}{hostStep && <section class="inline-notice" aria-label="运行环境还没配完"><Icon name="pause"/><div><strong>还可以完成：{hostStep.title}</strong><p>{hostStep.detail}</p><a class="button button-secondary button-small" href={hostStep.href}>去设置<Icon name="arrow"/></a></div></section>}<section class="stats-row" aria-label="项目概况">{[
     { label: '正在处理', value: all.filter(task => !terminalStatuses.has(task.status) && task.status !== 'awaiting_answer').length, icon: 'activity', note: '在各自的轨道上推进' },
     { label: '等你决定', value: all.filter(task => task.status === 'awaiting_answer').length, icon: 'spark', note: '真正需要你判断的事' },
     { label: '已交付', value: all.filter(task => task.status === 'delivered').length, icon: 'check', note: config.mode === 'demo' ? '已有演示回执' : '均有可核验的回执' },
