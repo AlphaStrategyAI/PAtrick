@@ -199,11 +199,22 @@ function CurrentCaseRules({ rules, context }: { rules: Rule[]; context: ViewCont
 function savedResearchKeys(context: ViewContext): string[] {
   return context.scoped('sources').filter(source => source.status === 'active' && source.externalId.startsWith('research:')).map(source => source.externalId.slice('research:'.length));
 }
+function WeeklyCounts({ report }: { report: NonNullable<ReturnType<typeof weeklyReport>> }) {
+  const metrics = report.metrics;
+  return <>
+    <p>本周拒绝了 {metrics.incorrectCitations} 条不在原文中的引文。</p>
+    <p>本周补扫找回了 {metrics.missedCaptures} 次监听没有报过的文件变化。</p>
+    <p>漏问未推断。误问未推断。</p>
+    <p>本周真实交付 {metrics.deliveredTasks} 项。</p>
+    <p>本周费用预留 {money(metrics.reservedCostUsd)}。这是按次预留，不是服务商账单。</p>
+    <p>{metrics.maintenanceMinutes === null ? '本周维护时间尚未记录' : `本周已记录维护 ${metrics.maintenanceMinutes} 分钟`}{metrics.slowestRecordedMaintenance ? ` · 最长一次 ${metrics.slowestRecordedMaintenance.minutes} 分钟${metrics.slowestRecordedMaintenance.note ? `：${metrics.slowestRecordedMaintenance.note}` : ''}` : ''}{metrics.sourceExpansionPaused ? ' · 已暂停新增 GitHub 来源' : ''}</p>
+  </>;
+}
 function WeekPanel({ context, reflection }: { context: ViewContext; reflection: ReturnType<typeof weeklyReport> | null }) {
-  if (reflection?.focus) return <WeeklyReflection report={reflection} context={context}/>;
+  if (reflection?.focus && canReadDecisionCase(reflection.focus.case, context)) return <WeeklyReflection report={reflection} context={context}/>;
   const judgment = context.project ? latestUnaskedJudgment(context.store, context.config, context.project) : undefined;
-  if (!judgment) return null;
-  return <section class="weekly-reflection surface" aria-label="未提问的判断"><header class="weekly-reflection-heading"><h2>本周没有向你提问</h2></header><p>下面是助手按原文直接处理的判断，不是你的决定。</p><blockquote>{judgment.summary}</blockquote><a class="text-link" href={context.href(`/tasks/${judgment.taskId}`)}>查看这次任务<Icon name="arrow"/></a></section>;
+  if (!judgment && !reflection) return null;
+  return <>{judgment && <section class="weekly-reflection surface" aria-label="未提问的判断"><header class="weekly-reflection-heading"><h2>本周没有向你提问</h2></header><p>下面是助手按原文直接处理的判断，不是你的决定。</p><blockquote>{judgment.summary}</blockquote><a class="text-link" href={context.href(`/tasks/${judgment.taskId}`)}>查看这次任务<Icon name="arrow"/></a></section>}{reflection && <section class="weekly-reflection surface" aria-label="本周统计"><header class="weekly-reflection-heading"><h2>本周统计</h2></header><WeeklyCounts report={reflection}/></section>}</>;
 }
 function WeeklyReflection({ report, context }: { report: ReturnType<typeof weeklyReport>; context: ViewContext }) {
   const focus = report.focus;
@@ -227,14 +238,12 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
       <p>{{ none: '没有需要另归类的分歧。', missed_fact: '你的原话包含一条当时没有被引用的原文。', preference: '当时引用的事实已经在，这次不同是偏好，不是新的事实。', rule_exception: '你的原话命中了当时规则已经写下的例外。', unresolved: '选择和初判不同，现有记录还不能归入漏事实、偏好或例外。' }[focus.lesson.disagreement.reason]}</p>
       <h3>业务结果</h3>
       <p>{focus.lesson.disagreement.effect === 'recorded' ? '回执已记下业务结果，不拿它改写当时的对照。' : '业务结果仍待观察，不从这次选择推断效果。'}</p>
-      <p>本周拒绝了 {report.metrics.incorrectCitations} 条不在原文中的引文。</p>
-      <p>本周补扫找回了 {report.metrics.missedCaptures} 次监听没有报过的文件变化。</p>
+      <WeeklyCounts report={report}/>
       <h3>本月对照</h3>
       <p>{monthlyComparisonMessage(report.monthly)}</p>
     </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
-    <p class="metadata">{report.metrics.maintenanceMinutes === null ? '本周维护时间尚未记录' : `本周已记录维护 ${report.metrics.maintenanceMinutes} 分钟`}{report.metrics.slowestRecordedMaintenance ? ` · 最长一次 ${report.metrics.slowestRecordedMaintenance.minutes} 分钟${report.metrics.slowestRecordedMaintenance.note ? `：${report.metrics.slowestRecordedMaintenance.note}` : ''}` : ''}{report.metrics.sourceExpansionPaused ? ' · 已暂停新增 GitHub 来源' : ''}</p>
     <footer><time datetime={focus.case.createdAt}>{date(focus.case.createdAt, true)}</time><a href={context.href(`/tasks/${focus.case.taskId}`)} class="text-link" data-task-link>回看这次决定<Icon name="arrow"/></a></footer>
   </section>;
 }

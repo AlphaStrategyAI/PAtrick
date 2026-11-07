@@ -15,5 +15,9 @@ it('shows this week’s unasked host judgment without calling it the owner’s d
     expect(html).toContain('本周没有向你提问');
     expect(html).toContain('不是你的决定');
     expect(html).not.toContain('当时，你的决定');
+    expect(html).toContain('漏问未推断。误问未推断。');
+    expect(html).toContain('本周真实交付');
+    expect(html).toContain('本周费用预留');
+    expect(html).toContain('这是按次预留，不是服务商账单。');
   } finally { await runtime.close(); }
 });
