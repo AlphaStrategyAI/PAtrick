@@ -2,6 +2,7 @@ import { recordLocalTests } from './experience-observations.js';
 import { takeHostTestRun } from './integrations/workers.js';
 import { randomUUID } from 'node:crypto';
 import { DomainError, SubscriptionAccessError, WorkerUnavailable, digest, now, stableId, type AppConfig, type Attempt, type Project, type Role, type Runner, type Task, type WorkerAdapter, type WorkerInput, type WorkerResult } from './domain.js';
+import { publicError } from './readiness.js';
 import { Store } from './store.js';
 import { assertBillingAuthorityBinding, billingSwitchInputHash, BillingAuthority } from './billing.js';
 
@@ -89,10 +90,15 @@ export class Scheduler {
   private block(task: Task, message: string, code: string): void {
     this.store.transaction(() => {
       const current = this.current(task); if (current.billingStop) return; const runAfter = new Date(Date.now() + 30_000).toISOString();
-      const notice = code === 'workers_unavailable' ? `${current.title}：当前没有可接这个角色的运行器。下次探测：${runAfter}。无需回答。` : `${current.title} · ${current.stage}: ${message} 下次探测：${runAfter}。无需回答。`;
-      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: code === 'workers_unavailable' ? code : message, updatedAt: now() });
+      const ownerMessage = code === 'workers_unavailable' ? publicError('workers_unavailable')! : code === 'budget_exhausted' ? publicError('budget_exhausted')! : message;
+      const notice = code === 'workers_unavailable'
+        ? `${current.title}：当前没有可接这个角色的运行器。下次探测：${runAfter}。无需回答。`
+        : code === 'budget_exhausted'
+          ? `${current.title}：${ownerMessage}`
+          : `${current.title} · ${current.stage}: ${message} 下次探测：${runAfter}。无需回答。`;
+      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: code === 'workers_unavailable' || code === 'budget_exhausted' ? code : message, updatedAt: now() });
       this.notify(task, stableId('blocked', task.id, task.version, task.stage, current.attempts), notice);
-      this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type: code, message: code === 'workers_unavailable' ? '当前没有可接这个角色的运行器。任务已保留，到点会再探测。这不需要你回答。' : message, createdAt: now(), data: { runAfter } });
+      this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type: code, message: ownerMessage, createdAt: now(), data: { runAfter } });
     });
   }
   private notify(task: Task, id: string, text: string): void {
