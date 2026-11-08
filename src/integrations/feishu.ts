@@ -5,7 +5,7 @@ import { DomainError, digest, now, stableId, type AppConfig, type NotificationAd
 import type { Workbench } from '../orchestrator.js';
 import type { Store } from '../store.js';
 import { canExport } from '../permissions.js';
-import { admitOriginalOwnerDecision, clearNativeDecision } from '../cases.js';
+import { admitOriginalOwnerDecision, clearNativeDecision, looksLikeNativeRevision } from '../cases.js';
 import { knowledgeSourceRefs } from '../knowledge-records.js';
 
 type Json = Record<string, any>;
@@ -132,7 +132,8 @@ export class FeishuChannel implements NotificationAdapter {
         const binding = { schemaVersion: 1 as const, provider: 'feishu' as const, tenant: f.appId, chatId: f.chatId!, messageId, nativeRevision: revision, ownerId: this.config.ownerId, principal: sender.sender_id.open_id as string, nativeTime: time, receiveId: id, receivedAt, nativeBodyHash: digest(text), businessBodyHash: digest(source.content), source: { id: source.id, revision: source.revision }, sourceRefs, projectId: source.projectId, domain: source.domain };
         const originId = stableId('decision.owner-origin', binding.tenant, binding.chatId, binding.messageId, binding.nativeRevision, source.id), hash = digest(binding);
         this.store.save('actions', { projectId: source.projectId, domain: source.domain, id: originId, kind: 'decision.owner-origin', status: 'completed', payload: { binding, hash, sourceRefs }, updatedAt: receivedAt });
-        admitOriginalOwnerDecision(this.store, this.config, { id: originId, hash }, { source: binding.source, quote: source.content, scopeQuote: clear.scopeQuote, declaredScope: { projectId: source.projectId, domain: source.domain } });
+        try { admitOriginalOwnerDecision(this.store, this.config, { id: originId, hash }, { source: binding.source, quote: source.content, scopeQuote: clear.scopeQuote, declaredScope: { projectId: source.projectId, domain: source.domain } }); }
+        catch (error) { if (!(error instanceof DomainError) || error.code !== 'invalid_owner_declaration' || !looksLikeNativeRevision(source.content)) throw error; }
       }
     });
   }
