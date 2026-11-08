@@ -36,7 +36,7 @@ export function Monogram() {
 }
 export const statuses: Record<TaskStatus, string> = { queued: '等待处理', extracting: '整理证据', deciding: '形成判断', researching: '查证资料', awaiting_answer: '等你决定', planning: '制定方案', executing: '执行中', checking: '独立检查', publishing: '验证交付', feedback: '整理反馈', delivered: '已交付', completed: '已整理', archived: '已归档', blocked: '暂时阻塞', retrying: '等待重试', cancelled: '已取消' };
 export const roleLabels: Record<string, string> = { knowledge_extract: '知识整理', case_extract: '标准提取', decide: '初判', plan: '规划', execute: '执行', check: '检查', feedback: '反馈', research: '双语查证', delivery: '交付验证' };
-export const sourceLabels: Record<string, string> = { file: '同步文件', feishu: '飞书', github: 'GitHub', conversation: '对话', manual: '手动输入', reading: '阅读', email: '邮箱' };
+export const sourceLabels: Record<string, string> = { file: '同步文件', feishu: '飞书', github: 'GitHub', gitlab: 'GitLab', conversation: '对话', manual: '手动输入', reading: '阅读', email: '邮箱' };
 export const terminalStatuses = new Set<TaskStatus>(['delivered', 'completed', 'archived', 'cancelled']);
 export function relative(value: string): string {
   const elapsed = Math.max(0, Date.now() - new Date(value).getTime());

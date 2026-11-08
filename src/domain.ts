@@ -34,7 +34,7 @@ export interface Project extends Scope {
   reviewIntervalDays?: number; ownerId: string; autoMerge: boolean; budgetUsd: number; executionRunner?: 'grok' | 'dsh'; sourceDir?: string; createdAt: string;
 }
 export interface SourceRevision extends Scope {
-  purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'conversation' | 'manual' | 'reading' | 'email';
+  purpose?: 'task' | 'reference'; id: string; kind: 'file' | 'feishu' | 'github' | 'gitlab' | 'conversation' | 'manual' | 'reading' | 'email';
   /** Host-recorded Vault dependencies; editable projections cannot replace these edges. */
   parentSources?: { id: string; revision: string }[];
   externalId: string; revision: string; title: string; content: string; locator: string;
