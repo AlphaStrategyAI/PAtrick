@@ -1,0 +1,42 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { now, type AppConfig, type Project } from '../../src/domain.js';
+import { caseVersions } from '../../src/cases.js';
+import { FeishuChannel } from '../../src/integrations/feishu.js';
+import { publishKnowledge } from '../../src/knowledge.js';
+import { Workbench } from '../../src/orchestrator.js';
+import { Store } from '../../src/store.js';
+
+const roots: string[] = [];
+const stores: Store[] = [];
+afterEach(() => { stores.splice(0).forEach(store => store.close()); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+
+it('counts one owner decision when a document and a tool conversation repeat it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'decision-mirror-'));
+  roots.push(root);
+  const store = new Store(join(root, 'db.sqlite'), join(root, 'vault'));
+  stores.push(store);
+  const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: '笔记', description: '', repository: 'owner/repo', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], trustedChecks: ['validate'], trustedAppIds: [7], ownerId: 'owner', autoMerge: false, budgetUsd: 1, createdAt: now() };
+  store.save('projects', project);
+  const declaration = '我决定仅本产品保留草稿到下次成功导出';
+  const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: root, vaultDir: join(root, 'vault'), ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project], workers: {}, scanIntervalMs: 1000, runnerPolicies: [], feishu: { appId: 'app', appSecret: 'test', ownerOpenId: 'owner-open', chatId: 'owner-chat' } };
+  const engine = new Workbench({ store, config, workers: [], writer: { async baseline() { return 'baseline'; }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
+  const channel = new FeishuChannel(store, config, engine, { im: { message: { async list() { return { code: 0, data: { items: [], has_more: false } }; }, async create() { throw new Error('unused'); } } } });
+  await channel.receive({ sender: { sender_type: 'user', sender_id: { open_id: 'owner-open' } }, message: { message_id: 'native-1', chat_id: 'owner-chat', message_type: 'text', create_time: '1000', update_time: '1000', content: JSON.stringify({ text: declaration }) } });
+  const document = `产品说明\n${declaration}\n导出失败后先问本人。`;
+  const prd = engine.ingest({ projectId: 'p', kind: 'manual', externalId: 'prd', title: 'PRD', content: document })!;
+  const conversation = engine.ingest({ projectId: 'p', kind: 'conversation', externalId: 'codex:session:1', title: '工具对话', content: declaration })!;
+  const mention = (quote: string, locator: string) => ({ quote, locator, title: '复述', choiceText: quote, rationale: null, alternatives: [] as string[] });
+  const prdSource = store.get('sources', prd.sourceId)!;
+  const conversationSource = store.get('sources', conversation.sourceId)!;
+  publishKnowledge(store, prdSource, { cards: [{ title: '说明', body: '已有决定。', quote: declaration, aliases: [], verification: 'reported', kind: 'fact' }], caseMentions: [mention(declaration, prdSource.locator), mention('导出失败后先问本人。', prdSource.locator)] }, config);
+  publishKnowledge(store, conversationSource, { cards: [{ title: '对话', body: '复述决定。', quote: declaration, aliases: [], verification: 'reported', kind: 'fact' }], caseMentions: [mention(declaration, conversationSource.locator)] }, config);
+  const versions = caseVersions(store, config, project);
+  expect(versions.filter(item => item.choiceText.trim() === declaration)).toHaveLength(1);
+  expect(versions.filter(item => item.authority === 'owner-explicit')).toHaveLength(1);
+  expect(versions.some(item => item.choiceText === '导出失败后先问本人。')).toBe(true);
+  expect(store.list('rules').filter(rule => rule.kind === 'principle')).toHaveLength(1);
+  expect(store.list('events').filter(event => event.message === '这份资料复述了已经记下的决定，不再另建一条。')).toHaveLength(2);
+});

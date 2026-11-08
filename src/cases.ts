@@ -296,6 +296,7 @@ export function applicableOriginalPrinciple(store: Store, config: AppConfig, rul
 
 /** Model mentions remain unresolved unless their exact native original is already bound by the producer. */
 export function captureSourceCaseMentions(store: Store, config: AppConfig, source: SourceRevision, mentions: CaseMention[], at = new Date()): CaseRef[] {
+  const recorded = caseVersions(store, config, source, at).filter(item => item.authority === 'owner-explicit' && (item.original.kind === 'authenticated-message' || item.original.kind === 'question'));
   return store.transaction(() => {
     const current = store.get('sources', source.id), project = store.get('projects', source.projectId);
     if (!current || !project || project.ownerId !== config.ownerId || !sameScope(current, source) || current.revision !== source.revision || digest(current.content) !== digest(source.content) || mentions.length > 20) throw new DomainError('Case extraction refers to an obsolete source.', 'stale_source', 409);
@@ -306,6 +307,14 @@ export function captureSourceCaseMentions(store: Store, config: AppConfig, sourc
       if (!span) return [];
       const origin = authenticatedOriginalDecisionOrigins(store, config, { id: source.id, revision: source.revision })[0], clear = clearNativeDecision(source.content);
       if (origin && clear && mention.quote === source.content) return [admitOriginalOwnerDecision(store, config, origin, { source: { id: source.id, revision: source.revision }, quote: source.content, scopeQuote: clear.scopeQuote, declaredScope: { projectId: source.projectId, domain: source.domain } }, at)];
+      const mirror = recorded.find(item => item.choiceText.trim() === mention.quote.trim());
+      const mirrored = mirror && store.get('actions', stableId('decision.case-version', mirror.id, mirror.version, mirror.hash));
+      const mirroredCase = mirrored?.payload.case as CanonicalCaseVersion | undefined;
+      if (mirrored?.kind === 'decision.case-version' && mirrored.status === 'completed' && mirroredCase?.authority === 'owner-explicit' && mirroredCase.choiceText.trim() === mention.quote.trim()) {
+        const eventId = stableId('decision-mirror', source.id, mirroredCase.id);
+        if (!store.get('events', eventId)) store.save('events', { id: eventId, projectId: source.projectId, domain: source.domain, type: 'decision.mirrored', message: '这份资料复述了已经记下的决定，不再另建一条。', data: { sourceId: source.id, caseId: mirroredCase.id }, createdAt: at.toISOString() });
+        return [{ id: mirroredCase.id, version: mirroredCase.version, hash: mirroredCase.hash }];
+      }
       const fragment = stableId('source-fragment', source.id, source.locator, span.start, span.end), id = stableId('canonical-case', source.projectId, source.domain, 'source-fragment', fragment);
       const previous = caseVersions(store, config, source).filter(value => value.id === id).sort((a, b) => b.version - a.version)[0];
       if (previous) return [{ id, version: previous.version, hash: previous.hash }];
