@@ -579,7 +579,9 @@ export class Workbench {
     const urls = new Set(research.queries.flatMap(query => query.sources.flatMap(source => [source.url, source.canonicalUrl])));
     if (q.A.description === q.B.description || q.A.label === q.B.label || [q.A, q.B].some(suggestion => suggestion.evidenceUrls.some(url => !urls.has(url)))) throw new DomainError('Two distinct recommendations must cite the opened research sources.', 'invalid_recommendations');
     const uncertainty = this.researchUncertainty(research);
-    const context = uncertainty ? `${q.context}\n${uncertainty}` : q.context;
+    const standards = applicableRules(this.store, task, this.config).filter(rule => rule.kind === 'principle').map(rule => rule.statement.trim()).filter(Boolean);
+    const uncertain = decision.grounds.unresolved.map(item => item.text.trim()).filter(Boolean);
+    const context = [q.context, uncertainty, standards.length ? `你已有的标准：${standards.join('；')}` : '', uncertain.length ? `仍不确定：${uncertain.join('；')}` : '', standards.length || uncertain.length ? '下面两条是建议，不是你的决定。' : ''].filter(Boolean).join('\n');
     const version = this.store.list('questions').filter(question => question.taskId === task.id).length + 1;
     const question: Question = { id: stableId('question', task.id, task.version, version), projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, version, ownerId: project.ownerId, title: q.title, context, options: { A: structuredClone(q.A), B: structuredClone(q.B) }, research: structuredClone(research), status: 'open', createdAt: now(), decisionSnapshotId };
     this.store.save('questions', question); this.advance(task, 'decide', { status: 'awaiting_answer', decision, decisionSnapshotId, questionId: question.id });
