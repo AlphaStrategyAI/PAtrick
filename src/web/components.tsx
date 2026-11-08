@@ -1,5 +1,7 @@
 import type { Child } from 'hono/jsx';
 import type { AppConfig, Project, Task, TaskStatus } from '../domain.js';
+import type { WorkspaceSetup } from '../workspace-setup.js';
+import { DEFAULT_ALLOWED_PATHS, DEFAULT_PRD_PATH } from '../workspace-setup.js';
 
 export type IconName = 'grid' | 'book' | 'standards' | 'source' | 'activity' | 'settings' | 'search' | 'plus' | 'chevron' | 'arrow' | 'arrowUp' | 'close' | 'check' | 'clock' | 'file' | 'link' | 'more' | 'menu' | 'spark' | 'shield' | 'refresh' | 'pause' | 'external' | 'command' | 'layers' | 'alert' | 'logout';
 const paths: Record<IconName, Child> = {
@@ -86,11 +88,11 @@ export function ProjectForm({ config, compact = false }: { config: AppConfig; co
     <label>执行首选<select name="executionRunner"><option value="grok">Grok Build</option><option value="dsh">DeepSeek Harness</option></select><span class="field-hint">不可用时切换到同一数据域内已准入的备选。检查优先使用与实际执行不同的运行器。</span></label>
     <label>目标仓库<input name="repository" required placeholder="owner/repository"/><span class="field-hint">GitHub 填写 owner/repo；GitLab 可填写带子组的项目路径。</span></label>
     <div class="form-grid">
-      <label>PRD 路径<input name="prdPath" required value="docs/PRD.md"/></label>
+      <label>PRD 路径<input name="prdPath" required value="docs/requirements/PRD.md"/><span class="field-hint">默认主文件；docs/requirements 与 docs/designs 下文档均视为 PRD 范围。</span></label>
       <label>单任务预算（USD）<input name="budgetUsd" type="number" min="0" max="10000" step="0.01" required value="0"/><span class="field-hint">0 将阻止需要费用预留的运行器；订阅权限仍需单独核验。</span></label>
     </div>
     <label>结果复核间隔（天）<input name="reviewIntervalDays" type="number" min="1" max="365" step="1" value="7" required/><span class="field-hint">默认 7 天，可设为 1–365 天。每次初判保存当时的间隔；之后调整不改写历史安排。</span></label>
-    <label>允许修改的路径<textarea name="allowedPaths" rows={2} required placeholder="docs/PRD.md"/><span class="field-hint">每行一个路径；目录以 / 结尾。</span></label>
+    <label>允许修改的路径<textarea name="allowedPaths" rows={2} required placeholder={"docs/requirements/\ndocs/designs/"}/><span class="field-hint">每行一个路径；目录以 / 结尾。默认覆盖 requirements 与 designs。</span></label>
     <label>可信必需检查<textarea name="trustedChecks" rows={2} placeholder="例如：validate-prd"/><span class="field-hint">只接受当前提交中通过的检查。每行一个检查名称；启用自动合并时必填。</span></label>
     <label>可信 CI 身份 ID<textarea name="trustedAppIds" rows={2} inputmode="numeric" placeholder="例如：15368, 24680"/><span class="field-hint">GitHub 使用可信 CI App ID；GitLab 使用可信流水线服务用户 ID。填写正整数，以逗号或换行分隔；启用自动合并时必填。</span></label>
     <label>同步目录（可选）<input name="sourceDir" placeholder="例如：/Users/me/productIdeas"/><span class="field-hint">填写本机获准采集的绝对路径；留空时可先手动加入资料。</span></label>
@@ -98,6 +100,57 @@ export function ProjectForm({ config, compact = false }: { config: AppConfig; co
     <p class="form-note"><Icon name="shield"/>连接凭据通过服务配置和环境变量管理。{config.mode === 'demo' ? '此处仅修改演示项目。' : '项目创建后仍需核对配置，并完成真实链路验证。'}</p>
     <button type="submit" class="button button-primary">{compact ? '创建第一个项目' : '创建项目'}<Icon name="arrow"/></button>
   </form>;
+}
+
+export function OnboardingWizard({ config, setup }: { config: AppConfig; setup: WorkspaceSetup }) {
+  const step = !setup.ideasGithub ? 1 : !setup.githubRoot ? 2 : 3;
+  const tokenHint = (ready: boolean) => ready ? '已保存。留空则不修改。' : '访问私有仓库时需要。';
+  return <section class="onboarding onboarding-wizard" data-onboarding-wizard data-step={String(step)}>
+    <div class="onboarding-intro">
+      <Badge tone="green">三步进入七层链路</Badge>
+      <h2>先把入口接上，<br/>再进入工作台<span>.</span></h2>
+      <p>配置想法采集、开发仓库根目录和飞书交互。完成后即可跑通采集 → 知识 → 标准 → 初判 → 规划执行检查 → 回执反馈。</p>
+      <ol>
+        <li class={step === 1 ? 'is-current' : step > 1 ? 'is-done' : ''}><span>01</span><div><strong>自动采集输入</strong><p>想法仓库路径，填写后立即检查访问。</p></div></li>
+        <li class={step === 2 ? 'is-current' : step > 2 ? 'is-done' : ''}><span>02</span><div><strong>开发项目根目录</strong><p>扫描并创建落地仓库；PRD 默认在 docs/requirements 与 docs/designs。</p></div></li>
+        <li class={step === 3 ? 'is-current' : ''}><span>03</span><div><strong>交互设置</strong><p>飞书鉴权，并自动验证发送与历史读取。</p></div></li>
+      </ol>
+    </div>
+    <div class="onboarding-form">
+      <div class="wizard-panels">
+        <form method="post" action="/api/setup/ideas" class={`stack-form wizard-panel ${step === 1 ? 'is-active' : ''}`} data-api-form data-wizard-step="1" hidden={step !== 1}>
+          <div class="form-error" role="alert" hidden/>
+          <h3>第一步 · 自动采集输入</h3>
+          <p class="muted">填写各类想法项目的远程路径。保存前会自动检查是否可访问。</p>
+          <label>GitHub 令牌（私有仓库需要）<input name="githubToken" type="password" autocomplete="new-password" placeholder={tokenHint(!!config.githubToken)}/><span class="field-hint">只保存在本机；公开仓库可不填。</span></label>
+          <label>想法项目 GitHub 路径<input name="ideasGithub" required value={setup.ideasGithub} placeholder="owner/productIdeas" data-probe-provider="github" data-probe-target="ideas-github-status"/><span class="field-hint" id="ideas-github-status" data-probe-status>填写 owner/repo，失焦后自动检查。</span></label>
+          <label>想法项目 GitLab 路径（可选）<input name="ideasGitlab" value={setup.ideasGitlab} placeholder="group/productIdeas" data-probe-provider="gitlab" data-probe-target="ideas-gitlab-status"/><span class="field-hint" id="ideas-gitlab-status" data-probe-status>可稍后在设置页补填。</span></label>
+          <label>GitLab 令牌（可选）<input name="gitlabToken" type="password" autocomplete="new-password" placeholder={tokenHint(!!config.gitlabToken)}/></label>
+          <div class="form-actions"><button type="submit" class="button button-primary">检查并进入下一步<Icon name="arrow"/></button></div>
+        </form>
+        <form method="post" action="/api/setup/roots" class={`stack-form wizard-panel ${step === 2 ? 'is-active' : ''}`} data-api-form data-wizard-step="2" hidden={step !== 2}>
+          <div class="form-error" role="alert" hidden/>
+          <h3>第二步 · 开发项目根目录</h3>
+          <p class="muted">根目录下的仓库会自动导入为项目。每个项目默认 PRD 范围为 <code>{DEFAULT_ALLOWED_PATHS.join(' · ')}</code>，主文件 <code>{DEFAULT_PRD_PATH}</code>。</p>
+          <label>GitHub 根目录<input name="githubRoot" required value={setup.githubRoot} placeholder="AlphaStrategyAI" data-root-provider="github" data-probe-target="github-root-status"/><span class="field-hint" id="github-root-status" data-probe-status>填写组织或用户名，失焦后统计可导入仓库数。</span></label>
+          <label>GitLab 根目录（可选）<input name="gitlabRoot" value={setup.gitlabRoot} placeholder="my-group" data-root-provider="gitlab" data-probe-target="gitlab-root-status"/><span class="field-hint" id="gitlab-root-status" data-probe-status>可稍后在设置页补填。</span></label>
+          <input type="hidden" name="create" value="on"/>
+          <div class="form-actions"><button type="submit" class="button button-primary">扫描并创建项目<Icon name="arrow"/></button></div>
+        </form>
+        <form method="post" action="/api/setup/feishu" class={`stack-form wizard-panel ${step === 3 ? 'is-active' : ''}`} data-api-form data-wizard-step="3" data-success-url="/" hidden={step !== 3}>
+          <div class="form-error" role="alert" hidden/>
+          <h3>第三步 · 交互设置</h3>
+          <p class="muted">填写飞书应用后自动验证发送与历史读取。验证通过即进入工作台。</p>
+          <label>飞书应用 ID<input name="appId" required autocomplete="off" value={config.feishu?.appId ?? ''} placeholder="cli_..."/><span class="field-hint">飞书开放平台中的 App ID。</span></label>
+          <label>名字<input name="ownerName" required autocomplete="off" value={setup.feishuOwnerName} placeholder="你的名字"/><span class="field-hint">用于测试消息署名与本地记录。</span></label>
+          <label>App Secret<input name="appSecret" type="password" required={!config.feishu?.appSecret} autocomplete="new-password" placeholder={config.feishu?.appSecret ? '已保存。留空则不修改。' : '应用密钥'}/></label>
+          <label>本人 Open ID<input name="ownerOpenId" required autocomplete="off" value={config.feishu?.ownerOpenId ?? ''} placeholder="ou_..."/><span class="field-hint">用于私聊发送与接收验证。</span></label>
+          <label>私聊 Chat ID（可选）<input name="chatId" autocomplete="off" value={config.feishu?.chatId ?? ''} placeholder="可留空，发送后自动解析"/><span class="field-hint">若自动解析失败，可稍后在设置页补填。</span></label>
+          <div class="form-actions"><button type="submit" class="button button-primary">验证并进入工作台<Icon name="arrow"/></button></div>
+        </form>
+      </div>
+    </div>
+  </section>;
 }
 export function SourceMeta({ project, source, revision }: { project?: Project; source: string; revision?: string }) {
   return <span class="source-meta"><Icon name="file"/>{project?.name ?? source}{revision && <span class="mono">@{shortHash(revision)}</span>}</span>;

@@ -245,8 +245,8 @@ test('project creation accepts repository service, trusted CI identities and opt
   await form.getByRole('combobox', { name: '仓库服务', exact: true }).selectOption('gitlab');
   await form.getByRole('combobox', { name: /^执行首选/ }).selectOption('dsh');
   await form.getByLabel('目标仓库').fill('team/subgroup/notes');
-  await form.getByLabel('PRD 路径', { exact: true }).fill('docs/PRD.md');
-  await form.getByLabel('允许修改的路径').fill('docs/PRD.md');
+  await form.locator('input[name="prdPath"]').fill('docs/PRD.md');
+  await form.locator('textarea[name="allowedPaths"]').fill('docs/PRD.md');
   await form.getByLabel('可信必需检查').fill('validate-prd');
   await form.getByLabel('可信 CI 身份 ID').fill('101, 202\n303');
   await form.getByLabel('同步目录（可选）').fill(sourceDir);
@@ -278,7 +278,8 @@ test('project creation persists the default zero-dollar spending cap after setti
   await expect(form).toContainText('0 将阻止需要费用预留的运行器；订阅权限仍需单独核验。');
   await form.getByLabel('项目名称', { exact: true }).fill(name);
   await form.getByLabel('目标仓库').fill('owner/zero-cap');
-  await form.getByLabel('允许修改的路径').fill('docs/PRD.md');
+  await form.locator('input[name="prdPath"]').fill('docs/requirements/PRD.md');
+  await form.locator('textarea[name="allowedPaths"]').fill('docs/requirements/\ndocs/designs/');
   expect(await budget.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(true);
   expect(await form.evaluate((element: HTMLFormElement) => element.checkValidity())).toBe(true);
   await form.getByRole('button', { name: '创建项目', exact: true }).click();

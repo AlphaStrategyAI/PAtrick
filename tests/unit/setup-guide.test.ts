@@ -22,7 +22,7 @@ it('saves connection secrets on this machine and does not replace them with a bl
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it('guides the first launch through project, credential, Feishu, and an installed runner', () => {
+it('guides the first launch through project, credential and Feishu before optional runners', () => {
   const config = readConfig({ PATRICK_MODE: 'live', PATRICK_DATA_DIR: mkdtempSync(join(tmpdir(), 'patrick-setup-live-')), PATRICK_TOKEN: 'test-owner-token-at-least-32-characters' });
   const installed = { grok: false, codex: false, dsh: false };
   expect(nextSetupStep(config, installed)?.id).toBe('project');
@@ -30,9 +30,9 @@ it('guides the first launch through project, credential, Feishu, and an installe
   expect(nextSetupStep(config, installed)?.id).toBe('repository');
   config.githubToken = 'github-token-value';
   expect(nextSetupStep(config, installed)?.id).toBe('feishu');
-  config.feishu = { appId: 'cli_app', appSecret: 'feishu-secret-value', ownerOpenId: 'ou_owner' };
-  expect(nextSetupStep(config, installed)?.id).toBe('runner');
-  expect(nextSetupStep(config, { grok: true, codex: false, dsh: false })).toBeUndefined();
+  config.feishu = { appId: 'cli_app', appSecret: 'feishu-secret-value', ownerOpenId: 'ou_owner', chatId: 'oc_chat' };
+  expect(nextSetupStep(config, installed)).toBeUndefined();
+  expect(setupSteps(config, installed).find(step => step.id === 'runner')?.required).toBe(false);
   expect(setupSteps(config, { grok: true, codex: false, dsh: false }).find(step => step.id === 'research')?.required).toBe(false);
   expect(setupSteps(config).filter(step => ['isolation', 'backup', 'network'].includes(step.id)).every(step => !step.required)).toBe(true);
   saveConnectionSecrets(config, { resticRepository: 's3:example/patrick', resticPassword: 'restic-password-value', limaInstance: 'patrick-local', githubShortcutStatus: '状态', githubShortcutConnect: '连接', githubShortcutDisconnect: '断开' });
