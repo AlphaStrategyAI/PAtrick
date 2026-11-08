@@ -563,12 +563,23 @@ export class Workbench {
     for (const language of ['zh', 'en']) if (!record.queries.some(q => q.language === language && q.sources.length) && !record.gaps.length) throw new DomainError('A missing-language evidence gap must be explicit.', 'insufficient_research');
   }
 
+  private researchUncertainty(research: ResearchRecord): string {
+    const opened = (language: 'zh' | 'en') => research.queries.some(query => query.language === language && query.sources.some(source => source.primary && source.excerpt.trim()));
+    const missing = (['zh', 'en'] as const).filter(language => !opened(language));
+    if (!research.gaps.length && !missing.length) return '';
+    const lines = ['查证仍有缺口。下面两个建议可以参考，但不是完整结论。'];
+    if (missing.includes('zh')) lines.push('中文没有打开到可靠原文。');
+    if (missing.includes('en')) lines.push('英文没有打开到可靠原文。');
+    return lines.join('\n');
+  }
   private openQuestion(task: Task, project: Project, decision: ReturnType<typeof decisionSchema.parse>, research: ResearchRecord, decisionSnapshotId: string): void {
     const q = decision.question!;
     const urls = new Set(research.queries.flatMap(query => query.sources.flatMap(source => [source.url, source.canonicalUrl])));
     if (q.A.description === q.B.description || q.A.label === q.B.label || [q.A, q.B].some(suggestion => suggestion.evidenceUrls.some(url => !urls.has(url)))) throw new DomainError('Two distinct recommendations must cite the opened research sources.', 'invalid_recommendations');
+    const uncertainty = this.researchUncertainty(research);
+    const context = uncertainty ? `${q.context}\n${uncertainty}` : q.context;
     const version = this.store.list('questions').filter(question => question.taskId === task.id).length + 1;
-    const question: Question = { id: stableId('question', task.id, task.version, version), projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, version, ownerId: project.ownerId, title: q.title, context: q.context, options: { A: structuredClone(q.A), B: structuredClone(q.B) }, research: structuredClone(research), status: 'open', createdAt: now(), decisionSnapshotId };
+    const question: Question = { id: stableId('question', task.id, task.version, version), projectId: task.projectId, domain: task.domain, taskId: task.id, taskVersion: task.version, version, ownerId: project.ownerId, title: q.title, context, options: { A: structuredClone(q.A), B: structuredClone(q.B) }, research: structuredClone(research), status: 'open', createdAt: now(), decisionSnapshotId };
     this.store.save('questions', question); this.advance(task, 'decide', { status: 'awaiting_answer', decision, decisionSnapshotId, questionId: question.id });
     this.enqueue(task, stableId('question-notice', question.id), `${question.title}\n${question.context}\nA · ${q.A.label}: ${q.A.description}\n依据：${q.A.rationale}\n代价：${q.A.tradeoff}\n${q.A.evidenceUrls.join('\n')}\nB · ${q.B.label}: ${q.B.description}\n依据：${q.B.rationale}\n代价：${q.B.tradeoff}\n${q.B.evidenceUrls.join('\n')}\nC · 我自己决定（自由输入）\n问题 ${question.id} · 版本 ${question.version}`);
   }
