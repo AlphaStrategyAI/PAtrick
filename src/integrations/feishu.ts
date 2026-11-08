@@ -120,6 +120,8 @@ export class FeishuChannel implements NotificationAdapter {
         if (!(error instanceof DomainError) && !(error instanceof ZodError)) throw error;
         this.reply(scope, messageId, revision, `未接纳这条指令：${error instanceof ZodError ? error.issues.map(issue => issue.message).join('；') : error.message}`);
       }
+      // The answer is already kept. Leave this receipt pending so the same message can finish the source later.
+      if (this.pendingAnswerSource(text, message)) return;
       const receivedAt = now(), directOriginal = !message.parent_id && !message.root_id;
       const receiptScope = sourceIds.length ? this.store.get('sources', sourceIds[0]!) ?? scope : scope;
       this.store.save('actions', { projectId: receiptScope.projectId, domain: receiptScope.domain, id, kind: 'feishu_receive', status: 'completed', payload: { messageId, chatId: f.chatId, revision, sourceIds, ownerId: this.config.ownerId, principal: sender.sender_id.open_id, nativeTime: time, nativeBodyHash: digest(text), directOriginal }, updatedAt: receivedAt });
@@ -246,6 +248,14 @@ export class FeishuChannel implements NotificationAdapter {
     return task ? [task.sourceId] : [];
   }
 
+  private pendingAnswerSource(text: string, message: Json): boolean {
+    const explicit = text.match(/^\/answer\s+(\S+)\s+(\d+)\.(\d+)\s+([ABC])/i);
+    const replyChoice = text.match(/^\s*([ABC])(?:\s+([\s\S]*))?\s*$/i);
+    const question = explicit ? this.store.get('questions', explicit[1]!) : replyChoice ? this.questionForRemote(message.parent_id ?? message.root_id) : undefined;
+    if (!question || question.status !== 'answered' || !question.answer) return false;
+    const source = this.store.get('sources', stableId('owner-answer', question.id));
+    return !source || source.status !== 'active' || source.content !== question.answer.text;
+  }
   private questionForRemote(remoteId: unknown): Question | undefined {
     if (typeof remoteId !== 'string') return undefined;
     const message = this.store.list('outbox').find(outbox => outbox.channel === 'feishu' && outbox.remoteId === remoteId);
