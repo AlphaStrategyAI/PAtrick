@@ -391,6 +391,7 @@ export class Workbench {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
         const parsed = decisionSchema.parse(output); const factualUse=this.validateDecision(task, parsed, input);
+        if (this.conflictingRequirements(input.source.content) && parsed.action === 'proceed' && !input.answer) throw new DomainError('The source states opposing requirements and has no owner choice.', 'conflicting_requirements', 409);
         const decision = this.bareIdea(task, parsed, input) ? { ...parsed, action: 'archive' as const, summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。', rationale: '单纯的新点子不进入执行。补上用户、竞品或已核验证据后再判断。' } : parsed;
         const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
         if (decision.action !== 'ask' && !this.store.list('questions').some(q => q.taskId === task.id && q.status === 'answered')) try { captureNoQuestionCaseVersion(this.store, this.config, snapshot.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
@@ -467,6 +468,11 @@ export class Workbench {
     const cards=[...new Map([...activeCards,...relevant].map(card=>[card.id,card])).values()].slice(0,30);
     const facts=cards.flatMap(card=>{const historical=card.factual?.eligible?[card.factual.fact]:[];const current=context?factualEligibility(this.store,card,project,{temporal:'current',contextId:context.id},context):undefined;return current?.eligible?[...historical,current.fact]:historical;});
     return { task: current, project, role, source, cards, facts, ...(context?{factualContext:context}:{}), ...(current.decision?{decisionInterpretation:decisionInterpretationFor(current)}:{}), rules: applicableRules(this.store, current, this.config), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
+  }
+
+  /** One source cannot both delete and keep the same draft unless the owner has chosen. */
+  private conflictingRequirements(text: string): boolean {
+    return /失败即删|失败后删/.test(text) && /保留七天|保留草稿/.test(text);
   }
 
   /** A new idea with only its own wording is a hypothesis, not work to execute. */
@@ -597,7 +603,7 @@ export class Workbench {
 
   private fail(task: Task, error: unknown): void {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
-    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation']);
+    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements']);
     const safe = publicError(rawCode)!;
     let code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
     const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);
