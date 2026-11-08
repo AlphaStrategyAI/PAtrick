@@ -85,7 +85,13 @@ export function applicableRules(store: Store, task: Task, config?: import('./dom
       const source = store.get('sources', citation.sourceId);
       return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && store.sourceRequiresTemporaryRetention(source);
     })) return false;
-    if (rule.kind === 'observation') return admittedObservation(store, rule);
+    if (rule.kind === 'observation') {
+      const temporaryRule = rule.citations.some(citation => {
+        const source = store.get('sources', citation.sourceId);
+        return !!source && store.sourceRequiresTemporaryRetention(source);
+      });
+      return temporaryRule ? temporaryTask : admittedObservation(store, rule);
+    }
     return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; }) || !!config && applicableOriginalPrinciple(store, config, rule, task);
   });
 }
