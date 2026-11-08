@@ -37,7 +37,14 @@ it('recovers a missed file event and withdraws a deleted source after complete s
     writeAtSameTime(original);await collector.scan();
     expect(lineage()).toHaveLength(2);expect(new Set(lineage().map(s=>s.id)).size).toBe(2);
     writeAtSameTime('# 草稿恢复\n新版 B。');await collector.scan();
+    const revised = store.list('tasks').find(task => task.status !== 'cancelled' && store.get('sources', task.sourceId)?.content.includes('新版 B'));
+    expect(revised?.stage).toBe('knowledge_extract');
     writeAtSameTime(original);await collector.scan();await collector.scan();
+    expect(store.get('tasks', revised!.id)).toMatchObject({ status: 'queued', stage: 'knowledge_extract' });
+    expect(store.get('tasks', revised!.id)!.version).toBe(revised!.version + 1);
+    expect(store.get('sources', store.get('tasks', revised!.id)!.sourceId)?.content).toBe(original);
+    expect(store.list('tasks').filter(task => task.status !== 'cancelled' && store.get('sources', task.sourceId)?.externalId === 'file:idea.md')).toHaveLength(1);
+    expect(store.list('events').some(event => event.taskId === revised!.id && event.message === '资料有了新修订。原任务重新处理一次。')).toBe(true);
     expect(lineage()).toHaveLength(4);expect(new Set(lineage().map(s=>s.id)).size).toBe(4);expect(lineage().filter(s=>s.status==='active')).toHaveLength(1);
     expect(store.get('sources',source.id)?.status).toBe('withdrawn');
   }finally{await collector.stop();store.close();rmSync(root,{recursive:true,force:true});}
