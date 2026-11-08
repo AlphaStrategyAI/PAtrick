@@ -41,6 +41,22 @@ it('keeps a comment on a delivered pull request with that task', async () => {
   expect(f.store.list('events').map(event => event.message)).toContain('这条讨论有了新消息。原任务已经结束，不会另开一件。');
 });
 
+it('continues the same unfinished task when a pull request comment is edited', async () => {
+  const f = setup();
+  f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'personal', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });
+  const fetcher = (body: string, updated: string): typeof fetch => async () => new Response(JSON.stringify([comment(3, body, updated)]), { status: 200 });
+  await scanGithubComments(f.store, f.config, f.project, f.engine, fetcher('检查还没过，先不要合并。', '2026-11-08T00:00:00Z'));
+  const continued = f.store.get('tasks', f.task.id)!;
+  await scanGithubComments(f.store, f.config, f.project, f.engine, fetcher('检查还没过。补充：只保留七天。', '2026-11-08T01:00:00Z'));
+  const edited = f.store.get('tasks', f.task.id)!;
+  expect(f.store.list('tasks').filter(task => task.status !== 'cancelled')).toEqual([expect.objectContaining({ id: f.task.id })]);
+  expect(edited.status).not.toBe('cancelled');
+  expect(edited.description).toBe('检查还没过。补充：只保留七天。');
+  expect(edited.version).toBe(continued.version + 1);
+  expect(f.store.list('events').map(event => event.message)).toContain('这条讨论有了新修订。原任务重新处理一次。');
+  expect(f.store.list('sources').filter(source => source.externalId.includes('github-comment:') && source.status === 'active')).toHaveLength(1);
+});
+
 it('continues an open pull request task once and does not import when two tasks claim it', async () => {
   const f = setup();
   f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'personal', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });
