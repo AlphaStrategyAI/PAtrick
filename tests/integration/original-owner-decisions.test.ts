@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { digest, now, stableId, type AppConfig, type Project, type Question } from '../../src/domain.js';
-import { caseVersions } from '../../src/cases.js';
+import { digest, DomainError, now, stableId, type AppConfig, type Project, type Question } from '../../src/domain.js';
+import { admitOriginalOwnerDecision, caseVersions } from '../../src/cases.js';
+import { publicError } from '../../src/readiness.js';
 import { FeishuChannel } from '../../src/integrations/feishu.js';
 import { publishKnowledge } from '../../src/knowledge.js';
 import { Workbench } from '../../src/orchestrator.js';
@@ -137,5 +138,89 @@ describe('authenticated native originals', () => {
     f.store.delete('actions', origin.id);
     expect(caseVersions(f.store, f.config, project)).toEqual([]);
     expect(applicableRules(f.store, task, f.config).filter(r => r.kind === 'principle')).toEqual([]);
+  });
+
+  function park(f: ReturnType<typeof setup>, kind: 'open' | 'delivered') {
+    const task = f.engine.ingest({ projectId: 'p', externalId: `${kind}-${digest(String(Math.random()))}`, title: 'Open work', content: 'Still working on the export.' })!;
+    const suggestion = (label: string) => ({ label, description: label, rationale: 'Evidence', tradeoff: 'Cost', evidenceUrls: ['https://example.com'] });
+    const question: Question = { id: `q-${task.id}`, projectId: 'p', domain: 'personal', taskId: task.id, taskVersion: task.version, version: 1, ownerId: 'owner', title: 'Keep?', context: 'Choose', options: { A: suggestion('Keep'), B: suggestion('Delete') }, research: { queries: [], summary: '', gaps: [] }, status: 'open', createdAt: now() };
+    f.store.save('questions', question);
+    const saved = f.store.get('tasks', task.id)!;
+    f.store.save('tasks', { ...saved, stage: kind === 'delivered' ? 'feedback' : 'plan', status: kind === 'delivered' ? 'delivered' : 'planning', questionId: question.id, ...(kind === 'delivered' ? { receiptId: `receipt-${task.id}` } : {}) });
+    return { taskId: task.id, questionId: question.id, version: saved.version };
+  }
+
+  it('replaces the previous explicit decision when the owner clearly changes their mind', async () => {
+    const f = setup();
+    await f.receive('base-1', declaration);
+    const open = park(f, 'open'), done = park(f, 'delivered');
+    const changed = '我决定仅本产品改主意，不再保留失败导出的草稿';
+    await f.receive('change-1', changed);
+    const later = f.engine.ingest({ projectId: 'p', externalId: 'after-change', title: 'After', content: 'Judge this next.' })!;
+    const principles = applicableRules(f.store, later, f.config).filter(rule => rule.kind === 'principle');
+    expect(principles).toMatchObject([{ statement: changed, status: 'active' }]);
+    expect(f.store.list('rules').filter(rule => rule.kind === 'principle' && rule.status === 'superseded')).toMatchObject([{ statement: declaration }]);
+    expect(f.store.list('actions').filter(action => action.kind === 'decision.rule-version').map(action => action.payload.history)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relation: 'owner-change', previous: expect.objectContaining({ id: f.store.list('rules').find(rule => rule.statement === declaration)!.id }) }),
+    ]));
+    expect(f.store.get('tasks', open.taskId)).toMatchObject({ version: open.version + 1, status: 'deciding', stage: 'decide', error: 'owner_changed' });
+    expect(f.store.get('questions', open.questionId)?.status).toBe('stale');
+    expect(publicError('owner_changed')).toContain('不再自动引用');
+    expect(f.store.get('tasks', done.taskId)).toMatchObject({ version: done.version, status: 'delivered' });
+    const again = '我决定仅本产品改主意，导出失败就删除草稿';
+    await f.receive('change-2', again);
+    expect(applicableRules(f.store, later, f.config).filter(rule => rule.kind === 'principle')).toMatchObject([{ statement: again }]);
+    expect(f.store.get('tasks', open.taskId)?.version).toBe(open.version + 2);
+    const origin = f.store.list('actions').find(action => action.kind === 'decision.owner-origin' && (action.payload.binding as { messageId?: string }).messageId === 'change-2')!;
+    const source = f.store.list('sources').find(item => item.content === again)!;
+    admitOriginalOwnerDecision(f.store, f.config, { id: origin.id, hash: origin.payload.hash as string }, { source: { id: source.id, revision: source.revision }, quote: again, scopeQuote: '仅本产品', declaredScope: { projectId: 'p', domain: 'personal' } });
+    expect(f.store.get('tasks', open.taskId)?.version).toBe(open.version + 2);
+  });
+
+  it('keeps the baseline when the owner states a bounded exception', async () => {
+    const f = setup();
+    await f.receive('base-2', declaration);
+    const open = park(f, 'open');
+    const exception = '我决定仅本产品例外，这次导出可以删掉草稿';
+    await f.receive('except-1', exception);
+    const later = f.engine.ingest({ projectId: 'p', externalId: 'after-exception', title: 'After', content: 'Judge this next.' })!;
+    expect(applicableRules(f.store, later, f.config).filter(rule => rule.kind === 'principle').map(rule => rule.statement).sort()).toEqual([declaration, exception].sort());
+    const history = f.store.list('actions').find(action => (action.payload.history as { relation?: string } | undefined)?.relation === 'bounded-exception')!.payload.history as { application: { exceptionOf?: string }; previous?: { id: string } };
+    const baseline = f.store.list('rules').find(rule => rule.statement === declaration)!;
+    expect(history.application.exceptionOf).toBe(baseline.id);
+    expect(history.previous?.id).toBe(baseline.id);
+    expect(baseline.status).toBe('active');
+    expect(f.store.get('tasks', open.taskId)).toMatchObject({ version: open.version, status: 'planning' });
+  });
+
+  it('keeps both sides and stops citing them when the owner records a conflict', async () => {
+    const f = setup();
+    await f.receive('base-3', declaration);
+    const open = park(f, 'open');
+    const conflict = '我决定仅本产品记下冲突，不能同时自动保留和删除草稿';
+    await f.receive('conflict-1', conflict);
+    const later = f.engine.ingest({ projectId: 'p', externalId: 'after-conflict', title: 'After', content: 'Judge this next.' })!;
+    expect(applicableRules(f.store, later, f.config).filter(rule => rule.kind === 'principle')).toEqual([]);
+    expect(f.store.list('rules').filter(rule => rule.kind === 'principle').map(rule => ({ statement: rule.statement, status: rule.status })).sort((a, b) => a.statement.localeCompare(b.statement))).toEqual([
+      { statement: conflict, status: 'suspended' },
+      { statement: declaration, status: 'suspended' },
+    ].sort((a, b) => a.statement.localeCompare(b.statement)));
+    expect(f.store.get('tasks', open.taskId)).toMatchObject({ version: open.version + 1, status: 'deciding', error: 'rules_conflict' });
+    expect(publicError('rules_conflict')).toContain('暂停自动引用');
+    await f.receive('conflict-1', conflict);
+    expect(f.store.get('tasks', open.taskId)?.version).toBe(open.version + 1);
+  });
+
+  it('does not invent a revision when the baseline is ambiguous or the sentence is not explicit', async () => {
+    const f = setup();
+    await f.receive('base-4', declaration);
+    await f.receive('base-5', '我决定仅本产品另外保留导出记录');
+    await f.receive('change-ambiguous', '我决定仅本产品改主意，不再保留失败导出的草稿');
+    await f.receive('change-ascii', '我决定仅本产品改主意,不再保留失败导出的草稿');
+    await f.receive('change-question', '我决定仅本产品改主意，可以吗');
+    expect(f.store.list('rules').filter(rule => rule.kind === 'principle' && rule.status === 'active').map(rule => rule.statement).sort()).toEqual([declaration, '我决定仅本产品另外保留导出记录'].sort());
+    const origin = f.store.list('actions').find(action => action.kind === 'decision.owner-origin' && (action.payload.binding as { messageId?: string }).messageId === 'base-4')!;
+    const source = f.store.list('sources').find(item => item.content === declaration)!;
+    expect(() => admitOriginalOwnerDecision(f.store, f.config, { id: origin.id, hash: origin.payload.hash as string }, { source: { id: source.id, revision: source.revision }, quote: declaration, scopeQuote: '仅本产品', declaredScope: { projectId: 'p', domain: 'personal' }, relation: 'owner-change' })).toThrow(DomainError);
   });
 });

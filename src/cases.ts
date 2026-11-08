@@ -1,4 +1,5 @@
-import { DomainError, digest, stableId, type AppConfig, type DecisionSnapshot, type Question, type Rule, type Scope, type SourceRevision } from './domain.js';
+import { DomainError, digest, now, stableId, type AppConfig, type DecisionSnapshot, type Question, type Rule, type Scope, type SourceRevision } from './domain.js';
+import { publicError } from './readiness.js';
 import { caseMentionSchema, type CanonicalCaseVersion, type CaseMention, type CaseRef, type OriginalOwnerDecision, type OwnerOriginRef, type RuleHistory, type SourceRef } from './case-contract.js';
 import { historicalSnapshot } from './intake.js';
 import { knowledgeSourceRefs } from './knowledge-records.js';
@@ -142,6 +143,67 @@ export function clearNativeDecision(text: string): { scopeQuote: string } | unde
   return { scopeQuote: match[1]! };
 }
 
+const nativeRevisionMarker = /^我决定((?:仅|只)本产品)(改主意|例外|记下冲突)，(\S.+)$/u;
+/** A revision is only explicit when the native sentence itself names it. Caller fields cannot supply one. */
+export function explicitNativeRevision(text: string): { scopeQuote: string; relation: 'owner-change' | 'bounded-exception' | 'conflict' } | undefined {
+  if (!clearNativeDecision(text)) return;
+  const match = text.trim().match(nativeRevisionMarker);
+  if (!match) return;
+  const relation = match[2] === '改主意' ? 'owner-change' : match[2] === '例外' ? 'bounded-exception' : 'conflict';
+  return { scopeQuote: match[1]!, relation };
+}
+export function looksLikeNativeRevision(text: string): boolean {
+  return /^我决定(?:仅|只)本产品(?:改主意|例外|记下冲突)/u.test(text.trim());
+}
+function recordedRuleHistory(store: Store, ref: CaseRef): RuleHistory | undefined {
+  const action = store.list('actions').find(item => {
+    const history = item.payload.history as RuleHistory | undefined;
+    return item.kind === 'decision.rule-version' && item.status === 'completed' && history?.ruleId === ref.id && history.version === ref.version && history.ruleHash === ref.hash;
+  });
+  return action?.payload.history as RuleHistory | undefined;
+}
+function ruleMatchesRecord(store: Store, ref: CaseRef, status: Rule['status']): boolean {
+  const rule = store.get('rules', ref.id);
+  return !!rule && !!recordedRuleHistory(store, ref) && rule.version === ref.version && rule.status === status && digest({ ...rule, status: 'active' }) === ref.hash;
+}
+function relationHolds(store: Store, rule: Rule, history: RuleHistory): boolean {
+  if (history.relation === 'initial') return history.version === 1 && !history.previous;
+  if (history.relation === 'revision') return !!history.previous && history.previous.id === rule.id && history.previous.version === rule.version - 1 && digest(priorRuleAudit(store, rule, rule.id, rule.version - 1) ?? {}) === digest(history.previous);
+  if (history.relation === 'owner-change') return !!history.previous && history.version === rule.version && rule.supersedes === history.previous.id && ruleMatchesRecord(store, history.previous, 'superseded');
+  if (history.relation === 'bounded-exception') return !!history.previous && history.version === rule.version && history.application.exceptionOf === history.previous.id && ruleMatchesRecord(store, history.previous, 'active');
+  return false;
+}
+function standingPrinciples(store: Store, config: AppConfig, scope: Scope): Rule[] {
+  return store.list('rules').filter(rule => {
+    if (rule.kind !== 'principle' || rule.status !== 'active' || !sameScope(rule, scope)) return false;
+    const history = store.list('actions').find(item => item.kind === 'decision.rule-version' && (item.payload.history as RuleHistory | undefined)?.ruleId === rule.id && (item.payload.history as RuleHistory).ruleHash === digest(rule))?.payload.history as RuleHistory | undefined;
+    return (history?.relation === 'initial' || history?.relation === 'revision' || history?.relation === 'owner-change') && applicableOriginalPrinciple(store, config, rule, { ...scope, id: `baseline:${rule.id}` });
+  });
+}
+function pauseExceptions(store: Store, scope: Scope, baselineId: string, status: 'superseded' | 'suspended'): void {
+  for (const rule of store.list('rules')) {
+    if (rule.status !== 'active' || !sameScope(rule, scope)) continue;
+    const history = store.list('actions').find(item => item.kind === 'decision.rule-version' && (item.payload.history as RuleHistory | undefined)?.ruleId === rule.id)?.payload.history as RuleHistory | undefined;
+    if (history?.application.exceptionOf === baselineId) store.save('rules', { ...rule, status });
+  }
+}
+function rejudgeOpenTasks(store: Store, scope: Scope, code: 'owner_changed' | 'rules_conflict', marker: string): void {
+  const id = stableId('rule-rejudge', scope.projectId, scope.domain, code, marker);
+  if (store.get('actions', id)) return;
+  const at = now();
+  const finished = new Set(['delivered', 'completed', 'archived', 'cancelled']);
+  const stages = new Set(['decide', 'research', 'plan', 'execute', 'check', 'delivery', 'feedback']);
+  const taskIds: string[] = [];
+  for (const task of store.list('tasks')) {
+    if (!sameScope(task, scope) || finished.has(task.status) || task.receiptId || !stages.has(task.stage)) continue;
+    for (const question of store.list('questions')) if (question.taskId === task.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
+    store.save('tasks', { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, questionId: undefined, baselineFiles: undefined, blockedFrom: undefined, error: code });
+    store.save('events', { id: stableId('rule-rejudge-event', task.id, id), projectId: scope.projectId, domain: scope.domain, taskId: task.id, type: code === 'owner_changed' ? 'owner.changed' : 'rules.conflict', message: publicError(code)!, createdAt: at, data: {} });
+    taskIds.push(task.id);
+  }
+  store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.rule-rejudge', status: 'completed', payload: { code, taskIds }, updatedAt: at });
+}
+
 type OriginBinding = { schemaVersion: 1; provider: 'feishu'; tenant: string; chatId: string; messageId: string; nativeRevision: string; ownerId: string; principal: string; nativeTime: number; receiveId: string; receivedAt: string; nativeBodyHash: string; businessBodyHash: string; source: SourceRef; sourceRefs: SourceRef[] } & Scope;
 function verifiedOrigin(store: Store, config: AppConfig, ref: OwnerOriginRef): { binding: OriginBinding; source: NonNullable<ReturnType<Store['get']>> } | undefined {
   const row = store.get('actions', ref.id), binding = row?.payload.binding as OriginBinding | undefined;
@@ -179,16 +241,33 @@ export function admitOriginalOwnerDecision(store: Store, config: AppConfig, orig
     if (!verified) throw new DomainError('Native owner origin is unavailable.', 'invalid_owner_origin', 403);
     const { binding } = verified, source = store.get('sources', binding.source.id)!, clear = clearNativeDecision(source.content), scope = declaration.declaredScope;
     if (!clear || declaration.source.id !== source.id || declaration.source.revision !== source.revision || declaration.quote !== source.content || declaration.scopeQuote !== clear.scopeQuote || !scope || Object.keys(scope).sort().join(',') !== 'domain,projectId' || scope.projectId !== binding.projectId || scope.domain !== binding.domain || declaration.baseline || declaration.relation || declaration.improvement) throw new DomainError('Native decision or its scope is ambiguous.', 'invalid_owner_declaration', 403);
+    const revision = explicitNativeRevision(source.content);
+    if (looksLikeNativeRevision(source.content) && !revision) throw new DomainError('Native decision or its scope is ambiguous.', 'invalid_owner_declaration', 403);
     const id = stableId('canonical-case', binding.projectId, binding.domain, 'authenticated-message', binding.messageId);
     const citation = { sourceId: source.id, revision: source.revision, quote: source.content, locator: source.locator };
     const ref = saveVersion(store, { schemaVersion: 1, id, projectId: binding.projectId, domain: binding.domain, identity: 'host-bound', original: { kind: 'authenticated-message', id: binding.messageId, revision: binding.nativeRevision }, authority: 'owner-explicit', ownerId: binding.ownerId, frozenJudgment: null, sourceRefs: binding.sourceRefs, citations: [citation], choiceText: source.content, rationale: null, alternatives: [], ruleVersions: [], expectedOutcome: null, observationRefs: [], effectiveAt: binding.receivedAt }, at);
     const ruleId = stableId('explicit-original-rule', id), historyId = stableId('decision.rule-version', ruleId, ref.version, ref.hash);
-    const previous = ref.version > 1 ? priorRuleAudit(store, binding, ruleId, ref.version - 1) : undefined;
-    if (ref.version > 1 && !previous) return ref;
-    const rule: Rule = { id: ruleId, projectId: binding.projectId, domain: binding.domain, title: source.title, statement: source.content, conditions: `Applies only within project ${binding.projectId}, domain ${binding.domain}.`, exceptions: 'Reconfirm outside this declared scope.', version: ref.version, kind: 'principle', status: 'active', caseIds: [id], citations: [citation], createdAt: binding.receivedAt, reviewAt: new Date(+at + 30 * 86400_000).toISOString() };
-    const history: RuleHistory = { schemaVersion: 1, id: historyId, projectId: binding.projectId, domain: binding.domain, ruleId, version: ref.version, kind: 'principle', relation: previous ? 'revision' : 'initial', ...(previous ? { previous } : {}), effectiveAt: binding.receivedAt, supports: [{ case: ref, citation }], opposes: [], confirmation: ref, scopeCitation: { ...citation, quote: declaration.scopeQuote }, application: {}, ruleHash: digest(rule), createdAt: at.toISOString() };
-    const existing = store.get('actions', historyId);
-    if (!existing) { store.save('rules', rule); store.save('actions', { id: historyId, projectId: binding.projectId, domain: binding.domain, kind: 'decision.rule-version', status: 'completed', payload: { history, origin, sourceRefs: binding.sourceRefs }, updatedAt: history.createdAt }); }
+    if (store.get('actions', historyId)) return ref;
+    const baseline = revision ? standingPrinciples(store, config, binding).filter(rule => rule.id !== ruleId) : [];
+    if (revision && baseline.length !== 1) throw new DomainError('Native decision or its scope is ambiguous.', 'invalid_owner_declaration', 403);
+    const previous = !revision && ref.version > 1 ? priorRuleAudit(store, binding, ruleId, ref.version - 1) : undefined;
+    if (!revision && ref.version > 1 && !previous) return ref;
+    const prior = baseline[0];
+    const priorRef = prior ? { id: prior.id, version: prior.version, hash: digest(prior) } : undefined;
+    const status = revision?.relation === 'conflict' ? 'suspended' as const : 'active' as const;
+    const rule: Rule = { id: ruleId, projectId: binding.projectId, domain: binding.domain, title: source.title, statement: source.content, conditions: `Applies only within project ${binding.projectId}, domain ${binding.domain}.`, exceptions: revision?.relation === 'owner-change' ? 'Replaces the previous explicit decision from this message onward.' : revision?.relation === 'bounded-exception' ? 'Bounded exception. The previous explicit decision remains in force.' : revision?.relation === 'conflict' ? 'Conflicts with the previous explicit decision. Neither side is cited automatically.' : 'Reconfirm outside this declared scope.', version: ref.version, kind: 'principle', status, caseIds: [id], citations: [citation], createdAt: binding.receivedAt, reviewAt: new Date(+at + 30 * 86400_000).toISOString(), ...(revision?.relation === 'owner-change' && prior ? { supersedes: prior.id } : {}) };
+    const history: RuleHistory = { schemaVersion: 1, id: historyId, projectId: binding.projectId, domain: binding.domain, ruleId, version: ref.version, kind: 'principle', relation: revision?.relation ?? (previous ? 'revision' : 'initial'), ...(revision && priorRef ? { previous: priorRef } : previous ? { previous } : {}), effectiveAt: binding.receivedAt, supports: [{ case: ref, citation }], opposes: [], confirmation: ref, scopeCitation: { ...citation, quote: declaration.scopeQuote }, application: revision?.relation === 'bounded-exception' && prior ? { exceptionOf: prior.id } : {}, ruleHash: digest(rule), createdAt: at.toISOString() };
+    store.save('rules', rule);
+    store.save('actions', { id: historyId, projectId: binding.projectId, domain: binding.domain, kind: 'decision.rule-version', status: 'completed', payload: { history, origin, sourceRefs: binding.sourceRefs }, updatedAt: history.createdAt });
+    if (prior && revision?.relation === 'owner-change') {
+      store.save('rules', { ...prior, status: 'superseded' });
+      pauseExceptions(store, binding, prior.id, 'superseded');
+      rejudgeOpenTasks(store, binding, 'owner_changed', historyId);
+    } else if (prior && revision?.relation === 'conflict') {
+      store.save('rules', { ...prior, status: 'suspended' });
+      pauseExceptions(store, binding, prior.id, 'suspended');
+      rejudgeOpenTasks(store, binding, 'rules_conflict', historyId);
+    }
     return ref;
   });
 }
@@ -198,7 +277,7 @@ export function applicableOriginalPrinciple(store: Store, config: AppConfig, rul
   const action = store.list('actions').find(a => a.kind === 'decision.rule-version' && a.status === 'completed' && sameScope(a, task) && (a.payload.history as RuleHistory | undefined)?.ruleId === rule.id && (a.payload.history as RuleHistory).ruleHash === digest(rule));
   const history = action?.payload.history as RuleHistory | undefined, origin = action?.payload.origin as OwnerOriginRef | undefined;
   if (!history || !origin || !history.confirmation || history.confirmation.id !== rule.caseIds[0] || history.version !== rule.version || history.confirmation.version !== rule.version || !verifiedOrigin(store, config, origin) || history.application.taskId && history.application.taskId !== task.id || history.validUntil && Date.parse(history.validUntil) <= Date.now()) return false;
-  if (history.relation === 'initial' ? history.version !== 1 || !!history.previous : history.relation === 'revision' ? !history.previous || history.previous.id !== rule.id || history.previous.version !== rule.version - 1 || digest(priorRuleAudit(store, task, rule.id, rule.version - 1) ?? {}) !== digest(history.previous) : true) return false;
+  if (!relationHolds(store, rule, history)) return false;
   return caseVersions(store, config, task).some(v => v.id === history.confirmation!.id && v.version === history.confirmation!.version && v.hash === history.confirmation!.hash && v.authority === 'owner-explicit' && v.original.kind === 'authenticated-message');
 }
 

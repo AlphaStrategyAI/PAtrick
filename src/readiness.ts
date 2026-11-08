@@ -87,6 +87,8 @@ const ownerStopMessages: Record<string, string> = {
   remote_unavailable: '仓库暂时连不上。到点会再试。这不需要你回答。',
   technical_failure: '运行暂时不可用；任务与账本已保留。',
   feedback_retry: '反馈没有完成。交付还不能算完成，到点会再试。这不需要你回答。',
+  owner_changed: '你明确改了主意。旧决定从这条消息起不再自动引用。未完成的任务会重新判断。这不需要你回答。',
+  rules_conflict: '这两条决定互相冲突，两侧都保留，但都暂停自动引用。未完成的任务会重新判断。这不需要你回答。',
   ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
   stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
   invalid_test_observation: '检查记录对不上这次执行。没有把它当成通过。',
