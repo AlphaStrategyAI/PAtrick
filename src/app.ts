@@ -19,7 +19,7 @@ import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
 import { openReleaseFollowUp } from './operations.js';
 import { connectionSecretsSchema, openRunnerLogin, saveConnectionSecrets } from './setup-guide.js';
-import { injectedQuotes, rememberInjection, stripInjectedMemory } from './memory.js';
+import { injectionBlock, injectedQuotes, rememberInjection, stripInjectedMemory } from './memory.js';
 
 export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>};launchRunnerLogin?:(runner:Runner)=>Promise<void>}
 export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOptions):Hono {
@@ -116,7 +116,12 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
       return store.searchCards((c.req.query('q')??'').slice(0,500),project,10);
     });
     const project=store.get('projects',projectId);
-    const injection=project&&project.domain===domain?rememberInjection(store,project,cards.map(card=>card.quote)):'';
+    let injection='';
+    if(project&&project.domain===domain&&cards.length){
+      injection=injectionBlock(cards.map(card=>card.quote));
+      try{rememberInjection(store,project,cards.map(card=>card.quote));}
+      catch(error){if(!isKnowledgeSnapshotFailure(error))throw error;}
+    }
     return c.json({cards,...(injection?{injection}:{})});
   });
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
