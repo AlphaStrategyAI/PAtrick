@@ -6,12 +6,15 @@ import { applicableOriginalPrinciple, captureOwnerCaseVersion, refreshCasesForSn
 export function publishObservations(store: Store, source: SourceRevision, output: unknown): Rule[] {
   const result = caseOutputSchema.parse(output); const current = store.get('sources', source.id);
   if (current?.status !== 'active' || current.revision !== source.revision) throw new DomainError('Case extraction refers to an obsolete source.', 'stale_source', 409);
-  return result.observations.map(candidate => {
-    if (!source.content.includes(candidate.quote)) throw new DomainError('An observation quote is absent from the source.', 'invalid_quote');
-    const rule: Rule = { id: stableId('observation', source.id, source.revision, candidate.title, candidate.quote), projectId: source.projectId, domain: source.domain, title: candidate.title, statement: candidate.statement, conditions: candidate.conditions, exceptions: candidate.exceptions, version: 1, kind: 'observation', status: 'active', caseIds: [], citations: [{ sourceId: source.id, revision: source.revision, quote: candidate.quote, locator: source.locator }], createdAt: now(), reviewAt: new Date(Date.now() + 30 * 86400_000).toISOString() };
-    if (!store.get('rules', rule.id)) store.save('rules', rule);
-    return rule;
-  });
+  const observations = result.observations.map(candidate => saveCaseCandidate(store, source, candidate, 'observation'));
+  const external = (result.externalReferences ?? []).map(candidate => saveCaseCandidate(store, source, candidate, 'external'));
+  return [...observations, ...external];
+}
+function saveCaseCandidate(store: Store, source: SourceRevision, candidate: { title: string; statement: string; quote: string; conditions: string; exceptions: string }, kind: 'observation' | 'external'): Rule {
+  if (!source.content.includes(candidate.quote)) throw new DomainError(kind === 'external' ? 'An external reference quote is absent from the source.' : 'An observation quote is absent from the source.', 'invalid_quote');
+  const rule: Rule = { id: stableId(kind === 'external' ? 'external-reference' : 'observation', source.id, source.revision, candidate.title, candidate.quote), projectId: source.projectId, domain: source.domain, title: candidate.title, statement: candidate.statement, conditions: candidate.conditions, exceptions: candidate.exceptions, version: 1, kind, status: 'active', caseIds: [], citations: [{ sourceId: source.id, revision: source.revision, quote: candidate.quote, locator: source.locator }], createdAt: now(), reviewAt: new Date(Date.now() + 30 * 86400_000).toISOString() };
+  if (!store.get('rules', rule.id)) store.save('rules', rule);
+  return store.get('rules', rule.id) ?? rule;
 }
 
 export function frozenAnswer(question: Question, answer: QuestionAnswer): string {
@@ -92,6 +95,22 @@ export function applicableRules(store: Store, task: Task, config?: import('./dom
       });
       return temporaryRule ? temporaryTask : admittedObservation(store, rule);
     }
-    return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; }) || !!config && applicableOriginalPrinciple(store, config, rule, task);
+    return rule.kind === 'principle' && (rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; }) || !!config && applicableOriginalPrinciple(store, config, rule, task));
   });
+}
+
+/** A cited industry or expert method can be compared. It is never an owner principle. */
+export function comparableExternalRules(store: Store, scope: { projectId: string; domain: string }, temporaryTask = false): Rule[] {
+  return store.list('rules').filter(rule => {
+    if (rule.kind !== 'external' || rule.projectId !== scope.projectId || rule.domain !== scope.domain || rule.status !== 'active' || Date.parse(rule.reviewAt) <= Date.now()) return false;
+    if (!rule.citations.length) return false;
+    return rule.citations.every(citation => {
+      const source = store.get('sources', citation.sourceId);
+      return !!source && source.status === 'active' && source.revision === citation.revision && source.projectId === rule.projectId && source.domain === rule.domain && source.content.includes(citation.quote) && (!store.sourceRequiresTemporaryRetention(source) || temporaryTask);
+    });
+  }).sort((a, b) => a.id.localeCompare(b.id));
+}
+export function externalComparisonNote(rules: Rule[]): string {
+  const statements = [...new Set(rules.map(rule => rule.statement.trim()).filter(Boolean))];
+  return statements.length ? `可对照的外部方法：${statements.join('；')}。这不是你的原则。` : '';
 }

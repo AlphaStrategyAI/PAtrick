@@ -11,7 +11,7 @@ import { knowledgePolicyHash } from './knowledge-identity.js';
 import { canonicalFactualContextPayloadSchema, knowledgeRequestSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
-import { applicableRules, appendCaseOutcome, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
+import { applicableRules, appendCaseOutcome, comparableExternalRules, externalComparisonNote, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
 import { BillingAuthority } from './billing.js';
@@ -580,9 +580,11 @@ export class Workbench {
     const question = decision.question;
     if (!question) return decision;
     const uncertainty = this.researchUncertainty(research);
+    const taskSource = this.store.get('sources', task.sourceId);
     const standards = applicableRules(this.store, task, this.config).filter(rule => rule.kind === 'principle').map(rule => rule.statement.trim()).filter(Boolean);
+    const external = externalComparisonNote(comparableExternalRules(this.store, task, !!taskSource && this.store.sourceRequiresTemporaryRetention(taskSource)));
     const uncertain = decision.grounds.unresolved.map(item => item.text.trim()).filter(Boolean);
-    const context = [question.context, uncertainty, standards.length ? `你已有的标准：${standards.join('；')}` : '', uncertain.length ? `仍不确定：${uncertain.join('；')}` : '', standards.length || uncertain.length ? '下面两条是建议，不是你的决定。' : ''].filter(Boolean).join('\n');
+    const context = [question.context, uncertainty, standards.length ? `你已有的标准：${standards.join('；')}` : '', external, uncertain.length ? `仍不确定：${uncertain.join('；')}` : '', standards.length || uncertain.length || external ? '下面两条是建议，不是你的决定。' : ''].filter(Boolean).join('\n');
     return context === question.context ? decision : { ...decision, question: { ...question, context } };
   }
   private openQuestion(task: Task, project: Project, decision: ReturnType<typeof decisionSchema.parse>, research: ResearchRecord, decisionSnapshotId: string): void {
@@ -658,7 +660,7 @@ export class Workbench {
 
   private fail(task: Task, error: unknown): void {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
-    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements', 'unverified_fix', 'egress_denied']);
+    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements', 'unverified_fix', 'egress_denied', 'invalid_rule']);
     const safe = publicError(rawCode)!;
     let code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
     const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);

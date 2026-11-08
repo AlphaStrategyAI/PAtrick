@@ -99,6 +99,7 @@ const ownerStopMessages: Record<string, string> = {
   budget_exhausted: '这件任务的费用预留已经用完。任务已保留，不会换运行器继续。这不需要你回答。',
   billing_boundary_mismatch: '这件任务的费用路线和当前主机不一致。任务已保留，不会换路线继续。这不需要你回答。',
   egress_denied: '这份资料不能送去外部检索。任务已保留，没有发出查询。这不需要你回答。',
+  invalid_rule: '这次判断引用了当前不能使用的规则。任务已保留，不会按那条规则继续。这不需要你回答。',
   ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
   stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
   invalid_test_observation: '检查记录对不上这次执行。没有把它当成通过。',
