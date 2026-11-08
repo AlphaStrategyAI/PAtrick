@@ -1,5 +1,6 @@
+import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
-import { extname, join, relative, sep } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import { digest, now, stableId, type AppConfig, type Project } from './domain.js';
 import type { Workbench } from './orchestrator.js';
@@ -20,7 +21,9 @@ export class SourceCollector {
       for(const project of this.store.list('projects')) {
         if(!project.sourceDir)continue;
         try {
-          const root=await realpath(project.sourceDir);if(this.roots.has(project.id)&&this.roots.get(project.id)!==root)throw Error('Source root moved; authorize its new path before reading.');this.roots.set(project.id,root);
+          const root=await realpath(project.sourceDir);if(this.roots.has(project.id)&&this.roots.get(project.id)!==root)throw Error('Source root moved; authorize its new path before reading.');
+          if(this.ledgerInside(root)){const watcher=this.watchers.get(project.id);if(watcher){this.watchers.delete(project.id);await watcher.close();}this.roots.delete(project.id);this.record(project,'ledger_inside_sync');continue;}
+          this.roots.set(project.id,root);
           const watching=this.watchers.has(project.id);
           if(!watching) {
             const watcher=watch(root,{ignoreInitial:true,followSymlinks:false,awaitWriteFinish:{stabilityThreshold:1000,pollInterval:100},ignored:/(^|[/\\])\.|node_modules/});
@@ -47,6 +50,12 @@ export class SourceCollector {
       if(item.isDirectory())files.push(...await this.walk(path));else if(item.isFile()&&['.md','.txt','.markdown'].includes(extname(path).toLowerCase()))files.push(path);
     }
     return files;
+  }
+  private ledgerInside(root:string):boolean {
+    const canonical=(path:string)=>{try{return realpathSync(path);}catch{return resolve(path);}};
+    const parents=[canonical(root)];
+    const contained=(child:string)=>{const target=canonical(child);return parents.some(parent=>{const rel=relative(parent,target);return rel===''||(!rel.startsWith(`..${sep}`)&&rel!=='..'&&!isAbsolute(rel));});};
+    return contained(this.config.dataDir)||contained(this.config.vaultDir);
   }
   private async capture(project:Project,path:string):Promise<boolean> {
     const root=this.roots.get(project.id);if(!root)return false;
@@ -84,8 +93,9 @@ function laterThan(previous?:string):string {
   if(!previous||current>previous)return current;
   return new Date(Date.parse(previous)+1).toISOString();
 }
-export type ScanNoticeCode='root_moved'|'scan_paused'|'watcher_unavailable';
+export type ScanNoticeCode='root_moved'|'scan_paused'|'watcher_unavailable'|'ledger_inside_sync';
 export function scanNoticeCopy(code:ScanNoticeCode):{title:string;detail:string} {
+  if(code==='ledger_inside_sync')return {title:'账本不能放在同步目录里',detail:'活动数据库、WAL 和凭据必须放在同步目录外。请把数据目录移出这个文件夹，或在设置里改用另一个同步目录。已有资料保持有效，这次不会读取新文件。'};
   if(code==='root_moved')return {title:'同步目录位置变了',detail:'在设置里重新确认这个目录。下一次扫描成功前，不会读取新位置。已有资料保持有效。'};
   if(code==='watcher_unavailable')return {title:'文件监听暂时不可用',detail:'定时补扫仍会继续。已有资料保持有效。'};
   return {title:'同步目录这次没有扫完',detail:'确认目录还在，并且可以读取。下一次扫描成功前，已有资料保持有效。'};
@@ -98,9 +108,9 @@ export function missedFileNotice(store:Store,project:{id:string;domain:string},a
 export function fileScanNotice(store:Store,project:{id:string;domain:string}):{title:string;detail:string}|undefined {
   const cursor=store.get('cursors',stableId('file-scan',project.domain,project.id));
   const unresolved=store.list('events').filter(event=>event.projectId===project.id&&event.domain===project.domain&&event.type==='source.connection'&&(!cursor||event.createdAt>cursor.updatedAt)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
-  const chosen=unresolved.find(event=>event.data.code==='scan_paused'||event.data.code==='root_moved')??unresolved.find(event=>event.data.code==='watcher_unavailable');
+  const chosen=unresolved.find(event=>event.data.code==='ledger_inside_sync')??unresolved.find(event=>event.data.code==='scan_paused'||event.data.code==='root_moved')??unresolved.find(event=>event.data.code==='watcher_unavailable');
   const code=chosen?.data.code;
-  if(code!=='root_moved'&&code!=='scan_paused'&&code!=='watcher_unavailable')return undefined;
+  if(code!=='root_moved'&&code!=='scan_paused'&&code!=='watcher_unavailable'&&code!=='ledger_inside_sync')return undefined;
   return scanNoticeCopy(code);
 }
 export function fileScanStatus(store:Store,project:{id:string;domain:string;sourceDir?:string}):{title:string;detail:string} {
