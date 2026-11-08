@@ -94,6 +94,7 @@ const ownerStopMessages: Record<string, string> = {
   delivery_kept: '已经交付的结果仍保留。资料变化没有改写这次交付。',
   evidence_withdrawn: '来源已撤回。可读内容已收回，相关任务不再使用它。',
   stale_answer: '这是旧答复，没有执行原来的选项。任务会重新判断。这不需要你回答。',
+  conflicting_requirements: '同一份资料里有两条互相冲突的要求。还没有你的选择，不会直接执行。',
   ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
   stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
   invalid_test_observation: '检查记录对不上这次执行。没有把它当成通过。',
