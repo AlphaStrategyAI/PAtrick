@@ -40,6 +40,7 @@ function setup({ ask = true, temporary = false, changeRuleDuringDecision = false
   const source = store.get('sources', task.sourceId)!;
   const rule: Rule = { id: 'used-rule', projectId: 'p', domain: 'personal', title: 'Recovery observation', statement: oldStatement, conditions: 'Failed exports', exceptions: 'Unknown', version: 3, kind: 'observation', status: 'active', caseIds: [], citations: [{ sourceId: source.id, revision: source.revision, quote: '保留草稿', locator: source.locator }], createdAt: now(), reviewAt: new Date(Date.now() + 86400_000).toISOString() };
   store.save('rules', rule); store.save('rules', { ...rule, id: 'unused-rule', statement: 'Not used by this decision' });
+  store.save('actions', { id: 'monthly-admission', projectId: 'p', domain: 'personal', kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison: { trial: 'single-product', candidateId: 'used-rule', reverted: false } }, updatedAt: now() });
   const answer = (choice: 'A' | 'B' | 'C') => { const q = store.list('questions').find(q => q.status === 'open')!; return engine.answer({ questionId: q.id, taskVersion: q.taskVersion, questionVersion: q.version, actorId: 'owner', eventId: 'answer', choice, ...(choice === 'C' ? { text: '只保留到下次成功导出' } : {}) }); };
   const reopen = () => { store.close(); const next = new Store(db, vault); stores.push(next); return next; };
   return { root, db, vault, store, engine, task, answer, reopen };

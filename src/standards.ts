@@ -72,6 +72,11 @@ export function recordOwnerDecision(store: Store, task: Task, question: Question
   return decisionCase;
 }
 
+function admittedObservation(store: Store, rule: Rule): boolean {
+  const saved = store.list('actions').filter(action => action.kind === 'decision.monthly-comparison' && action.projectId === rule.projectId && action.domain === rule.domain).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.payload.comparison as { trial?: string; candidateId?: string | null; reverted?: boolean } | undefined;
+  return saved?.trial === 'single-product' && saved.candidateId === rule.id && !saved.reverted;
+}
+
 export function applicableRules(store: Store, task: Task, config?: import('./domain.js').AppConfig): Rule[] {
   const taskSource=store.get('sources',task.sourceId),temporaryTask=!!taskSource&&store.sourceRequiresTemporaryRetention(taskSource);
   return store.list('rules').filter(rule => {
@@ -80,6 +85,7 @@ export function applicableRules(store: Store, task: Task, config?: import('./dom
       const source = store.get('sources', citation.sourceId);
       return source?.status !== 'active' || source.revision !== citation.revision || source.projectId !== task.projectId || source.domain !== task.domain || !temporaryTask && store.sourceRequiresTemporaryRetention(source);
     })) return false;
+    if (rule.kind === 'observation') return admittedObservation(store, rule);
     return rule.kind !== 'principle' || rule.caseIds.some(id => { const c = store.get('cases', id); return c?.status === 'active' && c.taskId === task.id; }) || !!config && applicableOriginalPrinciple(store, config, rule, task);
   });
 }

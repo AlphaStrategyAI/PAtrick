@@ -5,6 +5,7 @@ import { readConfig } from '../../src/config.js';
 import { configureDemo } from '../../src/demo.js';
 import { digest } from '../../src/domain.js';
 import { monthlyComparisonMessage, recordHeldOutReplay, recordMaintenance, runMonthlyComparison } from '../../src/evaluation.js';
+import { applicableRules } from '../../src/standards.js';
 import { ingestSource } from '../../src/intake.js';
 import { Workbench } from '../../src/orchestrator.js';
 import { weeklyReport } from '../../src/reports.js';
@@ -108,6 +109,24 @@ it('tries one recorded replay on its own project and still does not change the p
     expect(comparison).toMatchObject({ month: '2026-11', sampleSize: 1, candidateAnswers: 1, candidateId: observation.id, trial: 'single-product', principle: 'unchanged' });
     expect(digest(store.get('rules', principle.id)!)).toBe(before);
     expect(store.get('rules', principle.id)?.statement).toBe(principle.statement);
+  } finally { store.close(); }
+});
+
+it('applies an observation only after this project admits that observation', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const citation = { sourceId: 'source', revision: 'v1', quote: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md' };
+  const observation = { id: 'observation', projectId: project.id, domain: project.domain, title: '观察', statement: '先看恢复路径。', conditions: '本页', exceptions: '没有额外例外', version: 1, kind: 'observation' as const, status: 'active' as const, caseIds: [] as string[], citations: [citation], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const task = { id: 'judge', projectId: project.id, domain: project.domain, sourceId: 'source', sourceRevision: 'v1', title: '草稿', description: '导出失败后应恢复草稿。', status: 'deciding' as const, version: 1, createdAt: at, updatedAt: at, runAfter: at, attempts: 0, repairCount: 0, budgetUsd: 0, spentUsd: 0, stage: 'decide' as const };
+  const clean = { unauthorized: false, duplicateExternalAction: false, fakeDelivery: false, withdrawalLeak: false, crossDomain: false, changesOwnerValue: false };
+  try {
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { id: 'case', projectId: project.id, domain: project.domain, taskId: 'task', questionId: 'question', decisionId: 'decision', actorId: project.ownerId, choice: 'C', originalWords: '仅本产品保留到下次成功导出。', rationale: 'Owner rationale not separately stated.', alternatives: [], ruleIds: [], sourceId: 'source', status: 'active', createdAt: at });
+    store.save('rules', observation);
+    expect(applicableRules(store, task).map(rule => rule.id)).not.toContain('observation');
+    recordHeldOutReplay(store, project, { caseId: 'case', candidateId: observation.id, month: '2026-11', candidateCorrect: true, ...clean });
+    expect(runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'))).toMatchObject({ candidateId: 'observation', trial: 'single-product' });
+    expect(applicableRules(store, task).map(rule => rule.id)).toContain('observation');
   } finally { store.close(); }
 });
 
