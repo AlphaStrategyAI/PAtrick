@@ -616,6 +616,8 @@ describe('single worker durable business flow', () => {
     await f.engine.tick();
     const notice = f.store.list('outbox').find(m => m.text.includes('grok') && m.text.includes('dsh'))!;
     expect(notice.status).toBe('pending'); expect(notice.attempts).toBe(1);
+    expect(notice.text).toContain('原因：原来的运行器暂时不可用');
+    expect(notice.text).toContain('已继续原任务');
     expect(f.store.list('attempts').map(a => a.status)).toEqual(['unavailable', 'succeeded']);
     f.options.notifierOffline = false;
     f.store.save('outbox', { ...notice, runAfter: new Date(0).toISOString() });
