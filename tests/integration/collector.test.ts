@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, unlinkSync, rmSync, utimesSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
@@ -47,6 +47,21 @@ it('recovers a missed file event and withdraws a deleted source after complete s
     expect(store.list('events').some(event => event.taskId === revised!.id && event.message === '资料有了新修订。原任务重新处理一次。')).toBe(true);
     expect(lineage()).toHaveLength(4);expect(new Set(lineage().map(s=>s.id)).size).toBe(4);expect(lineage().filter(s=>s.status==='active')).toHaveLength(1);
     expect(store.get('sources',source.id)?.status).toBe('withdrawn');
+  }finally{await collector.stop();store.close();rmSync(root,{recursive:true,force:true});}
+});
+it('does not read files when the ledger sits inside the sync directory',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'patrick-collector-ledger-')),store=new Store(':memory:'),config=readConfig({PATRICK_MODE:'demo'});configureDemo(config);
+  const ledger=join(root,'ledger');mkdirSync(ledger);
+  config.dataDir=ledger;config.vaultDir=join(ledger,'vault');
+  config.projects[0]!.sourceDir=root;
+  const engine=new Workbench({store,config,workers:[],writer:demoWriter,research:demoResearch});const collector=new SourceCollector(store,config,engine);
+  try{
+    writeFileSync(join(root,'idea.md'),'# 草稿\n不要把账本扫进来。');
+    await collector.scan();
+    expect(store.list('sources').filter(source=>source.kind==='file')).toEqual([]);
+    const page=await (await createApp({store,config,engine}).request('/')).text();
+    expect(page).toContain('账本不能放在同步目录里');
+    expect(page).toContain('必须放在同步目录外');
   }finally{await collector.stop();store.close();rmSync(root,{recursive:true,force:true});}
 });
 it('keeps existing notes when a scan cannot read the directory and clears the notice after the next complete scan',async()=>{
