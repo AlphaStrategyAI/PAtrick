@@ -120,7 +120,12 @@ export class FeishuChannel implements NotificationAdapter {
     this.store.transaction(() => {
       const currentPrevious = this.messageCursor(cursorId);
       if (currentPrevious?.withdrawn || this.store.get('actions', id)?.status === 'completed') return;
-      if (currentPrevious && currentPrevious.revision !== revision) for (const sourceId of currentPrevious.sourceIds) this.workbench.withdraw(sourceId);
+      if (currentPrevious && currentPrevious.revision !== revision) for (const sourceId of currentPrevious.sourceIds) {
+        const source = this.store.get('sources', sourceId);
+        // The same business message is a new revision of one task, not a withdrawal that opens another task.
+        if (source?.kind === 'feishu' && source.externalId === `${f.chatId}:${messageId}`) continue;
+        this.workbench.withdraw(sourceId);
+      }
       let sourceIds: string[] = [];
       try { sourceIds = this.route(messageId, revision, text, message); }
       catch (error) {

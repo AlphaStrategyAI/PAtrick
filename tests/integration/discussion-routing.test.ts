@@ -17,6 +17,16 @@ function setup() {
 afterEach(() => stores.splice(0).forEach(store => store.close()));
 
 describe('subscribed discussion routing', () => {
+  it('continues the same task when the original Feishu message is edited', async () => {
+    const f = setup();
+    await f.receive('root', '导出失败后保留草稿');
+    const first = f.store.list('tasks')[0]!;
+    await f.receive('root', '导出失败后保留草稿七天', { update_time: '2000' });
+    expect(f.store.list('tasks').filter(task => task.status !== 'cancelled')).toEqual([expect.objectContaining({ id: first.id, version: first.version + 1, description: '导出失败后保留草稿七天' })]);
+    expect(f.store.get('tasks', first.id)?.status).not.toBe('cancelled');
+    expect(f.store.list('events').map(event => event.message)).toContain('资料有了新修订。原任务重新处理一次。');
+  });
+
   it('sends a later message in the same thread to the original task once', async () => {
     const f = setup();
     await f.receive('root', '导出失败后保留草稿');
