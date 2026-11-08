@@ -12,6 +12,7 @@ import { digest, stableId, DomainError, WorkerUnavailable, type AppConfig, type 
 import { openReleaseFollowUp } from '../../src/operations.js';
 import { createApp } from '../../src/app.js';
 import { weeklyReport } from '../../src/reports.js';
+import { publicError } from '../../src/readiness.js';
 
 const roots: string[] = []; const stores: Store[] = [];
 const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: 'Product', description: 'Test', repository: 'owner/product', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], trustedChecks: ['test'], trustedAppIds: [123], ownerId: 'owner', autoMerge: true, budgetUsd: 10, createdAt: new Date().toISOString() };
@@ -630,7 +631,11 @@ describe('single worker durable business flow', () => {
     const f = setup({ workerUnavailable: { grok: ['knowledge_extract'], dsh: ['knowledge_extract'], codex: ['knowledge_extract'] } }); const task = f.ingest(); await f.engine.runUntilIdle();
     const blocked = f.store.get('tasks', task.id)!; expect(blocked.status).toBe('blocked'); expect(Date.parse(blocked.runAfter)).toBeGreaterThan(Date.now()); expect(f.store.list('questions')).toEqual([]);
     const budget = setup({ budget: .001 }); const tiny = budget.ingest(); await budget.engine.runUntilIdle();
-    expect(budget.store.get('tasks', tiny.id)?.status).toBe('blocked'); expect(budget.calls).toEqual([]);
+    const stopped = budget.store.get('tasks', tiny.id)!;
+    expect(stopped.status).toBe('blocked'); expect(stopped.error).toBe('budget_exhausted'); expect(budget.calls).toEqual([]);
+    expect(budget.store.list('outbox').some(message => message.taskId === tiny.id && message.text.includes('不会换运行器继续'))).toBe(true);
+    const page = await (await createApp({ store: budget.store, config: budget.config, engine: budget.engine }).request(`/tasks/${tiny.id}?project=p`)).text();
+    expect(page).toContain(publicError('budget_exhausted'));
   });
 
   it('keeps a failed feedback incomplete and schedules another try', async () => {
