@@ -654,7 +654,7 @@ export class Workbench {
     const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);
     if (feedbackRetry) code = 'feedback_retry';
     const message = publicError(code)!;
-    const retrying = feedbackRetry || task.stage === 'delivery' && ['pending_ci', 'remote_unavailable', 'technical_failure'].includes(code);
+    const retrying = feedbackRetry || task.stage === 'delivery' && ['pending_ci', 'remote_unavailable', 'technical_failure'].includes(code) || task.stage === 'research' && code === 'insufficient_research';
     this.store.transaction(() => {
       const current = this.current(task);
       if (current.billingStop) return;

@@ -80,7 +80,7 @@ const ownerStopMessages: Record<string, string> = {
   invalid_receipt: '交付回执与合并后的文件不一致。这次没有记成已交付。',
   nonindependent_review: '检查和执行用了同一个未获准独立复核的运行器。没有发布。',
   missing_test_evidence: '方案要求的检查没有完整记录。没有发布。',
-  insufficient_research: '中英文查证还不足以提出两个可行建议。任务已保留。',
+  insufficient_research: '中英文查证还不足以提出两个可行建议。任务已保留，到点会再查。这不需要你回答。',
   invalid_recommendations: '决策卡不完整。任务已保留，还没有提问。',
   baseline_unavailable: '读不到仓库基线。任务已保留，没有改动文件。',
   pending_ci: '必需检查还没完成。到点会再查。这不需要你回答。',
