@@ -12,6 +12,22 @@ describe('network recovery',()=>{
   it('separates authorization and limits from a failed route',()=>{
     expect(classifyStatus(401)).toBe('auth');expect(classifyStatus(429)).toBe('rate_limit');expect(classifyStatus(200)).toBe('healthy');
   });
+  it('tells the owner about authentication, throttling and MFA without reconnecting',async()=>{
+    const targets:NetworkTarget[]=[{id:'github',url:'https://api.github.com',domain:'personal',adapter:{kind:'shortcuts',status:'s',connect:'c',disconnect:'d'}}];
+    const notices:string[]=[];let reconnects=0;
+    const kinds=['auth','rate_limit','mfa'] as const;
+    for(const kind of kinds){
+      const guardian=new NetworkGuardian(targets,{diagnose:async()=>true,probe:async()=>({kind,detail:'HTTP'}),reconnect:async()=>{reconnects++;},rollback:async()=>{}},result=>notices.push(result.reason));
+      const first=await guardian.check();
+      await guardian.check();
+      expect(first[0]).toMatchObject({id:'github',state:'blocked'});
+    }
+    expect(reconnects).toBe(0);
+    expect(notices.filter(notice=>notice.includes('认证没有通过'))).toHaveLength(1);
+    expect(notices.filter(notice=>notice.includes('暂时被限流'))).toHaveLength(1);
+    expect(notices.filter(notice=>notice.includes('本人完成登录'))).toHaveLength(1);
+    expect(notices.some(notice=>notice.includes('不会自动重连'))).toBe(true);
+  });
   it('reconnects only the failed approved path and rolls back a healthy-path regression',async()=>{
     const targets:NetworkTarget[]=[{id:'github',url:'https://api.github.com',domain:'personal',adapter:{kind:'shortcuts',status:'github-status',connect:'github-connect',disconnect:'github-disconnect'}},{id:'corporate',url:'https://git.example.org',domain:'company'}];
     let changed=false,rolledBack=false;const actions:string[]=[];

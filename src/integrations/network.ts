@@ -11,6 +11,13 @@ export interface Probe {kind:ProbeKind;detail:string}
 export interface NetworkResult {id:string;domain:string;state:'healthy'|'blocked';reason:string;checkedAt:string;retryAt?:string}
 export interface NetworkActions {diagnose:(target:NetworkTarget)=>Promise<boolean>;probe:(target:NetworkTarget)=>Promise<Probe>;reconnect:(target:NetworkTarget)=>Promise<void>;rollback:(target:NetworkTarget)=>Promise<void>}
 export function classifyStatus(status:number):ProbeKind{return status===401||status===403?'auth':status===429?'rate_limit':status>=200&&status<400?'healthy':'network';}
+/** Authorization, throttling and MFA stay distinct. None of them is treated as a route to reconnect. */
+export function ownerProbeReason(probe:Probe):string {
+  if(probe.kind==='mfa')return '这条路径要求你本人完成登录。不会自动重连，也不需要在任务里回答。';
+  if(probe.kind==='auth')return '这条路径的认证没有通过。不会把它当成断线去重连。';
+  if(probe.kind==='rate_limit')return '这条路径暂时被限流。不会把它当成断线去重连。';
+  return probe.detail;
+}
 
 /** Targets and repair commands are operator-approved. A route repair never rotates authentication or asks a business question. */
 export class NetworkGuardian {
@@ -26,7 +33,7 @@ export class NetworkGuardian {
       for(const target of this.targets){try{probes.set(target.id,await this.actions.diagnose(target)?await this.actions.probe(target):{kind:'network',detail:'Local DNS or routing prerequisites are not verified.'});}catch{probes.set(target.id,{kind:'network',detail:'Approved path unavailable.'});}}
       const healthy=this.targets.filter(t=>probes.get(t.id)?.kind==='healthy'),next:NetworkResult[]=[];
       for(const target of this.targets){
-        let probe=probes.get(target.id)!,state:NetworkResult['state']=probe.kind==='healthy'?'healthy':'blocked',reason=probe.detail;
+        let probe=probes.get(target.id)!,state:NetworkResult['state']=probe.kind==='healthy'?'healthy':'blocked',reason=ownerProbeReason(probe);
         const previous=this.failures.get(target.id)??{count:0,next:0};
         if(probe.kind==='network'&&target.adapter&&Date.now()>=previous.next&&previous.count<3){
           try {
@@ -42,7 +49,7 @@ export class NetworkGuardian {
         next.push(result);if(this.results.find(r=>r.id===target.id)?.state!==state)this.notify?.(result);
       }
       // Repairs of later targets may have damaged an earlier target; derive admission from a final fresh pass.
-      for(const result of next){const target=this.targets.find(t=>t.id===result.id)!;let final:Probe;try{final=await this.actions.diagnose(target)?await this.actions.probe(target):{kind:'network',detail:'Local path is not verified.'};}catch{final={kind:'network',detail:'Path unavailable after recovery.'};}if(final.kind!=='healthy'){result.state='blocked';result.reason=final.detail;}}
+      for(const result of next){const target=this.targets.find(t=>t.id===result.id)!;let final:Probe;try{final=await this.actions.diagnose(target)?await this.actions.probe(target):{kind:'network',detail:'Local path is not verified.'};}catch{final={kind:'network',detail:'Path unavailable after recovery.'};}if(final.kind!=='healthy'){result.state='blocked';result.reason=ownerProbeReason(final);}}
       this.results=next;return this.current();
     }finally{this.busy=false;this.idleWaiters.splice(0).forEach(resolve=>resolve());}
   }
