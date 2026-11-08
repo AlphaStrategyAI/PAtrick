@@ -258,6 +258,7 @@ function RuleItem({ rule, context }: { rule: Rule; context: ViewContext }) {
     <div class="rule-main">
       <div class="card-topline"><div class="badge-group"><Badge tone={rule.kind === 'principle' ? 'green' : rule.kind === 'observation' ? 'amber' : 'neutral'}>{({ principle: '本人原则', observation: '观察 · 待验证', external: '外部参考' })[rule.kind]}</Badge><Badge>{rule.status === 'active' ? '当前规则' : '规则记录'} · v{rule.version}</Badge></div><span class="metadata">{({ active: '有效', suspended: '已暂停', superseded: '已被新版替换' })[rule.status]}</span></div>
       <h2>{rule.title}</h2><p class="rule-statement">{rule.statement}</p>
+      {context.scoped('actions').some(action => action.kind === 'decision.rule-expiry' && Array.isArray(action.payload.ruleIds) && (action.payload.ruleIds as string[]).includes(rule.id)) && <p class="metadata">已到复核期，暂停自动引用。原文仍保留。</p>}
       <div class="rule-scope"><span><strong>适用范围</strong>{rule.conditions || '尚未明确'}</span><span><strong>例外与边界</strong>{rule.exceptions || '尚无已记录的例外'}</span></div>
       <details class="rule-evidence"><summary><Icon name="book"/>{cases.length} 个决策案例 · {rule.citations.length} 处依据<Icon name="chevron"/></summary>
         {cases.map(item => canReadDecisionCase(item, context) ? <div class="decision-case">
