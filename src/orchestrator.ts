@@ -390,10 +390,14 @@ export class Workbench {
       } else if (task.stage === 'case_extract') {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
-        const decision = decisionSchema.parse(output); const factualUse=this.validateDecision(task, decision, input);
+        const parsed = decisionSchema.parse(output); const factualUse=this.validateDecision(task, parsed, input);
+        const decision = this.bareIdea(task, parsed, input) ? { ...parsed, action: 'archive' as const, summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。', rationale: '单纯的新点子不进入执行。补上用户、竞品或已核验证据后再判断。' } : parsed;
         const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
         if (decision.action !== 'ask' && !this.store.list('questions').some(q => q.taskId === task.id && q.status === 'answered')) try { captureNoQuestionCaseVersion(this.store, this.config, snapshot.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
-        if (decision.action === 'archive') this.advance(task, 'decide', { status: 'archived', decision, decisionSnapshotId: snapshot.id });
+        if (decision.action === 'archive') {
+          if (parsed.action !== 'archive') this.event(task, 'hypothesis.archived', decision.summary);
+          this.advance(task, 'decide', { status: 'archived', decision, decisionSnapshotId: snapshot.id });
+        }
         else if (decision.action === 'proceed') this.advance(task, 'plan', { decision, decisionSnapshotId: snapshot.id });
         else if (!input.research) this.advance(task, 'research', { decision, decisionSnapshotId: snapshot.id });
         else { this.validateResearch(input.research); this.openQuestion(task, project, decision, input.research, snapshot.id); }
@@ -463,6 +467,14 @@ export class Workbench {
     const cards=[...new Map([...activeCards,...relevant].map(card=>[card.id,card])).values()].slice(0,30);
     const facts=cards.flatMap(card=>{const historical=card.factual?.eligible?[card.factual.fact]:[];const current=context?factualEligibility(this.store,card,project,{temporal:'current',contextId:context.id},context):undefined;return current?.eligible?[...historical,current.fact]:historical;});
     return { task: current, project, role, source, cards, facts, ...(context?{factualContext:context}:{}), ...(current.decision?{decisionInterpretation:decisionInterpretationFor(current)}:{}), rules: applicableRules(this.store, current, this.config), answer: question?.status === 'answered' ? question.answer?.text : undefined, research: question?.status === 'answered' ? question.research : completedResearch, plan: current.plan, artifact: current.artifact, receipt: current.receiptId ? this.store.get('receipts', current.receiptId) : undefined, baselineFiles: current.baselineFiles };
+  }
+
+  /** A new idea with only its own wording is a hypothesis, not work to execute. */
+  private bareIdea(task: Task, decision: ReturnType<typeof decisionSchema.parse>, input: WorkerInput): boolean {
+    if (decision.action !== 'proceed' || input.answer || input.facts.length || decision.grounds.facts.length) return false;
+    if (decision.citations.some(citation => citation.sourceId !== task.sourceId)) return false;
+    if (input.research?.queries.some(query => query.sources.length)) return false;
+    return decision.grounds.statements.length > 0 && decision.grounds.statements.every(statement => statement.purpose === 'author-statement' && statement.binding === 'source-statement');
   }
 
   private validateDecision(task: Task, decision: ReturnType<typeof decisionSchema.parse>, input:WorkerInput): FactualUseView {
