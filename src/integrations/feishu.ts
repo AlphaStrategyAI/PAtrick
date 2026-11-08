@@ -244,8 +244,30 @@ export class FeishuChannel implements NotificationAdapter {
     if (!project) throw new DomainError('多个项目时，请用 /task 项目编号 业务内容指定范围。');
     const content = taskCommand?.[2] ?? text;
     if (!content.trim()) throw new DomainError('业务内容不能为空。');
-    const task = this.workbench.ingest({ projectId: project.id, kind: 'feishu', externalId: `${f.chatId}:${messageId}`, title: content.trim().split('\n')[0]!.slice(0, 120), content, revision, locator: `https://applink.feishu.cn/client/message/open?message_id=${encodeURIComponent(messageId)}`, authorId: internalOwner, retention: 'permanent' });
-    return task ? [task.sourceId] : [];
+    const chatId = f.chatId;
+    if (!chatId) throw new DomainError('Feishu is not configured.', 'feishu_unready', 503);
+    const threadId = typeof message.root_id === 'string' ? message.root_id : typeof message.parent_id === 'string' ? message.parent_id : undefined;
+    const subscribed = threadId ? this.discussion(chatId, threadId) : undefined;
+    const externalId = `${chatId}:${messageId}`;
+    const title = content.trim().split('\n')[0]!.slice(0, 120);
+    const locator = `https://applink.feishu.cn/client/message/open?message_id=${encodeURIComponent(messageId)}`;
+    const task = this.workbench.ingest({ projectId: project.id, kind: 'feishu', externalId, title, content, revision, locator, authorId: internalOwner, retention: 'permanent', ...(subscribed?.taskId ? { subscribedTaskId: subscribed.taskId } : {}) });
+    const sourceId = stableId('source', { projectId: project.id, domain: project.domain }, 'feishu', externalId, revision);
+    if (this.store.get('sources', sourceId)) this.rememberDiscussion(project, chatId, messageId, subscribed?.taskId ?? task?.id, threadId);
+    return this.store.get('sources', sourceId) ? [sourceId] : task ? [task.sourceId] : [];
+  }
+  private discussion(chatId: string, messageId: string) {
+    return this.store.list('actions').find(item => item.kind === 'discussion.subscription' && item.payload.chatId === chatId && Array.isArray(item.payload.messageIds) && (item.payload.messageIds as unknown[]).includes(messageId) && typeof item.taskId === 'string');
+  }
+  private rememberDiscussion(project: { id: string; domain: string }, chatId: string, messageId: string, taskId: string | undefined, parentId?: string): void {
+    const existing = parentId ? this.discussion(chatId, parentId) : undefined;
+    const rootId = typeof existing?.payload.rootId === 'string' ? existing.payload.rootId : messageId;
+    const boundTask = existing?.taskId ?? taskId;
+    if (!boundTask) return;
+    const id = stableId('discussion', chatId, rootId);
+    const current = this.store.get('actions', id);
+    const prior = Array.isArray(current?.payload.messageIds) ? current.payload.messageIds.filter((value): value is string => typeof value === 'string') : [rootId];
+    this.store.save('actions', { projectId: project.id, domain: project.domain, id, taskId: boundTask, kind: 'discussion.subscription', status: 'completed', payload: { chatId, rootId, messageIds: [...new Set([...prior, messageId])] }, updatedAt: now() });
   }
 
   private pendingAnswerSource(text: string, message: Json): boolean {

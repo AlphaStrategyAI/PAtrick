@@ -7,7 +7,7 @@ import { canonicalExperiencePayloadSchema, factualContextTombstone, factualConte
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
   locator?: string; authorId?: string; retention?: SourceRevision['retention']; revision?: string;
-  purpose?: 'task' | 'reference'; status?: 'active' | 'withdrawn';
+  purpose?: 'task' | 'reference'; status?: 'active' | 'withdrawn'; subscribedTaskId?: string;
 }
 const finished = new Set(['delivered', 'completed', 'archived', 'cancelled']);
 
@@ -184,7 +184,10 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
   const project = store.get('projects', input.projectId) ?? config.projects.find(p => p.id === input.projectId);
   if (!project) throw new DomainError('Unknown project.', 'unknown_project', 404);
   if (!input.externalId?.trim() || !input.title?.trim() || typeof input.content !== 'string' || input.content.length > 2_000_000) throw new DomainError('A source identifier, title and bounded text are required.');
-  const purpose = input.purpose ?? 'task';
+  const subscribed = input.subscribedTaskId ? store.get('tasks', input.subscribedTaskId) : undefined;
+  if (input.subscribedTaskId && (!subscribed || subscribed.projectId !== project.id || subscribed.domain !== project.domain)) throw new DomainError('The subscribed task is not in this project.', 'unknown_task', 404);
+  const carrySubscription = !!subscribed && subscribed.kind !== 'reference_knowledge' && !finished.has(subscribed.status) && !subscribed.receiptId && subscribed.stage !== 'feedback';
+  const purpose = input.subscribedTaskId && !carrySubscription ? 'reference' : input.purpose ?? 'task';
   if (!['task', 'reference'].includes(purpose)) throw new DomainError('Unknown source purpose.');
   const kind = input.kind ?? 'manual';
   if (!['file', 'feishu', 'github', 'conversation', 'manual', 'reading', 'email'].includes(kind)) throw new DomainError('Unknown source kind.');
@@ -254,6 +257,19 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
     store.save('sources', source);
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
+    if (input.subscribedTaskId) {
+      const current = store.get('tasks', input.subscribedTaskId)!;
+      if (purpose === 'reference') {
+        store.save('events', { ...scope, id: stableId('ingest', id), taskId: current.id, type: 'discussion.note', message: '这条讨论有了新消息。原任务已经结束，不会另开一件。', createdAt, data: { sourceId: id, revision } });
+        return undefined;
+      }
+      for (const question of store.list('questions')) if (question.taskId === current.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
+      const woken: Task = { ...current, sourceId: id, sourceRevision: revision, title: input.title, description: input.content, version: current.version + 1, status: 'queued', stage: 'knowledge_extract', updatedAt: createdAt, runAfter: createdAt, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: undefined };
+      store.save('tasks', woken);
+      store.save('events', { ...scope, id: stableId('ingest', id), taskId: woken.id, type: 'discussion.continued', message: '这条讨论有了新消息。原任务继续处理一次。', createdAt, data: { sourceId: id, revision } });
+      enqueueStructuredKnowledge(store, source);
+      return woken;
+    }
     enqueueStructuredKnowledge(store, source);
     if (purpose === 'reference') {
       store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: '已收下这份引用资料。它不启动执行任务。', createdAt, data: { sourceId: id, revision:store.sourceRequiresTemporaryRetention(source)?store.auditTemporaryRevision(revision):revision, retention: source.retention, purpose } });
