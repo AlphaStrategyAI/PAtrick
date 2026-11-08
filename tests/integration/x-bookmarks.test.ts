@@ -63,7 +63,11 @@ it('imports the newest bookmark page and accepts only a grounded learning note',
     acceptBookmarkLearning(store, source, { explanation: `书签原句是：${text}`, association: 'none', counterexample: '失败后立即删除也是一种选择。', reviewAt: new Date(Date.now() + 86400000).toISOString() });
     expect(learningView(store, source)).toMatchObject({ state: 'checked', association: 'none' });
     expect(store.list('rules')).toHaveLength(0);
-    expect(await (await app.request('/sources')).text()).toContain('已核验解释、关联、反例和到期复核。');
+    const checked = await (await app.request('/sources')).text();
+    expect(checked).toContain('已核验解释、关联、反例和到期复核。');
+    expect(checked).toContain(`书签原句是：${text}`);
+    expect(checked).toContain('反例：失败后立即删除也是一种选择。');
+    expect(checked).toContain('没有关联其他资料');
     expect(await scanXBookmarks(store, config, project, engine, fetcher)).toBe('idle');
     expect(store.list('sources').filter(source => source.kind === 'reading')).toHaveLength(2);
   } finally { await engine.shutdown(); store.close(); }
