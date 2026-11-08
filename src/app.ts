@@ -10,6 +10,7 @@ import { DomainError, digest, now, stableId, type AppConfig, type Project, type 
 import { projectSchema } from './config.js';
 import { sameSecret, sessionToken, validSession } from './auth.js';
 import { readiness, publicTask, publicAttempt, publicEvent, taskBillingStatus } from './readiness.js';
+import { applicableRules } from './standards.js';
 import { recordMaintenance } from './evaluation.js';
 import { weeklyReport } from './reports.js';
 import { outcomeReviewViews, recordOutcomeEvidence, runOutcomeReviews } from './reviews.js';
@@ -105,7 +106,7 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
     });
     return c.json(data);
   });
-  app.get('/api/tasks/:id',async c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);const project=ownedProject(task.projectId,task.domain),billing=await engine.billingStatuses([project]);return c.json({task:publicTask(task),billing:taskBillingStatus(task,config,billing),question:task.questionId?store.get('questions',task.questionId):undefined,events:store.list('events').filter(e=>e.taskId===task.id).map(publicEvent),attempts:store.list('attempts').filter(a=>a.taskId===task.id).map(publicAttempt),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
+  app.get('/api/tasks/:id',async c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);const project=ownedProject(task.projectId,task.domain),billing=await engine.billingStatuses([project]);const source=store.get('sources',task.sourceId);const readable=!!source&&source.status==='active'&&!!source.content&&!store.sourceRequiresTemporaryRetention(source);return c.json({task:publicTask(task),billing:taskBillingStatus(task,config,billing),question:task.questionId?store.get('questions',task.questionId):undefined,evidence:{sourceId:task.sourceId,revision:readable?source!.revision:undefined,title:readable?source!.title:undefined,locator:readable?source!.locator:undefined,quote:readable?source!.content:undefined,citations:task.decision?.citations??[]},standards:applicableRules(store,task,config).map(rule=>({id:rule.id,title:rule.title,statement:rule.statement,kind:rule.kind,version:rule.version,status:rule.status})),events:store.list('events').filter(e=>e.taskId===task.id).map(publicEvent),attempts:store.list('attempts').filter(a=>a.taskId===task.id).map(publicAttempt),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
   app.get('/api/lookup',c=>{
     const data=store.readSnapshot(()=>{const project=store.get('projects',c.req.query('project')??'');
       if(!project||project.domain!==c.req.query('domain'))return {cards:[]};
