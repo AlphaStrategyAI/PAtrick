@@ -272,8 +272,10 @@ export class BillingAuthority {
       this.store.save('attempts', attempt);
       this.store.save('tasks', { ...task, attempts: ordinal, spentUsd: task.spentUsd + decision.reserveUsd, updatedAt: at });
       if (prior && switchRows) {
-        this.store.save('outbox', { id: switchRows.noticeId, projectId: task.projectId, domain: task.domain, taskId: task.id, channel: this.config.feishu ? 'feishu' : 'origin', recipient: this.config.feishu?.ownerOpenId ?? this.config.ownerId, text: `${task.title}：${roleLabelsZh[task.stage] ?? task.stage}从 ${prior.runner} 换到 ${runner}。已继续原任务。`, status: 'pending', attempts: 0, runAfter: at, createdAt: at });
-        this.store.save('events', { id: switchRows.eventId, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'worker.switched', message: `${roleLabelsZh[task.stage] ?? task.stage}：${prior.runner} 换到 ${runner}。已继续原任务。`, createdAt: at, data: { from: prior.runner, to: runner, role: task.stage } });
+        const reason = switchContext?.reason === 'subscription_unavailable' ? '原来的运行器订阅额度或认证暂不可用' : '原来的运行器暂时不可用';
+        const continued = `原因：${reason}。已继续原任务。`;
+        this.store.save('outbox', { id: switchRows.noticeId, projectId: task.projectId, domain: task.domain, taskId: task.id, channel: this.config.feishu ? 'feishu' : 'origin', recipient: this.config.feishu?.ownerOpenId ?? this.config.ownerId, text: `${task.title}：${roleLabelsZh[task.stage] ?? task.stage}从 ${prior.runner} 换到 ${runner}。${continued}`, status: 'pending', attempts: 0, runAfter: at, createdAt: at });
+        this.store.save('events', { id: switchRows.eventId, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'worker.switched', message: `${roleLabelsZh[task.stage] ?? task.stage}：${prior.runner} 换到 ${runner}。${continued}`, createdAt: at, data: { from: prior.runner, to: runner, role: task.stage } });
       }
       return pending;
     }); } catch (cause) {
