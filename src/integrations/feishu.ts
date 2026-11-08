@@ -39,6 +39,7 @@ export class FeishuChannel implements NotificationAdapter {
     this.dispatcher = new EventDispatcher({ verificationToken: f?.verificationToken, encryptKey: f?.encryptKey, logger: silentLogger, loggerLevel: LoggerLevel.error });
     this.dispatcher.register({
       'im.message.receive_v1': async (event: Json) => this.receive(event),
+      'card.action.trigger': async (event: Json) => this.cardAction(event),
       'im.message.recalled_v1': async (event: Json) => this.recalled(event),
       // Edits are also detected by complete history reconciliation, even when a tenant has no edit event.
       'im.message.updated_v1': async (event: Json) => this.receive(event),
@@ -290,6 +291,38 @@ export class FeishuChannel implements NotificationAdapter {
     const source = this.store.get('sources', stableId('owner-answer', question.id));
     return !source || source.status !== 'active' || source.content !== question.answer.text;
   }
+  private decisionQuestion(message: OutboxMessage): Question | undefined {
+    return this.store.list('questions').find(question => stableId('question-notice', question.id) === message.id && question.projectId === message.projectId && question.domain === message.domain && question.taskId === message.taskId && question.status !== 'stale');
+  }
+  private decisionCard(question: Question, marker: string): string {
+    const value = (choice: 'A' | 'B' | 'C') => ({ questionId: question.id, taskVersion: question.taskVersion, questionVersion: question.version, choice });
+    const button = (choice: 'A' | 'B', label: string, type: 'primary' | 'default') => ({ tag: 'button', text: { tag: 'plain_text', content: `${choice} · ${label}`.slice(0, 100) }, type, behaviors: [{ type: 'callback', value: value(choice) }] });
+    return JSON.stringify({ schema: '2.0', config: { update_multi: true }, header: { title: { tag: 'plain_text', content: question.title.slice(0, 100) }, template: 'green' }, body: { elements: [{ tag: 'markdown', content: `${question.context}\n\nA · ${question.options.A.label}：${question.options.A.description}\nB · ${question.options.B.label}：${question.options.B.description}\n\n${marker}` }, button('A', question.options.A.label, 'primary'), button('B', question.options.B.label, 'default'), { tag: 'form', name: 'owner_decision', elements: [{ tag: 'input', name: 'words', placeholder: { tag: 'plain_text', content: '写下我自己的决定' }, width: 'fill' }, { tag: 'button', text: { tag: 'plain_text', content: 'C · 我自己决定' }, type: 'primary', name: 'submit', form_action_type: 'submit', behaviors: [{ type: 'callback', value: value('C') }] }] }] } });
+  }
+  private async cardAction(raw: Json): Promise<void> {
+    if (this.stopping) return;
+    const event = raw.event ? { ...raw.header, ...raw.event } : raw;
+    const f = this.config.feishu;
+    if (!f?.chatId || !f.ownerOpenId || event.operator?.open_id !== f.ownerOpenId) return;
+    const chatId = event.context?.open_chat_id ?? event.open_chat_id;
+    if (chatId && chatId !== f.chatId) return;
+    const action = event.action ?? {};
+    const value = action.value;
+    if (!value || typeof value.questionId !== 'string' || !['A', 'B', 'C'].includes(value.choice) || !Number.isInteger(Number(value.taskVersion)) || !Number.isInteger(Number(value.questionVersion))) return;
+    const question = this.store.get('questions', value.questionId);
+    if (!question) return;
+    const choice = value.choice as 'A' | 'B' | 'C';
+    const words = typeof action.form_value?.words === 'string' ? action.form_value.words : typeof action.input_value === 'string' ? action.input_value : undefined;
+    if (choice === 'C' && !words?.trim()) {
+      this.reply({ projectId: question.projectId, domain: question.domain }, typeof event.context?.open_message_id === 'string' ? event.context.open_message_id : question.id, digest({ questionId: question.id, empty: true }), 'C 需要写下你自己的决定。只点按钮不会续办。');
+      return;
+    }
+    this.project(question.projectId);
+    try {
+      this.workbench.answer({ questionId: question.id, taskVersion: Number(value.taskVersion), questionVersion: Number(value.questionVersion), choice, ...(choice === 'C' ? { text: words } : {}), actorId: this.config.ownerId, eventId: `feishu-card:${f.chatId}:${question.id}:${value.questionVersion}` });
+    } catch (error) { if (!(error instanceof DomainError) || error.code !== 'answer_conflict') throw error; }
+  }
+
   private questionForRemote(remoteId: unknown): Question | undefined {
     if (typeof remoteId !== 'string') return undefined;
     const message = this.store.list('outbox').find(outbox => outbox.channel === 'feishu' && outbox.remoteId === remoteId);
@@ -314,16 +347,21 @@ export class FeishuChannel implements NotificationAdapter {
     if (message.sourceIds?.some(id => this.store.get('sources', id)?.status !== 'active')) throw new DomainError('Notification evidence is no longer available.', 'feishu_stale', 409);
     if (![f.ownerOpenId, this.config.ownerId].includes(message.recipient)) throw new DomainError('Feishu notifications may only target the configured owner.', 'feishu_recipient', 403);
     const marker = `[PAtrick:${message.id}]`; const text = `${message.text}\n\n${marker}`;
-    const id = stableId('feishu-send', message.id); const fingerprint = digest({ text, chatId: f.chatId }); const existing = this.store.get('actions', id);
+    const question = this.decisionQuestion(message);
+    const card = question ? this.decisionCard(question, marker) : undefined;
+    const id = stableId('feishu-send', message.id); const fingerprint = digest(card ? { text, chatId: f.chatId, card } : { text, chatId: f.chatId }); const existing = this.store.get('actions', id);
     if (existing && existing.payload.fingerprint !== fingerprint) throw new DomainError('An outbox identifier cannot be reused for different notification content.', 'feishu_conflict', 409);
     if (existing?.status === 'completed' && typeof existing.payload.remoteId === 'string') return { remoteId: existing.payload.remoteId };
     const matches: Json[] = []; let token: string | undefined; const seen = new Set<string>();
     do {
       const data = await this.history({ page_token: token, sort_type: 'ByCreateTimeDesc', start_time: String(Math.max(0, Math.floor(Date.parse(message.createdAt) / 1000) - 60)) });
       for (const item of data.items ?? []) {
-        const body = this.text(item.body?.content);
-        if (item.chat_id === f.chatId && ['app', 'bot'].includes(item.sender?.sender_type) && item.sender?.id === f.appId && body?.includes(marker)) {
-          if (body !== text || typeof item.message_id !== 'string') throw new DomainError('A notification marker has conflicting remote content.', 'feishu_ambiguous', 409);
+        const raw = typeof item.body?.content === 'string' ? item.body.content : '';
+        const body = this.text(raw);
+        const expected = card ?? text;
+        const actual = card ? (raw.includes(marker) ? raw : undefined) : body;
+        if (item.chat_id === f.chatId && ['app', 'bot'].includes(item.sender?.sender_type) && item.sender?.id === f.appId && actual?.includes(marker)) {
+          if (actual !== expected || typeof item.message_id !== 'string') throw new DomainError('A notification marker has conflicting remote content.', 'feishu_ambiguous', 409);
           matches.push(item);
         }
       }
@@ -338,7 +376,8 @@ export class FeishuChannel implements NotificationAdapter {
     let remoteId = matches[0]?.message_id as string | undefined;
     if (!remoteId) {
       let result: Json;
-      try { result = await this.client.im.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: f.chatId, msg_type: 'text', content: JSON.stringify({ text }), uuid: payload.uuid } }); }
+      const data = card ? { receive_id: f.chatId, msg_type: 'interactive', content: card, uuid: payload.uuid } : { receive_id: f.chatId, msg_type: 'text', content: JSON.stringify({ text }), uuid: payload.uuid };
+      try { result = await this.client.im.message.create({ params: { receive_id_type: 'chat_id' }, data }); }
       catch { throw new DomainError('Feishu send result is unknown; the stable marker will be checked before retry.', 'feishu_unavailable', 503); }
       if (result.code !== 0 || typeof result.data?.message_id !== 'string') throw new DomainError('Feishu did not return a verified message receipt.', 'feishu_unavailable', 503);
       remoteId = result.data.message_id;

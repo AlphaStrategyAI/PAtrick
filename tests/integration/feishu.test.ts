@@ -170,6 +170,29 @@ describe('authenticated durable Feishu channel', () => {
     expect(f.store.list('outbox').filter(m => m.status === 'pending')).toHaveLength(1);
   });
 
+  it('sends a Feishu decision card and resumes the original task once', async () => {
+    const f = setup(); const { task, q } = f.question();
+    const notice = f.store.get('outbox', stableId('question-notice', q.id))!;
+    f.store.save('outbox', { ...notice, status: 'pending' });
+    await f.channel.send(f.store.get('outbox', notice.id)!);
+    const card = JSON.parse(f.messages.at(-1).body.content);
+    expect(card.schema).toBe('2.0');
+    expect(JSON.stringify(card)).toContain('A · Keep');
+    expect(JSON.stringify(card)).toContain('B · Delete');
+    expect(JSON.stringify(card)).toContain('C · 我自己决定');
+    expect(JSON.stringify(card)).toContain(`[PAtrick:${notice.id}]`);
+    const press = (choice: 'A' | 'B' | 'C', words?: string) => f.channel.dispatcher.invoke({ schema: '2.0', header: { event_type: 'card.action.trigger' }, event: { operator: { open_id: 'ou_owner' }, action: { value: { questionId: q.id, taskVersion: 1, questionVersion: 1, choice }, ...(words ? { form_value: { words } } : {}) }, context: { open_chat_id: 'oc_dm', open_message_id: 'om_1' } } }, { needCheck: false });
+    await press('C');
+    expect(f.store.get('tasks', task.id)?.status).toBe('awaiting_answer');
+    expect(f.store.list('outbox').some(item => item.text.includes('C 需要写下你自己的决定'))).toBe(true);
+    await press('A');
+    expect(f.store.get('tasks', task.id)).toMatchObject({ status: 'deciding', stage: 'decide', version: 2 });
+    await press('A');
+    await press('B');
+    expect(f.store.get('tasks', task.id)?.version).toBe(2);
+    expect(f.store.list('cases')).toHaveLength(1);
+  });
+
   it('binds a reply A/B/C to the original remote question notification', async () => {
     const f = setup(); f.question(); const input = event('reply', 'A'); input.message = { ...input.message, parent_id: 'om_question' } as typeof input.message;
     await f.channel.receive(input); expect(f.store.list('cases')[0]?.choice).toBe('A');
