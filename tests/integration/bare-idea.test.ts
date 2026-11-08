@@ -47,6 +47,17 @@ it('archives a bare idea instead of executing it', async () => {
   } finally { await f.engine.shutdown(); }
 });
 
+it('archives an idea the source itself says is still unverified', async () => {
+  const f = setup('task-request');
+  const task = f.engine.ingest({ projectId: 'p', kind: 'file', externalId: 'productIdeas/首次体验.md', title: '首次引导', content: '想法：在用户第一次打开时提供一个可跳过的引导。尚未取得用户访谈或行为证据，先作为待验证假设。' })!;
+  try {
+    await f.engine.runUntilIdle();
+    const saved = f.store.get('tasks', task.id)!;
+    expect(saved).toMatchObject({ status: 'archived', decision: { action: 'archive', summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。' } });
+    expect(saved.plan).toBeUndefined();
+  } finally { await f.engine.shutdown(); }
+});
+
 it('still plans a requirement stated by the current source', async () => {
   const f = setup('task-request');
   const task = f.engine.ingest({ projectId: 'p', kind: 'manual', externalId: 'report', title: '草稿', content: '用户报告：导出失败后草稿消失。' })!;
