@@ -17,7 +17,7 @@ const roots: string[] = []; const stores: Store[] = [];
 const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: 'Product', description: 'Test', repository: 'owner/product', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/'], trustedChecks: ['test'], trustedAppIds: [123], ownerId: 'owner', autoMerge: true, budgetUsd: 10, createdAt: new Date().toISOString() };
 const research: ResearchRecord = { queries: (['zh', 'en'] as const).map(language => ({ language, query: language === 'zh' ? '草稿 恢复' : 'draft recovery', searchedAt: new Date().toISOString(), sources: [{ language, url: `https://${language}.example.com/original`, canonicalUrl: `https://${language}.example.com/original`, title: 'Source', publishedAt: '2026-01-01', accessedAt: new Date().toISOString(), excerpt: 'Evidence for both alternatives', primary: true, conditions: 'Draft export' }] })), summary: 'A and B both viable', gaps: [] };
 const suggestion = (label: string) => ({ label, description: `Choose ${label}`, rationale: 'Evidence', tradeoff: 'A cost', evidenceUrls: research.queries.flatMap(q => q.sources.map(s => s.url)) });
-interface Options { ask?: boolean; noReceipt?: boolean; badReview?: boolean; repair?: number; workerUnavailable?: Partial<Record<Runner, Role[]>>; budget?: number; notifierOffline?: boolean; research?: ResearchRecord; researchFromQuestion?: (question: string) => ResearchRecord; mutateOutput?: (input: WorkerInput, output: unknown) => unknown; beforeRun?: (input: WorkerInput) => Promise<void>; canRun?: (project: Project) => boolean; mutateReceipt?: (receipt: DeliveryReceipt) => DeliveryReceipt }
+interface Options { ask?: boolean; noReceipt?: boolean; badReview?: boolean; badFeedback?: boolean; repair?: number; workerUnavailable?: Partial<Record<Runner, Role[]>>; budget?: number; notifierOffline?: boolean; research?: ResearchRecord; researchFromQuestion?: (question: string) => ResearchRecord; mutateOutput?: (input: WorkerInput, output: unknown) => unknown; beforeRun?: (input: WorkerInput) => Promise<void>; canRun?: (project: Project) => boolean; mutateReceipt?: (receipt: DeliveryReceipt) => DeliveryReceipt }
 function setup(options: Options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'patrick-core-flow-')); roots.push(root);
   const store = new Store(join(root, 'db.sqlite'), join(root, 'vault')); stores.push(store);
@@ -35,7 +35,7 @@ function setup(options: Options = {}) {
     if (input.role === 'plan') output = { taskVersion: input.task.version, sourceRevision: input.task.sourceRevision, baselineSha: 'baseline', summary: 'Update PRD', paths: ['docs/PRD.md'], steps: ['Update'], tests: ['test'], stopConditions: ['Source changes'] };
     if (input.role === 'execute') output = { taskVersion: input.task.version, planHash: digest(input.plan!), baselineSha: input.plan!.baselineSha, files: [{ path: 'docs/PRD.md', content: '# PRD\nKeep drafts.' }], tests: [{ command: 'test', passed: true, output: '1 passed' }], summary: 'Updated' };
     if (input.role === 'check') { checks++; output = { taskVersion: input.task.version, planHash: digest(input.plan!), artifactHash: digest(input.artifact!), verdict: options.badReview || checks <= (options.repair ?? 0) ? 'repair' : 'pass', summary: 'Independent checks', issues: [], tests: [{ command: 'test', passed: !(options.badReview || checks <= (options.repair ?? 0)), output: options.badReview ? 'failed' : '1 passed' }] }; }
-    if (input.role === 'feedback') output = { summary: 'Merged and verified', observations: ['Successful delivery'] };
+    if (input.role === 'feedback') output = options.badFeedback ? { summary: '', observations: [] } : { summary: 'Merged and verified', observations: ['Successful delivery'] };
     return { output: options.mutateOutput?.(input, output) ?? output, costUsd: .01, model: `${name}-model`, provider: `${name}-provider` };
   } }));
   const writer = { async baseline() { return 'baseline'; }, async deliver(task: WorkerInput['task']) { deliveries++; if (options.noReceipt) throw new Error('remote offline'); const receipt = { id: `receipt-${task.id}`, projectId: task.projectId, domain: task.domain, taskId: task.id, repository: p.repository, path: p.prdPath, pullRequestUrl: 'https://github.com/owner/product/pull/1', pullRequestNumber: 1, headSha: 'head', mergeSha: 'merged', contentHash: digest(task.artifact!.files.find(f => f.path === p.prdPath)!.content), verifiedAt: new Date().toISOString(), checks: [{ name: 'test', conclusion: 'success', headSha: 'head', appId: 123, url: 'https://github.com/owner/product/actions/1' }] } satisfies DeliveryReceipt; return options.mutateReceipt?.(receipt) ?? receipt; } };
@@ -627,6 +627,21 @@ describe('single worker durable business flow', () => {
     const blocked = f.store.get('tasks', task.id)!; expect(blocked.status).toBe('blocked'); expect(Date.parse(blocked.runAfter)).toBeGreaterThan(Date.now()); expect(f.store.list('questions')).toEqual([]);
     const budget = setup({ budget: .001 }); const tiny = budget.ingest(); await budget.engine.runUntilIdle();
     expect(budget.store.get('tasks', tiny.id)?.status).toBe('blocked'); expect(budget.calls).toEqual([]);
+  });
+
+  it('keeps a failed feedback incomplete and schedules another try', async () => {
+    const f = setup({ badFeedback: true });
+    const task = f.ingest();
+    await f.engine.runUntilIdle();
+    const current = f.store.get('tasks', task.id)!;
+    expect(current).toMatchObject({ status: 'retrying', stage: 'feedback', error: 'feedback_retry' });
+    expect(current.receiptId).toBeTruthy();
+    expect(current.feedback).toBeUndefined();
+    expect(f.deliveryCount()).toBe(1);
+    expect(f.store.list('events').some(event => event.type === 'feedback_retry' && event.message.includes('交付还不能算完成'))).toBe(true);
+    const html = await (await createApp({ store: f.store, config: f.config, engine: f.engine }).request(`/tasks/${task.id}`)).text();
+    expect(html).toContain('反馈没有完成。');
+    expect(html).toContain('这不需要你回答。');
   });
 
   it('bounds repairs at two and never treats business test failure as runner unavailability', async () => {
