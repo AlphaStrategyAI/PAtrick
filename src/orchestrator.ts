@@ -115,18 +115,27 @@ export class Workbench {
       const task = this.task(question.taskId); const project = this.project(task);
       if (answer.actorId !== question.ownerId || answer.actorId !== project.ownerId) throw new DomainError('Only the current project owner may answer this question.', 'wrong_owner', 403);
       const source = this.store.get('sources', task.sourceId);
-      if (question.status === 'stale' || source?.status !== 'active' || source.revision !== task.sourceRevision) throw new DomainError('This question is obsolete. Review the current task.', 'stale_answer', 409);
-      if (question.taskVersion !== answer.taskVersion || question.version !== answer.questionVersion) throw new DomainError('Answer versions do not match the frozen question.', 'stale_answer', 409);
       const words = frozenAnswer(question, answer);
       const eventId = stableId('answer-event', task.projectId, task.domain, answer.eventId);
       const recorded = this.store.get('cursors', eventId);
       const fingerprint = digest({ questionId: question.id, choice: answer.choice, words });
       if (recorded && recorded.value !== fingerprint) throw new DomainError('This answer event already identifies a different answer.', 'answer_conflict', 409);
-      if (question.status === 'answered') {
+      if (question.status === 'answered' && question.taskVersion === answer.taskVersion && question.version === answer.questionVersion) {
         if (question.answer?.actorId !== answer.actorId || question.answer.choice !== answer.choice || question.answer.text !== words) throw new DomainError('This question already has a different accepted answer.', 'answer_conflict', 409);
         return task;
       }
-      if (task.status !== 'awaiting_answer' || task.questionId !== question.id || task.version !== question.taskVersion) throw new DomainError('The task has moved beyond this question.', 'stale_answer', 409);
+      const stale = question.status === 'stale' || !source || source.status !== 'active' || source.revision !== task.sourceRevision || question.taskVersion !== answer.taskVersion || question.version !== answer.questionVersion || task.status !== 'awaiting_answer' || task.questionId !== question.id || task.version !== question.taskVersion;
+      if (stale) {
+        const finished = new Set(['delivered', 'completed', 'archived', 'cancelled']);
+        const restarting = new Set(['queued', 'extracting', 'deciding', 'researching']);
+        if (finished.has(task.status) || task.receiptId || restarting.has(task.status)) throw new DomainError('This answer is older than the current task and was not executed.', 'stale_answer', 409);
+        const at = now();
+        if (question.status === 'open') this.store.save('questions', { ...question, status: 'stale' });
+        const rejudged: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: 'stale_answer' };
+        this.store.save('tasks', rejudged);
+        this.event(task, 'answer.stale', publicError('stale_answer')!, { questionId: question.id });
+        return rejudged;
+      }
       const at = now(); const ownerCase = recordOwnerDecision(this.store, task, question, answer);
       this.store.save('questions', { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } });
       this.store.save('cursors', { id: eventId, projectId: task.projectId, domain: task.domain, value: fingerprint, updatedAt: at });
