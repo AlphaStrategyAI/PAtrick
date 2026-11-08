@@ -231,6 +231,8 @@ export class SubscriptionAccessError extends DomainError {
 }
 export function now(): string { return new Date().toISOString(); }
 export function digest(value: string | object): string { return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex'); }
+/** An assistant's claim that a problem is fixed. It is not evidence of a solution. */
+export function assistantFixClaim(text: string): boolean { return /修好了|已经修好|已修复/.test(text); }
 export function stableId(...parts: unknown[]): string { return digest(JSON.stringify(parts)).slice(0, 32); }
 export function tokenize(text: string): string {
   const terms = text.toLowerCase().match(/[a-z0-9_]+|[\p{Script=Han}]+/gu) ?? [];

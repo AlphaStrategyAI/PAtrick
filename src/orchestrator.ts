@@ -3,7 +3,7 @@ import { expandFactRefs, factualEligibility, knowledgeReference } from './knowle
 import type { FactualContext, FactualUseView } from './knowledge-contract.js';
 import { assertPlanBinding, assertArtifactBinding, assertReviewBinding, testsRecorded } from './execution-contract.js';
 import { randomUUID } from 'node:crypto';
-import { DomainError, artifactSchema, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, knowledgeOutputSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roleLabelsZh, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
+import { DomainError, artifactSchema, assistantFixClaim, decisionSchema, decisionInterpretationFor, digest, executionPlanSchema, feedbackSchema, knowledgeOutputSchema, now, pathAllowed, questionAnswerSchema, reviewSchema, roleLabelsZh, roles, stableId, type AppConfig, type DeliveryReceipt, type DeliveryWriter, type NotificationAdapter, type Project, type Question, type QuestionAnswer, type ResearchAdapter, type ResearchRecord, type Role, type Runner, type Task, type TaskStatus, type WorkerAdapter, type WorkerInput } from './domain.js';
 import { ingestSource, withdrawSource, type IngestInput } from './intake.js';
 import { ingestStructuredKnowledge, publishKnowledge, type StructuredCurrentReceipt } from './knowledge.js';
 import { consumedStageResult, enqueueReferenceKnowledge, enqueueStructuredKnowledge, isReadyStructuredKnowledgeJob, readyStructuredKnowledgeJobs, reconcileReferenceKnowledge, referenceKnowledgeBinding, structuredIngestJobSchema, structuredKnowledgeJobId, validStructuredJobRefs } from './knowledge-jobs.js';
@@ -517,6 +517,7 @@ export class Workbench {
     }
     const rules = new Set(applicableRules(this.store, task, this.config).map(rule => rule.id));
     if (decision.ruleIds.some(id => !rules.has(id))) throw new DomainError('Decision cites a rule outside its current authorized scope.', 'invalid_rule', 403);
+    if (decision.action === 'proceed' && !input.answer && decision.citations.some(citation => assistantFixClaim(citation.quote)) && decision.citations.every(citation => assistantFixClaim(citation.quote))) throw new DomainError('An assistant fix claim cannot authorize execution without recovered test or delivery evidence.', 'unverified_fix', 409);
     const hasCitation=(citation:typeof decision.citations[number])=>decision.citations.some(item=>digest(item)===digest(citation));
     for(const statement of decision.grounds.statements){
       if(!hasCitation(statement.citation))throw new DomainError('A statement must cite authorized source words.','invalid_ground',403);
@@ -626,7 +627,7 @@ export class Workbench {
 
   private fail(task: Task, error: unknown): void {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
-    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements']);
+    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements', 'unverified_fix']);
     const safe = publicError(rawCode)!;
     let code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
     const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);
