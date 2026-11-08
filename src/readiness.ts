@@ -97,6 +97,7 @@ const ownerStopMessages: Record<string, string> = {
   conflicting_requirements: '同一份资料里有两条互相冲突的要求。还没有你的选择，不会直接执行。',
   unverified_fix: '助手说修好了。这是待核经验，收回测试或交付证据之前，不能当作解法执行。',
   budget_exhausted: '这件任务的费用预留已经用完。任务已保留，不会换运行器继续。这不需要你回答。',
+  billing_boundary_mismatch: '这件任务的费用路线和当前主机不一致。任务已保留，不会换路线继续。这不需要你回答。',
   egress_denied: '这份资料不能送去外部检索。任务已保留，没有发出查询。这不需要你回答。',
   ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
   stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
