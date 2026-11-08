@@ -578,9 +578,11 @@ export class Workbench {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
     const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation']);
     const safe = publicError(rawCode)!;
-    const code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
+    let code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
+    const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);
+    if (feedbackRetry) code = 'feedback_retry';
     const message = publicError(code)!;
-    const retrying = task.stage === 'delivery' && ['pending_ci', 'remote_unavailable', 'technical_failure'].includes(code);
+    const retrying = feedbackRetry || task.stage === 'delivery' && ['pending_ci', 'remote_unavailable', 'technical_failure'].includes(code);
     this.store.transaction(() => {
       const current = this.current(task);
       if (current.billingStop) return;

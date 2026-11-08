@@ -86,6 +86,7 @@ const ownerStopMessages: Record<string, string> = {
   pending_ci: '必需检查还没完成。到点会再查。这不需要你回答。',
   remote_unavailable: '仓库暂时连不上。到点会再试。这不需要你回答。',
   technical_failure: '运行暂时不可用；任务与账本已保留。',
+  feedback_retry: '反馈没有完成。交付还不能算完成，到点会再试。这不需要你回答。',
   ephemeral_expired: '临时资料已过期。任务已保留，没有继续使用它。',
   stale_attempt: '这次尝试已经过期。任务已保留，会按当前版本继续。',
   invalid_test_observation: '检查记录对不上这次执行。没有把它当成通过。',
