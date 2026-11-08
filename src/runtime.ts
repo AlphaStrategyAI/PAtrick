@@ -13,6 +13,7 @@ import { createRepositoryKnowledgeReader } from './integrations/repository-knowl
 import { BilingualResearch } from './integrations/research.js';
 import { SourceCollector } from './collector.js';
 import { scanGithubBranch } from './integrations/github-branch.js';
+import { scanGithubComments } from './integrations/github-comments.js';
 import { scanXBookmarks } from './integrations/x-bookmarks.js';
 import { scanGmail } from './integrations/gmail.js';
 import { FeishuChannel } from './integrations/feishu.js';
@@ -70,6 +71,7 @@ export async function createRuntime(config:AppConfig=readConfig()) {
       for(const project of store.list('projects')){
         if(project.repositoryProvider!=='github'||project.ownerId!==config.ownerId)continue;
         try{await scanGithubBranch(store,config,project,engine);}catch{console.error('GitHub branch scan failed; the saved commit cursor was not moved.');}
+        try{await scanGithubComments(store,config,project,engine);}catch{console.error('GitHub comment scan failed; no new comment was imported.');}
       }
     };
     const scanBookmarks=async()=>{
