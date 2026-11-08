@@ -46,12 +46,36 @@ it('records the current Gmail history id before importing a later message', asyn
     expect(store.list('sources').filter(source => source.kind === 'email')).toHaveLength(0);
     expect(await scanGmail(store, config, project, engine, remote({
       '/gmail/v1/users/me/profile': { emailAddress: 'owner@example.com', historyId: '11' },
-      '/gmail/v1/users/me/history?startHistoryId=10&historyTypes=messageAdded&maxResults=20': { historyId: '11', history: [{ id: '11', messagesAdded: [{ message: { id: 'm1' } }] }] },
+      '/gmail/v1/users/me/history?startHistoryId=10&historyTypes=messageAdded&historyTypes=messageDeleted&maxResults=20': { historyId: '11', history: [{ id: '11', messagesAdded: [{ message: { id: 'm1' } }] }] },
       '/gmail/v1/users/me/messages/m1?format=full': { id: 'm1', payload: { mimeType: 'text/plain', headers: [{ name: 'Subject', value: '草稿恢复' }], body: { data: encoded } } },
     }))).toBe('imported');
     expect(store.list('sources').filter(source => source.kind === 'email')).toMatchObject([{ externalId: 'gmail:m1', title: '草稿恢复', content: mail, purpose: 'reference' }]);
     expect(store.list('tasks').filter(task => task.kind !== 'reference_knowledge')).toHaveLength(0);
     expect(store.get('cursors', gmailCursor(project))?.value).toBe('11');
+  } finally { await engine.shutdown(); store.close(); }
+});
+
+it('withdraws a saved message when Gmail history says it was deleted', async () => {
+  const { config, project, store, engine } = setup();
+  const encoded = Buffer.from(mail).toString('base64url');
+  const history = (start: string) => `/gmail/v1/users/me/history?startHistoryId=${start}&historyTypes=messageAdded&historyTypes=messageDeleted&maxResults=20`;
+  try {
+    await scanGmail(store, config, project, engine, remote({ '/gmail/v1/users/me/profile': { emailAddress: 'owner@example.com', historyId: '10' } }));
+    await scanGmail(store, config, project, engine, remote({
+      '/gmail/v1/users/me/profile': { emailAddress: 'owner@example.com', historyId: '11' },
+      [history('10')]: { historyId: '11', history: [{ id: '11', messagesAdded: [{ message: { id: 'm1' } }] }] },
+      '/gmail/v1/users/me/messages/m1?format=full': { id: 'm1', payload: { mimeType: 'text/plain', headers: [{ name: 'Subject', value: '草稿恢复' }], body: { data: encoded } } },
+    }));
+    const failing: typeof fetch = async () => { throw Error('offline'); };
+    await expect(scanGmail(store, config, project, engine, failing)).rejects.toMatchObject({ code: 'remote_unavailable' });
+    expect(store.list('sources').find(source => source.kind === 'email' && source.status === 'active')?.content).toBe(mail);
+    await scanGmail(store, config, project, engine, remote({
+      '/gmail/v1/users/me/profile': { emailAddress: 'owner@example.com', historyId: '12' },
+      [history('11')]: { historyId: '12', history: [{ id: '12', messagesDeleted: [{ message: { id: 'm1' } }] }] },
+    }));
+    expect(store.list('sources').filter(source => source.kind === 'email' && source.status === 'active')).toEqual([]);
+    expect(store.list('sources').some(source => source.kind === 'email' && source.status === 'withdrawn' && !source.content.includes('草稿应该还能找回来'))).toBe(true);
+    expect(store.get('cursors', gmailCursor(project))?.value).toBe('12');
   } finally { await engine.shutdown(); store.close(); }
 });
 
@@ -66,7 +90,7 @@ it('keeps the history cursor when Gmail is unreachable or the first message is p
     recordMaintenance(store, project, { eventId: randomUUID(), minutes: 90, recordedAt: new Date(Date.now() - 2 * 86400000).toISOString() });
     await expect(scanGmail(store, config, project, engine, remote({
       '/gmail/v1/users/me/profile': { emailAddress: 'owner@example.com', historyId: '11' },
-      '/gmail/v1/users/me/history?startHistoryId=10&historyTypes=messageAdded&maxResults=20': { historyId: '11', history: [{ id: '11', messagesAdded: [{ message: { id: 'm1' } }] }] },
+      '/gmail/v1/users/me/history?startHistoryId=10&historyTypes=messageAdded&historyTypes=messageDeleted&maxResults=20': { historyId: '11', history: [{ id: '11', messagesAdded: [{ message: { id: 'm1' } }] }] },
       '/gmail/v1/users/me/messages/m1?format=full': { id: 'm1', payload: { mimeType: 'text/plain', headers: [{ name: 'Subject', value: '草稿恢复' }], body: { data: Buffer.from(mail).toString('base64url') } } },
     }))).rejects.toMatchObject({ code: 'source_expansion_paused' });
     expect(store.get('cursors', gmailCursor(project))?.value).toBe('10');
