@@ -264,9 +264,10 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
         return undefined;
       }
       for (const question of store.list('questions')) if (question.taskId === current.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
-      const woken: Task = { ...current, sourceId: id, sourceRevision: revision, title: input.title, description: input.content, version: current.version + 1, status: 'queued', stage: 'knowledge_extract', updatedAt: createdAt, runAfter: createdAt, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: undefined };
+      const alreadyRejudged = !!subscribed && current.version > subscribed.version && current.error === 'source_superseded';
+      const woken: Task = { ...current, sourceId: id, sourceRevision: revision, title: input.title, description: input.content, version: alreadyRejudged ? current.version : current.version + 1, status: 'queued', stage: 'knowledge_extract', updatedAt: createdAt, runAfter: createdAt, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: undefined };
       store.save('tasks', woken);
-      store.save('events', { ...scope, id: stableId('ingest', id), taskId: woken.id, type: 'discussion.continued', message: '这条讨论有了新消息。原任务继续处理一次。', createdAt, data: { sourceId: id, revision } });
+      store.save('events', { ...scope, id: stableId('ingest', id), taskId: woken.id, type: 'discussion.continued', message: previous.length ? '这条讨论有了新修订。原任务重新处理一次。' : '这条讨论有了新消息。原任务继续处理一次。', createdAt, data: { sourceId: id, revision } });
       enqueueStructuredKnowledge(store, source);
       return woken;
     }
