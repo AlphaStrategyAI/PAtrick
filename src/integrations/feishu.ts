@@ -93,16 +93,16 @@ export class FeishuChannel implements NotificationAdapter {
     if (previous?.withdrawn || this.store.get('actions', id)?.status === 'completed') return;
     const time = Number(message.update_time ?? message.create_time) || 0;
     if (previous && (previous.watermark ?? previous.time) > time) return;
-    this.store.transaction(() => {
+    const outcome = this.store.transaction(() => {
       // A withdrawn or no longer readable source cannot prove a new semantic edit.
       // Do not recreate its evidence merely because transport metadata changed.
-      if (previous?.sourceIds.some(sourceId => { const source = this.store.get('sources', sourceId); return !source || source.status !== 'active' || !source.content; })) return;
+      if (previous?.sourceIds.some(sourceId => { const source = this.store.get('sources', sourceId); return !source || source.status !== 'active' || !source.content; })) return 'stop' as const;
       // Legacy receipts retained the original revision, which hashes the native
       // timestamp and body. Compare both timestamp representations supported by
       // the receiver; if neither proves equality, let the edit revoke the answer.
       if (previous && this.legacyAnswerReceipt(previous, messageId) && Number.isFinite(previous.time) && [previous.time, String(previous.time)].some(originalTime => digest([originalTime, text]) === previous.revision)) {
         this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ ...previous, watermark: time } satisfies MessageCursor), updatedAt: now() });
-        return;
+        return 'stop' as const;
       }
       const retainedSource = previous && (this.unchangedMessageSource(previous, messageId, text, message) ?? this.unchangedAnswerSource(previous, messageId, text, message));
       if (previous && retainedSource) {
@@ -110,10 +110,17 @@ export class FeishuChannel implements NotificationAdapter {
         this.store.save('actions', { projectId: retainedSource.projectId, domain: retainedSource.domain, id, kind: 'feishu_receive', status: 'completed', payload: { messageId, chatId: f.chatId, revision, semanticRevision: previous.revision, sourceIds: previous.sourceIds, ownerId: this.config.ownerId, principal: sender.sender_id.open_id, nativeTime: time, nativeBodyHash: digest(text), directOriginal }, updatedAt: receivedAt });
         // Keep the semantic revision and its original receipt valid while advancing transport ordering.
         this.store.save('cursors', { ...scope, id: cursorId, value: JSON.stringify({ ...previous, watermark: time } satisfies MessageCursor), updatedAt: receivedAt });
-        return;
+        return 'stop' as const;
       }
-      this.store.save('actions', { ...scope, id, kind: 'feishu_receive', status: 'pending', payload: { messageId, chatId: f.chatId, revision }, updatedAt: now() });
-      if (previous && previous.revision !== revision) for (const sourceId of previous.sourceIds) this.workbench.withdraw(sourceId);
+      // The receipt is durable before the task or source delivery, so a later failure can be retried from the same message.
+      if (this.store.get('actions', id)?.status !== 'pending') this.store.save('actions', { ...scope, id, kind: 'feishu_receive', status: 'pending', payload: { messageId, chatId: f.chatId, revision }, updatedAt: now() });
+      return 'deliver' as const;
+    });
+    if (outcome !== 'deliver') return;
+    this.store.transaction(() => {
+      const currentPrevious = this.messageCursor(cursorId);
+      if (currentPrevious?.withdrawn || this.store.get('actions', id)?.status === 'completed') return;
+      if (currentPrevious && currentPrevious.revision !== revision) for (const sourceId of currentPrevious.sourceIds) this.workbench.withdraw(sourceId);
       let sourceIds: string[] = [];
       try { sourceIds = this.route(messageId, revision, text, message); }
       catch (error) {
