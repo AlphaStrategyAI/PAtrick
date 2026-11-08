@@ -96,6 +96,7 @@ describe('canonical owner cases', () => {
     const task = engine.ingest({ projectId: 'p', externalId: 'no-question', title: 'Drafts', content: 'Keep drafts.' })!, source = store.get('sources', task.sourceId)!;
     const rule: Rule = { id: 'used-rule', projectId: 'p', domain: 'personal', title: 'Recovery', statement: 'Rule version three', conditions: 'Drafts', exceptions: 'None', version: 3, kind: 'observation', status: 'active', caseIds: [], citations: [{ sourceId: source.id, revision: source.revision, quote: source.content, locator: source.locator }], createdAt: now(), reviewAt: new Date(Date.now() + 86400000).toISOString() };
     store.save('rules', rule);
+    store.save('actions', { id: 'monthly-admission', projectId: 'p', domain: 'personal', kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison: { trial: 'single-product', candidateId: 'used-rule', reverted: false } }, updatedAt: now() });
     await engine.tick(); await engine.tick(); await engine.tick();
     const snapshotId = store.get('tasks', task.id)!.decisionSnapshotId!;
     const before = caseVersions(store, config, project);
@@ -134,6 +135,7 @@ describe('canonical owner cases', () => {
     const task = engine.ingest({ projectId: 'p', externalId: 'question-judgment', title: 'Drafts', content: 'Keep drafts.' })!, source = store.get('sources', task.sourceId)!;
     const rule: Rule = { id: 'question-rule', projectId: 'p', domain: 'personal', title: 'Recovery', statement: 'Original rule', conditions: 'Drafts', exceptions: 'None', version: 3, kind: 'observation', status: 'active', caseIds: [], citations: [{ sourceId: source.id, revision: source.revision, quote: source.content, locator: source.locator }], createdAt: now(), reviewAt: new Date(Date.now() + 86400000).toISOString() };
     store.save('rules', rule);
+    store.save('actions', { id: 'monthly-admission', projectId: 'p', domain: 'personal', kind: 'decision.monthly-comparison', status: 'completed', payload: { comparison: { trial: 'single-product', candidateId: 'question-rule', reverted: false } }, updatedAt: now() });
     for (let i = 0; i < 5; i++) await engine.tick();
     const q = store.list('questions')[0]!;
     engine.answer({ questionId: q.id, taskVersion: q.taskVersion, questionVersion: q.version, actorId: 'owner', eventId: 'actual-question-answer', choice: 'A' });
