@@ -187,7 +187,7 @@ function pauseExceptions(store: Store, scope: Scope, baselineId: string, status:
     if (history?.application.exceptionOf === baselineId) store.save('rules', { ...rule, status });
   }
 }
-function rejudgeOpenTasks(store: Store, scope: Scope, code: 'owner_changed' | 'rules_conflict', marker: string): void {
+function rejudgeOpenTasks(store: Store, scope: Scope, code: 'owner_changed' | 'rules_conflict' | 'rule_expired', marker: string): void {
   const id = stableId('rule-rejudge', scope.projectId, scope.domain, code, marker);
   if (store.get('actions', id)) return;
   const at = now();
@@ -198,10 +198,23 @@ function rejudgeOpenTasks(store: Store, scope: Scope, code: 'owner_changed' | 'r
     if (!sameScope(task, scope) || finished.has(task.status) || task.receiptId || !stages.has(task.stage)) continue;
     for (const question of store.list('questions')) if (question.taskId === task.id && question.status === 'open') store.save('questions', { ...question, status: 'stale' });
     store.save('tasks', { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, feedback: undefined, questionId: undefined, baselineFiles: undefined, blockedFrom: undefined, error: code });
-    store.save('events', { id: stableId('rule-rejudge-event', task.id, id), projectId: scope.projectId, domain: scope.domain, taskId: task.id, type: code === 'owner_changed' ? 'owner.changed' : 'rules.conflict', message: publicError(code)!, createdAt: at, data: {} });
+    store.save('events', { id: stableId('rule-rejudge-event', task.id, id), projectId: scope.projectId, domain: scope.domain, taskId: task.id, type: code === 'owner_changed' ? 'owner.changed' : code === 'rules_conflict' ? 'rules.conflict' : 'rule.expired', message: publicError(code)!, createdAt: at, data: {} });
     taskIds.push(task.id);
   }
   store.save('actions', { id, projectId: scope.projectId, domain: scope.domain, kind: 'decision.rule-rejudge', status: 'completed', payload: { code, taskIds }, updatedAt: at });
+}
+
+/** A due review pauses citation and keeps the recorded wording. Unfinished work in the domain is judged again once. */
+export function expireDueRules(store: Store, scope: Scope, at = new Date()): number {
+  return store.transaction(() => {
+    const due = store.list('rules').filter(rule => sameScope(rule, scope) && rule.status === 'active' && Number.isFinite(Date.parse(rule.reviewAt)) && Date.parse(rule.reviewAt) <= +at).sort((a, b) => a.id.localeCompare(b.id));
+    if (!due.length) return 0;
+    const marker = digest(due.map(rule => `${rule.id}\0${rule.version}\0${rule.reviewAt}`));
+    for (const rule of due) store.save('rules', { ...rule, status: 'suspended' });
+    rejudgeOpenTasks(store, scope, 'rule_expired', marker);
+    store.save('actions', { id: stableId('rule-expiry', scope.projectId, scope.domain, marker), projectId: scope.projectId, domain: scope.domain, kind: 'decision.rule-expiry', status: 'completed', payload: { ruleIds: due.map(rule => rule.id), reason: 'review_due' }, updatedAt: at.toISOString() });
+    return due.length;
+  });
 }
 
 type OriginBinding = { schemaVersion: 1; provider: 'feishu'; tenant: string; chatId: string; messageId: string; nativeRevision: string; ownerId: string; principal: string; nativeTime: number; receiveId: string; receivedAt: string; nativeBodyHash: string; businessBodyHash: string; source: SourceRef; sourceRefs: SourceRef[] } & Scope;
