@@ -27,20 +27,26 @@ function setup(database = ':memory:', retention: 'permanent' | 'ephemeral' = 'pe
 afterEach(() => stores.splice(0).forEach(store => store.close()));
 
 describe('canonical owner cases', () => {
-  it('rolls back the accepted answer when the case snapshot is unavailable', () => {
+  it('keeps the accepted answer when the case snapshot is unavailable and finishes it once the snapshot can be read', () => {
     const f = setup(), q = f.question('snapshot-failure');
     const before = f.store.get('tasks', q.taskId)!, list = f.store.list.bind(f.store);
     const fault = vi.spyOn(f.store, 'list').mockImplementation(((...args: Parameters<typeof list>) => {
       if (args[0] === 'actions' && new Error().stack?.includes('relatedQuestionSnapshots')) throw new DomainError('Knowledge temporarily unavailable; retry.', 'knowledge_snapshot_unavailable', 503);
       return list(...args);
     }) as typeof f.store.list);
+    const answer = { questionId: q.id, taskVersion: 1, questionVersion: 1, actorId: 'owner', eventId: 'failed-answer', choice: 'C' as const, text: 'Keep drafts.' };
     try {
-      expect(() => f.engine.answer({ questionId: q.id, taskVersion: 1, questionVersion: 1, actorId: 'owner', eventId: 'failed-answer', choice: 'C', text: 'Keep drafts.' })).toThrowError(expect.objectContaining({ code: 'knowledge_snapshot_unavailable', status: 503 }));
+      const task = f.engine.answer(answer);
+      expect(task).toMatchObject({ id: before.id, version: before.version + 1, status: 'deciding' });
+      expect(f.store.get('questions', q.id)?.status).toBe('answered');
+      expect(f.store.list('cases')).toHaveLength(0);
+      expect(f.store.get('actions', stableId('owner-answer-collect', q.id))?.status).toBe('pending');
     } finally { fault.mockRestore(); }
-    expect(f.store.get('questions', q.id)?.status).toBe('open');
-    expect(f.store.get('tasks', q.taskId)).toEqual(before);
-    expect(f.store.list('cases')).toHaveLength(0);
-    expect(f.store.get('cursors', stableId('answer-event', 'p', 'personal', 'failed-answer'))).toBeUndefined();
+    f.engine.answer(answer);
+    expect(f.store.get('questions', q.id)?.status).toBe('answered');
+    expect(f.store.get('tasks', q.taskId)?.version).toBe(before.version + 1);
+    expect(f.store.list('cases')).toHaveLength(1);
+    expect(f.store.get('cursors', stableId('answer-event', 'p', 'personal', 'failed-answer'))?.value).toBeTruthy();
   });
   it.each(['A', 'B', 'C'] as const)('freezes answer %s once, including replay and a separate identical question', choice => {
     const f = setup();

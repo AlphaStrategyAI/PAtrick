@@ -109,7 +109,7 @@ export class Workbench {
     const parsed = questionAnswerSchema.parse(input);
     // Preserve the owner's wording; validation only trims to test whether C is empty.
     const answer = { ...parsed, ...(input.text !== undefined ? { text: input.text } : {}) };
-    return this.store.transaction(() => {
+    const accepted = this.store.transaction(() => {
       const question = this.store.get('questions', answer.questionId);
       if (!question) throw new DomainError('Question not found.', 'unknown_question', 404);
       const task = this.task(question.taskId); const project = this.project(task);
@@ -122,7 +122,8 @@ export class Workbench {
       if (recorded && recorded.value !== fingerprint) throw new DomainError('This answer event already identifies a different answer.', 'answer_conflict', 409);
       if (question.status === 'answered' && question.taskVersion === answer.taskVersion && question.version === answer.questionVersion) {
         if (question.answer?.actorId !== answer.actorId || question.answer.choice !== answer.choice || question.answer.text !== words) throw new DomainError('This question already has a different accepted answer.', 'answer_conflict', 409);
-        return task;
+        if (this.ownerAnswerMissing(question)) this.saveOwnerAnswerCollect(task, question, answer);
+        return { task, question, collect: this.ownerAnswerMissing(question) };
       }
       const stale = question.status === 'stale' || !source || source.status !== 'active' || source.revision !== task.sourceRevision || question.taskVersion !== answer.taskVersion || question.version !== answer.questionVersion || task.status !== 'awaiting_answer' || task.questionId !== question.id || task.version !== question.taskVersion;
       if (stale) {
@@ -134,19 +135,20 @@ export class Workbench {
         const rejudged: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: 'stale_answer' };
         this.store.save('tasks', rejudged);
         this.event(task, 'answer.stale', publicError('stale_answer')!, { questionId: question.id });
-        return rejudged;
+        return { task: rejudged, question, collect: false };
       }
-      const at = now(); const ownerCase = recordOwnerDecision(this.store, task, question, answer);
-      this.store.save('questions', { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } });
+      const at = now();
+      const answered: Question = { ...question, status: 'answered', answeredAt: at, answer: { choice: answer.choice, text: words, actorId: answer.actorId, eventId: answer.eventId } };
+      this.store.save('questions', answered);
       this.store.save('cursors', { id: eventId, projectId: task.projectId, domain: task.domain, value: fingerprint, updatedAt: at });
-      // Legacy questions can be accepted without granting a canonical case from
-      // a snapshot that cannot prove the question's original contents.
-      try { captureOwnerCaseVersion(this.store, this.config, ownerCase.id); } catch (error) { if (!(error instanceof DomainError) || error.code !== 'invalid_decision_snapshot') throw error; }
       const resumed: Task = { ...task, version: task.version + 1, status: 'deciding', stage: 'decide', updatedAt: at, runAfter: at, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, error: undefined };
       this.store.save('tasks', resumed);
       this.event(task, 'answer.accepted', '已接纳你的决定，原任务继续处理一次。', { questionId: question.id, choice: answer.choice });
-      return resumed;
+      this.saveOwnerAnswerCollect(resumed, answered, answer);
+      return { task: resumed, question: answered, collect: true };
     });
+    if (accepted.collect) this.collectOwnerAnswer(accepted.question, accepted.task, answer);
+    return this.store.get('tasks', accepted.task.id) ?? accepted.task;
   }
 
   /** Read-only current host status: never reserve, restore availability or mint a permit. */
@@ -248,6 +250,7 @@ export class Workbench {
     }
     this.busy = true;
     try {
+      this.retryOwnerAnswerCollections();
       this.store.reconcileVault();
       reconcileReferenceKnowledge(this.store, this.config);
       const ready = (preferredTaskId ? this.readyTask(undefined,preferredTaskId,true) : undefined) ?? this.readyTask(undefined,undefined,true) ?? (preferredTaskId ? this.readyTask(undefined,preferredTaskId) : undefined) ?? this.readyTask();
@@ -649,11 +652,58 @@ export class Workbench {
     });
   }
 
+  private ownerAnswerMissing(question: Question): boolean {
+    if (question.status !== 'answered' || !question.answer) return false;
+    const source = this.store.get('sources', stableId('owner-answer', question.id));
+    return !source || source.status !== 'active' || source.content !== question.answer.text;
+  }
+  private saveOwnerAnswerCollect(task: Task, question: Question, answer: QuestionAnswer): void {
+    const id = stableId('owner-answer-collect', question.id);
+    const existing = this.store.get('actions', id);
+    if (existing?.status === 'completed') return;
+    this.store.save('actions', { id, projectId: task.projectId, domain: task.domain, taskId: task.id, kind: 'owner_answer_collect', status: 'pending', payload: { questionId: question.id, choice: answer.choice, text: answer.text, actorId: answer.actorId, eventId: answer.eventId }, updatedAt: now() });
+  }
+  /** Acceptance is already committed. A failed source write stays pending and is retried without another answer. */
+  private collectOwnerAnswer(question: Question, task: Task, answer: QuestionAnswer): void {
+    const id = stableId('owner-answer-collect', question.id);
+    try {
+      this.store.transaction(() => {
+        const currentQuestion = this.store.get('questions', question.id);
+        const currentTask = this.store.get('tasks', task.id);
+        if (!currentQuestion?.answer || currentQuestion.status !== 'answered' || !currentTask) return;
+        const sourceId = stableId('owner-answer', currentQuestion.id);
+        const existing = this.store.get('sources', sourceId);
+        if (existing?.status === 'active' && existing.content === currentQuestion.answer.text) {
+          const action = this.store.get('actions', id);
+          if (action && action.status !== 'completed') this.store.save('actions', { ...action, status: 'completed', updatedAt: now() });
+          return;
+        }
+        const ownerCase = recordOwnerDecision(this.store, currentTask, currentQuestion, answer);
+        // Legacy questions can be accepted without granting a canonical case from a snapshot that cannot prove the question's original contents.
+        try { captureOwnerCaseVersion(this.store, this.config, ownerCase.id); } catch (error) { if (!(error instanceof DomainError) || error.code !== 'invalid_decision_snapshot') throw error; }
+        const action = this.store.get('actions', id);
+        if (action) this.store.save('actions', { ...action, status: 'completed', updatedAt: now() });
+      });
+    } catch {
+      const eventId = stableId('answer-collect-pending', question.id);
+      if (!this.store.get('events', eventId)) this.store.save('events', { id: eventId, projectId: task.projectId, domain: task.domain, taskId: task.id, type: 'answer.collect_pending', message: '答复已经接纳。来源还没记上，到点会再补。这不需要你再答一次。', data: { questionId: question.id }, createdAt: now() });
+    }
+  }
+  private retryOwnerAnswerCollections(): void {
+    for (const action of this.store.list('actions')) {
+      if (action.kind !== 'owner_answer_collect' || action.status !== 'pending' || typeof action.payload.questionId !== 'string') continue;
+      const question = this.store.get('questions', action.payload.questionId);
+      const task = question && this.store.get('tasks', question.taskId);
+      if (!question?.answer || !task) continue;
+      const answer: QuestionAnswer = { questionId: question.id, taskVersion: question.taskVersion, questionVersion: question.version, choice: question.answer.choice, ...(typeof action.payload.text === 'string' ? { text: action.payload.text } : {}), actorId: question.answer.actorId, eventId: question.answer.eventId };
+      this.collectOwnerAnswer(question, task, answer);
+    }
+  }
   private readyTask(excludeId?:string,preferredId?:string,foregroundOnly=false): Task | undefined {
     if (this.stopping) return undefined;
     const attempts=this.store.list('attempts');
     return this.store.list('tasks').filter(task => {
-      if (task.id===excludeId || preferredId!==undefined&&task.id!==preferredId || foregroundOnly&&task.kind==='reference_knowledge' || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now()) return false;
+      if (task.id===excludeId || preferredId!==undefined&&task.id!==preferredId || foregroundOnly&&task.kind==='reference_knowledge' || task.billingStop || stopped.has(task.status) || Date.parse(task.runAfter) > Date.now() || task.questionId && this.store.get('actions', stableId('owner-answer-collect', task.questionId))?.status === 'pending') return false;
       const project = this.store.get('projects', task.projectId);
       const feedbackSource=task.stage==='feedback'?this.store.get('sources',task.sourceId):undefined;
       if(task.stage==='feedback'&&project&&(!feedbackSource||!this.feedbackContextAvailable(task,feedbackSource,project))){
