@@ -19,7 +19,7 @@ function textFromMessage(message: { payload?: { mimeType?: unknown; body?: { dat
 }
 
 /** Record the current Gmail history id first. Later scans import only messages added after that id. */
-export async function scanGmail(store: Store, config: Pick<AppConfig, 'gmailToken'>, project: Project, engine: Pick<Workbench, 'ingest'>, fetcher: typeof fetch = fetch, apiUrl = 'https://gmail.googleapis.com'): Promise<'baselined' | 'idle' | 'imported'> {
+export async function scanGmail(store: Store, config: Pick<AppConfig, 'gmailToken'>, project: Project, engine: Pick<Workbench, 'ingest' | 'withdraw'>, fetcher: typeof fetch = fetch, apiUrl = 'https://gmail.googleapis.com'): Promise<'baselined' | 'idle' | 'imported'> {
   const api = async (path: string): Promise<unknown> => {
     if (!config.gmailToken) throw new DomainError('Save a Gmail token before scanning mail.', 'delivery_unready', 409);
     let response: Response;
@@ -39,17 +39,26 @@ export async function scanGmail(store: Store, config: Pick<AppConfig, 'gmailToke
   }
   if (!historyIdPattern.test(saved)) throw new DomainError('The saved Gmail history cursor is not a history id.', 'remote_invalid', 503);
   if (saved === profile.historyId) return 'idle';
-  const page = await api(`/gmail/v1/users/me/history?startHistoryId=${saved}&historyTypes=messageAdded&maxResults=20`) as { history?: unknown; historyId?: unknown; nextPageToken?: unknown };
+  const page = await api(`/gmail/v1/users/me/history?startHistoryId=${saved}&historyTypes=messageAdded&historyTypes=messageDeleted&maxResults=20`) as { history?: unknown; historyId?: unknown; nextPageToken?: unknown };
   if (page.nextPageToken || typeof page.historyId !== 'string' || !historyIdPattern.test(page.historyId)) throw new DomainError('Gmail history is longer than one page or has no new history id. The cursor stays put.', 'gmail_history_gap', 409);
   const records = Array.isArray(page.history) ? page.history : [];
   const ids: string[] = [];
+  const deleted: string[] = [];
   for (const record of records) {
     const added = (record as { messagesAdded?: unknown }).messagesAdded;
-    if (!Array.isArray(added)) throw new DomainError('Gmail returned a history record without added messages.', 'remote_invalid', 503);
-    for (const item of added) {
+    const removed = (record as { messagesDeleted?: unknown }).messagesDeleted;
+    if (!Array.isArray(added) && !Array.isArray(removed)) throw new DomainError('Gmail returned a history record without added or deleted messages.', 'remote_invalid', 503);
+    for (const item of [...(Array.isArray(added) ? added : []), ...(Array.isArray(removed) ? removed : [])]) {
       const id = (item as { message?: { id?: unknown } }).message?.id;
       if (typeof id !== 'string' || !messageIdPattern.test(id)) throw new DomainError('Gmail returned a message the scan cannot identify.', 'remote_invalid', 503);
+    }
+    for (const item of Array.isArray(added) ? added : []) {
+      const id = (item as { message?: { id?: unknown } }).message?.id as string;
       if (!ids.includes(id)) ids.push(id);
+    }
+    for (const item of Array.isArray(removed) ? removed : []) {
+      const id = (item as { message?: { id?: unknown } }).message?.id as string;
+      if (!deleted.includes(id)) deleted.push(id);
     }
   }
   if (ids.length > 20) throw new DomainError('Gmail added more messages than this scan will import. The cursor stays put.', 'gmail_history_gap', 409);
@@ -65,6 +74,10 @@ export async function scanGmail(store: Store, config: Pick<AppConfig, 'gmailToke
     if (current?.content !== content) {
       engine.ingest({ projectId: project.id, kind: 'email', purpose: 'reference', externalId, revision: page.historyId, title: (subject?.value ?? id).slice(0, 80), content, locator: `https://mail.google.com/mail/u/0/#all/${id}`, authorId: profile.emailAddress, retention: 'permanent' });
     }
+  }
+  for (const id of deleted) {
+    const source = store.list('sources').find(item => item.projectId === project.id && item.domain === project.domain && item.kind === 'email' && item.status === 'active' && item.externalId === `gmail:${id}`);
+    if (source) engine.withdraw(source.id);
   }
   store.save('cursors', { id: cursorId, projectId: project.id, domain: project.domain, value: page.historyId, updatedAt: now() });
   return ids.length ? 'imported' : 'idle';
