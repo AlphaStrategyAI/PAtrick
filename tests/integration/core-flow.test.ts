@@ -672,7 +672,7 @@ describe('single worker durable business flow', () => {
 
   it('requires both actual language searches before opening a question', async () => {
     const f = setup({ ask: true, research: { ...research, queries: research.queries.filter(q => q.language === 'en') } }); const task = f.ingest(); await f.engine.runUntilIdle();
-    expect(f.store.get('tasks', task.id)?.status).toBe('blocked'); expect(f.store.list('questions')).toEqual([]);
+    expect(f.store.get('tasks', task.id)).toMatchObject({ status: 'retrying', stage: 'research', error: 'insufficient_research' }); expect(f.store.list('questions')).toEqual([]);
   });
 
   it('keeps every temporary derivative in memory and retains only execution metadata after restart', async () => {
