@@ -3,6 +3,7 @@ import { sourceExpansionPaused } from './evaluation.js';
 import type { Store } from './store.js';
 import { consumedStageResult, enqueueStructuredKnowledge, isStructuredKnowledgeCard, structuredIngestJobSchema, structuredKnowledgeJobId } from './knowledge-jobs.js';
 import { canonicalExperiencePayloadSchema, factualContextTombstone, factualContextTombstonePayloadSchema, knowledgeActionDependencies, knowledgeActionSourceRefs, knowledgeSourceRefs, wellFormedParentSources } from './knowledge-records.js';
+import { recordFixClaim } from './experience-claims.js';
 
 export interface IngestInput {
   projectId: string; kind?: SourceRevision['kind']; externalId: string; title: string; content: string;
@@ -219,6 +220,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
         if(!store.sourceIdentityMatches(existing,{externalId:input.externalId,revision,authorId,locator},parentSources))throw new DomainError('This source revision has unavailable or different identity metadata.','revision_conflict',409);
         const restored = { ...existing, externalId:input.externalId,authorId,revision, title: input.title, content: input.content, locator, ...(parentSources?{parentSources}:{}) };
         store.save('sources', restored);
+        recordFixClaim(store, restored);
         enqueueStructuredKnowledge(store, store.get('sources',id)!);
         if(task?.kind==='reference_knowledge'){
           const restoredTask:Task={...task,sourceRevision:revision,title:input.title,description:''};
@@ -256,6 +258,7 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     const createdAt = now();
     const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
     store.save('sources', source);
+    recordFixClaim(store, source);
     store.save('cursors', { ...scope, id: hashId, value: contentHash, updatedAt: createdAt });
     if (input.subscribedTaskId) {
       const current = store.get('tasks', input.subscribedTaskId)!;

@@ -1,0 +1,42 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { createApp } from '../../src/app.js';
+import { now, type AppConfig, type DeliveryReceipt, type Project } from '../../src/domain.js';
+import { recoverFixClaims } from '../../src/experience-claims.js';
+import { Workbench } from '../../src/orchestrator.js';
+import { Store } from '../../src/store.js';
+
+const roots: string[] = [];
+const stores: Store[] = [];
+afterEach(() => { stores.splice(0).forEach(store => store.close()); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+
+it('keeps an assistant fix claim out of the next task until a delivery receipt is recovered', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fix-claim-'));
+  roots.push(root);
+  const store = new Store(join(root, 'db.sqlite'), join(root, 'vault'));
+  stores.push(store);
+  const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: '笔记', description: '', repository: 'owner/repo', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], trustedChecks: ['validate'], trustedAppIds: [7], ownerId: 'owner', autoMerge: false, budgetUsd: 1, createdAt: now() };
+  store.save('projects', project);
+  const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: root, vaultDir: join(root, 'vault'), ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project], workers: {}, scanIntervalMs: 1000, runnerPolicies: [] };
+  const engine = new Workbench({ store, config, workers: [], writer: { async baseline() { return 'baseline'; }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
+  const app = createApp({ store, config, engine });
+  const claim = engine.ingest({ projectId: 'p', kind: 'conversation', externalId: 'codex:session:fix', title: '助手汇报', content: '导出问题已经修好。' })!;
+  engine.ingest({ projectId: 'p', kind: 'manual', externalId: 'plain', title: '普通记录', content: '还没处理导出问题。' });
+  expect(store.searchCards('修好', project)).toEqual([]);
+  expect(store.list('actions').filter(action => action.kind === 'experience.pending-claim')).toHaveLength(1);
+  const before = await (await app.request('/sources?project=p')).text();
+  expect(before).toContain('收回交付证据之前，下次任务不会引用它');
+  const task = store.get('tasks', claim.id)!;
+  const receipt: DeliveryReceipt = { id: 'receipt-1', projectId: 'p', domain: 'personal', taskId: task.id, repository: project.repository, path: project.prdPath, pullRequestUrl: 'https://github.com/owner/repo/pull/1', pullRequestNumber: 1, headSha: 'a'.repeat(40), mergeSha: 'b'.repeat(40), contentHash: 'hash', verifiedAt: '2099-01-01T00:00:00.000Z', checks: [] };
+  store.save('receipts', receipt);
+  const cards = recoverFixClaims(store, task, receipt);
+  expect(cards.map(card => card.quote)).toEqual(['导出问题已经修好。']);
+  expect(recoverFixClaims(store, task, receipt)).toEqual([]);
+  expect(store.list('cards').filter(card => card.quote === '导出问题已经修好。')).toHaveLength(1);
+  expect(store.searchCards('修好', project).map(card => card.quote)).toContain('导出问题已经修好。');
+  const after = await (await app.request('/sources?project=p')).text();
+  expect(after).toContain('下次任务可以对照这句原文');
+  expect(after).toContain('这不是已核实的解法');
+});
