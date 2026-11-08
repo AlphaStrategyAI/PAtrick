@@ -172,7 +172,8 @@ export const knowledgeOutputSchema = z.object({ cards: z.array(z.object({
   if (candidate.kind === 'experience' && !candidate.experience) ctx.addIssue({ code: 'custom', message: 'Experience extraction requires a complete reported description.', path: ['experience'] });
   if (candidate.kind !== 'experience' && candidate.experience !== undefined) ctx.addIssue({ code: 'custom', message: 'Only experience cards may carry experience descriptions.', path: ['experience'] });
 })), caseMentions: z.array(caseMentionSchema).max(20).superRefine((items, ctx) => { if (new Set(items.map(item => `${item.locator}\0${item.quote}`)).size !== items.length) ctx.addIssue({ code: 'custom', message: 'Case mentions must be unique.' }); }).optional(), learning: z.object({ explanation: z.string().min(1).max(10000), association: z.string().min(1).max(200), counterexample: z.string().min(1).max(10000), reviewAt: z.string().min(1).max(40) }).strict().optional() }).strict();
-export const caseOutputSchema = z.object({ observations: z.array(z.object({ title: z.string(), statement: z.string(), quote: z.string().min(1), conditions: z.string(), exceptions: z.string() })) });
+const caseCandidateSchema = z.object({ title: z.string(), statement: z.string(), quote: z.string().min(1), conditions: z.string(), exceptions: z.string() });
+export const caseOutputSchema = z.object({ observations: z.array(caseCandidateSchema), externalReferences: z.array(caseCandidateSchema).optional() });
 export const feedbackSchema = z.object({ summary: z.string().min(1), observations: z.array(z.string()) });
 export const roleSchemas = { knowledge_extract: knowledgeOutputSchema, case_extract: caseOutputSchema, decide: decisionSchema, plan: executionPlanSchema, execute: artifactSchema, check: reviewSchema, feedback: feedbackSchema };
 export const questionAnswerSchema = z.object({

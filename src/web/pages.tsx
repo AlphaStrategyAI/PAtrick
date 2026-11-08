@@ -16,6 +16,7 @@ import { Badge, date, Empty, ExternalLink, Icon, type IconName, Monogram, money,
 import { QuestionForm, TaskDetail } from './task.js';
 import { latestUnaskedJudgment } from '../cases.js';
 import { monthlyComparisonMessage } from '../evaluation.js';
+import { comparableExternalRules, externalComparisonNote } from '../standards.js';
 import { weeklyReport } from '../reports.js';
 import { outcomeReviewViews, type OutcomeEvidence, type OutcomeReviewView } from '../reviews.js';
 
@@ -223,6 +224,7 @@ function WeekPanel({ context, reflection }: { context: ViewContext; reflection: 
 function WeeklyReflection({ report, context }: { report: ReturnType<typeof weeklyReport>; context: ViewContext }) {
   const focus = report.focus;
   if (!focus || !canReadDecisionCase(focus.case, context)) return null;
+  const externalNote = externalComparisonNote(comparableExternalRules(context.store, focus.case));
   return <section class="weekly-reflection surface" aria-labelledby="weekly-reflection-title">
     <header class="weekly-reflection-heading"><div><p class="eyebrow">ONE DECISION, IN RETROSPECT</p><h2 id="weekly-reflection-title">每周回看</h2></div><span class="metadata">近七天 · 来自 {report.sampleSize} 个有效案例</span></header>
     <p class="small-label">当时，你的决定</p>
@@ -245,6 +247,7 @@ function WeeklyReflection({ report, context }: { report: ReturnType<typeof weekl
       <WeeklyCounts report={report}/>
       <h3>本月对照</h3>
       <p>{monthlyComparisonMessage(report.monthly)}</p>
+      {externalNote ? <p>{externalNote}</p> : null}
     </section>
     <div class="weekly-reflection-context"><InitialDecision item={focus.case}/><CaseOutcomes item={focus.case}/></div>
     <div class="weekly-reflection-context"><CurrentCaseRules rules={focus.rules} context={context}/></div>
