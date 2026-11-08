@@ -10,7 +10,7 @@ export function claimQuote(content: string): string | undefined {
 
 /** An assistant fix claim stays pending until a delivery receipt is recovered. */
 export function recordFixClaim(store: Store, source: SourceRevision): void {
-  if (source.status !== 'active' || source.retention === 'ephemeral') return;
+  if (source.kind !== 'conversation' || source.status !== 'active' || source.retention === 'ephemeral') return;
   const quote = claimQuote(source.content);
   if (!quote || !source.content.includes(quote)) return;
   const id = stableId('fix-claim', source.id, source.revision);
