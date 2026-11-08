@@ -237,6 +237,7 @@ export class GitLabWriter implements DeliveryWriter {
         mr=await this.mergeRequest(project,created.iid);
       }
       if(mr.state!=='opened') throw new DomainError('The GitLab delivery MR was closed without merging.','remote_conflict',409);
+      if(Number.isInteger(mr.iid)&&mr.iid>0){action={...action!,payload:{...action!.payload,pullRequestNumber:mr.iid},updatedAt:now()};this.store.save('actions',action);}
       await this.verifyPatch(project,task,mr,repo,branch,marker,id);
       await this.checks(project,mr,repo);
       const checkedHead=mr.sha;

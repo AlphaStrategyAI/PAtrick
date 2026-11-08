@@ -14,6 +14,7 @@ import { BilingualResearch } from './integrations/research.js';
 import { SourceCollector } from './collector.js';
 import { scanGithubBranch } from './integrations/github-branch.js';
 import { scanGithubComments } from './integrations/github-comments.js';
+import { scanGitlabNotes } from './integrations/gitlab-notes.js';
 import { scanXBookmarks } from './integrations/x-bookmarks.js';
 import { scanGmail } from './integrations/gmail.js';
 import { FeishuChannel } from './integrations/feishu.js';
@@ -67,11 +68,19 @@ export async function createRuntime(config:AppConfig=readConfig()) {
     const checkNetwork=()=>networkCheck??=(async()=>{if(!guardian)return;const resume=await engine.pause();try{await guardian.check();}finally{resume();}})().finally(()=>{networkCheck=undefined;});
     const reviewTimer=setInterval(()=>{try{reviewOutcomes();}catch{console.error('Outcome review scan failed; retrying at the next scheduled minute.');}},60000);reviewTimer.unref();
     const scanGithubBranches=async()=>{
-      if(config.mode!=='live'||!config.githubToken)return;
+      if(config.mode!=='live')return;
+      if(config.githubToken){
       for(const project of store.list('projects')){
         if(project.repositoryProvider!=='github'||project.ownerId!==config.ownerId)continue;
         try{await scanGithubBranch(store,config,project,engine);}catch{console.error('GitHub branch scan failed; the saved commit cursor was not moved.');}
         try{await scanGithubComments(store,config,project,engine);}catch{console.error('GitHub comment scan failed; no new comment was imported.');}
+      }
+      }
+      if(config.gitlabToken){
+        for(const project of store.list('projects')){
+          if(project.repositoryProvider!=='gitlab'||project.ownerId!==config.ownerId)continue;
+          try{await scanGitlabNotes(store,config,project,engine);}catch{console.error('GitLab note scan failed; no new note was imported.');}
+        }
       }
     };
     const scanBookmarks=async()=>{

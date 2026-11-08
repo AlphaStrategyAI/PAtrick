@@ -1486,7 +1486,7 @@ export class Store {
   }
 
   private ordinarySourceIdentity(source: Entities['sources']): boolean {
-    return ['file', 'feishu', 'github', 'conversation', 'manual', 'reading', 'email'].includes(source.kind)
+    return ['file', 'feishu', 'github', 'gitlab', 'conversation', 'manual', 'reading', 'email'].includes(source.kind)
       && typeof source.externalId === 'string' && !!source.externalId.trim()
       && source.id === stableId('source', { projectId: source.projectId, domain: source.domain }, source.kind, source.externalId, source.revision);
   }
