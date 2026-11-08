@@ -137,6 +137,69 @@
     }
     if (event.key === 'Escape' && document.body.classList.contains('nav-is-open')) setNav(false);
   });
+  async function setProbeStatus(targetId, message, ok) {
+    const status = targetId ? document.getElementById(targetId) : null;
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = ok === true ? 'ok' : ok === false ? 'error' : 'pending';
+  }
+  async function probeRepositoryField(input) {
+    if (!(input instanceof HTMLInputElement)) return;
+    const provider = input.dataset.probeProvider;
+    const repository = input.value.trim();
+    const target = input.dataset.probeTarget;
+    if (!provider) return;
+    if (!repository) {
+      await setProbeStatus(target, provider === 'gitlab' ? '可稍后在设置页补填。' : '填写 owner/repo，失焦后自动检查。', null);
+      return;
+    }
+    await setProbeStatus(target, '正在检查访问…', null);
+    try {
+      const response = await fetch('/api/setup/probe-repository', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ provider, repository }),
+      });
+      const result = await response.json();
+      await setProbeStatus(target, result.detail || (result.ok ? '可访问' : '无法访问'), !!result.ok);
+    } catch {
+      await setProbeStatus(target, '暂时无法检查，请稍后重试。', false);
+    }
+  }
+  async function probeRootField(input) {
+    if (!(input instanceof HTMLInputElement)) return;
+    const provider = input.dataset.rootProvider;
+    const root = input.value.trim();
+    const target = input.dataset.probeTarget;
+    if (!provider) return;
+    if (!root) {
+      await setProbeStatus(target, provider === 'gitlab' ? '可稍后在设置页补填。' : '填写组织或用户名，失焦后统计可导入仓库数。', null);
+      return;
+    }
+    await setProbeStatus(target, '正在扫描根目录…', null);
+    try {
+      const response = await fetch('/api/setup/scan-root', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ provider, root }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        await setProbeStatus(target, result.detail || result.error || '扫描失败', false);
+        return;
+      }
+      const count = Array.isArray(result.repositories) ? result.repositories.length : 0;
+      await setProbeStatus(target, result.detail || `发现 ${count} 个项目。`, true);
+    } catch {
+      await setProbeStatus(target, '暂时无法扫描，请稍后重试。', false);
+    }
+  }
+  document.addEventListener('focusout', event => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.dataset.probeProvider) probeRepositoryField(target);
+    if (target.dataset.rootProvider) probeRootField(target);
+  });
   document.addEventListener('input', event => {
     if (event.target instanceof Element && event.target.closest('[data-api-form]')) hasDraft = true;
   });

@@ -156,10 +156,10 @@ export function setupSteps(config: AppConfig, installed: Record<Runner, boolean>
   const project = config.projects[0];
   const needsGitlab = config.projects.some(item => item.repositoryProvider === 'gitlab');
   return [
-    { id: 'project', title: '创建一个项目', detail: project?.sourceDir ? '已有项目和同步目录。' : '填写项目、同步目录、目标仓库和允许修改的路径。', href: '/settings#projects', done: !!project?.sourceDir && !!project.repository && project.allowedPaths.length > 0, required: true },
+    { id: 'project', title: '完成三步引导', detail: project ? '已从开发根目录导入项目；PRD 默认覆盖 docs/requirements 与 docs/designs。' : '配置想法仓库、开发根目录和飞书后进入工作台。', href: '/', done: config.projects.length > 0, required: true },
     { id: 'repository', title: needsGitlab ? '保存 GitLab 令牌' : '保存 GitHub 令牌', detail: '令牌只保存在本机，页面不会再显示它。', href: '/settings#connections', done: needsGitlab ? !!config.gitlabToken : !!config.githubToken, required: true },
-    { id: 'feishu', title: '连接飞书', detail: '填写应用编号、密钥和你的 Open ID。密钥保存后不再显示。', href: '/settings#connections', done: !!config.feishu?.appId && !!config.feishu.appSecret && !!config.feishu.ownerOpenId, required: true },
-    { id: 'runner', title: '登录一个运行器', detail: installed.grok || installed.codex ? '命令已安装。若还没登录，打开终端完成登录，不会在这里输入模型密码。' : '先安装 Grok Build 或 Codex，再在终端登录。', href: '/settings#runners', done: installed.grok || installed.codex, required: true },
+    { id: 'feishu', title: '连接飞书', detail: '填写应用编号、密钥和你的 Open ID。密钥保存后不再显示。', href: '/settings#connections', done: !!config.feishu?.appId && !!config.feishu.appSecret && !!config.feishu.ownerOpenId && !!config.feishu.chatId, required: true },
+    { id: 'runner', title: '登录一个运行器', detail: installed.grok || installed.codex ? '命令已安装。若还没登录，打开终端完成登录，不会在这里输入模型密码。' : '先安装 Grok Build 或 Codex，再在终端登录。', href: '/settings#runners', done: installed.grok || installed.codex, required: false },
     { id: 'research', title: '检索网关（需要提问时）', detail: '做中英文查证前再填写。不填也可以先整理本地资料。', href: '/settings#connections', done: !!config.researchUrl, required: false },
     { id: 'isolation', title: '准备隔离环境', detail: config.limaInstance ? '实例名已保存。安装并启动 Lima 后，执行才会进隔离环境；保存本身不会切换正在运行的虚拟机。' : '安装 Lima，并在设置页填写实例名。', href: '/settings#host', done: !!config.limaInstance && commandOnPath('limactl'), required: false },
     { id: 'backup', title: '设置异机备份', detail: '填写 restic 仓库和密码。密码只留在本机。', href: '/settings#host', done: !!config.resticRepository && !!config.resticPassword && commandOnPath('restic'), required: false },

@@ -19,6 +19,7 @@ import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
 import { openReleaseFollowUp } from './operations.js';
 import { connectionSecretsSchema, openRunnerLogin, saveConnectionSecrets } from './setup-guide.js';
+import { applyFeishuStep, applyIdeasStep, applyRootStep, probeRepository, scanRootRepositories, loadWorkspaceSetup } from './workspace-setup.js';
 import { injectionBlock, injectedQuotes, rememberInjection, stripInjectedMemory } from './memory.js';
 
 export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>};launchRunnerLogin?:(runner:Runner)=>Promise<void>}
@@ -209,6 +210,41 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
         :rawBudget;
     const project=projectSchema.parse({id,projectId:id,name,domain:value.domain||'personal',description:value.description??'',repository:value.repository,repositoryProvider:value.repositoryProvider??'github',prdPath:value.prdPath,allowedPaths:array(value.allowedPaths),trustedChecks:array(value.trustedChecks),trustedAppIds:array(value.trustedAppIds).map(Number),ownerId:config.ownerId,autoMerge:value.autoMerge===true||value.autoMerge==='on',budgetUsd,sourceDir:value.sourceDir||undefined,executionRunner:value.executionRunner??'grok',reviewIntervalDays,createdAt:now()});
     store.save('projects',project);config.projects.push(project);return respond(c,{project,message:'项目已创建。外部连接可在连接设置中核对。'},`/?project=${id}`);
+  });
+  app.post('/api/setup/probe-repository',async c=>{
+    const value=await body(c);
+    const provider=z.enum(['github','gitlab']).parse(value.provider);
+    const repository=String(value.repository??'').trim();
+    if(!repository)return c.json({ok:false,detail:'请先填写仓库路径。'});
+    const probe=await probeRepository({provider,repository,token:provider==='github'?config.githubToken:config.gitlabToken,gitlabUrl:config.gitlabUrl});
+    return c.json(probe);
+  });
+  app.post('/api/setup/scan-root',async c=>{
+    const value=await body(c);
+    const provider=z.enum(['github','gitlab']).parse(value.provider);
+    const root=String(value.root??'').trim();
+    if(!root)return c.json({ok:false,detail:'请先填写根目录。',repositories:[]});
+    const setup=loadWorkspaceSetup(config);
+    const scan=await scanRootRepositories({provider,root,token:provider==='github'?config.githubToken:config.gitlabToken,gitlabUrl:config.gitlabUrl,exclude:[setup.ideasGithub,setup.ideasGitlab].filter(Boolean)});
+    return c.json({ok:true,...scan});
+  });
+  app.post('/api/setup/ideas',async c=>{
+    const value=await body(c);
+    const result=await applyIdeasStep(config,{ideasGithub:String(value.ideasGithub??''),ideasGitlab:String(value.ideasGitlab??''),githubToken:typeof value.githubToken==='string'?value.githubToken:undefined,gitlabToken:typeof value.gitlabToken==='string'?value.gitlabToken:undefined});
+    return respond(c,{...result,message:result.probes.map(item=>item.detail).join(' ')},'/');
+  });
+  app.post('/api/setup/roots',async c=>{
+    const value=await body(c);
+    const result=await applyRootStep(config,store,{githubRoot:String(value.githubRoot??''),gitlabRoot:String(value.gitlabRoot??''),create:value.create===true||value.create==='on'});
+    const count=(result.github?.repositories.length??0)+(result.gitlab?.repositories.length??0);
+    return respond(c,{...result,message:`已检查 ${count} 个仓库，新创建 ${result.created.length} 个项目。`},'/');
+  });
+  app.post('/api/setup/feishu',async c=>{
+    const value=await body(c);
+    const appSecret=typeof value.appSecret==='string'&&value.appSecret.trim()?value.appSecret:config.feishu?.appSecret??'';
+    const result=await applyFeishuStep(config,{appId:String(value.appId??''),appSecret,ownerOpenId:String(value.ownerOpenId??''),ownerName:String(value.ownerName??''),chatId:typeof value.chatId==='string'?value.chatId:undefined});
+    const first=config.projects[0]?.id;
+    return respond(c,{...result,message:result.verify.detail},first?`/?project=${first}`:'/');
   });
   const pages:Record<string,string>={'/':'workbench','/knowledge':'knowledge','/standards':'standards','/sources':'sources','/activity':'activity','/settings':'settings'};
   for(const [path,page] of Object.entries(pages))app.get(path,async c=>{
