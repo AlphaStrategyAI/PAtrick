@@ -247,6 +247,8 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     }
     const githubAlreadyUsed = kind === 'github' && store.list('sources').some(source => source.projectId === scope.projectId && source.domain === scope.domain && source.kind === 'github');
     if (kind === 'github' && !githubAlreadyUsed && sourceExpansionPaused(store, scope)) throw new DomainError('Source expansion is paused after two measured weeks over 60 maintenance minutes. Keep the current product source and repair the slowest recorded step before adding GitHub.', 'source_expansion_paused', 409);
+    const prior = previous.length === 1 ? previous[0] : undefined;
+    const carried = prior && prior.retention !== 'ephemeral' ? store.list('tasks').find(task => task.sourceId === prior.id && task.kind !== 'reference_knowledge' && !finished.has(task.status) && !task.receiptId && task.stage !== 'feedback') : undefined;
     for (const old of previous) invalidateSource(store, old.id, 'superseded');
     const createdAt = now();
     const source: SourceRevision = { ...scope, id, purpose, ...(parentSources?.length ? { parentSources } : {}), kind, externalId: input.externalId, revision, title: input.title, content: input.content, locator: input.locator ?? `${kind}:${input.externalId}`, authorId: input.authorId ?? '', retention: input.retention ?? 'permanent', status: 'active', createdAt };
@@ -256,6 +258,13 @@ export function ingestSource(store: Store, config: Pick<AppConfig, 'projects' | 
     if (purpose === 'reference') {
       store.save('events', { ...scope, id: stableId('ingest', id), type: 'source.received', message: '已收下这份引用资料。它不启动执行任务。', createdAt, data: { sourceId: id, revision:store.sourceRequiresTemporaryRetention(source)?store.auditTemporaryRevision(revision):revision, retention: source.retention, purpose } });
       return undefined;
+    }
+    if (carried) {
+      const current = store.get('tasks', carried.id)!;
+      const woken: Task = { ...current, sourceId: id, sourceRevision: revision, title: input.title, description: input.content, status: 'queued', stage: 'knowledge_extract', updatedAt: createdAt, runAfter: createdAt, repairCount: 0, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, feedback: undefined, baselineFiles: undefined, blockedFrom: undefined, error: undefined };
+      store.save('tasks', woken);
+      store.save('events', { ...scope, id: stableId('ingest', id), taskId: woken.id, type: 'source.updated', message: '资料有了新修订。原任务重新处理一次。', createdAt, data: { sourceId: id, revision, retention: source.retention } });
+      return woken;
     }
     const task: Task = { ...scope, billingBoundary, id: stableId('task', id), sourceId: id, sourceRevision: revision, title: input.title, description: source.retention === 'ephemeral' ? '' : input.content, status: 'queued', version: 1, stage: 'knowledge_extract', createdAt, updatedAt: createdAt, runAfter: createdAt, attempts: 0, repairCount: 0, budgetUsd: project.budgetUsd, spentUsd: 0 };
     store.save('tasks', task);
