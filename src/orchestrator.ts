@@ -12,6 +12,7 @@ import { canonicalFactualContextPayloadSchema, knowledgeRequestSourceRefs, readH
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
 import { distillIdleObservations } from './case-observations.js';
+import { recoverFixClaims } from './experience-claims.js';
 import { applicableRules, appendCaseOutcome, comparableExternalRules, externalComparisonNote, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
@@ -471,7 +472,7 @@ export class Workbench {
     this.store.transaction(() => {
       const existing = this.store.get('receipts', receipt.id);
       if (existing && digest(existing) !== digest(receipt)) throw new DomainError('The delivery receipt identifier already belongs to another result.', 'receipt_conflict', 409);
-      this.store.save('receipts', receipt); this.advance(task, 'feedback', { receiptId: receipt.id });
+      this.store.save('receipts', receipt); recoverFixClaims(this.store, this.task(task.id), receipt); this.advance(task, 'feedback', { receiptId: receipt.id });
     });
   }
 
