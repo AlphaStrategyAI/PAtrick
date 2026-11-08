@@ -6,7 +6,7 @@ import type { Store } from '../store.js';
 const marker = /PAtrick action |<!-- patrick:/;
 
 /** Comments on a pull request this host already opened stay on that task. */
-export async function scanGithubComments(store: Store, config: Pick<AppConfig, 'githubToken'>, project: Project, engine: Pick<Workbench, 'ingest'>, fetcher: typeof fetch = fetch, apiUrl = 'https://api.github.com'): Promise<'idle' | 'advanced'> {
+export async function scanGithubComments(store: Store, config: Pick<AppConfig, 'githubToken'>, project: Project, engine: Pick<Workbench, 'ingest' | 'withdraw'>, fetcher: typeof fetch = fetch, apiUrl = 'https://api.github.com'): Promise<'idle' | 'advanced'> {
   if (project.repositoryProvider !== 'github') return 'idle';
   if (!config.githubToken) throw new DomainError('Save a GitHub token before reading pull request comments.', 'delivery_unready', 409);
   const pulls = subscribedPulls(store, project);
@@ -15,15 +15,22 @@ export async function scanGithubComments(store: Store, config: Pick<AppConfig, '
     if (taskId === 'ambiguous') continue;
     const listed = await api(fetcher, apiUrl, config.githubToken, `/repos/${project.repository}/issues/${number}/comments?per_page=100`);
     if (!Array.isArray(listed) || listed.length > 100) throw new DomainError('GitHub did not return a bounded comment page. Nothing new was imported.', 'remote_invalid', 503);
-    for (const item of listed) {
-      const comment = readComment(item);
-      if (!comment || marker.test(comment.body)) continue;
+    const comments = listed.flatMap(item => { const comment = readComment(item); return comment ? [comment] : []; });
+    const complete = comments.length === listed.length && listed.length < 100;
+    for (const comment of comments) {
+      if (marker.test(comment.body)) continue;
       const before = store.list('tasks').find(task => task.id === taskId);
       const input: IngestInput = { projectId: project.id, kind: 'github', externalId: `github-comment:${project.repository}#${number}:${comment.id}`, revision: digest([comment.updatedAt, comment.body]), title: comment.body.trim().split('\n')[0]!.slice(0, 120) || `评论 ${comment.id}`, content: comment.body, locator: comment.url, authorId: comment.author, retention: 'permanent', subscribedTaskId: taskId };
       engine.ingest(input);
       const after = store.list('tasks').find(task => task.id === taskId);
       if (after && before && after.version !== before.version) advanced = true;
       if (!before) advanced = true;
+    }
+    if (complete) for (const source of store.list('sources')) {
+      const prefix = `github-comment:${project.repository}#${number}:`;
+      if (source.projectId !== project.id || source.domain !== project.domain || source.kind !== 'github' || source.status !== 'active' || !source.externalId.startsWith(prefix)) continue;
+      const commentId = Number(source.externalId.slice(prefix.length));
+      if (!comments.some(comment => comment.id === commentId)) { engine.withdraw(source.id); advanced = true; }
     }
   }
   return advanced ? 'advanced' : 'idle';

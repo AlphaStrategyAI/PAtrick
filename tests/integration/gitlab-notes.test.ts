@@ -41,6 +41,19 @@ it('keeps a note on a merged request with that task and skips system notes', asy
   expect(f.store.list('events').map(event => event.message)).toContain('这条讨论有了新消息。原任务已经结束，不会另开一件。');
 });
 
+it('withdraws a merge request note that the complete listing no longer contains', async () => {
+  const f = setup();
+  f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'company', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });
+  const page = (body: unknown, status = 200): typeof fetch => async () => new Response(JSON.stringify(body), { status });
+  await scanGitlabNotes(f.store, f.config, f.project, f.engine, page([note(3, '这段备注稍后会被删除。')]));
+  await expect(scanGitlabNotes(f.store, f.config, f.project, f.engine, page({ message: 'down' }, 503))).rejects.toMatchObject({ code: 'remote_unavailable' });
+  expect(f.store.list('sources').some(source => source.kind === 'gitlab' && source.status === 'active')).toBe(true);
+  await scanGitlabNotes(f.store, f.config, f.project, f.engine, page([]));
+  expect(f.store.list('sources').filter(source => source.kind === 'gitlab' && source.status === 'active')).toEqual([]);
+  expect(f.store.get('tasks', f.task.id)?.description ?? '').not.toContain('这段备注稍后会被删除。');
+  expect(f.store.get('tasks', f.task.id)?.error).toBe('evidence_withdrawn');
+});
+
 it('continues an open merge request once and leaves an ambiguous request alone', async () => {
   const f = setup();
   f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'company', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });

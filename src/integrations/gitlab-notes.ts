@@ -6,7 +6,7 @@ import type { Store } from '../store.js';
 const marker = /PAtrick action |<!-- patrick:/;
 
 /** Notes on a merge request this host already opened stay on that task. */
-export async function scanGitlabNotes(store: Store, config: Pick<AppConfig, 'gitlabUrl' | 'gitlabToken'>, project: Project, engine: Pick<Workbench, 'ingest'>, fetcher: typeof fetch = fetch): Promise<'idle' | 'advanced'> {
+export async function scanGitlabNotes(store: Store, config: Pick<AppConfig, 'gitlabUrl' | 'gitlabToken'>, project: Project, engine: Pick<Workbench, 'ingest' | 'withdraw'>, fetcher: typeof fetch = fetch): Promise<'idle' | 'advanced'> {
   if (project.repositoryProvider !== 'gitlab') return 'idle';
   const base = approvedBase(config);
   const notesFor = subscribedRequests(store, project);
@@ -15,14 +15,21 @@ export async function scanGitlabNotes(store: Store, config: Pick<AppConfig, 'git
     if (taskId === 'ambiguous') continue;
     const listed = await api(fetcher, base, config.gitlabToken!, `/api/v4/projects/${encodeURIComponent(project.repository)}/merge_requests/${iid}/notes?per_page=100`);
     if (!Array.isArray(listed) || listed.length > 100) throw new DomainError('GitLab did not return a bounded note page. Nothing new was imported.', 'remote_invalid', 503);
-    for (const item of listed) {
-      const note = readNote(item);
-      if (!note || note.system || marker.test(note.body)) continue;
+    const notes = listed.flatMap(item => { const note = readNote(item); return note ? [note] : []; });
+    const complete = notes.length === listed.length && listed.length < 100;
+    for (const note of notes) {
+      if (note.system || marker.test(note.body)) continue;
       const before = store.list('tasks').find(task => task.id === taskId);
       const input: IngestInput = { projectId: project.id, kind: 'gitlab', externalId: `gitlab-note:${project.repository}!${iid}:${note.id}`, revision: digest([note.updatedAt, note.body]), title: note.body.trim().split('\n')[0]!.slice(0, 120) || `评论 ${note.id}`, content: note.body, locator: `${base}/${project.repository}/-/merge_requests/${iid}#note_${note.id}`, authorId: note.author, retention: 'permanent', subscribedTaskId: taskId };
       engine.ingest(input);
       const after = store.list('tasks').find(task => task.id === taskId);
       if (after && before && after.version !== before.version) advanced = true;
+    }
+    if (complete) for (const source of store.list('sources')) {
+      const prefix = `gitlab-note:${project.repository}!${iid}:`;
+      if (source.projectId !== project.id || source.domain !== project.domain || source.kind !== 'gitlab' || source.status !== 'active' || !source.externalId.startsWith(prefix)) continue;
+      const noteId = Number(source.externalId.slice(prefix.length));
+      if (!notes.some(note => note.id === noteId)) { engine.withdraw(source.id); advanced = true; }
     }
   }
   return advanced ? 'advanced' : 'idle';

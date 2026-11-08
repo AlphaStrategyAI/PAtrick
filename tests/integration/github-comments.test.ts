@@ -41,6 +41,20 @@ it('keeps a comment on a delivered pull request with that task', async () => {
   expect(f.store.list('events').map(event => event.message)).toContain('这条讨论有了新消息。原任务已经结束，不会另开一件。');
 });
 
+it('withdraws a pull request comment that the complete listing no longer contains', async () => {
+  const f = setup();
+  f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'personal', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });
+  const page = (body: unknown, status = 200): typeof fetch => async () => new Response(JSON.stringify(body), { status });
+  await scanGithubComments(f.store, f.config, f.project, f.engine, page([comment(3, '这段评论稍后会被删除。')]));
+  await expect(scanGithubComments(f.store, f.config, f.project, f.engine, page({ message: 'down' }, 503))).rejects.toMatchObject({ code: 'remote_unavailable' });
+  expect(f.store.list('sources').some(source => source.status === 'active' && source.content === '这段评论稍后会被删除。')).toBe(true);
+  await scanGithubComments(f.store, f.config, f.project, f.engine, page([]));
+  expect(f.store.list('sources').filter(source => source.externalId.includes('github-comment:') && source.status === 'active')).toEqual([]);
+  expect(f.store.get('tasks', f.task.id)?.description ?? '').not.toContain('这段评论稍后会被删除。');
+  expect(f.store.get('tasks', f.task.id)?.error).toBe('evidence_withdrawn');
+  expect(f.store.list('events').map(event => event.message)).toContain('来源已撤回。相关知识和规则已停用。');
+});
+
 it('continues the same unfinished task when a pull request comment is edited', async () => {
   const f = setup();
   f.store.save('actions', { id: 'delivery-1', projectId: 'p', domain: 'personal', taskId: f.task.id, kind: 'repository_delivery', status: 'pending', payload: { pullRequestNumber: 8 }, updatedAt: now() });
