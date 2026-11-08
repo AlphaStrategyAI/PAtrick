@@ -403,7 +403,7 @@ export class Workbench {
           this.openQuestion(task, project, asked, input.research, snapshot.id);
           return;
         }
-        const decision = this.bareIdea(task, parsed, input) ? { ...parsed, action: 'archive' as const, summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。', rationale: '单纯的新点子不进入执行。补上用户、竞品或已核验证据后再判断。' } : parsed;
+        const decision = !input.answer && (this.statedHypothesis(input.source.content) && parsed.action !== 'archive' || this.bareIdea(task, parsed, input)) ? { ...parsed, action: 'archive' as const, summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。', rationale: '单纯的新点子不进入执行。补上用户、竞品或已核验证据后再判断。' } : parsed;
         const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
         if (decision.action !== 'ask' && !this.store.list('questions').some(q => q.taskId === task.id && q.status === 'answered')) try { captureNoQuestionCaseVersion(this.store, this.config, snapshot.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
         if (decision.action === 'archive') {
@@ -496,6 +496,11 @@ export class Workbench {
       A: suggestion('保留七天', '仅本产品保留七天以便恢复。', '保留要求给一次恢复机会。', '需要在期限内保存草稿。', evidenceUrls[0]!),
       B: suggestion('失败即删', '失败即删以降低留存成本。', '删除要求减少失败后的留存。', '失败后不能从草稿恢复。', evidenceUrls[1] ?? evidenceUrls[0]!),
     };
+  }
+
+  /** The source itself says this is an idea without user or competitor evidence. */
+  private statedHypothesis(text: string): boolean {
+    return /想法[:：]/.test(text) && /尚未取得|待验证假设|没有用户|没有证据/.test(text);
   }
 
   /** A new idea with only its own wording is a hypothesis, not work to execute. */
