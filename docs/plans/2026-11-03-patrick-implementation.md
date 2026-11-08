@@ -4,6 +4,8 @@
 
 **Goal:** 打通一个产品从 `productIdeas` 来源修订到有证据的正式 PRD 合并、反馈和记忆更新，并用持久账本在等待、故障和重启后续办。
 
+**2026-11-08 状态：** 已完成的任务标为完成。未完成的是真实运行器准入、真实合并读回、主机运维准入和真实首链验收。下面各步的复选框保留原计划写法，不以勾选代替实链证据。
+
 **Architecture:** 一个 Node.js 24/TypeScript ESM 常驻服务，Hono SSR/HTML 与普通渐进 JavaScript/CSS，SQLite 事务记录任务、尝试与收发意图，Vault 保存可读事实与标准。worker 只能提出候选或隔离补丁，宿主检查当前授权并通过受控写入器取得可信 CI、合并与读回证据；所有外部前提单独验收。
 
 **Tech Stack:** Node.js 24、TypeScript ESM、Hono、better-sqlite3/FTS5、Chokidar、Zod、官方 Feishu/MCP SDK、dsh ACP、Grok Build CLI、Codex exec、Vitest、Playwright、Lima、launchd、restic。
@@ -84,6 +86,8 @@ interface NotificationContract {
 
 ## Task 1：配置、共享契约与默认拒绝
 
+**状态：完成**
+
 **Files:** `package.json`、`tsconfig.json`、`tsconfig.build.json`、`src/domain.ts`、`src/config.ts`；测试 `tests/unit/domain.test.ts`、`tests/unit/config.test.ts`。
 
 **Interfaces:** 产出 `Scope`、`Project`、`SourceRevision`、`Task`、七角色 Schema、`QuestionAnswer`、`WorkerInput`、外部适配器契约及 `readConfig(env)`。`Project.trustedChecks` 与 `trustedAppIds` 在自动合并时都必须非空；角色准入默认 `admitted: false`。
@@ -107,6 +111,8 @@ it('defaults to a local unconfigured live service without admitted workers', () 
 - [ ] **Step 5：验证并保存本任务证据。** 同一测试命令全绿；`npm run typecheck` 成功。记录 R001、R006、R052、R070、R071、R075 的代码部分；有真实依赖的部分仍未验收。
 
 ## Task 2：持久存储、事务、FTS 与可恢复 Markdown
+
+**状态：完成**
 
 **Files:** `src/store.ts`；测试 `tests/unit/core-store.test.ts`。
 
@@ -134,6 +140,8 @@ it('does not resurrect withdrawn cards after rebuilding FTS', () => {
 
 ## Task 3：文件与消息来源修订
 
+**状态：完成**
+
 **Files:** `src/intake.ts`、`src/collector.ts`、`src/index.ts`；测试 `tests/unit/intake.test.ts`、`tests/integration/core-flow.test.ts`。
 
 **Interfaces:** `ingestSource(store, config, input: IngestInput): Task | undefined`；`withdrawSource(store, sourceId): void`；输入含 `projectId/externalId/kind/title/content/authorId` 及可选 locator/修订/留存。同一内容同源返回同任务，变更使旧来源/任务与相关问题失效。
@@ -145,6 +153,8 @@ it('does not resurrect withdrawn cards after rebuilding FTS', () => {
 - [ ] **Step 5：验证并保存。** `npm test -- tests/unit/intake.test.ts tests/integration/core-flow.test.ts`。覆盖 R007–R015、R050、R072、R078；真实目录自动捕获在 live 任务另验。
 
 ## Task 4：事实核实、知识卡与统一检索
+
+**状态：完成**
 
 **Files:** `src/knowledge.ts`、`src/store.ts`；测试 `tests/unit/knowledge.test.ts`、`tests/unit/core-store.test.ts`。
 
@@ -170,6 +180,8 @@ it('indexes adjacent Chinese bigrams and English terms', () => {
 
 ## Task 5：本人决定、规则范围与版本
 
+**状态：完成**
+
 **Files:** `src/standards.ts`；测试 `tests/unit/standards.test.ts`、`tests/integration/core-flow.test.ts`。
 
 **Interfaces:** `publishObservations(store, source, output): Rule[]`、`frozenAnswer(question, answer): string`、`recordOwnerDecision(store, task, question, answer): DecisionCase`、`applicableRules(store, task): Rule[]`；只接纳已核本人和当前问题的决定。
@@ -181,6 +193,8 @@ it('indexes adjacent Chinese bigrams and English terms', () => {
 - [ ] **Step 5：验证并保存。** 用同一决定实时/历史/PRD 镜像验证一案一原则；不同项目不得复用；撤回后新任务不引用旧版。覆盖 R026–R036、R040、R042、R064、R066。
 
 ## Task 6：调度、预算与自动切换
+
+**状态：完成**
 
 **Files:** `src/scheduler.ts`；测试 `tests/unit/scheduler.test.ts`、`tests/integration/core-flow.test.ts`。
 
@@ -206,6 +220,8 @@ it('persists fallback notices while a healthy replacement continues', async () =
 
 ## Task 7：真实 worker 适配器与隔离边界
 
+**状态：未完成** — 适配器和隔离替身已落地。真实 Grok、Codex、dsh 的提供方、权限和费用仍未准入。
+
 **Files:** `src/integrations/workers.ts`、`examples/lima.yaml`；测试 `tests/unit/workers.test.ts`。
 
 **Interfaces:** 实现 `WorkerAdapter.name` 和 `run(input, signal)`；Grok 非交互 CLI、dsh ACP、Codex `codex exec` 只在 Lima 执行。输入/输出都关联 task/version/role，进程外费用/提供方记录进入 Attempt。
@@ -217,6 +233,8 @@ it('persists fallback notices while a healthy replacement continues', async () =
 - [ ] **Step 5：保存分层证据。** 本地替身协议测试通过记 `C`；真实 ACP、后台权限/费用/隔离、主机 Lima 记录为独立 `L/O`。覆盖 R045–R047、R075–R076、R081–R083、R093。
 
 ## Task 8：双语研究、证据缺口与决策卡
+
+**状态：完成**
 
 **Files:** `src/integrations/research.ts`、`src/orchestrator.ts`；测试 `tests/unit/research.test.ts`、`tests/integration/core-flow.test.ts`。
 
@@ -241,6 +259,8 @@ it('keeps a question closed until both language searches actually occurred', asy
 
 ## Task 9：仓库写入、可信 CI 与合并读回
 
+**状态：未完成** — 写入器和可信检查门禁已落地。真实合并 SHA 与读回仍未验收。
+
 **Files:** `src/integrations/github.ts`、`src/integrations/gitlab.ts`；测试 `tests/unit/writer.test.ts`、`tests/integration/writer-recovery.test.ts`。
 
 **Interfaces:** `validateDelivery(task, project): void`、`validateChecks(checks, project, headSha): void`、`GitHubWriter implements DeliveryWriter`；真实凭据只传写入器，不传 WorkerInput。GitLab 使用同样的 `DeliveryReceipt` 语义；首链只验 GitHub。
@@ -264,6 +284,8 @@ it('rejects zero, skipped, foreign-app, and stale-head checks', () => {
 - [ ] **Step 5：验证并保存。** 假 fetch 精确记录 API 访问次序；模拟 PR 创建成功后响应丢失、合并成功后断网、路径/权限变化、CI 缺项/head 改变，重放均最多一份修改。覆盖 R006、R047–R050、R057、R074–R079；真实 App/head/合并实链留后验。
 
 ## Task 10：持久编排与完整闭环
+
+**状态：完成**
 
 **Files:** `src/orchestrator.ts`、`src/runtime.ts`、`src/index.ts`；测试 `tests/integration/core-flow.test.ts`。
 
@@ -293,6 +315,8 @@ it('executes all roles before delivery and refuses absent receipts', async () =>
 
 ## Task 11：飞书、MCP 与受管工具记忆
 
+**状态：完成** — 飞书决策卡可以选择 A、B，或写下 C，并只续办原任务一次。真实飞书租户上的交互卡回执仍未单独验收。
+
 **Files:** `src/integrations/feishu.ts`、`src/mcp.ts`；测试 `tests/unit/feishu.test.ts`、`tests/integration/mcp.test.ts`。
 
 **Interfaces:** Feishu 实现 `NotificationAdapter`，消息入账后调用同一 `Workbench.answer/ingest`；MCP 查询受认证项目身份约束，提供 lookup、提问、按问题编号取答，不允许客户端自行扩大 scope。官方 SDK 承载平台通信。
@@ -304,6 +328,8 @@ it('executes all roles before delivery and refuses absent receipts', async () =>
 - [ ] **Step 5：验证并保存。** 单测不调用真实飞书；实际私聊、补读、离线通知、MCP 重连、工具确实引用唯一试点标识及撤回新会话均另记实链证据。覆盖 R005、R038–R043、R058–R059、R065–R066、R079。
 
 ## Task 12：SSR 工作台与 A/B/C 界面
+
+**状态：完成**
 
 **Files:** `src/app.ts`、`src/auth.ts`、`src/readiness.ts`、`src/web/`、`public/`；测试 `tests/e2e/workbench.spec.ts`。
 
@@ -330,6 +356,8 @@ test('submits a custom answer without changing its original words', async ({ pag
 
 ## Task 13：本地运维、备份、网络与主机准入
 
+**状态：未完成** — 备份和网络诊断代码已落地。launchd、restic 异机恢复和 VPN 仍未准入。
+
 **Files:** `scripts/doctor.ts`、`scripts/backup.ts`、`scripts/report.ts`、`scripts/restore.ts`、`scripts/install-service.ts`、`src/integrations/network.ts`、`examples/`、`.env.example`、`docs/operations.md`。
 
 **Interfaces:** `npm run doctor` 输出逐项真实就绪/缺口，不打印凭据；`npm run backup` 使用 `Store.backup()`；网络适配器只执行显式获准路径/命令，真实修复须单独准入。
@@ -342,6 +370,8 @@ test('submits a custom answer without changing its original words', async ({ pag
 
 ## Task 14：禁写回放、复盘与后续角色
 
+**状态：完成** — 漏问和误问仍保持未推断。
+
 **Files:** `tests/integration/evaluation.test.ts`、`src/standards.ts`、`src/orchestrator.ts`、活动/规则视图、`docs/acceptance.md`。
 
 **Interfaces:** 冻结来源截点、角色输入和预算，候选只读回放；报告偏好与业务结果分开，记录样本数/费用/维护分钟；规则生效仍由宿主当前证据约束。
@@ -353,6 +383,8 @@ test('submits a custom answer without changing its original words', async ({ pag
 - [ ] **Step 5：验证并保存。** 禁写回放全绿；未来域仍标 F，不以接口存在冒称通过。覆盖 R032–R044、R051、R096–R105。
 
 ## Task 15：本地发布检查与真实首链验收
+
+**状态：未完成** — 本地检查可以运行。真实首链交付仍未验收。
 
 **Files:** `README.md`、`README.zh-CN.md`、`docs/operations.md`、`docs/acceptance.md`；不通过文档假装外部环境具备能力。
 
