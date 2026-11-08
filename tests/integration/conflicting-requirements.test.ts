@@ -3,9 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
-import type { AppConfig, Project, WorkerAdapter, WorkerInput } from '../../src/domain.js';
+import type { AppConfig, Project, ResearchRecord, WorkerAdapter, WorkerInput } from '../../src/domain.js';
 import { Workbench } from '../../src/orchestrator.js';
-import { publicError } from '../../src/readiness.js';
 import { Store } from '../../src/store.js';
 
 const roots: string[] = [];
@@ -28,7 +27,8 @@ function setup() {
     if (input.role === 'plan') return { output: { taskVersion: input.task.version, sourceRevision: input.task.sourceRevision, baselineSha: 'baseline', summary: 'Plan', paths: ['docs/PRD.md'], steps: ['Update'], tests: ['test'], stopConditions: ['Stop'] }, costUsd: 0.01, model: 'fixture', provider: 'fixture' };
     return { output: { taskVersion: input.task.version, planHash: 'unused', baselineSha: 'baseline', files: [{ path: 'docs/PRD.md', content: 'changed' }], tests: [{ command: 'test', passed: true, output: 'ok' }], summary: 'changed' }, costUsd: 0.01, model: 'fixture', provider: 'fixture' };
   } };
-  const engine = new Workbench({ store, config, workers: [worker], writer: { async baseline() { return 'baseline'; }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
+  const researchRecord: ResearchRecord = { queries: (['zh', 'en'] as const).map(language => ({ language, query: language === 'zh' ? '草稿 保留 删除' : 'draft retention deletion', searchedAt: new Date().toISOString(), sources: [{ language, url: `https://${language}.example.com/draft`, canonicalUrl: `https://${language}.example.com/draft`, title: language === 'zh' ? '保留与删除' : 'Retention and deletion', publishedAt: '2026-01-01', accessedAt: new Date().toISOString(), excerpt: '比较恢复机会和留存成本。', primary: true, conditions: '导出失败后的草稿' }] })), summary: '两种做法都有出处。', gaps: [] };
+  const engine = new Workbench({ store, config, workers: [worker], writer: { async baseline() { return 'baseline'; }, async deliver() { throw new Error('unused'); } }, research: { async research() { return researchRecord; } } });
   return { store, config, engine };
 }
 
@@ -38,11 +38,18 @@ it('does not execute a source that both deletes and keeps the draft', async () =
   try {
     await f.engine.runUntilIdle();
     const saved = f.store.get('tasks', task.id)!;
-    expect(saved).toMatchObject({ status: 'blocked', stage: 'decide', error: 'conflicting_requirements' });
+    const question = f.store.list('questions').find(item => item.taskId === task.id);
+    expect(saved).toMatchObject({ status: 'awaiting_answer', questionId: question?.id });
     expect(saved.plan).toBeUndefined();
+    expect(question?.options.A.label).toBe('保留七天');
+    expect(question?.options.B.label).toBe('失败即删');
+    expect(question?.options.A.evidenceUrls.join(' ')).not.toContain('pending-research');
+    expect(f.store.list('actions').some(action => action.kind === 'research' && action.taskId === task.id)).toBe(true);
     expect(f.store.list('receipts')).toEqual([]);
     const page = await (await createApp({ store: f.store, config: f.config, engine: f.engine }).request(`/tasks/${task.id}?project=p`)).text();
-    expect(page).toContain(publicError('conflicting_requirements'));
+    expect(page).toContain('导出失败后，草稿应该保留还是删除？');
+    expect(page).toContain('保留七天');
+    expect(page).toContain('失败即删');
   } finally { await f.engine.shutdown(); }
 });
 

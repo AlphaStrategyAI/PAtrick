@@ -391,7 +391,18 @@ export class Workbench {
         publishObservations(this.store, input.source, output); this.advance(task, 'decide');
       } else if (task.stage === 'decide') {
         const parsed = decisionSchema.parse(output); const factualUse=this.validateDecision(task, parsed, input);
-        if (this.conflictingRequirements(input.source.content) && parsed.action === 'proceed' && !input.answer) throw new DomainError('The source states opposing requirements and has no owner choice.', 'conflicting_requirements', 409);
+        if (this.conflictingRequirements(input.source.content) && parsed.action === 'proceed' && !input.answer) {
+          const asked = { ...parsed, action: 'ask' as const, summary: '同一份资料里有两条互相冲突的要求。', rationale: input.research ? '中英文查证之后，仍要你选择。不会直接执行。' : '先查中英文实践和反例，再请你选择。', question: this.conflictQuestion(input.research) };
+          if (!input.research) {
+            this.event(task, 'requirements.conflict', asked.rationale);
+            this.advance(task, 'research', { decision: asked });
+            return;
+          }
+          const snapshot = recordDecisionSnapshot(this.store, task, input, asked, factualUse);
+          this.validateResearch(input.research);
+          this.openQuestion(task, project, asked, input.research, snapshot.id);
+          return;
+        }
         const decision = this.bareIdea(task, parsed, input) ? { ...parsed, action: 'archive' as const, summary: '这是待验证假设。还没有用户或竞品证据，先保留原文。', rationale: '单纯的新点子不进入执行。补上用户、竞品或已核验证据后再判断。' } : parsed;
         const snapshot = recordDecisionSnapshot(this.store, task, input, decision, factualUse);
         if (decision.action !== 'ask' && !this.store.list('questions').some(q => q.taskId === task.id && q.status === 'answered')) try { captureNoQuestionCaseVersion(this.store, this.config, snapshot.id); } catch (error) { if (!(error instanceof DomainError)) throw error; }
@@ -473,6 +484,18 @@ export class Workbench {
   /** One source cannot both delete and keep the same draft unless the owner has chosen. */
   private conflictingRequirements(text: string): boolean {
     return /失败即删|失败后删/.test(text) && /保留七天|保留草稿/.test(text);
+  }
+
+  private conflictQuestion(research?: ResearchRecord) {
+    const opened = [...new Set((research?.queries ?? []).flatMap(query => query.sources.flatMap(source => [source.url, source.canonicalUrl])))];
+    const evidenceUrls = opened.length >= 2 ? opened.slice(0, 2) : ['https://patrick.invalid/pending-research'];
+    const suggestion = (label: string, description: string, rationale: string, tradeoff: string, url: string) => ({ label, description, rationale, tradeoff, evidenceUrls: [url] });
+    return {
+      title: '导出失败后，草稿应该保留还是删除？',
+      context: '同一份资料同时要求失败即删和保留。这个选择只覆盖当前资料里的范围。',
+      A: suggestion('保留七天', '仅本产品保留七天以便恢复。', '保留要求给一次恢复机会。', '需要在期限内保存草稿。', evidenceUrls[0]!),
+      B: suggestion('失败即删', '失败即删以降低留存成本。', '删除要求减少失败后的留存。', '失败后不能从草稿恢复。', evidenceUrls[1] ?? evidenceUrls[0]!),
+    };
   }
 
   /** A new idea with only its own wording is a hypothesis, not work to execute. */
