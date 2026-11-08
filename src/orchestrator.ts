@@ -11,6 +11,7 @@ import { knowledgePolicyHash } from './knowledge-identity.js';
 import { canonicalFactualContextPayloadSchema, knowledgeRequestSourceRefs, readHostObservation } from './knowledge-records.js';
 import { assertKnowledgeSource, parseStructuredKnowledge, structuredRepositoryRequest } from './structured-knowledge.js';
 import type { RepositoryKnowledgeReader } from './integrations/repository-knowledge.js';
+import { distillIdleObservations } from './case-observations.js';
 import { applicableRules, appendCaseOutcome, comparableExternalRules, externalComparisonNote, frozenAnswer, publishObservations, recordDecisionSnapshot, recordOwnerDecision } from './standards.js';
 import { Scheduler } from './scheduler.js';
 import { isKnowledgeSnapshotFailure, Store, VaultSyncError } from './store.js';
@@ -63,6 +64,7 @@ export class Workbench {
   private readonly research: ResearchAdapter;
   private readonly notifier?: NotificationAdapter;
   private readonly scheduler: Scheduler;
+  private readonly caseWorkers: WorkerAdapter[];
   private readonly billing: BillingAuthority;
   private readonly canRun?: (project: Project) => boolean;
   private readonly repositoryKnowledgeReader?: RepositoryKnowledgeReader;
@@ -94,6 +96,7 @@ export class Workbench {
     }};
     this.billing = options.billing ?? new BillingAuthority(this.store, this.config, { async read() { return undefined; } });
     this.scheduler = new Scheduler(this.store, this.config, options.workers, this.billing);
+    this.caseWorkers = (Array.isArray(options.workers) ? options.workers : Object.values(options.workers)).filter((worker): worker is WorkerAdapter => !!worker);
     for (const project of this.config.projects) if (!this.store.get('projects', project.id)) this.store.save('projects', project);
     this.store.rebuildIndex();
     linkRetainedExperienceEvidence(this.store);
@@ -292,6 +295,7 @@ export class Workbench {
         }
       }
       if(!this.stopping&&this.pauseDepth===0)await this.drainHostJobs(4-preferred.count);
+      if(!this.stopping&&this.pauseDepth===0&&!this.readyTask())await distillIdleObservations(this.store,this.config,this.caseWorkers,this.canRun);
       await this.flushOutbox();
     } finally {
       this.busy = false;

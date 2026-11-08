@@ -173,7 +173,8 @@ export const knowledgeOutputSchema = z.object({ cards: z.array(z.object({
   if (candidate.kind !== 'experience' && candidate.experience !== undefined) ctx.addIssue({ code: 'custom', message: 'Only experience cards may carry experience descriptions.', path: ['experience'] });
 })), caseMentions: z.array(caseMentionSchema).max(20).superRefine((items, ctx) => { if (new Set(items.map(item => `${item.locator}\0${item.quote}`)).size !== items.length) ctx.addIssue({ code: 'custom', message: 'Case mentions must be unique.' }); }).optional(), learning: z.object({ explanation: z.string().min(1).max(10000), association: z.string().min(1).max(200), counterexample: z.string().min(1).max(10000), reviewAt: z.string().min(1).max(40) }).strict().optional() }).strict();
 const caseCandidateSchema = z.object({ title: z.string(), statement: z.string(), quote: z.string().min(1), conditions: z.string(), exceptions: z.string() });
-export const caseOutputSchema = z.object({ observations: z.array(caseCandidateSchema), externalReferences: z.array(caseCandidateSchema).optional() });
+export const caseObservationSchema = caseCandidateSchema.extend({ supports: z.array(z.string().min(1)).min(1), opposes: z.array(z.string().min(1)).default([]) });
+export const caseOutputSchema = z.object({ observations: z.array(caseCandidateSchema), externalReferences: z.array(caseCandidateSchema).optional(), caseObservations: z.array(caseObservationSchema).optional() });
 export const feedbackSchema = z.object({ summary: z.string().min(1), observations: z.array(z.string()) });
 export const roleSchemas = { knowledge_extract: knowledgeOutputSchema, case_extract: caseOutputSchema, decide: decisionSchema, plan: executionPlanSchema, execute: artifactSchema, check: reviewSchema, feedback: feedbackSchema };
 export const questionAnswerSchema = z.object({
@@ -190,6 +191,7 @@ export interface WorkerInput {
   task: Task; project: Project; role: Role; source: SourceRevision; cards: KnowledgeView[]; facts: CanonicalFact[]; factualContext?: FactualContext; rules: Rule[];
   referenceKnowledge?: ReferenceKnowledgeBinding;
   answer?: string; research?: ResearchRecord; receipt?: DeliveryReceipt; plan?: ExecutionPlan; artifact?: Artifact; baselineSha?: string; baselineFiles?: {path:string;content:string}[];
+  caseBatch?: { cases: { id: string; choice: 'A' | 'B' | 'C'; words: string; outcome: string | null }[] };
   decisionInterpretation?: {summary:'assistant-inference';rationale:'assistant-inference';expectedOutcome:'assistant-prediction'};
 }
 /** A host-authored transport label, also applied to decisions stored before factual-use views existed. */
