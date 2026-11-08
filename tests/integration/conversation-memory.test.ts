@@ -1,0 +1,55 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { createApp } from '../../src/app.js';
+import { now, type AppConfig, type Project, type SourceRevision } from '../../src/domain.js';
+import { publishKnowledge } from '../../src/knowledge.js';
+import { Workbench } from '../../src/orchestrator.js';
+import { Store } from '../../src/store.js';
+
+const roots: string[] = [];
+const stores: Store[] = [];
+afterEach(() => { stores.splice(0).forEach(store => store.close()); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+
+const quote = '保留草稿以供恢复';
+
+it('strips a looked-up card quote from the next conversation and keeps the same turn once', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'conversation-memory-'));
+  roots.push(root);
+  const store = new Store(join(root, 'db.sqlite'), join(root, 'vault'));
+  stores.push(store);
+  const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: '笔记', description: '', repository: 'owner/repo', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], trustedChecks: ['validate'], trustedAppIds: [7], ownerId: 'owner', autoMerge: false, budgetUsd: 1, createdAt: now() };
+  const other: Project = { ...project, id: 'other', projectId: 'other', name: '另一个' };
+  store.save('projects', project);
+  store.save('projects', other);
+  const source: SourceRevision = { id: 'source', projectId: 'p', domain: 'personal', kind: 'manual', externalId: 'note', revision: '1', title: '草稿', content: quote, locator: 'note', authorId: 'owner', retention: 'permanent', status: 'active', createdAt: now() };
+  store.save('sources', source);
+  publishKnowledge(store, source, { cards: [{ title: '草稿恢复', body: quote, quote, aliases: ['恢复'], verification: 'reported', kind: 'fact' }] });
+  const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: root, vaultDir: join(root, 'vault'), ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project, other], workers: {}, scanIntervalMs: 1000, runnerPolicies: [] };
+  const engine = new Workbench({ store, config, workers: [], writer: { async baseline() { return ''; }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
+  const app = createApp({ store, config, engine });
+  const lookup = await (await app.request('/api/lookup?project=p&domain=personal&q=%E8%8D%89%E7%A8%BF')).json() as { cards: { quote: string }[]; injection: string };
+  expect(lookup.cards.map(card => card.quote)).toContain(quote);
+  expect(lookup.injection).toContain('<patrick-memory>');
+  expect(lookup.injection).toContain(quote);
+  const unknown = await (await app.request('/api/lookup?project=missing&domain=personal&q=%E8%8D%89%E7%A8%BF')).json() as { cards: unknown[]; injection?: string };
+  expect(unknown.cards).toEqual([]);
+  expect(unknown.injection).toBeUndefined();
+  const body = { projectId: 'p', domain: 'personal', sessionId: 'session', turnId: 'turn', revision: 'r1', tool: 'codex', retention: 'permanent' };
+  const post = (content: string, extra: Record<string, string> = {}) => app.request('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ ...body, ...extra, content }) });
+  const echoed = await (await post(`${quote}\n导出失败后要问本人。`)).json() as { recorded: boolean; task: { id: string } };
+  expect(echoed.recorded).toBe(true);
+  const saved = store.list('sources').find(item => item.kind === 'conversation')!;
+  expect(saved.content).toBe('导出失败后要问本人。');
+  expect(saved.content).not.toContain(quote);
+  const again = await (await post(`${quote}\n导出失败后要问本人。`)).json() as { task: { id: string } };
+  expect(again.task.id).toBe(echoed.task.id);
+  expect(store.list('sources').filter(item => item.kind === 'conversation')).toHaveLength(1);
+  const kept = await (await post('我补充：保留草稿以供恢复，但要问本人。', { turnId: 'turn-2', revision: 'r2' })).json() as { task: { id: string } };
+  expect(store.get('sources', store.get('tasks', kept.task.id)!.sourceId)?.content).toContain(quote);
+  const onlyMemory = await (await post(`<patrick-memory>\n${quote}\n</patrick-memory>`, { turnId: 'turn-3', revision: 'r3' })).json() as { recorded: boolean };
+  expect(onlyMemory.recorded).toBe(false);
+  const foreign = await (await post(quote, { projectId: 'other', domain: 'personal', sessionId: 'elsewhere', turnId: 'turn', revision: 'r1' })).json() as { task: { id: string } };
+  expect(store.get('sources', store.get('tasks', foreign.task.id)!.sourceId)?.content).toBe(quote);
+});

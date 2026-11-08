@@ -19,6 +19,7 @@ import type { Workbench } from './orchestrator.js';
 import { renderPage, renderLogin } from './web/pages.js';
 import { openReleaseFollowUp } from './operations.js';
 import { connectionSecretsSchema, openRunnerLogin, saveConnectionSecrets } from './setup-guide.js';
+import { injectionBlock, injectedQuotes, rememberInjection, stripInjectedMemory } from './memory.js';
 
 export interface AppOptions {store:Store;config:AppConfig;engine:Workbench;feishu?:{webhook:(payload:unknown,headers:Record<string,string>)=>Promise<unknown>};launchRunnerLogin?:(runner:Runner)=>Promise<void>}
 export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOptions):Hono {
@@ -108,11 +109,20 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
   });
   app.get('/api/tasks/:id',async c=>{const task=store.get('tasks',c.req.param('id'));if(!task||c.req.query('project')&&task.projectId!==c.req.query('project')||c.req.query('domain')&&task.domain!==c.req.query('domain'))return c.json({error:'Task not found.'},404);const project=ownedProject(task.projectId,task.domain),billing=await engine.billingStatuses([project]);const source=store.get('sources',task.sourceId);const readable=!!source&&source.status==='active'&&!!source.content&&!store.sourceRequiresTemporaryRetention(source);return c.json({task:publicTask(task),billing:taskBillingStatus(task,config,billing),question:task.questionId?store.get('questions',task.questionId):undefined,evidence:{sourceId:task.sourceId,revision:readable?source!.revision:undefined,title:readable?source!.title:undefined,locator:readable?source!.locator:undefined,quote:readable?source!.content:undefined,citations:task.decision?.citations??[]},standards:applicableRules(store,task,config).map(rule=>({id:rule.id,title:rule.title,statement:rule.statement,kind:rule.kind,version:rule.version,status:rule.status})),events:store.list('events').filter(e=>e.taskId===task.id).map(publicEvent),attempts:store.list('attempts').filter(a=>a.taskId===task.id).map(publicAttempt),receipt:task.receiptId?store.get('receipts',task.receiptId):undefined});});
   app.get('/api/lookup',c=>{
-    const data=store.readSnapshot(()=>{const project=store.get('projects',c.req.query('project')??'');
-      if(!project||project.domain!==c.req.query('domain'))return {cards:[]};
+    const projectId=c.req.query('project')??'',domain=c.req.query('domain')??'';
+    const cards=store.readSnapshot(()=>{const project=store.get('projects',projectId);
+      if(!project||project.domain!==domain)return [];
       ownedProject(project.id,project.domain);
-      return {cards:store.searchCards((c.req.query('q')??'').slice(0,500),project,10)};
-    });return c.json(data);
+      return store.searchCards((c.req.query('q')??'').slice(0,500),project,10);
+    });
+    const project=store.get('projects',projectId);
+    let injection='';
+    if(project&&project.domain===domain&&cards.length){
+      injection=injectionBlock(cards.map(card=>card.quote));
+      try{rememberInjection(store,project,cards.map(card=>card.quote));}
+      catch(error){if(!isKnowledgeSnapshotFailure(error))throw error;}
+    }
+    return c.json({cards,...(injection?{injection}:{})});
   });
   app.get('/api/reports/weekly',c=>{const project=store.get('projects',c.req.query('project')??'');if(!project||c.req.query('domain')&&project.domain!==c.req.query('domain'))return c.json({error:'Project not found.'},404);ownedProject(project.id,project.domain);return c.json(weeklyReport(store,project));});
   app.post('/api/maintenance',async c=>{
@@ -147,7 +157,7 @@ export function createApp({store,config,engine,feishu,launchRunnerLogin}:AppOpti
   app.post('/api/conversations',async c=>{
     const data=z.object({projectId:z.string(),domain:z.string(),sessionId:z.string().min(1),turnId:z.string().min(1),revision:z.string().min(1),content:z.string().min(1).max(100000),tool:z.enum(['codex','cursor']),retention:z.enum(['permanent','ephemeral'])}).strict().parse(await body(c));
     const project=ownedProject(data.projectId,data.domain);
-    const content=data.content.replace(/<patrick-memory>[\s\S]*?<\/patrick-memory>/g,'').trim();
+    const content=stripInjectedMemory(data.content,injectedQuotes(store,project));
     if(!content)return c.json({recorded:false});
     const task=engine.ingest({projectId:project.id,kind:'conversation',externalId:`${data.tool}:${data.sessionId}:${data.turnId}`,revision:data.revision,title:`${data.tool} · ${data.sessionId.slice(0,40)}`,content,authorId:`tool:${data.tool}`,retention:data.retention,locator:`${data.tool}://${data.sessionId}/${data.turnId}`});
     return c.json({recorded:!!task,task});
