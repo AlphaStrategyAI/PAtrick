@@ -90,13 +90,14 @@ export class Scheduler {
   private block(task: Task, message: string, code: string): void {
     this.store.transaction(() => {
       const current = this.current(task); if (current.billingStop) return; const runAfter = new Date(Date.now() + 30_000).toISOString();
-      const ownerMessage = code === 'workers_unavailable' ? publicError('workers_unavailable')! : code === 'budget_exhausted' ? publicError('budget_exhausted')! : message;
+      const coded = code === 'workers_unavailable' || code === 'budget_exhausted' || code === 'billing_boundary_mismatch';
+      const ownerMessage = coded ? publicError(code)! : message;
       const notice = code === 'workers_unavailable'
         ? `${current.title}：当前没有可接这个角色的运行器。下次探测：${runAfter}。无需回答。`
-        : code === 'budget_exhausted'
+        : code === 'budget_exhausted' || code === 'billing_boundary_mismatch'
           ? `${current.title}：${ownerMessage}`
           : `${current.title} · ${current.stage}: ${message} 下次探测：${runAfter}。无需回答。`;
-      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: code === 'workers_unavailable' || code === 'budget_exhausted' ? code : message, updatedAt: now() });
+      this.store.save('tasks', { ...current, status: 'blocked', blockedFrom: current.status, runAfter, error: coded ? code : message, updatedAt: now() });
       this.notify(task, stableId('blocked', task.id, task.version, task.stage, current.attempts), notice);
       this.store.save('events', { id: randomUUID(), projectId: task.projectId, domain: task.domain, taskId: task.id, type: code, message: ownerMessage, createdAt: now(), data: { runAfter } });
     });
