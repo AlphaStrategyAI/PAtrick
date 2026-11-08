@@ -140,6 +140,10 @@ export class GitHubWriter implements DeliveryWriter {
       if (!pr) throw new DomainError('PR creation was not confirmed.','remote_unavailable',503);
       const opened:Json=await this.api(`${root}/pulls/${pr.number}`);pr=opened;
       if (opened.state!=='open') throw new DomainError('The delivery PR was closed without merging.','remote_conflict',409);
+      if (Number.isInteger(opened.number) && opened.number > 0) {
+        action = { ...action!, payload: { ...action!.payload, pullRequestNumber: opened.number }, updatedAt: now() };
+        this.store.save('actions', action);
+      }
       await this.verifyPatch(project,task,opened,base);
       const checks=await this.checks(project,opened.head.sha);validateChecks(checks,project,opened.head.sha);
       this.assertCurrent(task,project);
