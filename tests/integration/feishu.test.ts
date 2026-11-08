@@ -221,7 +221,9 @@ describe('authenticated durable Feishu channel', () => {
   it('invalidates edited and recalled owner source revisions', async () => {
     const f = setup(); await f.channel.receive(event('edit', '原方案')); const old = f.store.list('tasks')[0]!;
     await f.channel.receive(event('edit', '新方案', '2000'));
-    expect(f.store.get('tasks', old.id)?.status).toBe('cancelled'); expect(f.store.list('sources').filter(s => s.status === 'active')).toHaveLength(1);
+    expect(f.store.get('tasks', old.id)).toMatchObject({ id: old.id, status: 'queued', version: old.version + 1, description: '新方案' });
+    expect(f.store.list('tasks').filter(task => task.status !== 'cancelled')).toHaveLength(1);
+    expect(f.store.list('sources').filter(s => s.status === 'active')).toEqual([expect.objectContaining({ content: '新方案' })]);
     await f.channel.receive({ event_type: 'im.message.recalled_v1', message_id: 'edit', chat_id: 'oc_dm', recall_time: '3000' });
     expect(f.store.list('sources').filter(s => s.status === 'active')).toHaveLength(0);
     await f.channel.receive(event('edit', '原方案')); expect(f.store.list('sources').filter(s => s.status === 'active')).toHaveLength(0);
