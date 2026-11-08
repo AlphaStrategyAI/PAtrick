@@ -18,6 +18,7 @@ import { BillingAuthority } from './billing.js';
 import { captureNoQuestionCaseVersion, captureOwnerCaseVersion, refreshCasesForSnapshot, refreshCaseVersions } from './cases.js';
 import { acceptBookmarkLearning } from './learning.js';
 import { retainPrimaryResearch } from './research-sources.js';
+import { canExport } from './permissions.js';
 import { billingMessage, publicError, recordPolicyStatus, type BillingStatuses } from './readiness.js';
 
 export interface WorkbenchOptions {
@@ -445,6 +446,7 @@ export class Workbench {
   private async performResearch(task: Task, project: Project): Promise<void> {
     const question = task.decision?.question;
     if (!question) throw new DomainError('There is no decision to research.', 'missing_question');
+    if (!canExport(this.config, project.domain, 'research')) throw new DomainError('This data domain is not authorized to leave for research.', 'egress_denied', 403);
     const research = await this.research.research(`${question.title}\n${question.context}\nA: ${question.A.description}\nB: ${question.B.description}`, project);
     this.current(task); this.validateResearch(research);
     this.store.transaction(() => {
@@ -646,7 +648,7 @@ export class Workbench {
 
   private fail(task: Task, error: unknown): void {
     const rawCode = error instanceof DomainError ? error.code : 'technical_failure';
-    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements', 'unverified_fix']);
+    const known = new Set(['baseline_changed', 'baseline_unavailable', 'ephemeral_expired', 'pending_ci', 'remote_unavailable', 'technical_failure', 'invalid_plan', 'invalid_artifact', 'invalid_review', 'invalid_receipt', 'invalid_recommendations', 'insufficient_research', 'missing_test_evidence', 'nonindependent_review', 'repairs_exhausted', 'stale_attempt', 'invalid_test_observation', 'conflicting_requirements', 'unverified_fix', 'egress_denied']);
     const safe = publicError(rawCode)!;
     let code = known.has(rawCode) || safe === rawCode ? rawCode : 'technical_failure';
     const feedbackRetry = task.stage === 'feedback' && ['technical_failure', 'missing_receipt', 'invalid_receipt', 'invalid_worker_output'].includes(code);
