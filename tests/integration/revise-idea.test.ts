@@ -21,22 +21,22 @@ it('revises one manual idea once and keeps the current task when the text is unc
     expect(page.match(/修改这份想法/g)).toHaveLength(1);
     expect(page).toContain('导出失败后保留草稿。');
     const source = store.list('sources').find(item => item.id === store.get('tasks', created.task.id)?.sourceId)!;
-    const revised = await (await post({ title: '草稿', content: '导出失败后保留草稿七天。', externalId: source.externalId })).json() as { task: { id: string }; message: string };
+    store.save('questions', { id: 'q-revise', projectId: project.id, domain: project.domain, taskId: created.task.id, taskVersion: 1, version: 1, ownerId: project.ownerId, title: '保留吗', context: '选择', options: { A: { label: '保留', description: '保留', rationale: '依据', tradeoff: '代价', evidenceUrls: ['https://example.com'] }, B: { label: '删除', description: '删除', rationale: '依据', tradeoff: '代价', evidenceUrls: ['https://example.com'] } }, research: { queries: [], summary: '', gaps: [] }, status: 'open', createdAt: now() });
+    store.save('tasks', { ...store.get('tasks', created.task.id)!, stage: 'decide', status: 'awaiting_answer', questionId: 'q-revise' });
+    const revised = await (await post({ title: '草稿', content: '导出失败后保留草稿七天。', externalId: source.externalId })).json() as { task: { id: string; version: number; stage: string; status: string }; message: string };
     expect(revised.message).toBe('已按新材料处理一次。');
-    expect(revised.task.id).not.toBe(created.task.id);
-    const openManual = () => {
-      const ids = new Set(store.list('sources').filter(item => item.kind === 'manual').map(item => item.id));
-      return store.list('tasks').filter(item => ids.has(item.sourceId) && item.status !== 'cancelled');
-    };
-    expect(store.get('tasks', created.task.id)?.status).toBe('cancelled');
+    expect(revised.task).toMatchObject({ id: created.task.id, version: 2, stage: 'knowledge_extract', status: 'queued' });
+    expect(store.get('tasks', created.task.id)?.questionId).toBeUndefined();
+    expect(store.get('questions', 'q-revise')?.status).toBe('stale');
+    expect(store.list('events').some(event => event.taskId === created.task.id && event.message === '资料有了新修订。原任务重新处理一次。')).toBe(true);
+    const openManual = () => store.list('tasks').filter(item => item.kind !== 'reference_knowledge' && item.status !== 'cancelled' && store.get('sources', item.sourceId)?.kind === 'manual');
     expect(store.list('sources').filter(item => item.kind === 'manual' && item.status === 'active')).toHaveLength(1);
     expect(openManual()).toHaveLength(1);
-    const same = await (await post({ title: '草稿', content: '导出失败后保留草稿七天。', externalId: source.externalId })).json() as { task: { id: string }; unchanged: boolean };
-    expect(same).toMatchObject({ unchanged: true, task: { id: revised.task.id } });
+    const same = await (await post({ title: '草稿', content: '导出失败后保留草稿七天。', externalId: source.externalId })).json() as { task: { id: string; version: number }; unchanged: boolean };
+    expect(same).toMatchObject({ unchanged: true, task: { id: created.task.id, version: 2 } });
     expect(openManual()).toHaveLength(1);
-    const restored = await (await post({ title: '草稿', content: '导出失败后保留草稿。', externalId: source.externalId })).json() as { task: { id: string } };
-    expect(restored.task.id).not.toBe(revised.task.id);
-    expect(store.get('tasks', revised.task.id)?.status).toBe('cancelled');
+    const restored = await (await post({ title: '草稿', content: '导出失败后保留草稿。', externalId: source.externalId })).json() as { task: { id: string; version: number } };
+    expect(restored.task).toMatchObject({ id: created.task.id, version: 3 });
     expect(store.list('sources').filter(item => item.kind === 'manual' && item.status === 'active')).toHaveLength(1);
     expect(openManual()).toHaveLength(1);
   } finally {

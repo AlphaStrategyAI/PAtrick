@@ -603,7 +603,9 @@ describe('single worker durable business flow', () => {
     const f = setup({ ask: true }); const old = f.ingest(); await f.engine.runUntilIdle(); const question = f.store.list('questions')[0]!;
     f.engine.ingest({ projectId: 'p', externalId: 'idea', kind: 'manual', title: 'Edited', content: '新的资料仍须保留草稿。', authorId: 'owner' });
     expect(() => f.engine.answer({ questionId: question.id, taskVersion: question.taskVersion, questionVersion: question.version, actorId: 'owner', choice: 'A', eventId: 'late' })).toThrow();
-    expect(f.store.get('tasks', old.id)?.status).toBe('cancelled'); expect(f.store.get('questions', question.id)?.status).toBe('stale');
+    expect(f.store.get('tasks', old.id)).toMatchObject({ status: 'queued', stage: 'knowledge_extract' });
+    expect(f.store.list('tasks').filter(task => task.sourceId === f.store.get('tasks', old.id)?.sourceId && task.status !== 'cancelled')).toHaveLength(1);
+    expect(f.store.get('questions', question.id)?.status).toBe('stale');
     expect(f.store.list('rules').every(r => r.status !== 'active')).toBe(true);
     f.engine.withdraw(f.store.list('sources').find(s => s.status === 'active')!.id); f.store.rebuildIndex();
     expect(f.store.searchCards('草稿', project)).toEqual([]);
