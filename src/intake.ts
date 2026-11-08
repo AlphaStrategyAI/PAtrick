@@ -102,9 +102,9 @@ export function invalidateSource(store: Store, sourceId: string, status: 'supers
     for (const message of store.list('outbox')) if (message.taskId === task.id && message.status === 'pending') store.save('outbox', { ...message, status: 'sent', text: '[invalidated]', remoteId: 'invalidated' });
     if(task.stage==='feedback'&&task.receiptId){
       // The source change revokes further work, but cannot undo a completed delivery.
-      store.save('tasks',{...task,status:'cancelled',updatedAt:changed,runAfter:changed,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,error:`Source ${status}; completed delivery state retained.`});
+      store.save('tasks',{...task,status:'cancelled',updatedAt:changed,runAfter:changed,decision:undefined,decisionSnapshotId:undefined,plan:undefined,artifact:undefined,review:undefined,questionId:undefined,error:'delivery_kept'});
     }else{
-      store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: `Source ${status}; previous authorizations invalidated.` });
+      store.save('tasks', { ...task, version: task.version + 1, status: direct ? 'cancelled' : 'deciding', stage: 'decide', updatedAt: changed, runAfter: changed, decision: undefined, decisionSnapshotId: undefined, plan: undefined, artifact: undefined, review: undefined, questionId: undefined, receiptId: undefined, error: 'source_superseded' });
     }
   }
   store.save('events', { ...scope, id: stableId('source-invalidated', sourceId, status), type: `source.${status}`, message: status === 'superseded' ? '资料有了新修订。旧修订停止引用。' : '来源已撤回。相关知识和规则已停用。', createdAt: changed, data: { sourceId } });
@@ -154,10 +154,10 @@ export function redactWithdrawnEvidence(store: Store, sourceId: string): void {
     const terminal = finished.has(task.status);
     const completedDelivery = task.stage === 'feedback' && !!task.receiptId;
     const status = terminal ? task.status : completedDelivery || sourceIds.has(task.sourceId) ? 'cancelled' : 'deciding';
-    const alreadyRedacted = task.error === 'Evidence withdrawn; readable content retracted.' && !task.description && !task.decision && !task.plan && !task.artifact && !task.review && !task.feedback;
-    write('tasks', { ...task, sourceRevision:sourceIds.has(task.sourceId)?store.auditTemporaryRevision(task.sourceRevision):task.sourceRevision,title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'Evidence withdrawn; readable content retracted.', status, ...(terminal || completedDelivery ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
+    const alreadyRedacted = task.error === 'evidence_withdrawn' && !task.description && !task.decision && !task.plan && !task.artifact && !task.review && !task.feedback;
+    write('tasks', { ...task, sourceRevision:sourceIds.has(task.sourceId)?store.auditTemporaryRevision(task.sourceRevision):task.sourceRevision,title: '[Evidence withdrawn]', description: '', decision: undefined, decisionSnapshotId: undefined, plan: undefined, baselineFiles: undefined, artifact: undefined, review: undefined, feedback: undefined, error: 'evidence_withdrawn', status, ...(terminal || completedDelivery ? {} : { version: alreadyRedacted ? task.version : task.version + 1, stage: 'decide' as const, questionId: undefined, updatedAt: alreadyRedacted ? task.updatedAt : now(), runAfter: alreadyRedacted ? task.runAfter : now() }) });
   }
-  for (const event of store.list('events')) if (scoped(event) && (event.taskId && taskIds.has(event.taskId) || refers(event.data) || mentions(event.data) || mentions(event.message))) write('events', { ...event, message: 'Evidence retracted.', data: { retracted: true } });
+  for (const event of store.list('events')) if (scoped(event) && (event.taskId && taskIds.has(event.taskId) || refers(event.data) || mentions(event.data) || mentions(event.message))) write('events', { ...event, message: '证据已收回。', data: { retracted: true } });
   for (const attempt of store.list('attempts')) if (taskIds.has(attempt.taskId)) write('attempts', { ...attempt, error: undefined, ...(attempt.status === 'running' ? { status: 'stale' as const, finishedAt: now() } : {}) });
   const outboxIds = new Set<string>();
   for (const action of store.list('actions')) if (scoped(action) && (()=>{
