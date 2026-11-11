@@ -162,10 +162,16 @@ export function classifyOwnerChoice(input: { choice: 'A' | 'B' | 'C'; words: str
   return { alignment: 'different', reason: 'unresolved' };
 }
 
+export interface HeldOutCaseView { caseId: string; source: string; alternatives: string[] }
+export interface IndustryMethod { title: string; quote: string; locator: string; sourceId: string }
+/** The packet a candidate may see. Owner choice, rationale and later results stay out. */
+export function heldOutCase(item: DecisionCase, sourceContent: string): HeldOutCaseView {
+  return { caseId: item.id, source: sourceContent, alternatives: [...item.alternatives] };
+}
 export interface MonthlyComparison {
   month: string; sampleSize: number; ownerCorrections: number; matchedSuggestions: number; observedResults: number;
   candidateId: string | null; candidateAnswers: number; trial: TrialDecision['trial']; principle: 'unchanged'; ownerValue: boolean;
-  reverted?: boolean;
+  reverted?: boolean; heldOutViews: HeldOutCaseView[]; industryMethod: IndustryMethod | null;
 }
 
 export interface HeldOutReplay {
@@ -244,7 +250,9 @@ export function runMonthlyComparison(store: Store, scope: Scope, at = new Date()
   const heldOut = selected?.heldOut ?? cases;
   const replayed = selected?.replayed ?? [];
   const decision = selected?.decision ?? admitReplayTrial({ projectId: scope.projectId, oldBudget: 0, candidateBudget: 0, cases: [] });
-  const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged', ownerValue: replayed.some(item => item.changesOwnerValue) };
+  const heldOutViews = heldOut.map(item => heldOutCase(item, store.get('sources', item.sourceId)?.content ?? ''));
+  const industryMethod = store.list('rules').filter(rule => rule.projectId === scope.projectId && rule.domain === scope.domain && rule.kind === 'external' && rule.status === 'active').sort((a, b) => a.createdAt.localeCompare(b.createdAt)).flatMap(rule => rule.citations.filter(citation => citation.quote.trim()).map(citation => ({ title: rule.title, quote: citation.quote, locator: citation.locator, sourceId: citation.sourceId })))[0] ?? null;
+  const comparison: MonthlyComparison = { month, sampleSize: heldOut.length, ownerCorrections: heldOut.filter(item => item.choice !== 'A').length, matchedSuggestions: heldOut.filter(item => item.choice === 'A').length, observedResults: heldOut.filter(item => !!(item.outcome || item.outcomes?.length)).length, candidateId: candidate?.id ?? null, candidateAnswers: replayed.length, trial: decision.trial, principle: 'unchanged', ownerValue: replayed.some(item => item.changesOwnerValue), heldOutViews, industryMethod };
   const id = stableId('monthly-comparison', scope.projectId, scope.domain, comparison.month);
   const existing = store.get('actions', id);
   const saved = existing?.kind === 'decision.monthly-comparison' ? existing.payload.comparison as MonthlyComparison | undefined : undefined;
