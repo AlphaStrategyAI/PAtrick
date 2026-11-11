@@ -216,7 +216,7 @@ it('persists fallback notices while a healthy replacement continues', async () =
 - [ ] **Step 2：确认红灯。** `npm test -- tests/unit/scheduler.test.ts tests/integration/core-flow.test.ts`。
 - [ ] **Step 3：实现角色次序与准入。** 默认提取/初判/执行 Grok→dsh→Codex；显式 dsh 执行 dsh→Grok→Codex；规划/检查/反馈 Codex→Grok→dsh。先过滤角色、域、提供方、权限、额度；预算原子预留并核实实际消耗；一次仅一个 worker。检查优先不同执行 runner，同 runner 必须 independentReview 准入。
 - [ ] **Step 4：实现错误分类与 fencing。** 运行器启动/超时/持续限流/失效凭据可切换，测试失败和返修不切换。每轮每候选一次；新尝试与通知同事务，冻结输入 hash 不变；旧尝试迟到不接纳。全不可用保留任务与退避时间，并通知下次探测；可能已远端写入先对账。
-- [ ] **Step 5：验证并保存。** 全七角色分别覆盖首选不可用；无备选/域不符/提供方不符/预算不足不调用；通知离线不挡健康 runner；通知重试只一回执。覆盖 R017、R028、R045–R046、R052–R059、R093。
+- [x] **Step 5：验证并保存。** 全七角色分别覆盖首选不可用；无备选/域不符/提供方不符/预算不足不调用；通知离线不挡健康 runner；通知重试只一回执。覆盖 R017、R028、R045–R046、R052–R059、R093。
 
 ## Task 7：真实 worker 适配器与隔离边界
 
