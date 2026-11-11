@@ -1,0 +1,32 @@
+{
+  "recordedAt": "2026-11-11T11:11:40.990Z",
+  "unitTestsCallOpenFeishu": false,
+  "unitTestBoundary": "Feishu integration tests inject a fake SDK. No test file calls open.feishu.cn.",
+  "history": {
+    "httpReady": true,
+    "code": 0,
+    "pageItems": 8
+  },
+  "catchup": {
+    "received": true,
+    "messageId": "om_x100b6a401a0d98b8c32a4cdb2cf00e4",
+    "sources": 1
+  },
+  "privateChat": {
+    "remoteId": "om_x100b607098270ca8c0c04ab41e22bae",
+    "receipt": "completed"
+  },
+  "offlineNotice": {
+    "firstError": "DomainError: Feishu send result is unknown; the stable marker will be checked before retry.",
+    "pendingBeforeRetry": true,
+    "remoteId": "om_x100b607099c444a0dd68dfd3da5c5aa",
+    "remoteCopies": 1
+  },
+  "tool": {
+    "cardId": "c0bf3dd476e4465349e915c7784a8039",
+    "firstSessionCited": true,
+    "reconnectedSessionCited": true,
+    "withdrawnSessionCited": false,
+    "withdrawnCount": 0
+  }
+}
