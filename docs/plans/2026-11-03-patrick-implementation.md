@@ -370,7 +370,7 @@ test('submits a custom answer without changing its original words', async ({ pag
 
 ## Task 14：禁写回放、复盘与后续角色
 
-**状态：完成** — 漏问和误问仍保持未推断。
+**状态：完成** — 每周从账本统计漏问和误问，并只推一条已记录的不同决定；这一周没有快照或答复时这两项保持未知。
 
 **Files:** `tests/integration/evaluation.test.ts`、`src/standards.ts`、`src/orchestrator.ts`、活动/规则视图、`docs/acceptance.md`。
 
@@ -378,7 +378,7 @@ test('submits a custom answer without changing its original words', async ({ pag
 
 - [ ] **Step 1：先写候选不达标不启用测试。** 构造候选只提高平均分却有一个关键越权或撤回泄漏的题集，断言不能试用；同预算修原错题、关键不退化、三种零容忍均零才可单产品试用。
 - [ ] **Step 2：确认红灯。** `npm test -- tests/integration/evaluation.test.ts`。
-- [ ] **Step 3：实现维护与规则复核。** 每周统计漏采/错引/漏问误问/交付/费用/维护，推一个真实反例；连续两周超过60分钟暂停扩源。每月同域留出题隐藏本人选择和事后结果，比较旧/候选及有出处行业方法，异常自动回旧并对账。
+- [x] **Step 3：实现维护与规则复核。** 每周统计漏采/错引/漏问误问/交付/费用/维护，推一个真实反例；连续两周超过60分钟暂停扩源。每月同域留出题隐藏本人选择和事后结果，比较旧/候选及有出处行业方法，异常自动回旧并对账。
 - [ ] **Step 4：声明扩展边界。** 开发运维从合并 PRD 触发同链、同提交测试/PR/MR/部署错误率/回滚；学习从获准书签/阅读信号输出解释/关联/反例/复核。未实际接入者在来源页列未覆盖，不能增加日常手工转发。memhub 混合检索只有真实漏搜样本后才在原预算只读对照，仍只返回卡 ID。
 - [ ] **Step 5：验证并保存。** 禁写回放全绿；未来域仍标 F，不以接口存在冒称通过。覆盖 R032–R044、R051、R096–R105。
 

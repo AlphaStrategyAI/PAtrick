@@ -222,3 +222,53 @@ it('keeps an owner-value replay as a decision for the owner and does not change 
     expect(store.get('rules', principle.id)?.statement).toBe(principle.statement);
   } finally { store.close(); }
 });
+
+it('pushes one recorded disagreement and counts missed and unnecessary questions from the ledger', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const earlier = '导出失败后应恢复这一份草稿。';
+  const snapshot = { schemaVersion: 1 as const, id: 'snap', projectId: project.id, domain: project.domain, taskId: 'task', taskVersion: 1, attemptId: 'attempt', inputHash: 'hash', sourceId: 'source', sourceRevision: 'v1', goal: { title: '草稿', description: '确定保留范围' }, decision: { action: 'ask' as const, summary: '需要选择', rationale: '范围冲突', citations: [], ruleIds: ['principle'], expectedOutcome: null }, rules: [], sourceRefs: [{ id: 'source', revision: 'v1' }], expectedOutcome: null, recordedAt: at };
+  const base = { projectId: project.id, domain: project.domain, taskId: 'task', decisionId: 'decision', actorId: project.ownerId, rationale: 'Owner rationale not separately stated.', alternatives: ['保留草稿', '删除草稿'], ruleIds: ['principle'], sourceId: 'source', status: 'active' as const, createdAt: at, decisionSnapshot: snapshot };
+  try {
+    store.save('sources', { id: 'earlier', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'earlier', revision: 'v1', title: '更早的草稿', content: earlier, locator: 'productIdeas/更早.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: '2026-11-01T00:00:00.000Z' });
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { ...base, id: 'matched', questionId: 'matched', choice: 'A', originalWords: '保留草稿' });
+    store.save('cases', { ...base, id: 'open', questionId: 'open', choice: 'C', originalWords: '先不保留这一次。', decisionSnapshot: { ...snapshot, id: 'snap-open' } });
+    store.save('cases', { ...base, id: 'realized', questionId: 'realized', choice: 'C', originalWords: `${earlier}仅本产品保留。`, outcome: '导出后草稿被清掉。', decisionSnapshot: { ...snapshot, id: 'snap-realized' } });
+    store.save('questions', { id: 'needed', projectId: project.id, domain: project.domain, taskId: 'task', taskVersion: 1, version: 1, ownerId: project.ownerId, title: '怎么处理', context: '两种做法', options: { A: { label: '保留', description: '保留草稿', rationale: '便于恢复', tradeoff: '多留一份', evidenceUrls: ['https://example.com/zh'] }, B: { label: '删除', description: '删除草稿', rationale: '少留一份', tradeoff: '不能恢复', evidenceUrls: ['https://example.com/en'] } }, research: { queries: [], summary: '', gaps: [] }, status: 'answered', createdAt: at, answeredAt: '2026-11-03T00:00:00.000Z', answer: { choice: 'C', text: '仅本产品保留。', actorId: project.ownerId, eventId: '44444444-4444-4444-8444-444444444444' } });
+    store.save('questions', { id: 'extra', projectId: project.id, domain: project.domain, taskId: 'task', taskVersion: 1, version: 1, ownerId: project.ownerId, title: '确认建议', context: '建议已经完整', options: { A: { label: '保留', description: '保留草稿', rationale: '便于恢复', tradeoff: '多留一份', evidenceUrls: ['https://example.com/zh'] }, B: { label: '删除', description: '删除草稿', rationale: '少留一份', tradeoff: '不能恢复', evidenceUrls: ['https://example.com/en'] } }, research: { queries: [], summary: '', gaps: [] }, status: 'answered', createdAt: at, answeredAt: '2026-11-04T00:00:00.000Z', answer: { choice: 'A', text: '保留草稿', actorId: project.ownerId, eventId: '55555555-5555-4555-8555-555555555555' } });
+    const report = weeklyReport(store, project, new Date('2026-11-07T00:00:00.000Z'));
+    expect(report.counterexample).toEqual({ caseId: 'realized', reason: 'missed_fact', words: `${earlier}仅本产品保留。`, result: '导出后草稿被清掉。' });
+    expect(report.metrics.missedQuestions).toBe(1);
+    expect(report.metrics.unnecessaryQuestions).toBe(1);
+    expect(report.metrics.deliveredTasks).toBe(0);
+    expect(report.metrics.reservedCostUsd).toBe(0);
+  } finally { store.close(); }
+});
+
+it('hides the owner choice and later result from the held-out packet and cites only a sourced industry method', () => {
+  const { store, project } = fixture();
+  const at = '2026-11-02T00:00:00.000Z';
+  const ownerWords = '仅本产品保留到下次成功导出。';
+  const later = '事后结果不该出现在留出题里。';
+  const quote = '官方手册要求先核对导出回执。';
+  const principle = { id: 'principle', projectId: project.id, domain: project.domain, title: '保留草稿', statement: '仅本产品保留到下次成功导出。', conditions: '仅本产品这一次', exceptions: '敏感草稿需单独确认', version: 1, kind: 'principle' as const, status: 'active' as const, caseIds: ['case'], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const observation = { id: 'observation', projectId: project.id, domain: project.domain, title: '观察', statement: '先看恢复路径。', conditions: '本页', exceptions: '没有额外例外', version: 1, kind: 'observation' as const, status: 'active' as const, caseIds: [] as string[], citations: [], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  const industry = { id: 'industry', projectId: project.id, domain: project.domain, title: '导出回执', statement: '先核对回执。', conditions: '正式导出', exceptions: '没有额外例外', version: 1, kind: 'external' as const, status: 'active' as const, caseIds: [] as string[], citations: [{ sourceId: 'manual', revision: 'v1', quote, locator: 'https://example.com/export' }], createdAt: at, reviewAt: '2026-12-01T00:00:00.000Z' };
+  try {
+    store.save('sources', { id: 'source', projectId: project.id, domain: project.domain, kind: 'manual', externalId: 'idea', revision: 'v1', title: '草稿', content: '导出失败后应恢复草稿。', locator: 'productIdeas/草稿.md', authorId: project.ownerId, retention: 'permanent', status: 'active', createdAt: at });
+    store.save('cases', { id: 'case', projectId: project.id, domain: project.domain, taskId: 'task', questionId: 'question', decisionId: 'decision', actorId: project.ownerId, choice: 'C', originalWords: ownerWords, rationale: 'Owner rationale not separately stated.', alternatives: ['保留草稿'], ruleIds: ['principle'], sourceId: 'source', status: 'active', createdAt: at, outcome: later });
+    store.save('rules', principle);
+    store.save('rules', observation);
+    store.save('rules', industry);
+    const before = digest(store.get('rules', principle.id)!);
+    const comparison = runMonthlyComparison(store, project, new Date('2026-11-07T00:00:00.000Z'));
+    const packet = JSON.stringify(comparison?.heldOutViews);
+    expect(packet).not.toContain(ownerWords);
+    expect(packet).not.toContain(later);
+    expect(packet).not.toContain('"choice"');
+    expect(comparison?.industryMethod).toEqual({ title: '导出回执', quote, locator: 'https://example.com/export', sourceId: 'manual' });
+    expect(comparison?.principle).toBe('unchanged');
+    expect(digest(store.get('rules', principle.id)!)).toBe(before);
+  } finally { store.close(); }
+});
