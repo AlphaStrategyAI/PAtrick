@@ -325,7 +325,7 @@ it('executes all roles before delivery and refuses absent receipts', async () =>
 - [ ] **Step 2：确认红灯。** `npm test -- tests/unit/feishu.test.ts tests/integration/mcp.test.ts`。
 - [ ] **Step 3：实现收发协议。** 验平台事件和 owner 身份，先收件持久化再响应，按水位补读且成功入账才推进；发送前持久化并按稳定 marker 查回执。文件来源主动私聊本人，工具消息关联原发起线程；切换通知独立于待答问题。
 - [ ] **Step 4：实现记忆读写。** 受管 Codex 启动只取小量当前有效卡/版本/出处，结束只采获准新会话轮次，剥离注入正文；每次动作前重读当前出处。Cursor sessionStart 与 MCP 后续查询独立记录，不宣称未验证 hook 逐轮支持。
-- [ ] **Step 5：验证并保存。** 单测不调用真实飞书；实际私聊、补读、离线通知、MCP 重连、工具确实引用唯一试点标识及撤回新会话均另记实链证据。覆盖 R005、R038–R043、R058–R059、R065–R066、R079。
+- [x] **Step 5：验证并保存。** 单测不调用真实飞书；实际私聊、补读、离线通知、MCP 重连、工具确实引用唯一试点标识及撤回新会话均另记实链证据。覆盖 R005、R038–R043、R058–R059、R065–R066、R079。实链记录见 `docs/evidence/2026-11-11-t11-5.json`。
 
 ## Task 12：SSR 工作台与 A/B/C 界面
 
