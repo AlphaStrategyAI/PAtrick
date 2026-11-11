@@ -362,10 +362,10 @@ test('submits a custom answer without changing its original words', async ({ pag
 
 **Interfaces:** `npm run doctor` 输出逐项真实就绪/缺口，不打印凭据；`npm run backup` 使用 `Store.backup()`；网络适配器只执行显式获准路径/命令，真实修复须单独准入。
 
-- [ ] **Step 1：先写拒绝假就绪测试。** 未配置 Lima/runner/飞书/CI/研究网关时 doctor 显示未就绪；不给模拟数据标 live。假网络探测覆盖健康、DNS/路由错、TLS、认证失败、限流和 MFA；只有获准故障路径可重连。
-- [ ] **Step 2：确认红灯。** `npm test -- tests/unit/network.test.ts tests/unit/operations.test.ts`。
+- [x] **Step 1：先写拒绝假就绪测试。** 未配置 Lima/runner/飞书/CI/研究网关时 doctor 显示未就绪；不给模拟数据标 live。假网络探测覆盖健康、DNS/路由错、TLS、认证失败、限流和 MFA；只有获准故障路径可重连。
+- [x] **Step 2：确认红灯。** `npm test -- tests/unit/network.test.ts tests/unit/operations.test.ts`。
 - [ ] **Step 3：实现本地运行和备份。** launchd 模板使用明确 Node24 路径、同步目录外 dataDir、脱敏日志，主服务不依赖 IDE；SQLite 在线备份后 restic 加密每日异机。恢复先撤回/远端对账，吊销旧 writer 再接管，恢复时禁止双写入者。
-- [ ] **Step 4：实现网络政策。** 分钟心跳，先网卡/DNS/路由/代理/TLS再对端，内网先企业 DNS/路由；故障路径锁、限次/退避/回退，修复后复验故障与原健康路径及心跳，再对账续办。企业分流、两启动顺序/并发/单路修复未全部通过，双 VPN 不准入；无合格路径挂起。
+- [x] **Step 4：实现网络政策。** 分钟心跳，先网卡/DNS/路由/代理/TLS再对端，内网先企业 DNS/路由；故障路径锁、限次/退避/回退，修复后复验故障与原健康路径及心跳，再对账续办。企业分流、两启动顺序/并发/单路修复未全部通过，双 VPN 不准入；无合格路径挂起。
 - [ ] **Step 5：记录边界。** `npm run doctor` 和 `npm run backup` 本地输出可证明脚本；Lima 当前未安装、VPN 命令/企业政策、异机备份和恢复仍需主机证据。覆盖 R070、R081–R094；没有远端 hosting 部署要求，不擅自部署。
 
 ## Task 14：禁写回放、复盘与后续角色
