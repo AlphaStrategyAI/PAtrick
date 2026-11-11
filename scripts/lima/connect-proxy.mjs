@@ -8,7 +8,9 @@ import { parsePolicy, parseAuthority } from './policy.mjs';
 import { validateResolved } from './address-policy.mjs';
 import { readClientHelloSni } from './tls-clienthello.mjs';
 
-const headerMaximum=8192,tlsMaximum=65536,byteMaximum=32*1024*1024;
+export const sessionUploadBytes=32*1024*1024;
+const headerMaximum=8192,tlsMaximum=65536,byteMaximum=sessionUploadBytes;
+export function assertSessionUploadCap(text){if(text!==`${sessionUploadBytes}\n`)throw new Error('START');}
 const reasons=new Set(['HEADER','DNS','TLS','CONNECT','REMOTE','CAPACITY','IDLE','LIFETIME','BYTES','SOCKET','CANCEL','CLOSE']);
 const established=Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n');
 
@@ -213,6 +215,7 @@ const direct=(()=>{try{return Boolean(process.argv[1]&&realpathSync(resolve(proc
 if(direct) {
   try {
     if(process.argv.length!==2||process.geteuid?.()===0)throw new Error('START');
+    assertSessionUploadCap(readFileSync('/etc/patrick-worker/session-upload-bytes','utf8'));
     const policy=parsePolicy(JSON.parse(readFileSync('/etc/patrick-worker/policy.json','utf8')));
     const proxy=createProxy(policy,{report:(reason,count)=>process.stderr.write(`${reason} ${count}\n`)});
     process.once('SIGTERM',()=>{void proxy.close();});process.once('SIGINT',()=>{void proxy.close();});
