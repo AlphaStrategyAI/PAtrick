@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { readConfig } from './config.js';
+import { heartbeatIntervalMs } from './integrations/network.js';
 import { createRuntime } from './runtime.js';
 import { createApp } from './app.js';
 
@@ -21,7 +22,7 @@ await runtime.checkNetwork();
 if(runtime.feishu)void runtime.feishu.start().catch(()=>console.error('Feishu is not ready. Check the configured chat, identity, and history permissions.'));
 const timer=setInterval(()=>void runtime.engine.tick(),750);timer.unref();
 const historyTimer=setInterval(()=>void runtime.feishu?.catchup().catch(()=>{}),runtime.config.scanIntervalMs);historyTimer.unref();
-const networkTimer=setInterval(()=>void runtime.checkNetwork(),60000);networkTimer.unref();
+const networkTimer=setInterval(()=>void runtime.checkNetwork(),heartbeatIntervalMs);networkTimer.unref();
 const githubTimer=setInterval(()=>{void runtime.scanGithubBranches();void runtime.scanBookmarks();void runtime.scanMail();},runtime.config.scanIntervalMs);githubTimer.unref();
 let closing=false;
 async function close(){if(closing)return;closing=true;clearInterval(timer);clearInterval(historyTimer);clearInterval(networkTimer);clearInterval(githubTimer);await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime.close();process.exit(0);}
