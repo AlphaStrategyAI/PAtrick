@@ -7,6 +7,7 @@ import { caseVersions } from '../../src/cases.js';
 import { FeishuChannel } from '../../src/integrations/feishu.js';
 import { publishKnowledge } from '../../src/knowledge.js';
 import { Workbench } from '../../src/orchestrator.js';
+import { applicableRules } from '../../src/standards.js';
 import { Store } from '../../src/store.js';
 
 const roots: string[] = [];
@@ -39,4 +40,39 @@ it('counts one owner decision when a document and a tool conversation repeat it'
   expect(versions.some(item => item.choiceText === '导出失败后先问本人。')).toBe(true);
   expect(store.list('rules').filter(rule => rule.kind === 'principle')).toHaveLength(1);
   expect(store.list('events').filter(event => event.message === '这份资料复述了已经记下的决定，不再另建一条。')).toHaveLength(2);
+});
+
+it('keeps one principle across the live message, its history, and the PRD mirror, and does not reuse it elsewhere or after withdrawal', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'decision-one-principle-'));
+  roots.push(root);
+  const store = new Store(join(root, 'db.sqlite'), join(root, 'vault'));
+  stores.push(store);
+  const project: Project = { id: 'p', projectId: 'p', domain: 'personal', name: '笔记', description: '', repository: 'owner/repo', repositoryProvider: 'github', prdPath: 'docs/PRD.md', allowedPaths: ['docs/PRD.md'], trustedChecks: ['validate'], trustedAppIds: [7], ownerId: 'owner', autoMerge: false, budgetUsd: 1, createdAt: now() };
+  const other: Project = { ...project, id: 'q', projectId: 'q', domain: 'work', name: '另一个产品', repository: 'owner/other' };
+  store.save('projects', project);
+  store.save('projects', other);
+  const declaration = '我决定仅本产品保留草稿到下次成功导出';
+  const history: unknown[] = [];
+  const config: AppConfig = { mode: 'test', host: '127.0.0.1', port: 0, dataDir: root, vaultDir: join(root, 'vault'), ownerId: 'owner', authToken: 'test', sessionSecret: 'test', projects: [project], workers: {}, scanIntervalMs: 1000, runnerPolicies: [], feishu: { appId: 'app', appSecret: 'test', ownerOpenId: 'owner-open', chatId: 'owner-chat' } };
+  const engine = new Workbench({ store, config, workers: [], writer: { async baseline() { return 'baseline'; }, async deliver() { throw new Error('unused'); } }, research: { async research() { throw new Error('unused'); } } });
+  const channel = new FeishuChannel(store, config, engine, { im: { message: { async list() { return { code: 0, data: { items: history, has_more: false } }; }, async create() { throw new Error('unused'); } } } });
+  await channel.receive({ sender: { sender_type: 'user', sender_id: { open_id: 'owner-open' } }, message: { message_id: 'native-1', chat_id: 'owner-chat', message_type: 'text', create_time: '1000', update_time: '1000', content: JSON.stringify({ text: declaration }) } });
+  history.push({ message_id: 'native-1', chat_id: 'owner-chat', msg_type: 'text', create_time: '1000', update_time: '1000', sender: { id: 'owner-open', id_type: 'open_id', sender_type: 'user' }, body: { content: JSON.stringify({ text: declaration }) } });
+  await channel.catchup();
+  const prd = engine.ingest({ projectId: 'p', kind: 'manual', externalId: 'prd', title: 'PRD', content: `产品说明\n${declaration}` })!;
+  const prdSource = store.get('sources', prd.sourceId)!;
+  publishKnowledge(store, prdSource, { cards: [{ title: '说明', body: '已有决定。', quote: declaration, aliases: [], verification: 'reported', kind: 'fact' }], caseMentions: [{ quote: declaration, locator: prdSource.locator, title: '复述', choiceText: declaration, rationale: null, alternatives: [] }] }, config);
+  const explicit = caseVersions(store, config, project).filter(item => item.authority === 'owner-explicit' && item.choiceText.trim() === declaration);
+  expect(explicit).toHaveLength(1);
+  expect(store.list('rules').filter(rule => rule.kind === 'principle' && rule.status === 'active')).toHaveLength(1);
+  const home = engine.ingest({ projectId: 'p', externalId: 'home', title: '本产品', content: '继续导出。' })!;
+  expect(applicableRules(store, home, config).filter(rule => rule.kind === 'principle').map(rule => rule.statement)).toEqual([declaration]);
+  const elsewhere = { ...home, id: 'other-task', projectId: other.id, domain: other.domain };
+  store.save('tasks', elsewhere);
+  expect(applicableRules(store, elsewhere, config).filter(rule => rule.kind === 'principle')).toEqual([]);
+  const origin = store.list('sources').find(source => source.kind === 'feishu' && source.content === declaration)!;
+  engine.withdraw(origin.id);
+  const later = engine.ingest({ projectId: 'p', externalId: 'after-withdrawal', title: '撤回后', content: '新的导出工作。' })!;
+  expect(applicableRules(store, later, config).filter(rule => rule.kind === 'principle')).toEqual([]);
+  expect(caseVersions(store, config, project).filter(item => item.authority === 'owner-explicit')).toEqual([]);
 });
