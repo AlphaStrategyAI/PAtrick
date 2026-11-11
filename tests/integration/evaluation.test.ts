@@ -22,10 +22,12 @@ function fixture() {
 
 it('pauses a new GitHub source after two measured weeks over an hour and keeps the product file flowing', () => {
   const { config, store, project } = fixture();
-  const at = new Date('2026-11-07T00:00:00.000Z');
+  const at = new Date();
+  const recent = new Date(at.getTime() - 3 * 86400000).toISOString();
+  const previous = new Date(at.getTime() - 10 * 86400000).toISOString();
   try {
-    recordMaintenance(store, project, { eventId: '11111111-1111-4111-8111-111111111111', minutes: 70, note: '采集补扫', recordedAt: '2026-10-28T00:00:00.000Z' });
-    recordMaintenance(store, project, { eventId: '22222222-2222-4222-8222-222222222222', minutes: 90, note: '回执对账', recordedAt: '2026-11-04T00:00:00.000Z' });
+    recordMaintenance(store, project, { eventId: '11111111-1111-4111-8111-111111111111', minutes: 70, note: '采集补扫', recordedAt: previous });
+    recordMaintenance(store, project, { eventId: '22222222-2222-4222-8222-222222222222', minutes: 90, note: '回执对账', recordedAt: recent });
     const report = weeklyReport(store, project, at);
     expect(report.metrics.maintenanceMinutes).toBe(90);
     expect(report.metrics.slowestRecordedMaintenance).toEqual({ minutes: 90, note: '回执对账' });

@@ -9,6 +9,8 @@ import Database from 'better-sqlite3';
 import { Store } from '../../src/store.js';
 import { createBackup, verifyBackup } from '../../src/backup.js';
 import { now, stableId } from '../../src/domain.js';
+import { ingestSource, withdrawSource } from '../../src/intake.js';
+import { publishKnowledge } from '../../src/knowledge.js';
 const dirs:string[]=[];afterEach(()=>dirs.splice(0).forEach(dir=>rmSync(dir,{recursive:true,force:true})));
 it('creates an online snapshot with withdrawal tombstones and no credentials',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'patrick-backup-'));dirs.push(dir);const store=new Store(join(dir,'patrick.db'),join(dir,'vault'));
@@ -18,6 +20,36 @@ it('creates an online snapshot with withdrawal tombstones and no credentials',as
   const restored=new Store(join(dir,'snapshot','patrick.db'),join(dir,'restored-vault'));
   expect(restored.get('sources','s')?.status).toBe('withdrawn');expect(restored.searchCards('草稿',{projectId:'p',domain:'personal'})).toEqual([]);
   restored.close();store.close();
+});
+it('finds the same active card after opening an online backup, while Vault recovery stays separate from database projection',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'patrick-backup-search-'));dirs.push(dir);
+  const db=join(dir,'patrick.db'),vault=join(dir,'vault'),scope={projectId:'p',domain:'personal'};
+  const store=new Store(db,vault);
+  const project={id:'p',projectId:'p',domain:'personal',name:'Project',description:'',repository:'owner/repo',repositoryProvider:'github' as const,prdPath:'docs/PRD.md',allowedPaths:['docs/PRD.md'],trustedChecks:['validate'],trustedAppIds:[1],ownerId:'owner',autoMerge:false,budgetUsd:1,createdAt:now()};
+  store.save('projects',project);
+  const content='导出失败后应恢复草稿。';
+  const task=ingestSource(store,{projects:[]},{projectId:'p',kind:'manual',externalId:'idea',revision:'v1',title:'草稿恢复',content,authorId:'owner',locator:'productIdeas/草稿.md'})!;
+  const source=store.get('sources',task.sourceId)!;
+  const card=publishKnowledge(store,source,{cards:[{title:'草稿恢复',body:'保留草稿以供恢复',quote:'应恢复草稿',aliases:['draft'],verification:'reported',kind:'fact'}]})[0]!;
+  const projected=join(vault,'p','personal','cards',`${card.id}.md`);
+  const projectedText=readFileSync(projected,'utf8');
+  expect(projectedText).toContain('应恢复草稿');
+  const destination=join(dir,'snapshot');
+  await createBackup(store,destination,{mode:'test'});
+  store.close();
+  const opened=new Store(join(destination,'patrick.db'),join(destination,'vault'));
+  expect(opened.searchCards('恢复',scope).map(item=>item.id)).toEqual([card.id]);
+  expect(opened.searchCards('draft',scope).map(item=>item.id)).toEqual([card.id]);
+  opened.close();
+  const recovered=new Store(join(dir,'recovered.sqlite'),join(destination,'vault'));
+  expect(recovered.searchCards('恢复',scope).map(item=>item.id)).toEqual([card.id]);
+  const recoveredSource=recovered.get('sources',source.id)!;
+  withdrawSource(recovered,recoveredSource.id);
+  writeFileSync(join(destination,'vault','p','personal','cards',`${card.id}.md`),projectedText);
+  recovered.rebuildIndex();
+  expect(recovered.searchCards('恢复',scope)).toEqual([]);
+  expect(recovered.searchCards('draft',scope)).toEqual([]);
+  recovered.close();
 });
 it('preserves independent Vault edits and conflict versions in a verified snapshot',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'patrick-vault-backup-'));dirs.push(dir);const store=new Store(join(dir,'patrick.db'),join(dir,'vault'));

@@ -136,7 +136,7 @@ it('does not resurrect withdrawn cards after rebuilding FTS', () => {
 - [ ] **Step 2：确认红灯。** `npm test -- tests/unit/core-store.test.ts`；缺 FTS/失效过滤时失败。
 - [ ] **Step 3：实现账本与发布协议。** 创建 `projects/sources/tasks/cards/rules/cases/questions/events/attempts/outbox/receipts/actions/cursors`，每行存 `id/project_id/domain/data`。事务同时写状态/动作；Markdown 在事务提交后以临时文件+原子改名发布，失败留可恢复意图，冲突保存两侧；撤回记录先于重建。FTS 使用 `unicode61`，入索引与查询使用同一 `tokenize()`，按 scope 过滤后 `bm25()`。
 - [ ] **Step 4：加入实质恢复反例。** 测事务中抛错后 DB/Markdown 都未提交；发布意图落账后进程重启可补全；原文已撤回时索引重建不能复活；异项目/异域高相关卡不返回；未知项目为空。`ephemeral` 只在受控内存保留正文，关闭再开、备份字节和 Vault 均找不到其正文/派生摘录。
-- [ ] **Step 5：验证并保存。** 单测全绿；在线备份打开后可检索同样的有效卡。额外证明“Vault+撤回→重建”与“DB→Vault 投影”是不同能力，前者未实现不能勾 R025。覆盖 R005、R009、R014、R023–R025、R050、R085–R086。
+- [x] **Step 5：验证并保存。** 单测全绿；在线备份打开后可检索同样的有效卡。额外证明“Vault+撤回→重建”与“DB→Vault 投影”是不同能力，前者未实现不能勾 R025。覆盖 R005、R009、R014、R023–R025、R050、R085–R086。
 
 ## Task 3：文件与消息来源修订
 
