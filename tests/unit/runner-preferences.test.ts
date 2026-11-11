@@ -90,6 +90,24 @@ describe('project execution runner preference', () => {
     expect(f.runners(role)).toEqual([runner]);
   });
 
+  it.each(roles)('continues %s when its preferred runner is unavailable', async role => {
+    const first: Runner = role === 'plan' || role === 'check' || role === 'feedback' ? 'codex' : 'grok';
+    const second: Runner = first === 'codex' ? 'grok' : 'dsh';
+    const f = setup({ unavailable: { [first]: [role] } });
+    if (role === 'check') f.store.save('tasks', { ...f.store.get('tasks', 'task')!, artifact: { taskVersion: 1, planHash: 'synthetic-plan', baselineSha: 'baseline', files: [{ path: 'docs/PRD.md', content: 'Synthetic' }], tests: [{ command: 'validate', passed: true, output: 'Synthetic' }], summary: 'Synthetic artifact' } });
+    expect(await f.run(role)).toBeDefined();
+    expect(f.runners(role)).toEqual([first, second]);
+    expect(f.store.list('attempts').filter(attempt => attempt.role === role).map(attempt => [attempt.runner, attempt.status])).toEqual([[first, 'unavailable'], [second, 'succeeded']]);
+  });
+
+  it.each(roles)('does not call %s when no runner is admitted for the domain', async role => {
+    const f = setup({ policies: { grok: { domains: ['other'] }, dsh: { domains: ['other'] }, codex: { domains: ['other'] } } });
+    expect(await f.run(role)).toBeUndefined();
+    expect(f.calls).toEqual([]);
+    expect(f.store.list('attempts')).toEqual([]);
+    expect(f.store.get('tasks', 'task')).toMatchObject({ status: 'blocked', error: 'workers_unavailable' });
+  });
+
   it.each([
     ['domain', { domains: ['other'] }], ['role', { roles: ['plan'] }], ['admission', { admitted: false }],
   ] satisfies [string, Partial<RunnerPolicy>][])('does not bypass dsh %s policy', async (_, policy) => {
