@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { parsePolicy } from '../../scripts/lima/policy.mjs';
 import { readClientHelloSni } from '../../scripts/lima/tls-clienthello.mjs';
-import { createProxy } from '../../scripts/lima/connect-proxy.mjs';
+import { assertSessionUploadCap, createProxy, sessionUploadBytes } from '../../scripts/lima/connect-proxy.mjs';
 
 const u16=(n:number)=>Buffer.from([n>>8,n&255]);
 const extension=(type:number,data:Buffer)=>Buffer.concat([u16(type),u16(data.length),data]);
@@ -226,6 +226,9 @@ describe('bounded lifecycle, backpressure and shutdown',()=>{
   });
   it('leaves no CLI caller-selected policy, dependency or argument overrides',()=>{
     const source=readFileSync(new URL('../../scripts/lima/connect-proxy.mjs',import.meta.url),'utf8');
-    expect(source).toContain('/etc/patrick-worker/policy.json');expect(source).toContain('process.argv.length');expect(source).not.toMatch(/process\.env|--(?:policy|port|test|skip|resolver|connector)/);
+    expect(source).toContain('/etc/patrick-worker/policy.json');expect(source).toContain('/etc/patrick-worker/session-upload-bytes');expect(source).toContain('process.argv.length');expect(source).not.toMatch(/process\.env|--(?:policy|port|test|skip|resolver|connector)/);
+    expect(()=>assertSessionUploadCap(`${sessionUploadBytes}\n`)).not.toThrow();
+    expect(()=>assertSessionUploadCap(`${sessionUploadBytes}`)).toThrow(/^START$/);
+    expect(()=>assertSessionUploadCap(`${sessionUploadBytes+1}\n`)).toThrow(/^START$/);
   });
 });

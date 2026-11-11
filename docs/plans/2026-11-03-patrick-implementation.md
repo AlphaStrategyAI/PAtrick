@@ -228,7 +228,7 @@ it('persists fallback notices while a healthy replacement continues', async () =
 
 - [ ] **Step 1：建立进程协议替身。** 使用临时可执行文件/假 ACP 客户端记录收到的 argv、stdin、环境、工作目录和取消信号，返回角色 Schema；不得调用用户真实 CLI。测试超时后发取消/终止、输出过长或非 JSON 拒收、错误 Schema 失败。
 - [ ] **Step 2：确认红灯。** `npm test -- tests/unit/workers.test.ts`，缺隔离/取消/校验应失败。
-- [ ] **Step 3：实现只读/执行角色权限。** stdin 提供获准冻结 WorkerInput；不经 shell 拼接用户材料；环境只允许角色必需变量，不继承 GitHub/GitLab/SSH agent；只读角色不挂可写材料，执行只写任务副本。Lima 模板移除默认 home 挂载、关 agent 转发、限网络与会话上传。
+- [x] **Step 3：实现只读/执行角色权限。** stdin 提供获准冻结 WorkerInput；不经 shell 拼接用户材料；环境只允许角色必需变量，不继承 GitHub/GitLab/SSH agent；只读角色不挂可写材料，执行只写任务副本。Lima 模板移除默认 home 挂载、关 agent 转发、限网络与会话上传。
 - [ ] **Step 4：验证无逃逸能力。** 用含引号、换行、反引号的来源正文验证它只作为数据；检查命令不含凭据；输出中的假 `mergeSha/checks` 不产生 receipt；计划或补丁路径越界由宿主再次拒绝。运行器同名不代表提供方/模型准入一致。
 - [ ] **Step 5：保存分层证据。** 本地替身协议测试通过记 `C`；真实 ACP、后台权限/费用/隔离、主机 Lima 记录为独立 `L/O`。覆盖 R045–R047、R075–R076、R081–R083、R093。
 
