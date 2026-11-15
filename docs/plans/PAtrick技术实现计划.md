@@ -1,6 +1,30 @@
 # PAtrick 技术实现计划
 
-版本：1.3 · 2026-11-15 · 完整对齐产品v2.6的连接、编辑、状态与验收，实施未开始。依据：[产品设计 v2.6](../designs/PAtrick产品设计.md)、[技术设计 v2](../designs/PAtrick技术设计-v2.md)、[交互原型](../designs/设计资产/v2/交互原型.html)与[TJ团队Figma](https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=20-549)。
+> **实施技能** 按任务使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans`，以 §10 的复选框追踪红测、实现、验证和提交。
+
+**目标** 从指定目录的一次真实需求变更出发，交付可核验的方案 PR，把本人决定与实际反馈接回同一工作及其判断标准。
+
+**架构** `patrick-service` 提供同源 Web、领域命令及只读投影，SQLite/blob 持有领域事实，Autoloop 独占任务、等待和重试。固定处理器把执行、对账和文件操作连接到三个后端、GitHub、飞书与 Obsidian，各自保留精确版本及回执。
+
+**技术栈** TypeScript、Node ≥24.9.0、npm workspaces、Hono、SQLite/WAL、React/Vite、Autoloop、Codex CLI/Grok Build/DSH、Obsidian Desktop、飞书官方 Node SDK。
+
+## 全局约束
+
+- 首版从空代码、空数据库和首次部署开始。七个主页面、六组设置、四种采集来源、三个执行器均纳入完整产品验收。
+- 工作场景以创建并核验方案 PR 为交付点。合并、部署及 L3 属于各自的后续委托范围。
+- 以一个工作范围、一个标准域起步。`productIdeas` 首轮至少验证直接交付、回答后交付、过期或冲突拦截三条路线。
+- 每次业务执行核验身份、当前委托、策略、能力及短期 grant 的交集。等待关键回答时，研究咨询可按单独许可继续，受阻业务的派工、阶段事件和 effect 均保持等待。
+- 每项写入保留精确版本与幂等回执。跨库、文件系统及外部平台通过持久意图和读回对账收口；未知结果保持未知。
+- 个人与公司资料域贯通采集、检索、模型、日志及备份。原稿、生成视图、SQLite/WAL、凭据及执行器 HOME 按 §3 和 §6 分配读写边界。
+- 发布门槛包括至少 10 个种子案例和 5 个独立留出案例；引用准确率初始目标 ≥95%，关键越权、应问未问及受控召回撤回材料零容忍。
+- 主机初始模型并发 1、队列上限 1000、附件 20MB。恢复目标 RPO ≤24 小时、RTO ≤2 小时，每周维护以 1 小时为约束。
+- 语言模式 `system/en/zh`。触达至少 44×44px，普通文字对比度 ≥4.5:1，运行标识为 80×80px、4.8 秒循环并尊重减少动效。
+
+---
+
+版本 1.4 · 2026-11-15 · [产品设计 v2.6](../designs/PAtrick产品设计.md) · [技术设计 v2.1](../designs/PAtrick技术设计-v2.md) · [交互原型](../designs/设计资产/v2/交互原型.html) · [TJ 团队 Figma](https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67)
+
+开发依赖见 [§7](#7-可执行任务清单)，设计验收追踪见 [§8.4](#84-从设计条款到验收用例)，逐任务步骤见 [§10](#10-逐任务实施步骤)。
 
 **按全新系统实施：从空代码仓库、空数据库和首次部署开始。** 本文定义完整产品所需的开发任务、接口、数据及验收；任务均未实施，原型中的成功提示不作为真实服务证据。当前范围包括飞书机器人设置及Obsidian知识/标准编辑；以当前292帧/65张导出索引为设计基线，逐状态映射；原型105项/220组检查不作为真实后端、渠道或设备验收。本文路径均相对本仓库根目录：产品/技术设计与设计资产位于 docs/designs，实现计划位于 docs/plans。
 
@@ -263,13 +287,13 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 
 ```json
 {
-  "client_request_id": "req-unique",
+  "client_request_id": "web-req-017-03",
   "expected_revision": 3,
-  "payload_hash": "sha256-of-canonical-payload",
+  "payload_hash": "0c36ed2f38dbfa3729010d6161b777e6964daa203f9139630e428bae48aeb115",
   "payload": {
     "work_id": "W-017", "generation": 2,
     "question_id": "Q-017", "question_version": 3,
-    "proposal_revision": 8, "options_hash": "frozen-options-hash",
+    "proposal_revision": 8, "options_hash": "43013bc56b94ab3c198fb411c3b329a518993d8e800bffb61675b5bdac0cf8c4",
     "answer": {"kind": "custom", "raw_text": "先处理最高频故障，再验证新需求"}
   }
 }
@@ -379,9 +403,9 @@ Logo是侧栏居中的80×80方形SVG+CSS，主体68px、消息头像30px静态�
 
 ### 5.3 界面还原验收
 
-T00在`design-inputs.lock.json`锁产品/技术文档、原型、Figma交付记录与图标hash；T14再生成发行字体的浏览器基线。建立 `fixtures/screens/screen-manifest.json`，逐条覆盖[Figma交付记录](../designs/设计资产/v2/Figma交付记录.json)的当前292个frame：`frame_id、route、scenario、locale、viewport、fixture_hash、expected_actions、test_id、baseline_asset/hash、font_hash、browser/DPR`。同组件的预设状态通过fixture驱动，不把292帧当292个路由；不得静默漏掉弹窗、详情、移动或错误态。
+T00在`design-inputs.lock.json`锁产品/技术文档、原型、Figma交付记录与图标hash。T14锁定浏览器与发行字体渲染环境，T24建立 `fixtures/screens/screen-manifest.json` 和最终浏览器基线。清单逐条覆盖当前292个frame，记录`frame_id、route、scenario、locale、viewport、fixture_hash、expected_actions、test_id、baseline_asset/hash、font_hash、browser/DPR`。复用组件和状态夹具覆盖弹窗、详情、移动和错误态。[Figma交付记录](../designs/设计资产/v2/Figma交付记录.json)
 
-产品文字合同决定业务语义，原型决定交互，Figma及65张带版本/hash的导出索引校对几何/内容。像素比较只使用T14以最终发行字体生成、人工核对通过的唯一浏览器基线；Inter与Figma的Noto Sans SC字形/换行差异逐条记录，不能作为抗锯齿差异笼统豁免。固定时钟、数据、字体hash、浏览器、DPR及logo相位后做浏览器截图；动态遮罩只允许时间和确有必要的非业务装饰，不遮按钮、状态、回执或全文。
+产品文字合同决定业务语义，原型决定交互，Figma及65张带版本/hash的导出索引校对几何与内容。像素比较使用T24以最终发行字体生成并人工核对的浏览器基线。逐条记录 Inter 与 Figma 的 Noto Sans SC 字形和换行差异。固定时钟、数据、字体 hash、浏览器、DPR 和 logo 相位后截图；按钮、状态、回执和正文参与对照，遮罩限时间和确有必要的非业务装饰。
 
 视觉初始阈值：布局关键边界偏差≤2px、像素差异比例≤0.5%，字体抗锯齿差异单独人工判读；关键内容缺失/遮挡、错误状态、focus丢失直接失败，不靠像素阈值放行。桌面1440×1000、移动390×844为主，另验768宽、200%缩放、长中文/英文、键盘、读屏与prefers-reduced-motion。292个画面均有映射和合同检查，38类新增状态的中英版、6个展开画面、14个新增移动画面单列，截图覆盖每个独立布局/状态；等价合并须记录理由和对应frame，不能仅测首页。
 
@@ -481,7 +505,7 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 |---|---|---|---|
 | T00 基线与准入 · 4–6 | 无 | 空仓库、精确版本/SBOM、合同探针、产品v2.6/292帧及65张导出索引锁定、完整需求映射、设备/三CLI及Obsidian应用/安装器/核心功能能力表 | Mac/Linux原生依赖构建；验证不兼容组合被拒；design-inputs.lock.json |
 | T01 合同与骨架 · 5–8 | T00 | workspaces、contracts、OpenAPI/SDK、统一错误/命令/快照、CI | Schema/客户端一致；不合法major/超范围payload拒绝；contract-report |
-| T02 存储与事务 · 7–12 | T01 | 全部表组migration、repositories、blob、inbox/outbox、投影水位 | 唯一键/CAS并发、崩溃落盘、A→B→A、空库初始化与前向迁移；storage-report |
+| T02 存储与事务 · 7–12 | T01 | 存储基础migration、repositories、blob、inbox/outbox、投影水位；各领域任务交付所属表组 | 唯一键/CAS并发、崩溃落盘、A→B→A、空库初始化与前向迁移；storage-report |
 | T03 身份与可信控制 · 8–12 | T01,T02 | WebAuthn、session、caller scopes、控制提案/一次挑战/回执、共用SettingsChange引擎/固定操作注册表、Keychain边界 | CSRF/跨域/重放/过期/恢复会话失效；模型与MCP不能答题/扩权；auth-report |
 | T04 Autoloop适配 · 8–14 | T01,T02 | 固定SHA、source/rules、observer快照+分页+seq、公开插件、稳定lane与事件谱系 | 重复/乱序/断档/重启；done+ask不当完成；hops边界；hub-contract-report |
 | T05 GitHub与目录采集 · 8–12 | T02,T03,T04 | 注册表、读取/预览、webhook+补扫、游标、触发白名单、首次回执 | 断网/半写/权限过期、重复来源、自触发排除、暂停在途；collection-report |
@@ -511,20 +535,42 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 | ID / 预计小时 | 依赖 | 开发交付 | 必测与完成证据 |
 |---|---|---|---|
 | T21 主机网络与固定修复 · 8–14 | T03,T08,T13,T17 | Host Supervisor、锁/epoch、VPN探针、冷却/MFA、双目标复验 | hub正常目标失败、双VPN启动顺序、DNS/代理竞态、不可并用；真实设备报告 |
-| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T12,T17 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit）、冻结/交接、加密离机、撤回、隔离恢复/重建 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停 |
+| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、加密离机、撤回、隔离恢复/重建 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停 |
 | T27 Obsidian与Vault部署 · 7–12 | T00,T03,T06,T07 | 官方桌面安装配方、共享VaultConnection Inspector、vault-kit、设备映射/范围预览/往返检查、单设备与升级卸载 | 真实Mac打开/编辑/入库/导回；关应用仍处理；缺应用/权限、URI不可用、模板不覆盖；obsidian-install-report |
 | T23 安装与升级 · 8–12 | T00,T03,T09,T21,T22,T27 | 签名发布包、Caddy/TLS、launchd/Lima、整合T27桌面/Vault安装检查、init/doctor/upgrade/uninstall | 空Mac安装/重启、飞书长连接收发与doctor、缺证书/权限、磁盘不足、升级失败、拒绝旧库覆盖 |
 | T24 视觉/动效/无障碍 · 8–14 | T15,T16,T17,T18,T19,T20 | 292帧及38类新增流程状态映射，三轴编辑进度/连接向导/64条关键设计跳转对照、受控浏览器基线、全页动效/响应式/键盘与读屏 | §5.3视觉门槛、logo真实状态/4.8秒、减少动效、200%缩放、无横向溢出 |
 | T25 端到端与故障演练 · 12–20 | T12,T18,T19,T20,T21,T22,T23,T24,T27 | 三条真实工作路线、四类编辑/三轴回执、飞书配对/往返/显式启用/排空、升级恢复与预算故障注入 | 开PR直接/答后/过期；Obsidian知识核实/标准真实评测采纳与双向回执；真实后端/渠道/设备 |
 | T26 试点与维护交付 · 4–8 | T25 | 单范围试点、质量/人工投入基线、维护手册、恢复/升级演练、发布清单 | 无P0/P1未决、P2有明确处置；试点达成已冻结指标，周维护目标≤1小时 |
 
-T01先冻结VaultConnection/EditIntent/EditReceipt/ChannelTest及操作Schema，T02落实版本与唯一键；T06先完成接通处理器、文件协议、知识编辑与通用草稿/投影器；T07接标准编辑、候选/评测/采纳。T27交付独立桌面/Vault安装检查模块，不依赖总安装器；T23整合它。T27先验文件到候选往返，T25再验真实模型评测采纳，避免安装与业务联调互相等待。
+T01先冻结VaultConnection/EditIntent/EditReceipt/ChannelTest及操作Schema，T02提供版本与唯一键的迁移工具，各领域任务同时交付本域约束和测试。T06先完成接通处理器、文件协议、知识编辑与通用草稿/投影器；T07接标准编辑、候选/评测/采纳。T27交付独立桌面/Vault安装检查模块供T23整合，先验文件到候选往返，T25再验真实模型评测采纳。
 
 T10不依赖成品设置UI：用T03认证/可信控制和T10自身配置/测试后台，经认证客户端从空配置走probe→配对→往返→可信启用→active，再做真实双入口验收。禁止直接改ready或伪造ControlReceipt；T17/T20只复用这些既有端口。
 
 T07先完成规则/数据合同，T08先完成固定门槛下的委托与预算，T09通过后在T25补真实标准评测与能力晋级；fixture完成不等于模型路径准入，避免隐性依赖环。T17接T06/T10的真实端口；T27本机检查模块独立交付，完成前相关本机能力如实标待验证，T25汇总真实设备联调。T17先注册网络/备份处理器合同，实际T21/T22未通过时UI显示不可用，完整设置联调归T25。
 
-T14可与服务任务并行，但只能消费稳定合同与fixture；联调完成前标demo。首次100小时选择上述任务的最小纵向切片，不能把未完成任务标完成；完整产品须T00–T27全部交付及§8门槛通过。执行器每个独立验收，单个后端成功不代表T09完成。
+T14可根据稳定合同和带 demo 标识的夹具先行。首次100小时按 §7.4 运行最小纵向切片；完整产品以 T00–T27 全部交付及 §8 门槛为准，执行器逐个验收。
+
+### 7.4 首个 100 小时的可验收切片
+
+先冻结试点仓库、分支、目录、资料域、身份和费用上限。表中 T 编号指 §10 相应步骤的试点路径。每段结束记录实际耗时、证据和阻塞；完整任务仍按 §7.1–7.3 的依赖和验收关闭。任何切片发出的实际写请求仍执行 §3.3 与 §6 门禁。
+
+| 小时 | 本轮实施路径 | 段末可复验的结果 |
+|---|---|---|
+| 0–12 | T00锁输入和授权目标；T01命令/快照骨架，T02空库和事务最小集，T03单本人认证；以实际隔离身份预检三 CLI、VPN 及许可 | Node、上游、设备和身份有实测记录；可登录并访问唯一获准域；待实测能力有原因和下一步 |
+| 12–28 | T04登记单 lane；T05只启一个 GitHub 目录及其补漏路径；T06接同域 Vault/知识最小版，T07冻结产品域基线和样本 | 原文及游标可重放，中文可查证；半写、离线、撤回与冲突路径受测 |
+| 28–48 | T08签短期 grant 和累计预算；T09准入一条实际订阅路径，完成一次真实 Harness bundle 知识/判断调用；T10精确回答与恢复键，T12冻结产物与固定发布 | 隔离仓库可直接创建并读回 PR；中断后以同一业务键对账；不可用后端如实报告 |
+| 48–66 | T10以已授权飞书应用完成配对和双向验证，T11接受限咨询，T13提供同一任务快照，T14/T15接决策和进行中两页 | Web/飞书竞答只接受一次；真实答复重启后续办原工作；咨询重连及切换中英保留草稿和业务版本 |
+| 66–80 | T12反馈回原案例，T07/T08做一次候选对照及准入评估，T17提供试点所需检查及真实应用回执 | 拿到采纳或拒绝的版本证据；规则不足时明确保留候选；权限和已暂停工作保持原状态 |
+| 80–100 | T21只运行试点主机已登记的诊断/复查；T22对同一切片备份、撤回和隔离恢复；T25复演三条工作路线及一次真实故障 | 直接/回答后 PR 各一条，过期或冲突拦截一条；在隔离目录恢复并重建后，任务/答案/远端结果可核对 |
+
+首版完整产品还要验收 RSS/单网页、其余真实后端、六组设置、其余页面、全部设计状态和完整 RecoverySet。超过 100 小时或未满足段末条件时，在证据清单记实际结果和剩余依赖，沿同一计划继续实施。
+
+### 7.5 执行约定
+
+- §10 的文件路径相对仓库根目录，均为计划中的创建或修改位置。单元、合同和集成用例按卡片路径放置；`Txx` 文件内按场景命名。各任务把表中反例落实为独立断言，尤其是无副作用、重复、崩溃与恢复的计数。
+- T01建立 `npm run test:unit`、`test:contract`、`test:integration` 全量脚本。精确文件用 `npm exec -- vitest run <文件>`，浏览器文件用 `npm exec -- playwright test <文件>`。T02起在隔离临时数据根运行本地真库集成，T04起使用锁定 hub 的隔离实例。红测中的测试客户端、时钟和故障替身由各用例建立，复用真实 API 或存储入口验证事实。
+- 每次验证记录命令、退出码、场景/输入版本、证据 hash 和环境。报告归 `release-evidence/<release_id>/tasks/Txx.json`，由 T01 的校验脚本读取。每个任务绿测后先 `git diff --check`，再按卡片文件清单暂存和提交；完整联调与试点证据分别由 T25、T26 汇总。
+- T02以后迁移由所属任务同变更提交，编号预留 `00NN_<模块>.sql`（NN 为任务号，T02用 `0002_core.sql`）。安装器按编号升序初始化；已发布数据库按迁移 ledger 校验版本和 hash，只追加迁移。SQL 与代码测试覆盖空库及上一发布快照。
 
 ## 8. 测试、发布门槛与证据
 
@@ -566,10 +612,959 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 放行顺序：合同可行→空机可部署→真实七层闭环→完整产品/跨入口→故障恢复→小范围试点。试点范围、质量门槛、预算、停止条件先冻结，观察拒绝/返工/失败与本人投入；没有足够结果不能宣称判断提高。引用准确率目标≥95%、越权/应问未问/受控召回撤回材料零容忍，须同时报告样本量和不确定性。
 
+### 8.4 从设计条款到验收用例
+
+按产品及技术设计逐项回查。单元/合同证据用于验证具体规则，真实服务、设备、画面和试点结果分别使用 §10 所列的验收入口。完整版本要求每行证据可取回，条件未满足时在 manifest 记录实际差异和受影响的发布环节。
+
+| 产品设计 / 技术设计 | 实现任务 | 验收证据 |
+|---|---|---|
+| 产品§1、§4；技术§3、§4 | T07/T08/T12/T25/T26 | T07 冻结 r8 后收录 r9，旧报告只能留档；T25 实际反馈进入原案例，完成当前/候选/外部方法对照、影子及一个退化或样本不足样本；T26 按完整分母报告成果和人工投入 |
+| 产品§2–3；技术§5.1–5.2、A2 | T04/T08/T10/T11/T13/T15/T25 | T10 `answer-once`、`stale-or-deferred`；T13 `stable-work-and-watermark`；T15 `same-work`，显式提交和聊天各走其路，断线重取同一工作及回执 |
+| 产品§2.2；技术§5.5 | T13/T19/T25 | T19 夏令时跨日、域外事实、重复/撤销/重建，活动与当前存量分别验；T25 对账一次真实答复只计一次 |
+| 产品§4.1、§5.4；技术§5.3.1、§5.4.1、§6.1.1、A1 | T05/T06/T07/T16/T17/T22/T27 | T06 写稿后丢回执、中文检索与撤回；T16 四入口和三轴；T27 真实 Mac 文件往返/关编辑器；T22 保全较新原稿 |
+| 产品§5.5；技术§5.4.2、A2、A4 | T03/T10/T17/T20/T22/T25 | T10 `channel-lifecycle` 和真实双向探针；T17 待启用/排空各有回执；T22 恢复后旧 incarnation 回调和绑定无效 |
+| 产品§5.1–5.3、§7；技术§2.5、§5.3–5.4 | T01/T03/T05/T17/T18/T20 | T17 验证后改草稿、部分应用后复查失败；T05/T18 四种来源、启用和首次采集证据；T20 明确发送和脱敏预览 |
+| 产品§6–7；技术§4、§5.7–5.8、A3–A4 | T08/T09/T12/T25 | T08 最后额度竞争与旧 grant；T09 三后台身份、坏退出、每收费 attempt 预算；T12 远端成功响应丢失及 source/base 变化；T25 三条真实工作路线 |
+| 产品§6–7；技术§6、A4 | T21/T22/T23/T25 | T21 双 VPN 和原健康依赖复验；T22 两库水位、撤回、Vault 新稿、旧主机未停；T23 空机安装与升级；T25 真实隔离恢复 |
+| 产品§8–10；技术§5.6、§7.2 | T14/T15/T16/T17/T19/T24/T25 | T14 默认语言和覆盖；T15 生成中换语言后保留草稿、焦点、回执；T24 `frame-coverage`、各布局截图、键盘/读屏和动效实测 |
+
 ## 9. 本计划的审核与交付记录
+
+v1.4沿用产品v2.6和技术设计v2.1。补充首个100小时切片、任务文件与接口、红绿验证、提交边界及逐条验收追踪。T00–T27的估算仍为236–382小时，硬件、账号和平台准入按实测重估。计划中的应用代码、合约测试和设备验收由实施任务交付。
 
 v1.3以产品v2.6为当前输入：292个Figma画面、65张导出索引，原型105项行为检查/220组界面组合。当前设计证据见[交付记录](../designs/设计资产/v2/Figma交付记录.json)、[原型验证](../designs/设计资产/v2/原型验证.json)和[界面核对](../designs/设计资产/v2/Figma-界面核对.json)；它们不证明真实后端、飞书或Obsidian设备已联通。T00锁输入hash，T24建立发行浏览器基线，T25另做真实全链路验收。
 
 本轮补齐四类编辑的统一入口、三轴回执、Vault接通证明、配对/测试/待启用/排空，以及同源健康和统计隔离；同步Schema、接口、状态、任务依赖、工时和发布反例。文档执行结构/引用/任务图/估时及Mermaid检查；不将旧审核结论自动计为新增合同已通过独立审核。
 
-v1.0三轮subagent与独立Codex会话的原始意见、v1.1 Obsidian增补及后续入口调整留在历史评审与输入基线中，不改写历史快照。本次仅更新技术设计与实现计划，任务T00–T27均未实施；实际代码、部署和质量宣称仍按§8验收。
+v1.0三轮subagent与独立Codex会话的原始意见、v1.1 Obsidian增补及后续入口调整留在历史评审与输入基线中。实际代码、部署和质量仍按§8验收。
+
+
+## 10. 逐任务实施步骤
+
+任务表给出完整交付与依赖，本节给出落点、跨任务接口和首个可执行验证。并发、断电、平台探针等扩展用例沿用同一卡片的入口，从 §8 对照可观察结果。业务证据和设备探针均关联实际配置版本。
+
+### T00 锁定设计输入和运行准入
+
+**文件** `scripts/lock-design-inputs.mjs`、`tests/contract/T00.test.mjs`、`design-inputs.lock.json`、`upstream.lock.json`、`fixtures/contracts/admission-matrix.json`。
+
+**交接** T01读取锁定的 Node/npm、平台和依赖版本。T09/T10/T23/T27读取探针所用版本、实际运行身份及状态，T24读取 `frames` 和 `exports`。Autoloop 固定 `45aecbf578289cda72d1fc773dcad069bfe7778b`，DSH 为 `e8f7b93a344964de3dca1ace9e72b6e4d6de87cb`。逐项记录 Codex/Grok/DSH、飞书消息/卡片、Obsidian 应用/安装器/架构，以及签名链与离机目标的版本、探针命令、证据 hash 和 `verified/blocked/pending`。
+
+- [ ] 将下面用例写入 `tests/contract/T00.test.mjs`，运行 `node --test tests/contract/T00.test.mjs`，预期缺少设计锁时报 `ENOENT`。
+
+~~~js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+test('pinned-design-inputs', () => {
+  const lock = JSON.parse(readFileSync('design-inputs.lock.json', 'utf8'));
+  assert.equal(new Set(lock.frames.map(({ id }) => id)).size, 292);
+  assert.equal(lock.exports.length, 65);
+  assert.match(execFileSync(process.execPath, ['scripts/lock-design-inputs.mjs', '--check'], { encoding: 'utf8' }), /292 frames \/ 65 exports/);
+});
+~~~
+
+- [ ] 将下面脚本写入 `scripts/lock-design-inputs.mjs`。创建设计锁；对其余版本和声明逐项运行只读探针，留存兼容性清单。应用、平台或权限未知时使用 `pending`/`blocked`，保留现有输入并记录真实原因。
+
+~~~js
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const assets = 'docs/designs/设计资产/v2/';
+const files = [
+  'docs/designs/PAtrick产品设计.md',
+  'docs/designs/PAtrick技术设计-v2.md',
+  ...['交互原型.html', '设计令牌.css', 'Figma交付记录.json',
+    'Figma-界面核对.json', '原型验证.json', 'icons/manifest.json'].map(name => assets + name),
+];
+const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+const inventory = JSON.parse(readFileSync(assets + 'Figma交付记录.json', 'utf8'));
+const frames = inventory.screenInventory.map(({ key, id }) => ({ key, id })).sort((a, b) => a.key.localeCompare(b.key, 'en'));
+assert.equal(frames.length, 292);
+assert.equal(new Set(frames.map(({ id }) => id)).size, frames.length);
+assert.equal(inventory.exports.length, 65);
+for (const entry of inventory.exports) assert.equal(hash(assets + entry.asset), entry.sha256, entry.asset);
+const content = JSON.stringify({
+  files: Object.fromEntries(files.map(path => [path, hash(path)])),
+  frames, exports: inventory.exports,
+}, null, 2) + '\n';
+if (process.argv.includes('--check')) assert.equal(readFileSync('design-inputs.lock.json', 'utf8'), content);
+else writeFileSync('design-inputs.lock.json', content);
+console.log(frames.length + ' frames / ' + inventory.exports.length + ' exports');
+~~~
+
+- [ ] 运行 `node scripts/lock-design-inputs.mjs && node --test tests/contract/T00.test.mjs`，预期 `292 frames / 65 exports`、零失败。分别在支持的 Mac 架构和 Linux CI验证锁定 Node 及原生依赖的安装和加载，保留版本、许可证、构建摘要和探针回执。
+- [ ] 按本卡片文件清单提交 `chore: lock design inputs and runtime admission baseline`。
+
+### T01 合同和仓库骨架
+
+**文件** `package.json`、`package-lock.json`、`tsconfig.json`、`vitest.config.ts`、`.github/workflows/ci.yml`、`apps/service/package.json`、`apps/service/src/app.ts`、`apps/web/package.json`、`packages/contracts/package.json`、`packages/contracts/src/envelope.ts`、`packages/contracts/src/resources.ts`、`packages/contracts/src/events.ts`、`scripts/check-release-evidence.mjs`、`tests/contract/T01.test.ts`。
+
+**交接** `commandEnvelope<T>(payload: z.ZodType<T>)` 验证 §4.1 共同信封。`canonicalPayload(value: Json): string` 供浏览器与服务计算相同 SHA-256，服务端重新计算。`resources.ts` 从 §4.2 注册每条 route、调用者权限、请求/响应及错误码，生成 OpenAPI 3.1 和 SDK；沿 §3.5 先冻结连接、EditReceipt 三轴和 ChannelTest 联合类型。
+
+- [ ] 初始化 npm workspaces、ESM、TS 和 Vitest。定义 `test:unit`、`test:contract`、`test:integration` 分别为 `vitest run tests/unit`、`vitest run tests/contract`、`vitest run tests/integration`。T00的 Node 原生测试单列 `node --test tests/contract/T00.test.mjs`，避免交给 Vitest 重跑。将以下红测加入 `tests/contract/T01.test.ts`，运行 `npm exec -- vitest run tests/contract/T01.test.ts`，预期模块或信封校验失败。
+
+~~~ts
+import { expect, test } from 'vitest';
+import { z } from 'zod';
+import { canonicalPayload, commandEnvelope } from '../../packages/contracts/src/envelope.js';
+
+test('canonical-command', () => {
+  expect(canonicalPayload({ z: 1, a: ['否', null] })).toBe('{"a":["否",null],"z":1}');
+  const schema = commandEnvelope(z.strictObject({ text: z.string() }));
+  const request = { client_request_id: 'req-1', expected_revision: null, payload_hash: 'a'.repeat(64), payload: { text: '原文' } };
+  expect(schema.parse(request)).toEqual(request);
+  expect(schema.safeParse({ ...request, origin: 'business' }).success).toBe(false);
+});
+~~~
+
+- [ ] 在 `envelope.ts` 实现共同边界。API route 严格校验 payload 及允许的 schema major；读接口、事件和错误体采用 §4 的共同结构。`scripts/check-release-evidence.mjs` 逐项校验报告的场景 ID、命令、退出码、版本和证据文件 hash，拒绝把无证据场景记为通过。
+
+~~~ts
+import { z } from 'zod';
+
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+export function canonicalPayload(value: Json): string {
+  if (Array.isArray(value)) return '[' + value.map(canonicalPayload).join(',') + ']';
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    return '{' + entries.map(([key, field]) => JSON.stringify(key) + ':' + canonicalPayload(field)).join(',') + '}';
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('PAYLOAD_NUMBER_INVALID');
+  return JSON.stringify(value);
+}
+
+export function commandEnvelope<T>(payload: z.ZodType<T>) {
+  return z.strictObject({
+    client_request_id: z.string().min(1),
+    expected_revision: z.number().int().nonnegative().nullable(),
+    payload_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    payload,
+  });
+}
+~~~
+
+- [ ] 运行 `npm ci && npm run lint && npm run typecheck && npm exec -- vitest run tests/contract/T01.test.ts`，预期通过。CI另校验生成 SDK 与 OpenAPI 无漂移、未知 major 和多余授权字段被拒。提交 `build: bootstrap typed PAtrick service contracts`。
+
+### T02 存储、事务和崩溃恢复
+
+**文件** `packages/storage/migrations/0002_core.sql`、`packages/storage/src/database.ts`、`packages/storage/src/blob-store.ts`、`packages/storage/src/commands.ts`、`packages/storage/src/outbox.ts`、`tests/integration/T02.test.ts`。
+
+**交接** `openDatabase(path: string)` 打开已迁移的 SQLite。`putBlob(bytes: Uint8Array): Promise<string>` 返回已持久化 SHA-256。`recordCommand(db, command): {command_id: string, created: boolean}` 接收 account_id/caller_id/client_request_id/payload_hash/command_id。`ackOutbox(eventId: string, destination: string, result: 'accepted' | 'duplicate'): void` 仅确认已收事件。
+
+- [ ] 红测用两个连接写入同一账户/调用者的命令，加入写 blob 后、提交前的故障注入。运行 `npm exec -- vitest run tests/integration/T02.test.ts`。在持久去重可用前，第二次执行仍显示 created 或找不到同一 command_id。
+
+~~~ts
+const first = { account_id: 'owner', caller_id: 'web', client_request_id: 'req-1', payload_hash: 'a'.repeat(64), command_id: 'cmd-1' };
+expect(recordCommand(db1, first)).toEqual({ command_id: 'cmd-1', created: true });
+expect(recordCommand(db2, { ...first, command_id: 'cmd-2' })).toEqual({ command_id: 'cmd-1', created: false });
+expect(() => recordCommand(db2, { ...first, payload_hash: 'b'.repeat(64) })).toThrow('IDEMPOTENCY_CONFLICT');
+~~~
+
+- [ ] 以 `BEGIN IMMEDIATE`/SQLite绑定事务实现读回与副作用排他。`commands.ts` 以组合键执行下列语句，插入为零时读取原 hash/回执。blob 先在同一文件系统写临时文件、fsync、原子落文件及同步父目录；游标和事件只在已验证文件存在后与修订同事务提交。
+
+~~~sql
+CREATE TABLE command_inbox (
+  account_id TEXT NOT NULL, caller_id TEXT NOT NULL, client_request_id TEXT NOT NULL,
+  command_id TEXT NOT NULL UNIQUE, payload_hash TEXT NOT NULL CHECK(length(payload_hash) = 64),
+  PRIMARY KEY (account_id, caller_id, client_request_id)
+) STRICT;
+
+INSERT INTO command_inbox (account_id, caller_id, client_request_id, command_id, payload_hash)
+VALUES (@account_id, @caller_id, @client_request_id, @command_id, @payload_hash)
+ON CONFLICT(account_id, caller_id, client_request_id) DO NOTHING;
+~~~
+
+- [ ] 重跑 T02，预期同键同内容仅建一命令、异内容冲突，故障前后游标保持正确；空库、重启及旧版本前向迁移均成功。提交 `feat: persist commands blobs and outbox atomically`。
+
+### T03 本人认证与可信控制
+
+**文件** `apps/service/src/auth.ts`、`apps/service/src/control.ts`、`apps/service/src/settings/registry.ts`、`packages/storage/migrations/0003_auth_control.sql`、`packages/host/src/credentials.ts`、`tests/integration/T03.test.ts`。
+
+**交接** `requireSession(request: Request): Promise<Principal>` 返回 account_id、caller_id、auth_epoch、可访问域及操作。`confirmControl(principal, {proposal_id, proposal_hash, challenge}): Promise<ControlReceipt>` 绑定最近认证和当前版本。`registerSettingsOperation(kind, handler): void` 注册 `inspect/validate/apply/recheck`，处理器分别返回检测记录、精确验证、逐项实际效果和复查。T06/T10/T17/T21/T22在服务组装时注册各自操作。
+
+- [ ] 红测用真实同源路由及固定测试认证器验证 Cookie、Origin/CSRF、过期 challenge、MCP 调用者和跨域。运行 `npm exec -- vitest run tests/integration/T03.test.ts`，预期以下有权读成功或越权请求无可信回执断言失败。
+
+~~~ts
+expect((await ownerApi.get('/api/v1/session')).status).toBe(200);
+expect((await ownerApi.post('/api/v1/control-proposals/p-1/confirm', validConfirmation, { origin: 'https://other.invalid' })).status).toBe(403);
+expect((await consultOnlyApi.post('/api/v1/control-proposals/p-1/confirm', validConfirmation)).status).toBe(403);
+expect(await countControlReceipts('p-1')).toBe(0);
+~~~
+
+- [ ] 用 SimpleWebAuthn 验证固定 RP ID、Origin、challenge、credential 和服务端签名结果。本机登记票据短期一次性，Web 会话保存 token hash 和 auth_epoch，保护状态改变路由。auth_epoch 提升后撤销旧 Cookie/SSE。可信确认在事务内以该条件单次消费挑战，再写回执；密钥通过专用凭据提供器传短期引用。
+
+~~~sql
+UPDATE control_proposals
+SET confirmed_at = @now
+WHERE proposal_id = @id AND account_id = @account
+  AND proposal_hash = @hash AND challenge_hash = @challenge
+  AND base_revision = @current_revision AND confirmed_at IS NULL AND expires_at > @now
+RETURNING proposal_id;
+~~~
+
+- [ ] 重跑 T03，预期合法确认恰有一份权威回执，改 hash、重放、跨域、旧会话以及咨询 token 的控制请求均失败。提交 `feat: authenticate owner and bind trusted change receipts`。
+
+### T04 Autoloop 适配与谱系
+
+**文件** `packages/integrations/autoloop/client.ts`、`packages/integrations/autoloop/observer.ts`、`packages/integrations/autoloop/agent.ts`、`packages/storage/migrations/0004_hub_work.sql`、`tests/contract/T04.test.ts`。
+
+**交接** `publishHubEvent(event: HubEvent): Promise<'accepted' | 'duplicate'>` 传固定 event_id。`rebuildHubView(): Promise<{hub_seq: number}>` 先读完整分页快照再跟 seq。`deriveStageEvent(parent: HubEvent, eventId: string, kind: StageKind): HubEvent`，供 T09/T12 保留代次和深度。Autoloop 负责 claim、retry、later、ask/answer；PAtrick 从公开接口读回。
+
+- [ ] 红测向锁定 hub 交同一事件两次，观察者从断档重取；再验证下面谱系断言。运行 `npm exec -- vitest run tests/contract/T04.test.ts`，预期重复投递、断档或深度断言失败。
+
+~~~ts
+const parent = { event_id: 'e8', root: 'e0', cause: 'e7', generation: 2, hops: 8, kind: 'draft.requested' } as const;
+expect(() => deriveStageEvent(parent, 'e9', 'draft.ready')).toThrow('HOPS_LIMIT');
+expect(deriveStageEvent({ ...parent, hops: 7 }, 'e8-ready', 'draft.ready')).toMatchObject({
+  root: 'e0', cause: 'e8', generation: 2, hops: 8,
+});
+~~~
+
+- [ ] 固定使用公开 `command/read/check`。发布桥把已准入 `work.requested` 送到 hub 的来源变化规则。只有 `draft.requested`、`draft.ready` 增加模型阶段深度。定时唤醒、答复和网络恢复沿用同一根/代次。快照导入与游标一事务保存，断档重建。实现阶段事件的固定函数。
+
+~~~ts
+export type StageKind = 'draft.requested' | 'draft.ready';
+export type HubEvent = {
+  event_id: string; root: string; cause: string; generation: number; hops: number;
+  kind: StageKind | 'work.requested';
+};
+export function deriveStageEvent(parent: HubEvent, eventId: string, kind: StageKind): HubEvent {
+  const hops = parent.hops + 1;
+  if (hops > 8) throw new Error('HOPS_LIMIT');
+  return { event_id: eventId, root: parent.root, cause: parent.event_id, generation: parent.generation, hops, kind };
+}
+~~~
+
+- [ ] 重跑 T04。预期重复事件只有一个 hub seq，分页/重启获同一关联，`done+ask`仍待答，控制唤醒不新建 lane。提交 `feat: integrate Autoloop event and observer contracts`。
+
+### T05 GitHub 和目录采集
+
+**文件** `packages/integrations/sources/registry.ts`、`packages/integrations/sources/github.ts`、`packages/integrations/sources/directory.ts`、`packages/storage/migrations/0005_sources.sql`、`tests/integration/T05.test.ts`。
+
+**交接** `detectSource(principal, draft: SourceDraft): Promise<SourcePreview>` 返回范围、样例、草稿 hash、基线、身份及到期时间。`collectSource(sourceId: string, configRevision: number): Promise<CollectionReceipt>` 供 T06/T18。`admitChange(change: CollectedChange): boolean` 只处理可信元数据，T12反馈走独立入口。
+
+- [ ] 红测用同一对象的 A→B→A、源暂停后迟到读取、离线补扫与 bot/review 热路径。运行 `npm exec -- vitest run tests/integration/T05.test.ts`，预期下列触发或三次修订断言失败。
+
+~~~ts
+const change = { hasTriggerRule: true, origin: 'source', kind: 'modify', matchesScope: true, excluded: false } as const;
+expect(admitChange(change)).toBe(true);
+expect(admitChange({ ...change, origin: 'review' })).toBe(false);
+expect(admitChange({ ...change, excluded: true })).toBe(false);
+~~~
+
+- [ ] GitHub验签后按获准 repo/branch/path 读取完整对象，保存 webhook 事件 ID，定期补漏；目录 watcher 仅唤醒稳定读取。离线/占位暂停、两次成功补扫确认删除。启用写版本和基线游标，另记首次采集。注册表按物理根去重，修订/游标落库前重查 config_revision。受控触发函数采用以下条件，origin 来自固定连接器。
+
+~~~ts
+export type CollectedChange = {
+  hasTriggerRule: boolean; origin: 'source' | 'review' | 'bot_output' | 'system_view';
+  kind: 'create' | 'modify' | 'delete'; matchesScope: boolean; excluded: boolean;
+};
+export function admitChange(change: CollectedChange): boolean {
+  return change.hasTriggerRule && change.origin === 'source'
+    && change.kind !== 'delete' && change.matchesScope && !change.excluded;
+}
+~~~
+
+- [ ] 重跑 T05。预期 A→B→A 三次修订，重复 webhook 不动游标，暂停后旧回执无法提交，删除只撤回和触发依赖检查。提交 `feat: collect versioned GitHub and directory sources`。
+
+### T06 Vault 与知识证据
+
+**文件** `packages/integrations/vault/connection.ts`、`packages/integrations/vault/reader.ts`、`packages/integrations/vault/drafts.ts`、`packages/integrations/vault/projector.ts`、`packages/integrations/vault/uri.ts`、`packages/domain/src/evidence.ts`、`packages/storage/migrations/0006_vault_evidence.sql`、`apps/service/src/routes/vaults.ts`、`apps/service/src/routes/edits.ts`、`apps/service/src/routes/knowledge.ts`、`assets/vault-kit/manifest.json`、`assets/vault-kit/知识笔记.md`、`tests/integration/T06.test.ts`。
+
+**交接** `inspectVault(deviceId: string, vaultId: string): Promise<VaultConnection>` 供 T17/T27。`createEdit(principal, input: EditIntentRequest): Promise<EditReceipt>` 和 `retryProjection(editId: string, expectedRevision: number): Promise<EditReceipt>` 供 T07/T16；四类编辑共用 T01 Schema。`queryEvidence(query: EvidenceQuery, principal): Promise<EvidencePack>` 供 T07/T09/T11。
+
+- [ ] 红测在真实临时 Vault 对同一补充稿重试，模拟第一个进程写完、回执未落。再写较新原稿、收到迟到投影、离线补扫。运行 `npm exec -- vitest run tests/integration/T06.test.ts`，预期 `edit_id` 或正文保全断言失败。
+
+~~~ts
+const edit = await vaultApi.createEdit(supplementRequest);
+await saveOwnerText(edit.edit_id, '# 原稿仍在');
+const retry = await vaultApi.createEdit(supplementRequest);
+expect(retry.edit_id).toBe(edit.edit_id);
+expect(await readDraftText(edit.edit_id)).toBe('# 原稿仍在');
+expect(retry.business.state).not.toBe('adopted');
+~~~
+
+- [ ] Reader复用 T05 的一源一责任方，包含稳定文件身份、附件、原字节归档、属性解析与证据依赖。以 FTS5 中文预分词加别名查询，再按域/撤回 epoch 过滤。固定路径转换只接受受信映射；DraftWriter持目录锁用 create-only 文件发布；Projector按域与视图持锁，核验完整清单后推进单调指针。活动编辑以非空键规范化。
+
+~~~ts
+export function editKey(
+  operation: 'edit_original' | 'supplement_knowledge' | 'create_standard' | 'revise_standard',
+  targetId: string | null, baseVersion: number | null, draftKey: string,
+): string {
+  return JSON.stringify([operation, targetId, baseVersion, operation === 'create_standard' ? draftKey : null]);
+}
+
+// 来自已核验的 Vault 客户端映射与原稿相对路径。
+export function obsidianFileUri(vault: string, relativeFile: string): string {
+  return 'obsidian://open?vault=' + encodeURIComponent(vault) + '&file=' + encodeURIComponent(relativeFile);
+}
+~~~
+
+- [ ] 重跑 T06。预期重复键重开原稿，两个独立首次标准稿保留各自 draft_key，同域证据查询可查出处，孤立撤回保留仍有支持的条目；旧/失败投影可对账且当前指针不回退。模板、系统区、冲突和撤回规则按 §3.4 校验。提交 `feat: ingest Vault revisions and persist edit progress`。
+
+### T07 标准、案例与评测
+
+**文件** `packages/domain/src/standards.ts`、`packages/domain/src/evaluation.ts`、`packages/storage/migrations/0007_standards.sql`、`apps/service/src/routes/standards.ts`、`assets/vault-kit/判断案例.md`、`assets/vault-kit/标准修订.md`、`fixtures/evaluation/product/manifest.json`、`tests/integration/T07.test.ts`。
+
+**交接** `prepareEvaluation(candidateId: string, policyVersion: number): Promise<EvaluationInput>` 固定训练/留出划分、当时资料、预算和门槛。`adoptStandard(candidateId: string, reportId: string, expectedRevision: number): Promise<'adopted' | 'stale' | 'not_adopted'>` 返回 T06 编辑状态并写采用事实。`recordOutcome(caseId: string, outcome: CaseOutcome): Promise<void>` 供 T12；可信现场结果由 T25 补证。
+
+- [ ] 红测创建10条种子与5条独立留出案例，冻结 r8/base 1 的报告，登记 r9 后尝试采纳。运行 `npm exec -- vitest run tests/integration/T07.test.ts`，预期陈旧报告被错误采用或缺采纳实现。
+
+~~~ts
+const report = await evaluate(candidateR8, frozenPolicy);
+await ingestStandardDraft(revisionR9);
+expect(await adoptStandard(candidateR8.id, report.id, candidateR8.revision)).toBe('stale');
+expect(await activeStandardVersion(candidateR8.standard_id)).toBe(1);
+expect(await activeStandardCount()).toBe(1);
+~~~
+
+- [ ] 先实现冻结案例/版本、独立评分入口及比较报告，再在确认候选、当前文件头、权限、证据水位和评测结果的同一事务里推进生效指针。首次用 null→1，已有标准基线用原版本。并事务写 `standard.activated` 和投影意图；域内授权以外仍走可信提案。
+
+~~~sql
+UPDATE standards SET active_version = @next_version, revision = revision + 1
+WHERE standard_id = @standard_id AND data_domain = @data_domain
+  AND revision = @expected_revision AND active_version IS @base_version
+RETURNING standard_id, active_version, revision;
+~~~
+
+- [ ] 重跑 T07，预期 r8→r9 和基线变更只保留旧报告，首次采纳仅新增一条存量。构造未来结果和留出泄漏、低样本/关键失败、退出当前版本的反例。模型真实评测在 T09路径准入后进入 T25。提交 `feat: evaluate and adopt exact standard revisions`。
+
+### T08 委托、能力、grant 与预算
+
+**文件** `packages/domain/src/delegation.ts`、`packages/domain/src/budget.ts`、`packages/storage/migrations/0008_admission_budget.sql`、`apps/service/src/routes/delegations.ts`、`tests/integration/T08.test.ts`。
+
+**交接** `authorizeAction(request: ActionRequest): Promise<ExecutionGrant>` 按 §3.3 校验，并在旧执行树停止且效果已对账后原子换 attempt。`reserveCall(input: CallReservation): Promise<BudgetReceipt>` 接 business/grant/session/attempt/route/逻辑调用ID/额度，返回唯一预留。`settleCall(reservationId: string, usage: Usage | null): Promise<BudgetReceipt>` 将无用量保留为 uncertain。
+
+- [ ] 红测让两个不同调用竞争最后 5000 单位（整数微额），另重送胜者同一调用。运行 `npm exec -- vitest run tests/integration/T08.test.ts`，预期下列并发或重试计数断言失败。
+
+~~~ts
+const results = await Promise.allSettled([reserveCall(callA), reserveCall(callB)]);
+expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+expect(await heldAmount('work-1')).toBe(5000);
+expect(await activeGrantCount('work-1', 2)).toBe(1);
+~~~
+
+- [ ] 使用 `WHERE` 原子约束及唯一调用键。重复调用在扣额度前返回预留账本原记录；同步检查委托/能力证据有效期、待答和撤回 epoch。余额足够还要验证成本来源、路由、累计时长和次数。失效先暂停相关范围并撤销未执行 grant。
+
+~~~sql
+CREATE UNIQUE INDEX one_active_grant
+ON execution_grants(work_id, generation) WHERE revoked_at IS NULL;
+
+UPDATE business_budgets
+SET held_micros = held_micros + @amount
+WHERE business_id = @business_id AND @amount >= 0
+  AND held_micros + spent_micros + @amount <= limit_micros
+RETURNING held_micros;
+~~~
+
+- [ ] 重跑 T08，预期拒绝超预算、过期/旧 attempt 和报告撤回后的未发动作；未知用量不释放预留，恢复不清零总额。提交 `feat: gate grants and reserve cumulative budgets`。
+
+### T09 三执行器与 Harness 生产探针
+
+**文件** `packages/executor/src/wrapper.ts`、`packages/executor/src/backends/codex.ts`、`packages/executor/src/backends/grok.ts`、`packages/executor/src/backends/dsh.ts`、`packages/executor/harness/manifest.json`、`packages/executor/harness/patrick-memory.ts`、`packages/executor/harness/patrick-judgment.ts`、`packages/executor/harness/patrick-bridge.ts`、`tests/contract/T09.test.ts`、`tests/admission/T09.test.ts`。
+
+**交接** `runAttempt(snapshot: FrozenRun, grant: ExecutionGrant): Promise<RunReceipt>` 返回 `agent_completed/policy_wait/technical_failure`，仅通过冻结文件交付产物。各 adapter 暴露 `probe(): Promise<BackendCapability>` 及取消/用量/认证/工具/资料域能力。T08的 reserveCall 供 bridge 每次收费请求前调用。
+
+- [ ] 红测先发送 final 后 exit1、发送 final 后不退出、缺 bundle、空用量及不支持 resume。运行 `npm exec -- vitest run tests/contract/T09.test.ts`，预期出现误收成功或缺终态选择函数。
+
+~~~ts
+const closed = { closed: true, drained: true, exitCode: 0, finalCount: 1, completed: true, outputsValid: true };
+expect(completedRun(closed)).toBe(true);
+expect(completedRun({ ...closed, exitCode: 1 })).toBe(false);
+expect(completedRun({ ...closed, closed: false })).toBe(false);
+expect(completedRun({ ...closed, finalCount: 2 })).toBe(false);
+~~~
+
+- [ ] 真实退出与输出排空后验证唯一终态、session 和 schema；控制器授权的等待单独落盘。DSH以 stdin 启专用 DSH_HOME/headless profile，探测三个工具，固定 bundle、配置 hash，关闭会话上报和未归属的后台调用。预算桥在 `llm/stream` 的 `next` 前原子预留；按技术设计 A3 核验 SDK 自身重试和隐式再发。Codex/Grok适配各自 JSON 终态，Grok要求 exit0 与 end_turn，DSH要求 `reason.kind=completed`。resume 前验证同后端身份/Home/配置及停止树。固定终态判定如下。
+
+~~~ts
+export function completedRun(input: {
+  closed: boolean; drained: boolean; exitCode: number | null;
+  finalCount: number; completed: boolean; outputsValid: boolean;
+}): boolean {
+  return input.closed && input.drained && input.exitCode === 0
+    && input.finalCount === 1 && input.completed && input.outputsValid;
+}
+~~~
+
+- [ ] 重跑合同，再在真实隔离身份/Host 上执行 `npm exec -- vitest run tests/admission/T09.test.ts`，逐后端生成通过或受阻证据，另核对真实 Harness 领域工具调用。已配置收费路线需证明每个收费 attempt 有预留；权限、隔离和产物读回都通过才标对应后端可用。提交 `feat: verify isolated executor terminal results and readiness`。
+
+
+### T10 精确答复、原任务续办与飞书
+
+**文件** `packages/domain/src/answer-gate.ts`、`packages/storage/migrations/0010_answers_channels.sql`、`packages/integrations/autoloop/answers.ts`、`packages/integrations/feishu/connection.ts`、`packages/integrations/feishu/channel-gate.ts`、`apps/service/src/routes/answers.ts`、`apps/service/src/routes/feishu.ts`、`tests/integration/T10.test.ts`、`tests/admission/T10.test.ts`。
+
+**交接** `submitAnswer(principal: Principal, command: AnswerCommand): Promise<AnswerReceipt>` 供两入口共用。`recoverAnswer(intentId: string): Promise<AnswerReceipt>` 读回冻结 hub card 与答案。`channelPermit(connectionId: string, inboundId: string): Promise<ChannelPermit>` 由固定飞书入口发放。公开路由和字段见 §4.2–4.3，绑定条件见技术设计附录 A2。
+
+#### 精确问题和一次续办
+
+- [ ] 在真 SQLite + 锁定 hub 上提交 Web/飞书竞答。故障注入点放在 hub 接受后、写本地回执之前；并先交付原生 card.answered，检验恢复前模型调用为零。红测运行 `npm exec -- vitest run tests/integration/T10.test.ts -t answer-once`，预期不能获得唯一有效回执或存在提前派工。
+
+~~~ts
+const contenders = await Promise.allSettled([webAnswer.submit(optionA), feishuAnswer.submit(optionB)]);
+expect(contenders).toHaveLength(2);
+expect(await hubAnswersFor('Q-017')).toHaveLength(1);
+await restartServiceAndReconcile();
+await drainResumeQueue();
+expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
+expect(await attemptsForResumeKey('W-017', 2, 'Q-017')).toBe(1);
+~~~
+
+- [ ] 先写 AnswerIntent；每 question 串行核验代次、对象、选项/提案/策略和证据水位。处置 `deferred`/`clarification_required` 只记录原文。明确有界补证的 proceed 只开放获准补证。上游 A/B 用冻结的零起索引；custom 省略 choice，只传 text，原文另存。首答由 hub 原子裁决，读回真实权威答案后重验当前门禁。期间撤权或换代则保留失效答案轨迹，需要回答时另开当前版本。有效时同事务写唯一核验回执、恢复意图和 `answer.verified`。重复事件走同一恢复键，以 UPSERT 是否新增决定是否追加唤醒 outbox。
+
+~~~sql
+INSERT INTO resume_intents (work_id, generation, question_id, answer_event_id)
+VALUES (@work_id, @generation, @question_id, @answer_event_id)
+ON CONFLICT(work_id, generation, question_id, answer_event_id) DO NOTHING
+RETURNING work_id;
+~~~
+
+- [ ] 重跑 T10 的 `answer-once`，同时运行 `stale-or-deferred`。预期 Web/飞书只有首个有效答案，迟到/旧卡保留原输入，无额外模型轮次；明确暂缓保持待答，有界补证不能发布。提交问答与恢复子步骤 `feat: verify exact answers and resume one work item`。
+
+#### 飞书配对、测试与排空
+
+- [ ] 红测在 `tests/integration/T10.test.ts` 增加 `channel-lifecycle`，并发停用与已提交 hub 但读回超时的答复。运行 `npm exec -- vitest run tests/integration/T10.test.ts -t channel-lifecycle`，预期当前阶段或未决意图断言失败。
+
+~~~ts
+await channel.recordTestCallback(currentTest);
+expect((await channel.readTest(currentTest.test_id)).status).toBe('verified');
+expect((await channel.readConnection()).status).toBe('needs_enable');
+expect(await businessAnswerCount()).toBe(0);
+await channel.applyTrustedEnable(currentProof);
+expect((await channel.disableWhileHubIsUncertain()).status).toBe('draining');
+expect((await channel.receive(oldCallback)).disposition).toBe('audit_only');
+expect((await channel.finishAfterReconciliation()).status).toBe('disabled');
+~~~
+
+- [ ] SDK 以单个受监督出站连接接收消息与卡片事件。配对码随机、只存 hash、默认 5 分钟、本人 Web 确认后消费。确认、测试发送、回传及启用各自重验证版本/目的地、incarnation、epoch、当前指针与 TTL。启用固定注册项绑定真实双向证明。停用先停止新许可，在锁内归档已发送 cutoff；未发送旧意图无效，已发送且未知的保持 draining。以下谓词只用于列出仍需对账的条目；已挂起的旧回答仍核验当前权限才签新 grant。
+
+~~~ts
+export function requiresChannelReconciliation(intent: {
+  permitRecorded: boolean; dispatchSeq: number | null; terminal: boolean;
+}, cutoff: number): boolean {
+  return intent.permitRecorded && intent.dispatchSeq !== null
+    && intent.dispatchSeq <= cutoff && !intent.terminal;
+}
+~~~
+
+- [ ] 重跑整份 T10 集成测试。另用 `npm exec -- vitest run tests/admission/T10.test.ts` 在已授权飞书应用走真实 `连接→配对→收信/卡片回传→可信启用→双入口竞答→停用`。预期真实消息 ID 和回调证明可读回；错租户、抢配、过期、断连、未核对结果和退订均有明确状态，测试样例无业务事实。提交 `feat: verify and drain Feishu decision delivery`。
+
+### T11 工作对话与受限咨询
+
+**文件** `packages/domain/src/consultations.ts`、`apps/service/src/routes/conversations.ts`、`apps/service/src/routes/consultations.ts`、`packages/integrations/mcp/consultation.ts`、`packages/storage/migrations/0011_conversations.sql`、`tests/integration/T11.test.ts`。
+
+**交接** `createConsultation(principal, request: ConsultationRequest): Promise<ConsultationReceipt>` 返回稳定 request_id。`completeConsultation(requestId, version, answer: ConsultationAnswer): Promise<boolean>` 与 `cancelConsultation(principal, requestId, version): Promise<boolean>` 竞争 result_version。T15接工作关联与全局入口。
+
+- [ ] 红测在工作 W 等关键答复时发单独咨询，断线后重取；用两连接并发发布最终答案/取消。运行 `npm exec -- vitest run tests/integration/T11.test.ts`，预期终态竞态、权限或任务隔离断言失败。
+
+~~~ts
+const c = await createConsultation(owner, { ...contextRequest, parent_work_id: 'W-017' });
+const winners = await Promise.all([
+  completeConsultation(c.request_id, c.result_version, answer),
+  cancelConsultation(owner, c.request_id, c.result_version),
+]);
+expect(winners.filter(Boolean)).toHaveLength(1);
+expect(await businessAttempts('W-017')).toBe(0);
+expect((await otherCallerApi.get('/api/v1/consultations/' + c.request_id)).status).toBe(403);
+~~~
+
+- [ ] 按调用者+client_request_id幂等，subject=request_id，组和并行策略固定。先判资料域与咨询预算，关联现有工作须独立命令。持久消息及最终答案与 result_version 同事务提交，迟到结果留审计。MCP仅注册 §4.2 三个工具。
+
+~~~sql
+UPDATE consultations
+SET status = 'answered', final_result = @answer, result_version = result_version + 1
+WHERE request_id = @request_id AND result_version = @expected_revision
+  AND status IN ('pending', 'waiting_user')
+RETURNING result_version;
+~~~
+
+- [ ] 重跑 T11，预期同请求可重取、异内容 409、一个终态、普通聊天无决定回执，咨询无业务 grant、阶段 emit 或远端动作。提交 `feat: persist isolated consultations and work conversations`。
+
+### T12 固定 PR 发布与反馈
+
+**文件** `packages/domain/src/effects.ts`、`packages/integrations/publisher/github.ts`、`packages/integrations/publisher/outcomes.ts`、`packages/storage/migrations/0012_effects_outcomes.sql`、`tests/integration/T12.test.ts`。
+
+**交接** `publishPr(intentId: string): Promise<EffectReceipt>` 只消费已冻结产物。`reconcilePr(intentId: string): Promise<EffectReceipt>` 先查授权目标和固定分支，供 T22。`observeOutcome(caseId: string, remoteRef: string): Promise<CaseOutcome>` 调 T07 的 recordOutcome 供学习与试点评估。
+
+- [ ] 红测用 GitHub 协议夹具在创建 PR 后丢响应，重启重跑；补 base/source 变化、迟到成功及冲突读回。运行 `npm exec -- vitest run tests/integration/T12.test.ts`，预期重复写或缺读回核验。
+
+~~~ts
+await github.dropNextPrResponseAfterCommit();
+expect((await publishPr(intentId)).status).toBe('uncertain');
+expect((await reconcilePr(intentId)).status).toBe('verified');
+expect(github.calls('createPullRequest')).toBe(1);
+expect(await deliveredCount(workId)).toBe(1);
+~~~
+
+- [ ] 事务写 EffectIntent；锁定资源，复验源、base、grant 与撤回水位。Git Data API 从验收后的字节创建 tree/commit/ref。每次远端变更前读回当前目标版本，最终再次读回核对；请求期间目标变更则保留发生的效果，重新核验交付条件。读回唯一匹配，再核对 repo/branch/head/tree，最后事务写交付回执与事件。outcome watcher匹配原 case_id，分别保存采纳、PR事件和实际效果。用如下完整标识匹配冻结产物。
+
+~~~ts
+export type PrIdentity = { repo: string; branch: string; headSha: string; treeSha: string };
+export function matchesFrozenPr(actual: PrIdentity, expected: PrIdentity): boolean {
+  return actual.repo === expected.repo && actual.branch === expected.branch
+    && actual.headSha === expected.headSha && actual.treeSha === expected.treeSha;
+}
+~~~
+
+- [ ] 重跑 T12，预期丢响应后只读回、无重复 PR，远端多匹配转冲突，base/source 变化拒绝过期发布。反馈只归原案例；业务真实回执在隔离授权仓库 T25 验证。提交 `feat: publish verified PR artifacts and reconcile outcomes`。
+
+### T13 工作与健康快照、SSE
+
+**文件** `packages/storage/src/views/work.ts`、`packages/storage/src/views/health.ts`、`packages/storage/migrations/0013_views.sql`、`apps/service/src/routes/work.ts`、`apps/service/src/routes/events.ts`、`tests/integration/T13.test.ts`。
+
+**交接** `readWorkList(principal, filters: WorkFilters): Promise<Snapshot<WorkList>>`、`readHealth(principal): Promise<Snapshot<HealthSnapshot>>` 使用 scope、as_of、`watermark: {hub_seq, domain_seq}` 和 freshness；T15/T17/T19共用。`subscribeEvents(principal, cursor: string): Response` 对缺段给 reset_required，撤权关闭流。
+
+- [ ] 红测从同一 work_id 的两轮 hub 事件和一条领域交付读列表，引入断档和 scope 变化。运行 `npm exec -- vitest run tests/integration/T13.test.ts -t stable-work-and-watermark`，预期重复工作、游标超前或缺段误读。
+
+~~~ts
+expect((await readWorkList(owner, { state: 'open' })).data.items.map(item => item.work_id)).toEqual(['W-017']);
+expect(await reconnectEvents(expiredCursor)).toMatchObject({ type: 'reset_required' });
+await revokeDomain(owner, 'work-company');
+expect(await eventStream.isClosed()).toBe(true);
+~~~
+
+- [ ] 固定优先核验终态，独立保留等待、暂停/阻塞与执行阶段。joined 水位尚未追平时发 syncing，保持上次可信时间。投影更新与游标同事务；每次读或 SSE 写前复验 scope。以双水位函数比较完整性，拒绝把单边已追平当完整。
+
+~~~ts
+export type Watermark = { hub_seq: number; domain_seq: number };
+export function covers(actual: Watermark, required: Watermark): boolean {
+  return actual.hub_seq >= required.hub_seq && actual.domain_seq >= required.domain_seq;
+}
+~~~
+
+- [ ] 重跑 T13，预期全量重建与增量一致，超时/断档重取结果与权限收缩一致，页面刷新无写命令。向 T19交付同水位工作计数。提交 `feat: project trusted work and health snapshots`。
+
+### T14 双语界面骨架
+
+**文件** `apps/web/src/app/AppShell.tsx`、`apps/web/src/app/routes.tsx`、`apps/web/src/i18n/locale.ts`、`apps/web/src/i18n/en.json`、`apps/web/src/i18n/zh.json`、`apps/web/src/state/drafts.ts`、`apps/web/src/api/client.ts`、`apps/web/src/styles/tokens.css`、`playwright.config.ts`、`tests/unit/T14.test.ts`。
+
+**交接** `resolveLocale(mode: 'system' | 'en' | 'zh', browserLanguages: readonly string[]): 'en' | 'zh'` 供全部页面。AppShell共享 §5.1 路由、抽屉、状态/弹窗/回执组件；Query/SSE 使用 T01/T13 契约。T24复用锁定浏览器、DPR、字体文件及 hash。
+
+- [ ] 红测比较英文/中文消息键并覆盖缺系统语言和手动覆盖。运行 `npm exec -- vitest run tests/unit/T14.test.ts`，预期导航、语言或 key 对齐断言失败。
+
+~~~ts
+expect(resolveLocale('system', ['ja-JP', 'zh-TW', 'en'])).toBe('zh');
+expect(resolveLocale('system', ['ja-JP'])).toBe('en');
+expect(resolveLocale('en', ['zh-CN'])).toBe('en');
+expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+~~~
+
+- [ ] 构建 AppShell，按照 §5.1 依次呈现七导航与底部设置。初始读 navigator.languages，缺失用 navigator.language；监听 languagechange。以 account/conversation/resource/version 为草稿键，presentation_epoch 丢弃旧语言片段，保留原结果。依据 §5.2 接本地化错误和受限 Markdown。有效语言选择如下。
+
+~~~ts
+export function resolveLocale(mode: 'system' | 'en' | 'zh', browserLanguages: readonly string[]): 'en' | 'zh' {
+  if (mode !== 'system') return mode;
+  for (const language of browserLanguages) {
+    const primary = language.toLowerCase().split('-')[0];
+    if (primary === 'en' || primary === 'zh') return primary;
+  }
+  return 'en';
+}
+~~~
+
+- [ ] 重跑 T14，构建 Web。预期中英键一致、退出账户清私有草稿、HTML/脚本链接无法执行、语言切换仅更新呈现；标识 demo 夹具，发布截图由 T24确认。提交 `feat: build bilingual workbench shell and scoped drafts`。
+
+### T15 决策、正在进行与全局提问
+
+**文件** `apps/web/src/features/work/WorkPage.tsx`、`apps/web/src/features/work/WorkDetail.tsx`、`apps/web/src/features/decisions/DecisionCard.tsx`、`apps/web/src/features/decisions/DecisionsPage.tsx`、`apps/web/src/features/consultation/ConsultationPanel.tsx`、`tests/e2e/T15.spec.ts`。
+
+**交接** T10的 question/answer/receipt、T11咨询、T13列表/SSE。组件 `DecisionCard({card, onSubmit})` 的 onSubmit 发送 `AnswerCommand`。`ConsultationPanel({sourceRoute, returnTo})` 打开独立对话，按显式关联读取同域 work_id。
+
+- [ ] 用实际服务与 WebAuthn 测试器写 `same-work`。从待决策进入同一工作详情，普通聊天“同意”不提交；再明确提交卡片，断线恢复。运行 `npm exec -- playwright test tests/e2e/T15.spec.ts --grep same-work`，预期卡片/未完成任务缺失或路由对象改变。
+
+~~~ts
+await page.goto('/decisions');
+const card = page.getByTestId('decision-Q-017');
+await expect(card.getByRole('textbox', { name: '自定义决定' })).toBeVisible();
+await card.getByRole('radio', { name: /方案 A/ }).check();
+await card.getByRole('button', { name: '提交决定' }).click();
+await expect(page.getByTestId('answer-receipt-Q-017')).toContainText('已核验');
+await page.goto('/work/W-017');
+await expect(page.getByTestId('work-id')).toHaveText('W-017');
+~~~
+
+- [ ] 把咨询与卡片做成独立表单，使用各自 DraftStore 键和 T01 信封。无选项预选；过期保留草稿、显示变化；从进行中定位到原卡。按钮值由用户输入决定，提交处理器固定传冻结对象，提交后只读回回执。
+
+~~~ts
+export type CardAnswer =
+  | { kind: 'option'; option_id: string }
+  | { kind: 'custom'; raw_text: string };
+export function answerPayload(card: {
+  work_id: string; generation: number; question_id: string; question_version: number;
+  proposal_revision: number; options_hash: string;
+}, answer: CardAnswer) {
+  const { work_id, generation, question_id, question_version, proposal_revision, options_hash } = card;
+  return { work_id, generation, question_id, question_version, proposal_revision, options_hash, answer };
+}
+~~~
+
+- [ ] 重跑 T15 全文件。预期三种提交（聊天、显式答案、关联工作）各自独立，原工作在核验后继续、失效版本保留输入、不因页面退出重派工；键盘和小屏两输入都可达。提交 `feat: connect decisions and ongoing work to the same task`。
+
+### T16 知识、标准与委托界面
+
+**文件** `apps/web/src/features/knowledge/KnowledgePage.tsx`、`apps/web/src/features/standards/StandardsPage.tsx`、`apps/web/src/features/edits/EditProgress.tsx`、`apps/web/src/features/delegation/DelegationsPage.tsx`、`tests/e2e/T16.spec.ts`。
+
+**交接** `EditProgress({receipt: EditReceipt})` 逐轴映射状态，T17可按同一语义复用。页面写入使用 T06/T07编辑路由和 T08委托控制，复用 T03可信回执。
+
+- [ ] 红测依次打开知识原稿、补充、首次标准和修订入口；以 T07实际采用后令导回失败。运行 `npm exec -- playwright test tests/e2e/T16.spec.ts`，预期状态混用或缺四入口。
+
+~~~ts
+await page.goto('/standards');
+await page.getByRole('button', { name: '修订标准' }).click();
+const progress = page.getByTestId('edit-progress');
+await expect(progress.getByTestId('file-state')).toHaveText('已收录');
+await expect(progress.getByTestId('business-state')).toHaveText('已采用');
+await expect(progress.getByTestId('projection-state')).toHaveText('Obsidian 待更新');
+~~~
+
+- [ ] 知识搜索保留来源和冲突，标准显示当前/候选/退化和评测证据；委托只通过精确提案和控制回执更新。EditProgress独立渲染三轴，重试只请求相同采用事实的导回。已采用后的失败用以下具体文案键，其他状态各自取目录。
+
+~~~ts
+export function projectionMessage(receipt: Pick<EditReceipt, 'business' | 'projection'>): string {
+  if (receipt.business.state === 'adopted' && receipt.projection.state === 'failed') return 'edits.projection.adopted_pending';
+  return 'edits.projection.' + receipt.projection.state;
+}
+~~~
+
+- [ ] 重跑 T16，预期导回失败不取消采用，过期/冲突有原稿位置和一个后续动作，委托差异/降级可追溯；测试审批不得改变业务标准或直接覆写权限。提交 `feat: show evidence standards and delegated scope with receipts`。
+
+### T17 六组设置与系统共用回执
+
+**文件** `apps/service/src/routes/settings.ts`、`apps/service/src/routes/system.ts`、`apps/service/src/routes/preferences.ts`、`apps/web/src/features/settings/SettingsPage.tsx`、`apps/web/src/features/settings/ConnectionWizard.tsx`、`apps/web/src/features/system/SystemPage.tsx`、`packages/storage/migrations/0017_settings.sql`、`tests/integration/T17.test.ts`、`tests/e2e/T17.spec.ts`。
+
+**交接** `validateSettings(principal, draft: SettingsDraft): Promise<SettingsValidation>`、`submitSettings(principal, change: SettingsChangeProposal): Promise<SettingsChangeReceipt>`。handler 使用 T03注册表，T06/T10/T09供 Vault、飞书、执行探针。T21/T22通过注册表接主机与恢复操作。
+
+- [ ] 红测冻结某设备的草稿和基线，改变一项后重用验证；装配模拟部分应用后复查失败。运行 `npm exec -- vitest run tests/integration/T17.test.ts`，预期过期证明或逐项效果断言失败。
+
+~~~ts
+const proof = await validateSettings(owner, draft);
+expect(await submitChangedDraft(draft, proof)).toMatchObject({ code: 'VALIDATION_STALE' });
+const change = await submitPartiallyAppliedChange(draft);
+expect(change.applied_revision).not.toBeNull();
+expect(change.verified).toBe(false);
+expect(await resumedBySettingsChange(change.change_id)).toBe(0);
+~~~
+
+- [ ] 注册六组固定操作及偏好白名单。应用前校验草稿 hash、基线、身份、设备、范围及有效期；复查目标和既有健康依赖。企图回滚时逐项核对本次拥有的版本。设置与系统显示同 change_id、实际逐项效果与复查时间，Vault与飞书向导只用原处理器。
+
+~~~ts
+export function canApply(proof: {
+  draftHash: string; baseRevision: number; deviceId: string; identityId: string;
+  scopeHash: string; expiresAt: number;
+}, current: Omit<typeof proof, 'expiresAt'>, now: number): boolean {
+  return proof.expiresAt > now && proof.draftHash === current.draftHash
+    && proof.baseRevision === current.baseRevision && proof.deviceId === current.deviceId
+    && proof.identityId === current.identityId && proof.scopeHash === current.scopeHash;
+}
+~~~
+
+- [ ] 重跑集成，再执行 `npm exec -- playwright test tests/e2e/T17.spec.ts`。预期 Grok登录过期从系统定位执行页，变更文件夹使验证失效，偏好保存按账户读回，飞书待启用/停用、Vault三轴健康分别可见。提交 `feat: connect settings and system to typed change receipts`。
+
+### T18 RSS、单网页与采集页
+
+**文件** `packages/integrations/sources/http-read.ts`、`packages/integrations/sources/rss.ts`、`packages/integrations/sources/webpage.ts`、`apps/service/src/routes/sources.ts`、`apps/web/src/features/collection/CollectionPage.tsx`、`tests/integration/T18.test.ts`。
+
+**交接** 两适配器实现 T05 的 `detectSource`/`collectSource` 契约；T17注册启用、修改、暂停/恢复/断开。HTTP读取器只接受获准的 `SourceConfig`，每跳复检 DNS 结果、连接地址、协议、目标和域。预览、启用和第一次成功采集各返回自己的回执。
+
+- [ ] 红测以本地传输替身记录每跳是否请求，另构造重复条目、变更频率与登录响应。运行 `npm exec -- vitest run tests/integration/T18.test.ts`，预期第二跳未核验或登录页被误认成功。
+
+~~~ts
+await expect(readRegisteredHttp(sourceConfig, redirectFixture)).rejects.toThrow('SOURCE_TARGET_OUTSIDE_SCOPE');
+expect(redirectFixture.requestedTargets).toEqual(['https://feed.example.test/news']);
+expect(await firstSuccessfulReceipt(sourceConfig.source_id)).toBeNull();
+~~~
+
+- [ ] 读取器核验原始 URL、解析结果与实际连接地址，重定向逐跳执行同一校验；固定 TCP/TLS 验证、大小、超时和最大跳数。RSS禁 DTD、外部实体，以 GUID/规范链接作对象键；网页提取正文、更换正文 hash 才生成新修订，保留证据位置与原响应。基本 URL 准入如下，域和解析地址仍须单独通过服务端许可。
+
+~~~ts
+export function sourceUrl(raw: string): URL {
+  const url = new URL(raw);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('SOURCE_URL_INVALID');
+  }
+  url.hash = '';
+  return url;
+}
+~~~
+
+- [ ] 重跑 T18。预期未授权目标零请求，回填须精确范围与预算，重复来源返回原 ID，旧配置的迟到回执不推进当前游标，暂停仍保留证据及原任务。提交 `feat: add scoped RSS and webpage collection`。
+
+### T19 统计与底部任务计数
+
+**文件** `packages/storage/migrations/0019_stats.sql`、`packages/storage/src/views/stats.ts`、`apps/service/src/routes/stats.ts`、`apps/web/src/features/stats/StatsPage.tsx`、`tests/integration/T19.test.ts`。
+
+**交接** `readStats(principal, period: '7d' | '30d' | 'all', timezone: string): Promise<Snapshot<StatsSnapshot>>`。按 §5.4 读核验事实、稳定 canonical ID 及 T13工作计数，返回口径版本、时间窗、as_of、coverage 与双水位。T22可按相同事实重建。
+
+- [ ] 红测将当前时间固定为 `2025-03-10T12:00:00.000Z`，以 America/New_York 横跨夏令时。导入重复有效答案、控制清卡、飞书测试、知识补充和域外有效行。运行 `npm exec -- vitest run tests/integration/T19.test.ts`，预期去重、窗口或过滤断言失败。
+
+~~~ts
+const stats = (await readStats(owner, '7d', 'America/New_York')).data;
+expect(stats.window_start).toBe('2025-03-04T05:00:00.000Z');
+expect(stats.window_end).toBe('2025-03-11T04:00:00.000Z');
+expect(stats.activity.owner_decisions).toBe(1);
+expect(stats.activity.delivered_work).toBe(0);
+expect((await readStats(owner, '30d', 'America/New_York')).data.stock).toEqual(stats.stock);
+~~~
+
+- [ ] 含今天的自然日按指定 IANA 时区计算，区间左闭右开、显式转换为 UTC，活动还受 as_of 水位限定。按照 §5.4 用唯一事实键及补偿事件维持有效行，先按 scope 过滤，再按权威键聚合。例如活动中的主人决定使用下列查询；不全的 coverage 返回 null，确认覆盖且空集才返回 0。
+
+~~~sql
+SELECT COUNT(DISTINCT fact_key)
+FROM stats_facts
+WHERE account_id = @account_id AND valid = 1 AND kind = 'owner_decision'
+  AND data_domain IN (SELECT value FROM json_each(@visible_domains_json))
+  AND occurred_at >= @window_start AND occurred_at < @window_end AND occurred_at <= @as_of;
+~~~
+
+- [ ] 重跑 T19，预期待答/受阻计数与 WorkList 同水位，撤销及恢复重放结果一致；三周期切换不写业务，断联保留原快照时间。提交 `feat: derive six scoped metrics from verified facts`。
+
+
+### T20 通知摘要与诊断导出
+
+**文件** `packages/domain/src/notifications.ts`、`packages/host/src/diagnostics.ts`、`apps/service/src/routes/notifications.ts`、`apps/service/src/routes/diagnostics.ts`、`packages/storage/migrations/0020_notifications.sql`、`tests/integration/T20.test.ts`。
+
+**交接** `dispatchNotification(intentId: string): Promise<NotificationReceipt>` 发送前检查当前对象版本、域和目的地。`prepareDiagnostics(principal, scope): Promise<DiagnosticsPreview>` 只产脱敏预览并绑定导出清单 hash。飞书测试复用 T10，通知重试复用原意图。
+
+- [ ] 红测让待答通知跨过免打扰，在发送前先答题，再重放同事件。运行 `npm exec -- vitest run tests/integration/T20.test.ts`，预期过期投递或诊断脱敏断言失败。
+
+~~~ts
+await advanceToQuietHoursEnd();
+await verifyAnswer('Q-017');
+expect((await dispatchNotification(intentId)).status).toBe('superseded');
+expect(deliveryRequests()).toHaveLength(0);
+expect(businessAttemptsAfterDelivery()).toBe(0);
+~~~
+
+- [ ] 本地用允许字段构建诊断包，内容按 scope 检查，下载绑定预览版本。通知按 account/object/event_version/channel 去重，开始、发送、结果各记回执；读回未知先对账。通知的打断条件由当前服务事实和本人订阅判定。
+
+~~~ts
+export function interrupts(signal: { current: boolean; kind: 'decision' | 'blocker' | 'delivered' | 'progress'; needsOwner: boolean; subscribed: boolean }): boolean {
+  return signal.current && ((signal.kind === 'decision' || signal.kind === 'blocker') && signal.needsOwner
+    || (signal.kind === 'delivered' && signal.subscribed));
+}
+~~~
+
+- [ ] 重跑 T20。预期过期/已答对象零发送，故障仅重试同投递；诊断包无密钥、未获准正文或生产执行身份，预览无网络写。提交 `feat: deliver current scoped notifications and redacted diagnostics`。
+
+### T21 主机网络和固定修复
+
+**文件** `packages/host/src/network/probes.ts`、`packages/host/src/network/supervisor.ts`、`packages/host/src/network/vpn.ts`、`deploy/network-policy.schema.json`、`tests/integration/T21.test.ts`、`tests/admission/T21.test.ts`。
+
+**交接** `inspectNetwork(targets: readonly TargetId[]): Promise<NetworkReport>` 返回接口/路由/DNS/代理、TCP/TLS/身份/peer 各级证据。`repairNetwork(proposalId: string, expectedEpoch: number): Promise<RepairReceipt>` 经 T03注册固定操作，T17展示相同结果。
+
+- [ ] 红测保持 hub 健康而目标失败，再注入身份错误、限流、epoch 被他次操作替换。运行 `npm exec -- vitest run tests/integration/T21.test.ts`，预期误用修 VPN 或拥有权断言失败。
+
+~~~ts
+expect(classifyHttp(401)).toBe('identity');
+expect(classifyHttp(429)).toBe('rate_limit');
+expect(mayRevert({ operationId: 'a', epoch: 4 }, { operationId: 'b', epoch: 5 })).toBe(false);
+~~~
+
+- [ ] 只按已登记设备执行固定动作。探针按本机→目标层级执行，401/403 走登录修复，429 退避，MFA 合并一次问题。路由、代理、VPN、DNS同锁；每次变更保存 owner 和新 epoch。在锁内核对下列拥有权才回退，并同时复测故障目标、原健康目标和 peer。
+
+~~~ts
+export function classifyHttp(status: number): 'identity' | 'rate_limit' | 'target' | 'healthy' {
+  if (status === 401 || status === 403) return 'identity';
+  if (status === 429) return 'rate_limit';
+  return status >= 200 && status < 300 ? 'healthy' : 'target';
+}
+export function mayRevert(owned: { operationId: string; epoch: number }, current: typeof owned): boolean {
+  return owned.operationId === current.operationId && owned.epoch === current.epoch;
+}
+~~~
+
+- [ ] 重跑 T21，再以 `npm exec -- vitest run tests/admission/T21.test.ts` 跑已登记设备的双启动顺序、并发目标、企业 DNS 与重连。以实测记录 dual_path 或受控替代路径；未知用登录/权限/兼容状态提示。提交 `feat: supervise registered network targets and repair under epoch lock`。
+
+### T22 RecoverySet、一致备份与隔离恢复
+
+**文件** `packages/host/src/recovery/backup.ts`、`packages/host/src/recovery/witness.ts`、`packages/host/src/recovery/restore.ts`、`packages/storage/migrations/0022_recovery.sql`、`deploy/recovery-set.schema.json`、`tests/recovery/T22.test.ts`。
+
+**交接** `captureRecoverySet(scope: RecoveryScope): Promise<RecoverySet>` 签出完整性清单。`restoreRecoverySet(setId: string, mode: 'drill' | 'activate'): Promise<RecoveryReceipt>` 分阶段读回，默认 drill。`reconcilePr`、`recoverAnswer`、来源补采、Vault 编辑、通知回执与统计重建复用已有端口。
+
+- [ ] 红测错位两库、较新 Vault 加旧备份、丢失撤回尾部、未 fence 旧写者、飞书旧回调和不确定效果；在快照中保留未完咨询和已迁移撤销事实。运行 `npm exec -- vitest run tests/recovery/T22.test.ts`，预期任一门槛误开放或数据被旧状态覆盖。
+
+~~~ts
+const restore = await restoreRecoverySet('set-old', 'drill');
+expect(restore.external_writes).toBe(0);
+expect(restore.channels.feishu).toBe('requires_reauthorization');
+expect(restore.data_domains.personal.status).toBe('blocked');
+expect(await vaultText('标准修订/较新稿.md')).toBe('# 较新原稿');
+~~~
+
+- [ ] 冻结入口与写者，未决调用记 uncertain，按 §6.4 用 SQLite backup API 加 Vault、blob、交接日志与版本清单构成完整集合。主机放行前把独立见证置 open；停止写者、证实已交接完整撤回日志后以 CAS 封存。加密复制并校验离机目标、hash 和恢复凭据引用。
+- [ ] 隔离恢复先校验闭合见证、日志和 fencing，再保护新稿/冲突、补采、逐项去重对账和重建。演练使用专用见证和隔离凭据；真实切换从权威见证读回当前证明。撤销旧 Web 会话；新随机 channel_incarnation 隔离旧测试/绑定/待发消息。通过下列门禁并显式切换单写者后按域放开。
+
+~~~ts
+export function canActivateRecovery(evidence: {
+  manifestValid: boolean; witnessSealedNow: boolean; withdrawalsComplete: boolean;
+  previousWriterFenced: boolean; newerDraftsProtected: boolean; effectsReconciled: boolean;
+  oneWriterConfirmed: boolean;
+}): boolean {
+  return evidence.manifestValid && evidence.witnessSealedNow && evidence.withdrawalsComplete
+    && evidence.previousWriterFenced && evidence.newerDraftsProtected
+    && evidence.effectsReconciled && evidence.oneWriterConfirmed;
+}
+~~~
+
+- [ ] 重跑 T22。预期已隔离恢复可追踪每条原事实，陈旧/不可达/open 见证使相关域保持关闭，待对账效果不会重发，旧渠道需重新授权。以现场时间记录实测 RPO/RTO 及未闭合的范围。提交 `feat: capture consistent recovery sets and gate restoration`。
+
+### T27 Obsidian Desktop 与 Vault 初次部署
+
+**文件** `deploy/obsidian/install.mjs`、`deploy/obsidian/doctor.mjs`、`assets/vault-kit/manifest.json`、`assets/vault-kit/系统视图/索引.md`、`assets/vault-kit/系统视图/知识.base`、`assets/vault-kit/系统视图/标准.base`、`assets/vault-kit/系统视图/知识关系.canvas`、`tests/admission/T27.test.ts`。
+
+**交接** `inspectObsidian(deviceId: string): Promise<ObsidianProbe>` 区分应用/安装器/URI 注册。`installVaultKit(vaultId: string): Promise<VaultKitReceipt>` 只补缺项。T23用这两个固定模块组合安装流程；采集和导回仍读 T06 的实际身份与配置证明。
+
+- [ ] 红测真实 Mac 测已安装/缺应用、相对文件名含中文空格和 `#`、现有用户模板、服务身份权限和桌面退出。运行 `npm exec -- vitest run tests/admission/T27.test.ts`，预期接通误报、URI 转义或既有模板保全断言失败。
+
+~~~ts
+expect(obsidianFileUri('个人 Vault', '知识笔记/证据 #1.md')).toContain('file=%E7%9F%A5%E8%AF%86%E7%AC%94%E8%AE%B0%2F');
+expect(obsidianFileUri('个人 Vault', '知识笔记/证据 #1.md')).toContain('%231.md');
+expect(await fs.readFile(existingOwnerTemplate, 'utf8')).toBe(ownerTemplateBefore);
+~~~
+
+- [ ] 按 §6.2.1 和 T00 的包签名/版本锁安装或复用桌面端，登记本机 vault alias 并用 T06 输出真实接通证明。重用 T06 的 obsidianFileUri，使用下列排他写入把已校验的模板安装到允许的 Vault 相对路径，安装器及检查共用 manifest。
+
+~~~js
+import { constants } from 'node:fs';
+import { copyFile } from 'node:fs/promises';
+
+export async function installMissingTemplate(source, destination) {
+  try {
+    await copyFile(source, destination, constants.COPYFILE_EXCL);
+    return 'created';
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    return 'preserved';
+  }
+}
+~~~
+
+- [ ] 重跑 T27，按正式用户操作完成一次打开、保存、入库、候选和导回，再退出 Obsidian 验证后台仍收录和写回。记录权限不足、卸载保留数据和试点同步验证，未通过跨机同步时保留单设备用途。提交 `feat: install and verify Obsidian Vault editing on macOS`。
+
+### T23 总安装器和升级
+
+**文件** `deploy/cli/patrick.mjs`、`deploy/lib/release.mjs`、`deploy/Caddyfile`、`deploy/launchd/com.patrick.service.plist`、`deploy/launchd/com.patrick.autoloop-hub.plist`、`deploy/launchd/com.patrick.autoloop-worker.plist`、`deploy/lima/executor.yaml`、`tests/admission/T23.test.ts`。
+
+**交接** `patrick init / doctor / install / start / stop / backup / restore / upgrade / uninstall` 组合 T21/T22/T27和 T03安全登记。`canRestoreOldRelease(input): boolean` 供升级失败路径选择停留/回退。doctor 使用同一域、设备身份及连接回执。
+
+- [ ] 红测对空 Mac 安装拒绝被替换的构建产物、缺 TLS 信任、无写者停止凭据和磁盘不足；演练一次发布指针切换后已有新写入。运行 `npm exec -- vitest run tests/admission/T23.test.ts`，预期旧库覆盖或缺完整诊断断言失败。
+
+~~~ts
+expect(canRestoreOldRelease({ snapshotVerified: true, writerStopped: true, writesSinceSwitch: 1 })).toBe(false);
+expect(canRestoreOldRelease({ snapshotVerified: true, writerStopped: true, writesSinceSwitch: 0 })).toBe(true);
+expect((await doctor(untrustedTlsHost)).checks.web_origin.status).toBe('blocked');
+~~~
+
+- [ ] 使用 T00 签名链验证 manifest、产物 hash、平台、兼容 schema 和证据。按 §6.1 建立 scope 根、TLS、launchd、Lima并接 T27 探针；安装前预览、结束后读回。升级先排空及备份、候选迁移/回放，再原子切 current。有新写入时只走通过验证的前向/逆向迁移，按下列门禁保留旧库路径。
+
+~~~js
+export function canRestoreOldRelease({ snapshotVerified, writerStopped, writesSinceSwitch }) {
+  return snapshotVerified && writerStopped && writesSinceSwitch === 0;
+}
+~~~
+
+- [ ] 重跑 T23，预期同一目标重复安装可重取结果、重启后三服务/范围准确，升级失败的旧库不覆盖新数据，卸载保留本人数据。记录安装、恢复与硬件/网络证据。提交 `feat: ship verified install upgrade and doctor commands`。
+
+### T24 界面基线、动效及无障碍
+
+**文件** `fixtures/screens/screen-manifest.json`、`fixtures/screens/visual-environment.json`、`apps/web/src/components/ServiceLogo.tsx`、`apps/web/src/styles/motion.css`、`tests/visual/T24.spec.ts`、`tests/e2e/T24.a11y.spec.ts`。
+
+**交接** `ServiceLogo({health, reducedMotion, pageVisible})` 使用真实 HealthSnapshot 和本地偏好。T24为 T25提供逐 frame 的状态/语义操作、快照及 a11y 验收记录。锁定确定性截图运行环境。
+
+- [ ] 红测清单少一帧、重复一帧、错跳转和 3px 偏差。运行 `npm exec -- playwright test tests/visual/T24.spec.ts --grep frame-coverage`，预期缺项或目标漂移被验出。
+
+~~~ts
+const ids = manifest.map(row => row.frame_id).sort();
+expect(ids).toEqual(designLock.frames.map(row => row.id).sort());
+expect(new Set(ids).size).toBe(292);
+expect(linkEvidence.filter(row => row.readBackMatches)).toHaveLength(64);
+~~~
+
+- [ ] 按 §5.3 建齐画面、65 导出索引和 64 条关键跳转的对应证据。固定字体/browser/DPR/相位；截图逐布局和状态，以白名单遮罩限定装饰。共享运行标识只在健康服务运行、快照新鲜、页面可见且允许动效时循环，状态文字独立渲染。
+
+~~~ts
+export function animateServiceLogo(
+  health: { service: string; freshness: string }, reducedMotion: boolean, visible: boolean,
+): boolean {
+  return health.service === 'running' && health.freshness === 'fresh' && !reducedMotion && visible;
+}
+~~~
+
+- [ ] 运行 `npm exec -- playwright test tests/visual/T24.spec.ts tests/e2e/T24.a11y.spec.ts`。预期原型匹配门槛通过；中英、390px/768px/1440px、200%缩放、键盘焦点、读屏、4.8秒循环/静态均留证，证据含一条实际播放录屏。提交 `feat: verify mapped screens motion and accessibility`。
+
+### T25 真实纵向闭环与故障演练
+
+**文件** `fixtures/pilot/acceptance.json`、`tests/support/pilot-trace.ts`、`tests/e2e/T25.spec.ts`、`tests/admission/T25.test.ts`、`tests/recovery/T25.test.ts`。
+
+**交接** 运行 T00–T24/T27 正常入口，读取集中发布证据。每条工作线路存 source_revision、work_id、generation、标准和证据版本、grant/answer/effect 引用、PR head/tree 与 case_id，供 T26 试点评估及复演。
+
+- [ ] 先定义可失败的实际跑法。以三个不同需求修订分别触发明确标准直接发布、必要回答后续办、旧卡或冲突后无发布。通过本地故障夹具在进程中断后延迟 AnswerReceipt 或返回过期 proof。运行 `npm exec -- playwright test tests/e2e/T25.spec.ts` 检查本地真服务，再在隔离授权目标采集实链路版本与回执。
+
+~~~ts
+expect(traces.map(trace => trace.route)).toEqual(['direct-pr', 'answered-pr', 'stale-blocked']);
+expect(traces.map(trace => trace.verifiedPrCount)).toEqual([1, 1, 0]);
+expect(traces[1].observedWorkIds).toEqual([traces[1].workId]);
+expect(traces[2].unauthorizedEffects).toBe(0);
+~~~
+
+- [ ] 验证真实三执行器、Harness 领域工具、双入口答复、飞书启用后排空、知识四编辑路径、独立标准采纳/拒绝和业务反馈回案例。另做预算竞争、退出恢复、远端不确定效果、较新原稿和恢复后飞书重新授权。每条线路保留真实 HTTP/设备回执及版本；用如下结构记录门禁项，诸如 `verified` 必须有真实 evidenceRefs。
+
+~~~ts
+export type PilotTrace = {
+  route: 'direct-pr' | 'answered-pr' | 'stale-blocked';
+  workId: string;
+  generation: number;
+  sourceRevision: string;
+  standardRevision: string;
+  evidenceEpoch: number;
+  caseId: string | null;
+  grantId: string | null;
+  answerReceiptId: string | null;
+  pr: { effectId: string; headSha: string; treeSha: string } | null;
+  observedWorkIds: string[];
+  verifiedPrCount: number;
+  unauthorizedEffects: number;
+  evidenceRefs: string[];
+};
+~~~
+
+- [ ] 运行 `npm exec -- vitest run tests/admission/T25.test.ts tests/recovery/T25.test.ts`，再用 `node scripts/check-release-evidence.mjs <release-evidence目录>` 检查实际生成的证据。预期 §8.4全部有可重取测试/结果，竞态与恢复留有外部对账。提交 `test: prove live workflow and recovery acceptance paths`。
+
+### T26 试点、维护和发布证据
+
+**文件** `docs/operations/维护手册.md`、`docs/operations/恢复与升级.md`、`fixtures/pilot/quality-policy.json`、`scripts/summarize-pilot.mjs`、`tests/unit/T26.test.ts`。
+
+**交接** 输入 T25的真实工作和归因记录、试点范围与冻结质量策略。输出 §8.3 证据清单，包含引用准确率、成果有效率、返工、关键失误、本人介入时间和授权范围内自动完成率。周维护通过 Autoloop 维护规则汇总标准差异、升级候选、委托变化和系统事件。
+
+- [ ] 红测向质量摘要喂入失败、取消、转人工和重复投递，检查完整分母和未观测结果。运行 `npm exec -- vitest run tests/unit/T26.test.ts`，预期只计成功或重复计数时失败。
+
+~~~js
+const sample = [
+  { workId: '1', revision: 2, inScope: true, automatic: true },
+  { workId: '1', revision: 2, inScope: true, automatic: true },
+  { workId: '1', revision: 1, inScope: true, automatic: false },
+  { workId: '2', revision: 1, inScope: true, automatic: false },
+  { workId: '3', revision: 1, inScope: true, automatic: false },
+];
+expect(automaticCompletion(sample)).toEqual({ numerator: 1, denominator: 3 });
+~~~
+
+- [ ] 从每个任务的权威最终事实先聚合唯一工作，再计算比例、样本量和未观测情况。策略冻结引用准确率初始目标≥95%及零容忍项，缺观察记录保留 unknown。运行一轮试点、每周维护和升级/回退演练；连续两周超过维护时限，暂停扩展并记录最高频故障。
+
+~~~js
+export function automaticCompletion(finalFacts) {
+  const current = new Map();
+  for (const fact of finalFacts) {
+    const previous = current.get(fact.workId);
+    if (!previous || fact.revision > previous.revision) current.set(fact.workId, fact);
+  }
+  const values = [...current.values()].filter(fact => fact.inScope);
+  return { numerator: values.filter(fact => fact.automatic).length, denominator: values.length };
+}
+~~~
+
+- [ ] 重跑 T26并校验真实发布证据清单。预期全部任务有对应证据，P0/P1 已处置，P2 有处理责任和期限；unknown 及样本局限显式呈现。完成一次每周维护和一次隔离恢复计时后提交 `docs: record pilot evidence and operating procedures`。
