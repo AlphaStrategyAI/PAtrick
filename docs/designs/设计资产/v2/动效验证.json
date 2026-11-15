@@ -1,0 +1,116 @@
+{
+  "asset": "动效演示.html",
+  "brandDirection": "Flowing cyan + Curious P",
+  "tests": [
+    "English default",
+    "Approved cyan tokens, inline Curious P logo, full localized slogan, no visible text wordmark",
+    "Candidate remains gated before a checked reply",
+    "show-evidence: keyboard, focus preserved, no scroll, one-shot 320ms",
+    "load-receipt: keyboard, focus preserved, no scroll, one-shot 220ms",
+    "reveal-candidate: keyboard, focus preserved, no scroll, one-shot 280ms",
+    "Evidence, receipt and candidate containers preserve all bounds",
+    "EN/中文 and desktop 1500px / mobile 390px: no horizontal overflow or content clipping",
+    "System reduced motion: equivalent states immediately, zero animation, preserved focus",
+    "Manual reduced motion: equivalent states with zero animation",
+    "Zero JavaScript errors and zero external network requests",
+    "Full Tab order reaches all eight controls in reading order"
+  ],
+  "captures": [
+    "motion-en-1500.png",
+    "motion-en-390.png",
+    "motion-zh-1500.png",
+    "motion-zh-390.png"
+  ],
+  "palette": {
+    "background": "#f5fafc",
+    "surface": "#ffffff",
+    "side": "#eaf5f7",
+    "ink": "#203d49",
+    "secondary": "#5a707b",
+    "primary": "#087b96",
+    "line": "#d8e8ed",
+    "soft": "#ecf8fb",
+    "accent": "#21b2c5"
+  },
+  "result": "passed",
+  "actualTaskExecution": false,
+  "note": "Functional checks of the standalone HTML demo; no production authorization, model calls, or Figma video.",
+  "keyboardTabOrder": [
+    "lang-en",
+    "lang-zh",
+    "prototype-link",
+    "show-evidence",
+    "load-receipt",
+    "reveal-candidate",
+    "reduce-motion",
+    "reset-demo"
+  ],
+  "deliveredCaptures": [
+    "动效-01-依据.png",
+    "动效-02-回执.png",
+    "动效-03-候选.png"
+  ],
+  "video": {
+    "duration": 7.6,
+    "width": 1500,
+    "height": 1200,
+    "error": null,
+    "codec": "H.264",
+    "fps": 30,
+    "bytes": 493123,
+    "browserPlayback": "passed",
+    "origin": "Playwright recording of the standalone HTML demo; not a Figma video"
+  },
+  "htmlSha256": "a2ffc5ee95b6560ab5a78179d8d96a303a607d0392ec1a609c203c1f6785baa9",
+  "logo": {
+    "asset": "logo-curious-p.svg",
+    "sourceSha256": "5cd25e715e51cb1621b58853a3ddc91140956ab4a8a2a27603a69c36b3521168",
+    "inlineGeometryAndFills": "matches official SVG exactly",
+    "body": "#087B96",
+    "eye": "#45CECF",
+    "animation": "none; three existing meaningful motion sequences retained"
+  },
+  "prototypeKeyboardReview": {
+    "asset": "交互原型.html",
+    "sha256": "fa58a290e29e5cebf4295cae93983bec29ff3db7fa06355d230afe1f713c09b8",
+    "result": "passed",
+    "tests": [
+      "Default custom textarea is visible and editable with no preselected decision",
+      "After A, focusing/typing in the visible textarea selects custom without rerender or submission; Enter adds a line, confirmation records only custom and waits for clarification",
+      "Enter selects B and preserves radio focus",
+      "Modal Tab / Shift+Tab remain inside the dialog",
+      "Dialog language switching retains dialog focus; Escape restores the source trigger",
+      "Language switches preserve both raw drafts, choice, question/revision, standard and expanded details",
+      "Custom answer submits via keyboard, keeps original text and waits for clarification",
+      "Space selects A; Enter submits one receipt and resumes the selected path"
+    ],
+    "reducedMotion": "System reduce enabled throughout; zero active animations after decision transitions",
+    "scope": "Read-only Chromium keyboard activation/focus and reduced-motion checks. Not a full accessibility audit or production/backend test.",
+    "keyboardTestedSha256": "fdf7b60aec4762727b8c073d3f879e075d64a8d515a3fee899d829394db7a965",
+    "brandLineRefinementReview": {
+      "result": "passed",
+      "scope": "Only brand slogan line wrapping rechecked after the previously passed functional version; no repeat of the keyboard test suite.",
+      "exactDelta": "text-wrap:balance; word-break:keep-all; wbr after the Chinese comma. Reversing only these changes exactly reconstructs keyboardTestedSha256.",
+      "visualCheck": "Chinese desktop sidebar: full slogan spans two natural lines after the comma, with no clipped text or horizontal overflow. Logo and navigation remain clear.",
+      "screenshot": "/tmp/patrick-motion-v2/final-zh-sidebar.png"
+    },
+    "contrastRefinementReview": {
+      "result": "passed",
+      "previousSha256": "0182f9c8a3e942f3cbe012610c81f4212b6f1aa4c62053c9d5bdf2bbbb947a36",
+      "exactDelta": "Reversing only #5A707B → #5F7781 and #ECF8FB → #E3F3F8 exactly reconstructs the previous reviewed prototype. No behavior or text changed; keyboardTestedSha256 remains the original functional test version."
+    }
+  },
+  "functionalTestedHtmlSha256": "8069b85e4d9d86d93e9d83bba96df7e743dca1ef0e2d00492dc4bb0aa6c02406",
+  "contrastRefinementReview": {
+    "result": "passed",
+    "changes": [
+      "light secondary/navText #5F7781 → #5A707B",
+      "light soft/selected #E3F3F8 → #ECF8FB"
+    ],
+    "contrastRatios": {
+      "secondaryOnSidebar": 4.681,
+      "primaryOnSoft": 4.525
+    },
+    "scope": "Only the two color substitutions changed the HTML. Three PNGs and the MP4 were freshly recorded; final capture visually reviewed and MP4 browser playback passed. Existing keyboard and reduced-motion test results retained without rerunning unchanged interactions."
+  }
+}

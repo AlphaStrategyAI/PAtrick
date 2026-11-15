@@ -1,0 +1,1716 @@
+{
+  "screens": [
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "nodes": 548,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-checking",
+      "id": "63:4960",
+      "nodes": 551,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-error",
+      "id": "27:1310",
+      "nodes": 538,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-submitted",
+      "id": "26:677",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-settings-issues",
+      "id": "63:5375",
+      "nodes": 551,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "nodes": 316,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-delegation",
+      "id": "26:1829",
+      "nodes": 319,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "nodes": 313,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-standards",
+      "id": "26:1385",
+      "nodes": 320,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-submitted",
+      "id": "26:772",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "nodes": 341,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-result",
+      "id": "27:1028",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-submittedCustom",
+      "id": "28:1857",
+      "nodes": 592,
+      "nav": 7,
+      "logos": 3
+    },
+    {
+      "key": "en-resumedB",
+      "id": "28:1582",
+      "nodes": 331,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-resumedB",
+      "id": "28:1672",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-submittedCustom",
+      "id": "28:1762",
+      "nodes": 586,
+      "nav": 7,
+      "logos": 3
+    },
+    {
+      "key": "en-resumed",
+      "id": "26:867",
+      "nodes": 331,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-resumed",
+      "id": "26:966",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-expired",
+      "id": "27:1126",
+      "nodes": 537,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "nodes": 522,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "nodes": 566,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-expired",
+      "id": "27:1218",
+      "nodes": 542,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-error",
+      "id": "27:1448",
+      "nodes": 543,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "nodes": 533,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "nodes": 336,
+      "nav": 0,
+      "logos": 1
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "nodes": 360,
+      "nav": 0,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "nodes": 548,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "nodes": 496,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-submittedB",
+      "id": "28:1492",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-system",
+      "id": "26:2046",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-freechat",
+      "id": "26:1065",
+      "nodes": 339,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-freechat",
+      "id": "26:1161",
+      "nodes": 344,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "nodes": 523,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-custom",
+      "id": "26:549",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-details",
+      "id": "26:280",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "id": "63:5790",
+      "nodes": 551,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "nodes": 416,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "nodes": 548,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "nodes": 366,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-knowledge",
+      "id": "26:1617",
+      "nodes": 369,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-offline",
+      "id": "27:1682",
+      "nodes": 538,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "nodes": 539,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-submittedB",
+      "id": "28:1400",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "nodes": 278,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-setup",
+      "id": "26:2258",
+      "nodes": 282,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "nodes": 482,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "nodes": 522,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-ongoing-running",
+      "id": "114:14523",
+      "nodes": 337,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing-running",
+      "id": "114:14851",
+      "nodes": 340,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "id": "114:15182",
+      "nodes": 301,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-task-citations",
+      "id": "115:2660",
+      "nodes": 267,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-task-blocked",
+      "id": "115:2918",
+      "nodes": 264,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-task-blocked",
+      "id": "115:3173",
+      "nodes": 267,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-pause-dialog",
+      "id": "115:6516",
+      "nodes": 372,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stop-dialog",
+      "id": "115:6879",
+      "nodes": 368,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stop-dialog",
+      "id": "115:7238",
+      "nodes": 372,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-standards-expanded",
+      "id": "115:27311",
+      "nodes": 313,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-standards-expanded",
+      "id": "115:27615",
+      "nodes": 320,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "id": "115:27926",
+      "nodes": 366,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-result-dialog",
+      "id": "115:4632",
+      "nodes": 386,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-expired-dialog",
+      "id": "115:5009",
+      "nodes": 580,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-settings-validate",
+      "id": "115:13679",
+      "nodes": 543,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "id": "115:14213",
+      "nodes": 605,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-source-error",
+      "id": "95:5795",
+      "nodes": 297,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "nodes": 306,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-candidate",
+      "id": "114:11738",
+      "nodes": 304,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "nodes": 252,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "nodes": 402,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "id": "115:17267",
+      "nodes": 633,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "id": "115:17891",
+      "nodes": 525,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-selected-a",
+      "id": "115:24200",
+      "nodes": 523,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-selected-a",
+      "id": "115:24713",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "id": "115:14809",
+      "nodes": 609,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "id": "115:15409",
+      "nodes": 626,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "id": "115:11134",
+      "nodes": 482,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "id": "115:11607",
+      "nodes": 489,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "id": "115:12087",
+      "nodes": 539,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "id": "115:16026",
+      "nodes": 631,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "id": "115:16648",
+      "nodes": 628,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-system-expanded",
+      "id": "115:29260",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-system-expanded",
+      "id": "115:29597",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "id": "115:29939",
+      "nodes": 291,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "id": "115:12617",
+      "nodes": 544,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-validate",
+      "id": "115:13152",
+      "nodes": 536,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "nodes": 264,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "nodes": 267,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-candidate",
+      "id": "114:12033",
+      "nodes": 311,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-standard-history",
+      "id": "114:12335",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-standard-history",
+      "id": "114:12595",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "id": "115:28283",
+      "nodes": 369,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-delegation-expanded",
+      "id": "115:28643",
+      "nodes": 316,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "id": "115:28950",
+      "nodes": 319,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-trusted-dialog",
+      "id": "115:7601",
+      "nodes": 368,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "id": "115:7960",
+      "nodes": 372,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-rollback-dialog",
+      "id": "115:8323",
+      "nodes": 362,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-expired-dialog",
+      "id": "115:5580",
+      "nodes": 586,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-pause-dialog",
+      "id": "115:6157",
+      "nodes": 368,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "id": "115:8676",
+      "nodes": 369,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "id": "115:9036",
+      "nodes": 496,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "id": "115:9523",
+      "nodes": 503,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-setup-preview",
+      "id": "114:13661",
+      "nodes": 284,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-ongoing-decision",
+      "id": "114:13936",
+      "nodes": 301,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "id": "114:14228",
+      "nodes": 304,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "id": "115:20731",
+      "nodes": 587,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "id": "115:21309",
+      "nodes": 299,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "id": "115:21599",
+      "nodes": 302,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "nodes": 291,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-addsource",
+      "id": "95:5002",
+      "nodes": 294,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "nodes": 255,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-source-dialog",
+      "id": "115:3431",
+      "nodes": 422,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-source-dialog",
+      "id": "115:3844",
+      "nodes": 425,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-result-dialog",
+      "id": "115:4260",
+      "nodes": 381,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "id": "115:23038",
+      "nodes": 393,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422",
+      "nodes": 390,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803",
+      "nodes": 403,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "id": "115:30221",
+      "nodes": 294,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "id": "115:30506",
+      "nodes": 291,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "id": "115:30788",
+      "nodes": 294,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-selected-b",
+      "id": "115:25231",
+      "nodes": 523,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-selected-b",
+      "id": "115:25744",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "nodes": 544,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "nodes": 402,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "nodes": 303,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "id": "114:15474",
+      "nodes": 304,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "id": "114:15769",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "id": "114:16029",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "id": "115:10017",
+      "nodes": 566,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "id": "115:10574",
+      "nodes": 569,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "id": "115:18407",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "id": "115:18930",
+      "nodes": 619,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-materials",
+      "id": "62:6880",
+      "nodes": 503,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-execution",
+      "id": "62:8117",
+      "nodes": 569,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-operation",
+      "id": "63:3997",
+      "nodes": 489,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-task-decision",
+      "id": "115:1892",
+      "nodes": 264,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-task-decision",
+      "id": "115:2147",
+      "nodes": 267,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-task-citations",
+      "id": "115:2405",
+      "nodes": 264,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "nodes": 331,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-decisions-empty",
+      "id": "95:4245",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "nodes": 233,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "nodes": 244,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "nodes": 343,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "id": "95:4715",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "id": "115:21892",
+      "nodes": 390,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "id": "115:22273",
+      "nodes": 393,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "id": "115:22657",
+      "nodes": 390,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-translated",
+      "id": "115:26262",
+      "nodes": 531,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "zh-translated",
+      "id": "115:26784",
+      "nodes": 536,
+      "nav": 7,
+      "logos": 2
+    },
+    {
+      "key": "en-setup-scope",
+      "id": "114:12858",
+      "nodes": 274,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-setup-scope",
+      "id": "114:13123",
+      "nodes": 278,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-setup-preview",
+      "id": "114:13392",
+      "nodes": 278,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "id": "115:19540",
+      "nodes": 628,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "id": "115:20159",
+      "nodes": 581,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "nodes": 343,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "id": "95:5474",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "nodes": 294,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-candidate-shadow",
+      "id": "117:3421",
+      "nodes": 310,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "id": "117:3722",
+      "nodes": 317,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-candidate-rejected",
+      "id": "117:4030",
+      "nodes": 308,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "id": "117:8988",
+      "nodes": 350,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "id": "117:9329",
+      "nodes": 353,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "id": "117:6511",
+      "nodes": 622,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "id": "117:7124",
+      "nodes": 596,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "id": "117:7711",
+      "nodes": 601,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "id": "117:8303",
+      "nodes": 350,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "id": "117:8644",
+      "nodes": 353,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "id": "117:4329",
+      "nodes": 315,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-delegation-paused",
+      "id": "117:4635",
+      "nodes": 326,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-delegation-paused",
+      "id": "117:4952",
+      "nodes": 329,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-delegation-stopped",
+      "id": "117:5272",
+      "nodes": 322,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "id": "117:5585",
+      "nodes": 325,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "id": "117:5901",
+      "nodes": 619,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:7890",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8304",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:8710",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9124",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:9944",
+      "nodes": 405,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10350",
+      "nodes": 413,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "zh-mobilestats-all",
+      "id": "122:4683",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "en-mobilestats-counting",
+      "id": "122:4932",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "zh-mobilestats-counting",
+      "id": "122:5171",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "en-mobilestats-month",
+      "id": "122:3956",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "zh-mobilestats-month",
+      "id": "122:4195",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "en-mobilestats-all",
+      "id": "122:4444",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "id": "122:5420",
+      "nodes": 395,
+      "nav": 7,
+      "logos": 1
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "id": "122:5816",
+      "nodes": 407,
+      "nav": 7,
+      "logos": 1
+    }
+  ],
+  "counts": {
+    "screens": 196,
+    "nativeNodes": 79333,
+    "texts": 11508,
+    "logos": 222,
+    "links": 3440
+  },
+  "issues": {
+    "missing": [],
+    "size": [],
+    "navigation": [],
+    "fonts": [],
+    "images": [],
+    "badLinks": [],
+    "parentOverflow": [],
+    "overlaps": []
+  },
+  "version": "2.5",
+  "validatedAt": "2026-11-14T11:40:56.986789+00:00",
+  "initialParentOverflow": [
+    {
+      "key": "en-mobileconversation",
+      "id": "111:6123",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "111:6430",
+      "text": "Ask anything — even about something else…",
+      "dx": 9,
+      "dy": -4
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23438",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "114:8262",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6920",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6947",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6977",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7329",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7357",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7387",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7740",
+      "text": "64",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7754",
+      "text": "28",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7797",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:8149",
+      "text": "64",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:8163",
+      "text": "28",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:8207",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8574",
+      "text": "86",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8617",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:8983",
+      "text": "86",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:9027",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9380",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9407",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9437",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9789",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9817",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9847",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:10200",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:10214",
+      "text": "10",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:10227",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:10257",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10609",
+      "text": "18",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10623",
+      "text": "10",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10637",
+      "text": "42",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10667",
+      "text": "12",
+      "dx": 2,
+      "dy": 0
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10781",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobilestats-counting",
+      "id": "122:4949",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobilestats-month",
+      "id": "122:3973",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobilestats-all",
+      "id": "122:4461",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "id": "122:5436",
+      "text": "Personal workspace ",
+      "dx": 0,
+      "dy": 23
+    }
+  ],
+  "textFitCorrection": {
+    "mutatedNodeIds": [
+      "111:6123",
+      "111:6431",
+      "115:23438",
+      "114:8262",
+      "119:6921",
+      "119:6948",
+      "119:6978",
+      "119:7330",
+      "119:7358",
+      "119:7388",
+      "119:7741",
+      "119:7755",
+      "119:7798",
+      "119:8150",
+      "119:8164",
+      "119:8208",
+      "119:8575",
+      "119:8618",
+      "119:8984",
+      "119:9028",
+      "119:9381",
+      "119:9408",
+      "119:9438",
+      "119:9790",
+      "119:9818",
+      "119:9848",
+      "119:10201",
+      "119:10215",
+      "119:10228",
+      "119:10258",
+      "119:10610",
+      "119:10624",
+      "119:10638",
+      "119:10668",
+      "119:10781",
+      "122:4949",
+      "122:3973",
+      "122:4461",
+      "122:5436"
+    ],
+    "checked": 39,
+    "remaining": []
+  },
+  "scope": "Native screen structure, navigation targets, font families, image fills, parent boxes and screen overlap. Scrolling content is intentionally taller than its viewport."
+}

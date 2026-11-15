@@ -1,0 +1,94 @@
+{
+  "scope": "Independent static review of eight actual native Figma PNG exports. No inference of animation playback or route behavior.",
+  "images": [
+    {
+      "key": "en-conversation",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-conversation.png",
+      "dimensions": [
+        1440,
+        1100
+      ],
+      "sha256": "4fa7a3afd4f5c29afc7615a289a8ee85c285da8fbe8c6705efb479eba00db6f2",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "zh-conversation",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-zh-conversation.png",
+      "dimensions": [
+        1440,
+        1100
+      ],
+      "sha256": "062e879bef107e781865843e3621b653966d3eb93fd33b94b411b292c92c9e76",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "en-settings",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-settings.png",
+      "dimensions": [
+        1440,
+        1100
+      ],
+      "sha256": "be428d6c72fabd08fdab17fd29c3c0c31e2d193103a3e0e4ac08799ecabef940",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "en-settings-execution",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-settings-execution.png",
+      "dimensions": [
+        1440,
+        1222
+      ],
+      "sha256": "8a9d730006aa88c0c250278bbcfbbc69c75780e51ec05fbf6aeeb89f37f81e76",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "en-settings-preferences",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-settings-preferences.png",
+      "dimensions": [
+        1440,
+        1191
+      ],
+      "sha256": "0218405522d112c296dd36c4a68ab78e613cb64d68ba96286ed9ceba95ddb92a",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "en-settings-issues",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-settings-issues.png",
+      "dimensions": [
+        1440,
+        1626
+      ],
+      "sha256": "a035eacb9e18cc4c3281eeaf3888ae5aea14938940766536856482a1258e7f1c",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "en-mobileconversation",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-en-mobileconversation.png",
+      "dimensions": [
+        390,
+        1618
+      ],
+      "sha256": "acb49ca95979eaac3f4e7dbe8f81210dff6572fb0eaa74d689d797b7860d9991",
+      "visualCheck": "pass"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "path": "/workspace/productIdeas/PAtrick/设计资产/v2/Figma-zh-mobileconversation.png",
+      "dimensions": [
+        390,
+        1642
+      ],
+      "sha256": "4e518c6a5af1721bd6d2ac195d36184cfdd8d2559cf44c0eb05db1418a8f4191",
+      "visualCheck": "pass"
+    }
+  ],
+  "findings": [],
+  "observations": [
+    "Desktop logo is square and horizontally centered; localized slogan and service status are clear.",
+    "Conversation A/B basis-benefit-cost, custom decision input and independent chat remain visually distinct.",
+    "Settings overview contains four current groups with one actionable issue.",
+    "Execution keeps Codex CLI, Grok Build and DSH independently visible; preferences clearly selects Follow system.",
+    "Grok issue keeps service Running while describing local sign-in blocker and simulated receipt boundary.",
+    "Both mobile exports stack choices and keep custom decision and chat separate without text clipping or overlap."
+  ]
+}

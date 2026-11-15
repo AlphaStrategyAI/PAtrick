@@ -1,0 +1,1967 @@
+{
+  "version": "2.3",
+  "visualDirection": "流光青 · 好奇的 P · 80×80 方形持续运行标识",
+  "validatedAt": "2026-11-14",
+  "checks": [
+    "System English resolves in an English browser",
+    "No preselected decision",
+    "Default custom decision input is visible",
+    "Confirm disabled until explicit choice",
+    "Focusing custom input explicitly selects custom",
+    "Editing custom after B cannot submit B",
+    "Custom input locked while verifying",
+    "A resumed once",
+    "A result excludes dashboard",
+    "B result matches feature validation",
+    "Empty custom error",
+    "Language preserves selection drafts details scroll",
+    "Custom answer stays pending without execution",
+    "No custom result action",
+    "Language preference persists",
+    "Translation is English while original retained",
+    "Free chat cannot answer question",
+    "Consult starts empty and separate",
+    "Work draft returns intact",
+    "Consult draft returns intact",
+    "Retry retains exact answer",
+    "Retry accepted once",
+    "Expired cannot submit",
+    "Expired custom input remains visible and locked",
+    "Modal translates immediately",
+    "Refresh gets new precise question",
+    "Offline send disabled and draft preserved",
+    "Offline custom input remains visible and locked",
+    "Reconnect preserves draft",
+    "Candidate evaluated but not activated",
+    "Modal language preserves reason",
+    "Rollback changes version and freezes stale candidate",
+    "Pause preview cannot change status",
+    "Trusted handoff cannot change status",
+    "Explicit sample receipt updates sample status",
+    "Stop sample receipt shows stopped",
+    "Setup requires trusted handoff",
+    "Research scope reflected after receipt",
+    "56 responsive state/language combinations",
+    "No script errors",
+    "No external requests"
+  ],
+  "matrix": [
+    {
+      "width": 1440,
+      "state": 1,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 1,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 2,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 2,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 3,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 3,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 4,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 4,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 5,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 5,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 6,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 6,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 7,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 7,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 8,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 8,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 9,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 9,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 10,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 10,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 11,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 11,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 12,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 12,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 13,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 13,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 14,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "state": 14,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 1,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 1,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 2,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 2,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 3,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 3,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 4,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 4,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 5,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 5,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 6,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 6,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 7,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 7,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 8,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 8,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 9,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 9,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 10,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 10,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 11,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 11,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 12,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 12,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 13,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 13,
+      "lang": "zh",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 14,
+      "lang": "en",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "state": 14,
+      "lang": "zh",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "network": [],
+  "sha256": {
+    "交互原型.html": "30724279697228bb6924d6d87b667e67787edce834e794c5868135b4060833fe",
+    "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49"
+  },
+  "implementation": {
+    "settingsGroups": [
+      "materials",
+      "execution",
+      "operation",
+      "preferences"
+    ],
+    "routineFieldCount": 9,
+    "routineFields": {
+      "materials": [
+        "sourcePath",
+        "vaultPath"
+      ],
+      "execution": [
+        "preferredExecutor",
+        "runLimit"
+      ],
+      "operation": [
+        "backupDestination (correction only)"
+      ],
+      "preferences": [
+        "interfaceLanguage",
+        "motion",
+        "notifications",
+        "quietHours"
+      ]
+    },
+    "language": {
+      "default": "system",
+      "manualModes": [
+        "en",
+        "zh"
+      ],
+      "resolution": "First supported en/zh language in ordered navigator.languages, navigator.language fallback, then en.",
+      "preferenceKey": "patrick-language-mode-v23",
+      "immediate": true,
+      "businessActionsOnLocaleChange": false
+    },
+    "logo": {
+      "sidebarSize": [
+        80,
+        80
+      ],
+      "horizontalAlignment": "center",
+      "cycleSeconds": 4.8,
+      "smallIdentityMarks": "static",
+      "connectionLost": "unknown; does not claim remote service stopped",
+      "workPause": "independent from global service status",
+      "reducedMotion": "static mark with localized Running state",
+      "background": "decorative playback paused",
+      "lastConnectionDisplay": "Localized offline banner: Last connection 09:42 · example / 上次连接 09:42 · 示例; explicit prototype sample, never represented as real server time."
+    },
+    "removedFromCurrentUI": [
+      "duplicate Standards settings",
+      "database path",
+      "freshness and evaluation cadence",
+      "holdout policy",
+      "theme selector",
+      "host manager",
+      "Hub URL",
+      "proxy form",
+      "access-domain form",
+      "backup retention editor"
+    ],
+    "interactionTargets": {
+      "languageHeaderAndModal": [
+        44,
+        44
+      ],
+      "send": [
+        44,
+        44
+      ]
+    }
+  },
+  "settingsValidation": {
+    "checks": [
+      "Square 80 px logo centered in sidebar",
+      "Only sidebar identity carries the running loop",
+      "Four current settings categories",
+      "Settings selected separately from System",
+      "Default follows system",
+      "Detected backup target shown without routine form",
+      "Nine essential editable fields including backup correction",
+      "No future form: dbPath",
+      "No future form: freshness",
+      "No future form: evaluationCadence",
+      "No future form: holdout",
+      "No future form: appearance",
+      "No future form: host",
+      "No future form: endpoint",
+      "No future form: proxy",
+      "No future form: accessDomain",
+      "No future form: expires",
+      "No future form: retention",
+      "Checking does not show a completed result",
+      "Cancel excludes late results",
+      "Grok login issue found without changing default route",
+      "One unavailable executor does not stop global service",
+      "Modal and exact binding survive language change",
+      "Submitted does not claim sign-in effective",
+      "Explicit sample receipt is effective, not verified",
+      "Recheck verifies changed execution scope",
+      "Unconfigured DSH is not made ready",
+      "Changed folder is not scanned before grant",
+      "Validation records exact draft and device",
+      "Editing invalidates earlier validation",
+      "Stale review cannot submit",
+      "Configuration changes only after matching sample receipt",
+      "Scope recheck stays within materials",
+      "Corrected values retain user provenance",
+      "Reset only affects current group",
+      "Locale preference applies immediately without discarding pending values",
+      "Preference save preserves paused work and selected language",
+      "Paused work does not pause service marker",
+      "Preference persistence contains no permissions or host",
+      "Preference and locale overrides persist",
+      "Manual reduced motion keeps status but stops logo animation",
+      "Notification preview sends nothing",
+      "Diagnostics preview excludes credentials",
+      "Unconfigured executor cannot pass validation",
+      "Validation errors localize immediately",
+      "Restore plan is not claimed as a completed restore",
+      "Explicit service pause stops the marker",
+      "Lost connection means unknown, not remote stopped",
+      "Connection loss is separate from failure",
+      "System reduced motion stops the marker",
+      "Hidden tab pauses decorative playback",
+      "390 overview en fits",
+      "390 overview zh fits",
+      "390 materials en fits",
+      "390 materials zh fits",
+      "390 execution en fits",
+      "390 execution zh fits",
+      "390 operation en fits",
+      "390 operation zh fits",
+      "390 preferences en fits",
+      "390 preferences zh fits",
+      "1440 overview en fits",
+      "1440 overview zh fits",
+      "1440 materials en fits",
+      "1440 materials zh fits",
+      "1440 execution en fits",
+      "1440 execution zh fits",
+      "1440 operation en fits",
+      "1440 operation zh fits",
+      "1440 preferences en fits",
+      "1440 preferences zh fits",
+      "No script errors",
+      "No external requests"
+    ],
+    "passed": 73,
+    "matrix": [
+      {
+        "width": 390,
+        "group": null,
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": null,
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "materials",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "materials",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "execution",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "execution",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "operation",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "operation",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "preferences",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "group": "preferences",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": null,
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": null,
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "materials",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "materials",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "execution",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "execution",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "operation",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "operation",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "preferences",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "group": "preferences",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      }
+    ],
+    "errors": [],
+    "network": [],
+    "fields": {
+      "materials": 2,
+      "execution": 2,
+      "operation": 1,
+      "preferences": 4
+    }
+  },
+  "localeValidation": {
+    "passed": 8,
+    "checks": [
+      "Default zh-CN → zh-CN",
+      "Default en-GB → en",
+      "Default ja-JP → en",
+      "Manual override preserves two independent drafts",
+      "Manual override survives reload",
+      "Follow system applies immediately",
+      "Supported-language priority follows navigator.languages order",
+      "System change does not replace manual override"
+    ],
+    "errors": []
+  },
+  "diagnosticAndRouteValidation": {
+    "passed": 5,
+    "checks": [
+      "12 diagnostic state/language/viewport combinations fit",
+      "Reset action and last-check timestamp have a 24px gap",
+      "Standards no longer advertises a nonexistent settings group",
+      "Knowledge links to current Work materials group",
+      "Delegation links to current Execution settings"
+    ],
+    "matrix": [
+      {
+        "width": 390,
+        "state": "checking",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "state": "checking",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "state": "issues",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "state": "issues",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "state": "rechecked",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 390,
+        "state": "rechecked",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "checking",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "checking",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "issues",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "issues",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "rechecked",
+        "lang": "en",
+        "overflow": false,
+        "clipped": false
+      },
+      {
+        "width": 1440,
+        "state": "rechecked",
+        "lang": "zh",
+        "overflow": false,
+        "clipped": false
+      }
+    ],
+    "spacing": {
+      "gap": 24,
+      "display": "flex"
+    },
+    "errors": []
+  },
+  "coverage": {
+    "coreInteractionAssertions": 41,
+    "settingsAndLogoAssertions": 73,
+    "localeAssertions": 8,
+    "diagnosticAndRouteAssertions": 5,
+    "independentAssertions": 25,
+    "responsiveStateLanguageCombinations": 88,
+    "viewStates": 22,
+    "viewports": [
+      390,
+      1440
+    ],
+    "languages": [
+      "en",
+      "zh"
+    ],
+    "note": "Assertion groups overlap; counts are not a deduplicated test total. Current 88 combinations replace historical 104 after removing four future setting pages. Final targeted patch checks passed separately; broadValidationSha256 records the previously tested full matrix.",
+    "finalPatchTargetedAssertions": 5
+  },
+  "visuallyInspected": [
+    "Current Settings overview in English at 1440px",
+    "Preferences in English at 1440px: centered 80px identity, whitespace and readable fields",
+    "Current diagnostics issue state in English at 1440px",
+    "Independent reviewer: execution, operation and preferences; fixed Reset/Last-check spacing",
+    "Final patch: offline English 390px with localized sample timestamp and 44px controls; independent review includes final 390px view."
+  ],
+  "screenshots": [
+    "/workspace/scratch/patrick-v23-prototype/conversation-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/conversation-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-checking-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-checking-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-checking-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-checking-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-issues-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-issues-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-issues-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-issues-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-rechecked-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-rechecked-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-rechecked-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-rechecked-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/execution-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/execution-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/execution-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/execution-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/materials-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/materials-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/materials-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/materials-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/operation-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/operation-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/operation-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/operation-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/overview-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/overview-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/overview-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/overview-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-en-390.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-system-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-system-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/preferences-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/offline-zh-390.png",
+    "/workspace/scratch/patrick-v23-prototype/offline-zh-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/offline-en-1440.png",
+    "/workspace/scratch/patrick-v23-prototype/offline-en-390.png",
+    "/tmp/patrick-v23-offline-small.png"
+  ],
+  "independentReview": {
+    "scope": "Independent focused v2.3 prototype QA; original service calls remain simulated",
+    "sha256": "c6a4c9c1694a42cde64d9eb9d70043041c5360ff5dbfa32bf88315940e8fb512",
+    "checks": [
+      "system language zh-CN null",
+      "system language zh-TW null",
+      "system language en-GB null",
+      "system language ja-JP null",
+      "system language en-US [\"fr-FR\",\"zh-CN\",\"en-US\"]",
+      "system language zh-CN [\"ja-JP\",\"en-US\",\"zh-CN\"]",
+      "manual override persists; return to system follows immediately",
+      "system change only affects system mode",
+      "locale preserves work/custom/chat and settings validation",
+      "running logo square centered and actually loops",
+      "small identity marks do not independently loop",
+      "static paused online true",
+      "static unknown online true",
+      "static running online false",
+      "waiting decision or one paused delegation does not stop service mark",
+      "system reduced motion stops logo and keeps running state text",
+      "hidden document pauses decorative loops",
+      "no script errors",
+      "four groups and nine current fields only",
+      "settings error and control modal switch language",
+      "Current three executors and Grok repair survive four-group merge",
+      "New work folder loses old readiness and stays permission gated",
+      "Backup target detected, restore stays an isolated plan",
+      "Standards no longer offers a false settings route",
+      "Reset action and check timestamp have deliberate spacing"
+    ],
+    "passed": 25,
+    "remainingProductFailures": [],
+    "foundAndFixed": [
+      "Standards settings button incorrectly led to Work materials; removed",
+      "Reset action touched Last check text; flex gap restored"
+    ],
+    "note": "Earlier failed assertions in raw scripts were QA selector/text assumptions; final targeted checks passed. No production services were contacted."
+  },
+  "verificationScripts": [
+    "/workspace/scratch/patrick-v23-prototype/settings-test.cjs",
+    "/workspace/scratch/patrick-v23-prototype/locale-smoke.cjs",
+    "/workspace/scratch/patrick-v23-prototype/diagnostic-test.cjs",
+    "/tmp/patrick-v2-acceptance.cjs"
+  ],
+  "scope": "Local interactive design prototype. Runtime, discovery, executor checks, scoped authorization and trusted receipts are explicit samples; no production login, network configuration, installation, notification delivery, file scan or restore was performed. Native Figma and separate motion assets have their own delivery records.",
+  "priorVersionValidation": {
+    "checks": [
+      "Default English",
+      "No preselected decision",
+      "Default custom decision input is visible",
+      "Confirm disabled until explicit choice",
+      "Focusing custom input explicitly selects custom",
+      "Editing custom after B cannot submit B",
+      "Custom input locked while verifying",
+      "A resumed once",
+      "A result excludes dashboard",
+      "B result matches feature validation",
+      "Empty custom error",
+      "Language preserves selection drafts details scroll",
+      "Custom answer stays pending without execution",
+      "No custom result action",
+      "Language preference persists",
+      "Translation is English while original retained",
+      "Free chat cannot answer question",
+      "Consult starts empty and separate",
+      "Work draft returns intact",
+      "Consult draft returns intact",
+      "Retry retains exact answer",
+      "Retry accepted once",
+      "Expired cannot submit",
+      "Expired custom input remains visible and locked",
+      "Modal translates immediately",
+      "Refresh gets new precise question",
+      "Offline send disabled and draft preserved",
+      "Offline custom input remains visible and locked",
+      "Reconnect preserves draft",
+      "Candidate evaluated but not activated",
+      "Modal language preserves reason",
+      "Rollback changes version and freezes stale candidate",
+      "Pause preview cannot change status",
+      "Trusted handoff cannot change status",
+      "Explicit sample receipt updates sample status",
+      "Stop sample receipt shows stopped",
+      "Setup requires trusted handoff",
+      "Research scope reflected after receipt",
+      "56 responsive state/language combinations",
+      "No script errors",
+      "No external requests"
+    ],
+    "matrix": [
+      {
+        "width": 1440,
+        "state": 1,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 1,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 2,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 2,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 3,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 3,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 4,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 4,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 5,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 5,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 6,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 6,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 7,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 7,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 8,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 8,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 9,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 9,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 10,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 10,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 11,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 11,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 12,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 12,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 13,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 13,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 14,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "state": 14,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 1,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 1,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 2,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 2,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 3,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 3,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 4,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 4,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 5,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 5,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 6,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 6,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 7,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 7,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 8,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 8,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 9,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 9,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 10,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 10,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 11,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 11,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 12,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 12,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 13,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 13,
+        "lang": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 14,
+        "lang": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "state": 14,
+        "lang": "zh",
+        "overflow": false
+      }
+    ],
+    "errors": [],
+    "network": [],
+    "version": "2.2",
+    "visualDirection": "流光青 · 好奇的 P",
+    "brandChecks": [
+      "Cyan background",
+      "Light cyan sidebar",
+      "Curious P loaded in sidebar",
+      "Full English slogan below logo",
+      "Single slogan",
+      "All states omit visible brand text",
+      "Full Chinese slogan below logo",
+      "Mobile full slogan available",
+      "Mobile logo fits sidebar",
+      "Mobile settings remains reachable",
+      "Dark cyan surface follows appearance"
+    ],
+    "visibleBrandTextViolations": [],
+    "visuallyInspected": [
+      "English conversation desktop and mobile submit position",
+      "Settings overview desktop and mobile",
+      "Executors issue desktop and mobile",
+      "Settings checking/issues/rechecked in EN/ZH at 390/1440px",
+      "Standards, candidate, knowledge, delegation, system and result pages",
+      "Cyan light/dark and full EN/ZH slogan"
+    ],
+    "sha256": {
+      "交互原型.html": "ed25c395a38d8164990fc9ceed3e2e4e61ed853bbea0cd8d175625f109f1f83b",
+      "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49",
+      "logo-curious-p.svg": "5cd25e715e51cb1621b58853a3ddc91140956ab4a8a2a27603a69c36b3521168"
+    },
+    "logoGeometryAndEyePreserved": true,
+    "visualRefinement": "Readable type; compact side-by-side decision alternatives; always-visible custom input; independent compact composer; row-based settings and operational pages; detailed evidence and protocols disclosed on demand; persistent configuration separated from System operation.",
+    "contrastRefinement": {
+      "scope": "Only the two light color roles changed; primary, logo and all dark values are unchanged.",
+      "secondaryOnSidebar": {
+        "foreground": "#5A707B",
+        "background": "#EAF5F7",
+        "ratio": 4.681
+      },
+      "primaryOnSoft": {
+        "foreground": "#087B96",
+        "background": "#ECF8FB",
+        "ratio": 4.525
+      },
+      "requiredMinimum": 4.5,
+      "allPassed": true,
+      "regression": "41 interaction checks, 11 brand checks, 56 responsive state/language combinations passed after the two color replacements."
+    },
+    "priorVersionValidation": {
+      "version": "2.1",
+      "sha256": {
+        "交互原型.html": "fa58a290e29e5cebf4295cae93983bec29ff3db7fa06355d230afe1f713c09b8",
+        "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49",
+        "logo-curious-p.svg": "5cd25e715e51cb1621b58853a3ddc91140956ab4a8a2a27603a69c36b3521168"
+      }
+    },
+    "settingsValidation": {
+      "passed": 75,
+      "checks": [
+        "Eight settings categories",
+        "Settings entry active; System inactive",
+        "Prototype label moved out of persistent sidebar",
+        "Checking has no completion evidence",
+        "Cancel prevents late result",
+        "Expired Grok issue found",
+        "No paid fallback or route change",
+        "Fix modal switches language and retains exact binding",
+        "Submitted is not effective",
+        "Pending request can be reopened",
+        "Matching sample receipt is effective, not verified",
+        "Recheck verifies the affected route",
+        "Old evidence does not silently become current",
+        "Validation binds exact draft device config",
+        "Edit invalidates validation",
+        "Stale review cannot submit or apply",
+        "Scope config applies only after explicit sample receipt",
+        "Changed source verified separately",
+        "Edit during check cancels its bound result",
+        "New host is permission-gated, not scanned",
+        "Malformed endpoint has an actionable validation error",
+        "Failed endpoint is distinct from offline",
+        "Preference validation does not save",
+        "Local save is effective but unverified",
+        "Settings save never resumes paused work",
+        "Preference persistence excludes permissions and host",
+        "Local preference verification stays scoped",
+        "Local preferences survive reload",
+        "Setting draft and focus survive language switch",
+        "Expanded settings detail survives locale",
+        "Reset affects draft only",
+        "Notification is preview only",
+        "Diagnostic bundle excludes credentials",
+        "Restore authorization is not a completed restore",
+        "Offline remains distinct from failed",
+        "390 overview en fits",
+        "390 overview zh fits",
+        "390 sources en fits",
+        "390 sources zh fits",
+        "390 knowledge en fits",
+        "390 knowledge zh fits",
+        "390 standards en fits",
+        "390 standards zh fits",
+        "390 executors en fits",
+        "390 executors zh fits",
+        "390 interaction en fits",
+        "390 interaction zh fits",
+        "390 access en fits",
+        "390 access zh fits",
+        "390 devices en fits",
+        "390 devices zh fits",
+        "390 backup en fits",
+        "390 backup zh fits",
+        "1440 overview en fits",
+        "1440 overview zh fits",
+        "1440 sources en fits",
+        "1440 sources zh fits",
+        "1440 knowledge en fits",
+        "1440 knowledge zh fits",
+        "1440 standards en fits",
+        "1440 standards zh fits",
+        "1440 executors en fits",
+        "1440 executors zh fits",
+        "1440 interaction en fits",
+        "1440 interaction zh fits",
+        "1440 access en fits",
+        "1440 access zh fits",
+        "1440 devices en fits",
+        "1440 devices zh fits",
+        "1440 backup en fits",
+        "1440 backup zh fits",
+        "Decision submit remains above the independent composer",
+        "Reduced motion keeps no running animations",
+        "No script errors",
+        "No external network calls"
+      ],
+      "matrix": [
+        {
+          "width": 390,
+          "group": null,
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": null,
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "sources",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "sources",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "knowledge",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "knowledge",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "standards",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "standards",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "executors",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "executors",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "interaction",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "interaction",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "access",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "access",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "devices",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "devices",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "backup",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 390,
+          "group": "backup",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": null,
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": null,
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "sources",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "sources",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "knowledge",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "knowledge",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "standards",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "standards",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "executors",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "executors",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "interaction",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "interaction",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "access",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "access",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "devices",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "devices",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "backup",
+          "lang": "en",
+          "overflow": false,
+          "clipped": false
+        },
+        {
+          "width": 1440,
+          "group": "backup",
+          "lang": "zh",
+          "overflow": false,
+          "clipped": false
+        }
+      ],
+      "errors": [],
+      "external": []
+    },
+    "settingsEdgeCases": {
+      "passed": 18,
+      "checks": [
+        "Blocked executor recheck stays effective, not verified",
+        "New Vault is permission-gated",
+        "Read preview distinguishes effective and proposed domain",
+        "Source classification cannot silently grant company access",
+        "URL validation requires a hostname",
+        "Incomplete URL cannot produce ready checks",
+        "Saving unrelated preference retains selected UI language",
+        "Explicit language draft survives display language changes",
+        "Explicit saved language becomes effective",
+        "Reset preserves drafts in other categories",
+        "Applied manual correction records user origin",
+        "Unchanged origins are preserved",
+        "Presentation locale does not invalidate operational binding",
+        "Modal Tab stays in the modal",
+        "Modal Escape returns to the trigger",
+        "Settings reduced motion has no active animations",
+        "Executor rows show Checking for a new bound run",
+        "Executor rows do not reuse old-host Ready"
+      ]
+    },
+    "settingsPresetStates": [
+      {
+        "width": 390,
+        "name": "checking",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "name": "checking",
+        "language": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "name": "issues",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "name": "issues",
+        "language": "zh",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "name": "rechecked",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 390,
+        "name": "rechecked",
+        "language": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "checking",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "checking",
+        "language": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "issues",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "issues",
+        "language": "zh",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "rechecked",
+        "language": "en",
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "name": "rechecked",
+        "language": "zh",
+        "overflow": false
+      }
+    ],
+    "coverage": {
+      "existingInteractionChecks": 41,
+      "brandChecks": 11,
+      "settingsChecks": 75,
+      "settingsRegressionChecks": 18,
+      "presetLayoutChecks": 12,
+      "responsiveStateLanguageCombinations": 104,
+      "viewStates": 26
+    },
+    "screenshots": [
+      "/tmp/patrick-v22-settings-checking-en-390.png",
+      "/tmp/patrick-v22-settings-checking-zh-390.png",
+      "/tmp/patrick-v22-settings-issues-en-390.png",
+      "/tmp/patrick-v22-settings-issues-zh-390.png",
+      "/tmp/patrick-v22-settings-rechecked-en-390.png",
+      "/tmp/patrick-v22-settings-rechecked-zh-390.png",
+      "/tmp/patrick-v22-settings-checking-en-1440.png",
+      "/tmp/patrick-v22-settings-checking-zh-1440.png",
+      "/tmp/patrick-v22-settings-issues-en-1440.png",
+      "/tmp/patrick-v22-settings-issues-zh-1440.png",
+      "/tmp/patrick-v22-settings-rechecked-en-1440.png",
+      "/tmp/patrick-v22-settings-rechecked-zh-1440.png",
+      "/tmp/patrick-v22-standards-final.png",
+      "/tmp/patrick-v22-candidate-final.png",
+      "/tmp/patrick-v22-knowledge-final.png",
+      "/tmp/patrick-v22-delegation-final.png",
+      "/tmp/patrick-v22-system-final.png",
+      "/tmp/patrick-v22-result-final.png",
+      "/tmp/patrick-v22-conversation.png",
+      "/tmp/patrick-v22-settings-home.png",
+      "/tmp/patrick-v22-executors-issue.png",
+      "/tmp/patrick-v22-conversation-mobile.png",
+      "/tmp/patrick-v22-settings-mobile.png",
+      "/tmp/patrick-v22-executors-mobile.png"
+    ],
+    "independentReview": {
+      "productAndSettings": "7 reproduced issues fixed and independently rechecked; no material blocker remains.",
+      "visualAndFlow": "Core visual and settings flows passed; executor statuses rechecked across notChecked/checking/signIn/stale/permission/offline.",
+      "reports": [
+        "/tmp/patrick-v22-independent-qa.json",
+        "/tmp/patrick-v22-status-recheck.json"
+      ]
+    },
+    "scope": "Prototype and validation only. Design tokens, formal documents, Figma, manifest and motion/video assets were not edited by this implementation task."
+  },
+  "broadValidationSha256": "c6a4c9c1694a42cde64d9eb9d70043041c5360ff5dbfa32bf88315940e8fb512",
+  "finalPatchValidation": {
+    "passed": 5,
+    "checks": [
+      "EN/ZH last connection is explicitly marked sample",
+      "Disconnected service status is unknown and static with Connection lost label",
+      "Changing language retains decision and chat drafts and business state",
+      "Offline banner fits at 1440/390px in EN/ZH",
+      "Header language, send and modal language targets are at least44px"
+    ],
+    "en": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect",
+    "zh": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接",
+    "mark": {
+      "state": "unknown",
+      "animations": 0,
+      "label": "Connection lost"
+    },
+    "samples": [
+      {
+        "width": 1440,
+        "lang": "en",
+        "banner": {
+          "left": 228,
+          "right": 1440,
+          "scrollWidth": 1212,
+          "clientWidth": 1212,
+          "text": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect"
+        },
+        "controls": [
+          {
+            "selector": ".language button",
+            "width": 44,
+            "height": 44
+          },
+          {
+            "selector": ".send",
+            "width": 44,
+            "height": 44
+          }
+        ]
+      },
+      {
+        "width": 1440,
+        "lang": "zh",
+        "banner": {
+          "left": 228,
+          "right": 1440,
+          "scrollWidth": 1212,
+          "clientWidth": 1212,
+          "text": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接"
+        },
+        "controls": [
+          {
+            "selector": ".language button",
+            "width": 44,
+            "height": 44
+          },
+          {
+            "selector": ".send",
+            "width": 44,
+            "height": 44
+          }
+        ]
+      },
+      {
+        "width": 390,
+        "lang": "en",
+        "banner": {
+          "left": 0,
+          "right": 390,
+          "scrollWidth": 390,
+          "clientWidth": 390,
+          "text": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect"
+        },
+        "controls": [
+          {
+            "selector": ".language button",
+            "width": 44,
+            "height": 44
+          },
+          {
+            "selector": ".send",
+            "width": 44,
+            "height": 44
+          }
+        ]
+      },
+      {
+        "width": 390,
+        "lang": "zh",
+        "banner": {
+          "left": 0,
+          "right": 390,
+          "scrollWidth": 390,
+          "clientWidth": 390,
+          "text": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接"
+        },
+        "controls": [
+          {
+            "selector": ".language button",
+            "width": 44,
+            "height": 44
+          },
+          {
+            "selector": ".send",
+            "width": 44,
+            "height": 44
+          }
+        ]
+      }
+    ],
+    "modal": [
+      {
+        "width": 44,
+        "height": 44
+      },
+      {
+        "width": 44,
+        "height": 44
+      }
+    ],
+    "sha256": "30724279697228bb6924d6d87b667e67787edce834e794c5868135b4060833fe",
+    "scope": "Targeted verification after adding an explicitly example last-connection timestamp and minimum 44px header/modal language and Send targets. Broad checks were not rerun; their tested hash is retained separately.",
+    "script": "/tmp/patrick-v23-offline-patch-qa.cjs",
+    "authorship": "Independent QA agent authored the script; implementation agent ran the final patch check; independent QA reviewed the final report."
+  }
+}

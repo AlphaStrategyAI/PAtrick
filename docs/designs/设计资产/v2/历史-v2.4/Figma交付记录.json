@@ -1,0 +1,697 @@
+{
+  "version": "2.4",
+  "date": "2026-11-14",
+  "timezone": "Asia/Shanghai",
+  "team": "TJ",
+  "fileKey": "kPSkB5zeZSKaK7Yrz3PslQ",
+  "designUrl": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67",
+  "prototypeUrl": "https://www.figma.com/proto/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67&starting-point-node-id=24%3A67",
+  "defaultLocale": "system",
+  "supportedLocales": [
+    "en",
+    "zh"
+  ],
+  "language": {
+    "defaultPreference": "system",
+    "choices": [
+      "system",
+      "en",
+      "zh"
+    ],
+    "match": "First supported zh* or en* in navigator.languages; fallback navigator.language; otherwise en",
+    "manualOverride": "Immediate and persistent; languagechange ignored until system is selected again",
+    "figmaBoundary": "Localized preset views; actual system detection and preference persistence are verified in the HTML prototype"
+  },
+  "frames": {
+    "en-conversation": "24:67",
+    "zh-conversation": "24:204",
+    "en-details": "26:138",
+    "zh-details": "26:280",
+    "en-custom": "26:421",
+    "zh-custom": "26:549",
+    "en-submitted": "26:677",
+    "zh-submitted": "26:772",
+    "en-resumed": "26:867",
+    "zh-resumed": "26:966",
+    "en-freechat": "26:1065",
+    "zh-freechat": "26:1161",
+    "en-standards": "26:1257",
+    "zh-standards": "26:1385",
+    "en-knowledge": "26:1513",
+    "zh-knowledge": "26:1617",
+    "en-delegation": "26:1721",
+    "zh-delegation": "26:1829",
+    "en-system": "26:1937",
+    "zh-system": "26:2046",
+    "en-setup": "26:2155",
+    "zh-setup": "26:2258",
+    "en-settings": "26:2361",
+    "zh-settings": "26:2477",
+    "en-result": "26:2593",
+    "zh-result": "27:1028",
+    "en-expired": "27:1126",
+    "zh-expired": "27:1218",
+    "en-error": "27:1310",
+    "zh-error": "27:1448",
+    "en-offline": "27:1586",
+    "zh-offline": "27:1682",
+    "en-mobileconversation": "27:1778",
+    "zh-mobileconversation": "27:1875",
+    "en-submittedB": "28:1400",
+    "zh-submittedB": "28:1492",
+    "en-resumedB": "28:1582",
+    "zh-resumedB": "28:1672",
+    "en-submittedCustom": "28:1762",
+    "zh-submittedCustom": "28:1857",
+    "en-settings-checking": "63:4753",
+    "zh-settings-checking": "63:4960",
+    "en-settings-issues": "63:5167",
+    "zh-settings-issues": "63:5375",
+    "en-settings-rechecked": "63:5583",
+    "zh-settings-rechecked": "63:5790",
+    "en-settings-materials": "62:6635",
+    "en-settings-execution": "59:2171",
+    "en-settings-operation": "63:3745",
+    "en-settings-preferences": "63:2719",
+    "zh-settings-materials": "62:6880",
+    "zh-settings-execution": "62:8117",
+    "zh-settings-operation": "63:3997",
+    "zh-settings-preferences": "63:2981",
+    "en-ongoing": "94:3523",
+    "en-settings-collection": "94:3678",
+    "en-settings-source-preview": "94:3836",
+    "zh-ongoing": "94:4535",
+    "en-ongoing-updated": "94:4688",
+    "zh-ongoing-updated": "94:4842",
+    "en-work-detail": "94:4995",
+    "zh-work-detail": "95:4028",
+    "en-decisions-empty": "95:4148",
+    "zh-decisions-empty": "95:4245",
+    "en-mobileongoing": "95:4343",
+    "zh-mobileongoing": "95:4458",
+    "en-settings-source-paused": "95:4574",
+    "zh-settings-source-paused": "95:4715",
+    "en-settings-addsource": "95:4857",
+    "zh-settings-addsource": "95:5002",
+    "zh-settings-source-preview": "95:5148",
+    "en-settings-source-enabled": "95:5294",
+    "zh-settings-source-enabled": "95:5474",
+    "en-settings-source-error": "95:5653",
+    "zh-settings-source-error": "95:5795",
+    "zh-settings-collection": "95:5936"
+  },
+  "archivedSettings": {
+    "pageId": "88:6334",
+    "frames": {
+      "en-settings-knowledge": "62:7125",
+      "zh-settings-knowledge": "62:7373",
+      "en-settings-standards": "62:7621",
+      "zh-settings-standards": "62:7869",
+      "en-settings-access": "63:3241",
+      "zh-settings-access": "63:3493",
+      "en-settings-backup": "63:4249",
+      "zh-settings-backup": "63:4501"
+    },
+    "currentRoutesToArchivedFrames": 0
+  },
+  "screenInventory": {
+    "active": 76,
+    "locales": 2,
+    "statesPerLocale": 38,
+    "priorVersionFrameIdsPreserved": 54,
+    "originalFrameIdsPreserved": 40,
+    "newFrames": 22,
+    "rebuiltExistingFrames": 18,
+    "otherExistingFramesWithNavigationUpdate": 36,
+    "retiredSettingsFrames": 8
+  },
+  "components": {
+    "statusSetId": "20:697",
+    "inputComponent": {
+      "id": "26:126",
+      "valueKey": "Value#26:0"
+    },
+    "semanticVariables": 50,
+    "primitives": 50,
+    "textStyles": 13,
+    "logoComponentId": "37:1622",
+    "runningLogoFamily": "81:3993",
+    "logoStates": {
+      "Running": "81:3988",
+      "Still": "81:3989",
+      "Paused": "81:3990",
+      "Connection lost": "81:3991",
+      "Checking": "81:3992"
+    },
+    "runningLoopSet": "86:3988",
+    "runningNestedInstance": "89:4825",
+    "logoShowcase": "86:4016"
+  },
+  "nativeValidation": {
+    "frames": 76,
+    "links": 1044,
+    "anchorLinks": 38,
+    "currentPageEntries": 114,
+    "checkedControls": 1196,
+    "nodeTypes": {
+      "FRAME": 3474,
+      "INSTANCE": 1576,
+      "VECTOR": 460,
+      "GROUP": 230,
+      "ELLIPSE": 222,
+      "TEXT": 2872
+    },
+    "imageNodes": 0,
+    "fontMismatch": 0,
+    "outsideFrameText": 0,
+    "immediateParentTextOverflow": 0,
+    "wrappedControls": 0,
+    "screenOverlaps": 0,
+    "routeFailures": 0,
+    "navigationErrors": 0,
+    "staleLabels": 0,
+    "logoInstances": 102,
+    "localizedSlogans": 76,
+    "logoPlacementErrors": 0,
+    "report": "Figma-v2.4复核.json"
+  },
+  "settings": {
+    "groups": [
+      "Collection / 采集",
+      "Work materials / 工作资料",
+      "Execution / 执行",
+      "Operation & backup / 运行与备份",
+      "Preferences / 偏好"
+    ],
+    "existingRoutineEditableFields": 9,
+    "perSourceConfigAdded": true,
+    "sourceAdaptersDesigned": [
+      "GitHub",
+      "Local folder",
+      "RSS feed",
+      "Single webpage"
+    ],
+    "sourceConfig": "Address/scope, domain and target, cadence, first-history scope and exclusions; detect existing values before asking.",
+    "sourceLifecycle": "Detect → preview exact scope → explicit confirmation → effective receipt → observe first collection; enable is distinct from successful sync.",
+    "sourcePause": "Stops new collection; keeps evidence and existing work. Disconnect stops future access without cancelling work or deleting shared credentials.",
+    "backupTarget": "Input only when missing or explicitly changed",
+    "diagnostics": "Inspect approved scope; validate exact draft; trusted apply receipt; separate recheck",
+    "futureControlsRemoved": true
+  },
+  "brand": {
+    "palette": "流光青",
+    "logo": "好奇的P",
+    "largeMark": {
+      "width": 80,
+      "height": 80,
+      "glyphSize": 68,
+      "horizontalAlignment": "center",
+      "loopSeconds": 4.8
+    },
+    "currentLogoInstances": 102,
+    "runningLargeInstances": 74,
+    "connectionLostLargeInstances": 2,
+    "staticMessageInstances": 26,
+    "localizedSlogans": 76,
+    "slogan": {
+      "en": "Keep evolving toward exceptional judgment.",
+      "zh": "让你的判断，持续向顶尖进化。"
+    },
+    "assets": [
+      "logo-running.gif",
+      "logo-running.webp",
+      "logo-running.svg",
+      "logo-still.svg",
+      "logo-paused.svg",
+      "logo-connection-lost.svg",
+      "logo-checking.svg"
+    ],
+    "truthfulState": "Running describes service availability, not task completion; waiting and one blocked executor do not stop a healthy service indicator"
+  },
+  "motion": {
+    "logo": {
+      "assetFrames": 60,
+      "assetFrameDurationMs": 80,
+      "assetLoopSeconds": 4.8,
+      "assetInfiniteLoop": true,
+      "actualAssetPlaybackVerified": true,
+      "nativeMechanism": "AFTER_TIMEOUT + CHANGE_TO + SMART_ANIMATE closed cycle",
+      "nativePhases": 16,
+      "nativeCycleSeconds": 4.8,
+      "nativeReactionReadbackPassed": true,
+      "nativePrototypePlaybackRecordingVerified": false,
+      "evidence": "Figma-Logo循环验证.json"
+    },
+    "reducedMotion": "Static logo plus truthful status; hidden browser tab pauses decoration",
+    "priorExamples": "Existing 320/220/280ms motion examples and video are v2.1 history; current 4.8-second logo assets and native loop are reused unchanged from v2.3.",
+    "reuseVersion": "2.3"
+  },
+  "exports": [
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "asset": "Figma-en-conversation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "9e228e49521f16aa6a5c526ff46073b064e8f0e86cb2d7f3f1e1c98d4ce0b36c"
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "asset": "Figma-zh-conversation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "03a0b2614248ba081c6ef688c8e5f531f9a5baf26a97bb416d47981ddaff5492"
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "asset": "Figma-en-settings.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "693b686d135df4320e4542e8d3fd2b1d744999d87df1ed80e36974c08371450f"
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "asset": "Figma-zh-settings.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "11e005091ff4d7640006b34979b7301af22850e8ebf359a0b987425d52d3bb51"
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "asset": "Figma-en-settings-materials.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "4c80959ff86e4b7c23c3a9e2ad1182e4b8b49c3c7fa33c4888e88343e3bc19fc"
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "asset": "Figma-en-settings-execution.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "9585d792ae09b1109e214fb6952501cb9d57070a92cbc9decb759c8174b5f163"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "asset": "Figma-en-settings-operation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "98f2df8e9d7c617fc618b223fe471d2b74e71010f95298037a71c3a7ae23108b"
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "asset": "Figma-en-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "6a1f18acb7f27abf460012d1990b43c633bf55afaa15ece167c28259cd6dcbdb"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "asset": "Figma-zh-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "462b73243e794a34578b85b3142a7bfb0cabbefb7cc37e20f36b607086a2e323"
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "asset": "Figma-en-settings-checking.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "b5fb09b361e4b79f8b3a8a8393b327400a52a45d161c355537e081a0e07cbeef"
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "asset": "Figma-en-settings-issues.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "3ae3416307fd67dd5ff76192ef118082fda9e085f3ec4eb20373ad1dc93c68d0"
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "asset": "Figma-en-settings-rechecked.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "467ba54e7f2dfe9affa0472693a788731fff33f839e08db33cdba872a06d75f5"
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "asset": "Figma-en-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "e4cac0a63a761a94a272972afbee9a2da670fcf042b4dd06fb191ef9cd066dc5"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "asset": "Figma-zh-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "243a543d993d5b44f731568b0e87e2a8de058d1b3d6e37cb6ebab5c90c4ded02"
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "asset": "Figma-en-details.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "24b83e053aefcfc8090f706e50fc309c3fc9501ec5ae5072e163e1508f56b850"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "asset": "Figma-en-custom.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "d005b7ac6e899b94f9601a39b08ce9b13787221c504432f0fc0e12a473274918"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "asset": "Figma-en-standards.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "9e2a05239095f3e779285a473f154e1e6f132def457dc947c9a9772d584b6a59"
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "asset": "Figma-en-knowledge.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "95c37fef7255539131f4292b394034e1c8c6a9e819d3cb7019bf50fcc05e3e4b"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "asset": "Figma-en-delegation.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "aa4dd6575df53f88456e627a2509dd84d9d9082277776d395a408958f924da3c"
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "asset": "Figma-en-system.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "789504c9ff6a3ba1d426b3746a0fc51d925de28759441ce8819d0f044a9e65cf"
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "asset": "Figma-en-setup.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "536f8b74c912cdfedeaea544ad71e5e6b853c93734fe17fa7d3a1c63628947ea"
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "asset": "Figma-en-result.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "afdb28554ac963a191e442d99046cc072bed722440266d2d58be274fc1203fab"
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "asset": "Figma-en-offline.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "73d84026764b77efdc2c525521a332b466e2c09cce529786f3aec38f2d6bbe4f"
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "asset": "Figma-en-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "9df65a17dc854a1b42448b1f6c83e9bf9f582f1b51b0d6b0f41131770df8a132"
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "asset": "Figma-zh-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "2d4d15bb21d7128edb65b960d96cdce068b482f270ef1683df23308b9580c15c"
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "asset": "Figma-en-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "8c3f34341e3e9c53fc7e2b7d925e196d3ae4886345698c098dc3260895a41643"
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "asset": "Figma-zh-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "8e8ed165448b1de6d5e06aae2012463d9c7dd47d6de27b095f6abe77a3112788"
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "asset": "Figma-en-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "dab78d29248620c60dca5e8374371490e79a4f46666100c88f2ebbc1dcbfa804"
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "asset": "Figma-zh-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "68497da87edaad4db79162441d01c02722271117bfc106800dbe074ee9a693c4"
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "asset": "Figma-en-decisions-empty.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "00832f66d40c6317547d08b0527d89cd81fd1f9642eb45817fcc218f43e5369d"
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "asset": "Figma-en-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "936a5ff942ddff3d4c2ba201f1e8e1f5001b25c2e32c4842e0046154e22d75c9"
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "asset": "Figma-zh-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "52a9c13c2588e4217915b49ee921bb27bce3a5dd0cd240dd4859172510eeaa2e"
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "asset": "Figma-en-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "24db10759cc02c62c36bebfa47fe39f79abc3bce966f8b3d34ef2e533d88f85d"
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "asset": "Figma-zh-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "4a921b24513429c41b9205a5eef7e7ce5a02e4540e75fba6928a2760368fe51d"
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "asset": "Figma-en-settings-addsource.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "f6eac7426c6c85c236bc0af445aad3b6162ca188c148bc8239542d8eddd96e8b"
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "asset": "Figma-en-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "8fbbeed7a30f7814edd072f0ada71e141b7264af79edc4996f5fa312bd6d9ae1"
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "asset": "Figma-zh-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "ae7afe18df88d6aa4f857868353c44a5227ea4854169b2246d2ec203dfdab7c6"
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "asset": "Figma-en-settings-source-enabled.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "e4f67917263a2b6993cf4bb2569f9d7180b93e7b4bece1af18e101aa71338d50"
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "asset": "Figma-en-settings-source-paused.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "ff283a307eb3a0e4f685ebc95046c907c0ea25268ae55d52a06f34c8bd1452ee"
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "asset": "Figma-en-settings-source-error.png",
+      "exported": true,
+      "exportVersion": "2.4",
+      "sha256": "2375db24e023e92a21bdb09c687f1b6a24fe942f1e56bfff597d8968d8f05c66"
+    },
+    {
+      "key": "logo-motion",
+      "id": "86:4016",
+      "asset": "Figma-logo-motion.png",
+      "exported": true,
+      "sha256": "c4ae632acb716d9281a5bcf0659f0fb0538594efc4d7e61492d97255c0fe4aa1",
+      "exportVersion": "2.3",
+      "reusedUnchanged": true
+    }
+  ],
+  "visualReview": {
+    "report": "Figma-v2.4复核.json",
+    "independent": false,
+    "screens": [
+      "zh-ongoing",
+      "en-settings",
+      "zh-settings-collection",
+      "en-settings-source-preview",
+      "en-mobileongoing"
+    ],
+    "passed": true,
+    "scope": "Final native static appearance; native navigation separately read back."
+  },
+  "sourceLibraries": [
+    "Material 3 Button",
+    "Simple Design System Navigation Button"
+  ],
+  "localInputReason": "Imported textarea kept an 88px value width after overrides; replaced with responsive native PAtrick input component.",
+  "localPrototypeValidation": {
+    "report": "原型验证.json",
+    "currentSha256": {
+      "交互原型.html": "9a888b1a86064eb4d9443559a4e4d5529f09023025cfee6494e9c6995c366fec",
+      "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49"
+    },
+    "interactionChecks": 27,
+    "responsiveCombinations": 52,
+    "errors": 0,
+    "historicalReport": "历史-v2.3/原型验证.json"
+  },
+  "limits": [
+    "Figma displays localized preset states; dynamic search, filters, source drafts and state changes are demonstrated in the HTML prototype.",
+    "Figma does not detect browser/system language. HTML uses the system/en/zh preference model retained from v2.3.",
+    "Configuration, source detection and receipts are illustrative; no real service, credential, notification, network or business action is performed.",
+    "Logo animation is reused from v2.3. Native reactions were verified then; no native prototype playback recording was captured.",
+    "Production authentication, backend integration, real restore and full accessibility/usability acceptance remain implementation work."
+  ],
+  "history": [
+    {
+      "version": "2.1",
+      "nativeValidation": {
+        "frames": 40,
+        "links": 410,
+        "currentPageEntries": 62,
+        "nodeTypes": {
+          "FRAME": 1408,
+          "INSTANCE": 650,
+          "VECTOR": 160,
+          "TEXT": 1330
+        },
+        "imageNodes": 0,
+        "fontMismatch": 0,
+        "outsideFrameText": 0,
+        "immediateParentTextOverflow": 0,
+        "logoInstances": 80,
+        "localizedSlogans": 40,
+        "brandTextRemaining": 0,
+        "brandTextScope": "Standalone assistant branding; project names, source paths and original user text remain intact."
+      },
+      "localPrototypeValidation": {
+        "assertions": 41,
+        "responsiveCombinations": 56,
+        "sha256": "fa58a290e29e5cebf4295cae93983bec29ff3db7fa06355d230afe1f713c09b8",
+        "customInput": "always visible; focus and input explicitly select custom; never automatically submit",
+        "brandAssertions": 11
+      },
+      "motion": {
+        "frameId": "22:2",
+        "timelineSeconds": 2,
+        "nativeKeyframes": "Existing 320/220/280ms tracks recolored cyan; 360ms one-shot logo nod written and read back",
+        "nativePlayback": "Not re-exported for the color/nod change; previous native video asset download returned HTTP 403. Local HTML playback verified separately.",
+        "localVideo": "动效演示.mp4",
+        "localVideoSeconds": 7.6,
+        "localVideoVerified": true,
+        "logoNodeId": "42:1855",
+        "logoNodSeconds": 0.36
+      }
+    },
+    {
+      "version": "2.2",
+      "activeFramesThen": 62,
+      "nativeScreenshotsThen": 23,
+      "defaultLocaleThen": "en",
+      "archive": "历史-v2.2/Figma交付记录.json",
+      "scope": "Historical results only; not counted as v2.3 validation."
+    },
+    {
+      "version": "2.3",
+      "activeFramesThen": 54,
+      "nativeScreenshotsThen": 24,
+      "archive": "历史-v2.3/Figma交付记录.json",
+      "scope": "Historical tests and reviews; not counted as v2.4 reruns."
+    }
+  ],
+  "navigation": [
+    "Needs decision / 需要决策",
+    "Ongoing / 正在进行",
+    "Standards / 判断标准",
+    "Knowledge / 知识",
+    "Delegation / 委托",
+    "System / 系统"
+  ],
+  "workViews": {
+    "taskIdentity": "Shared task ID and authoritative status; pending questions and ongoing work are separate read views, not duplicate tasks.",
+    "ongoingStates": [
+      "waiting for decision",
+      "accepted/verifying/queued/running",
+      "blocked/paused/failure needing action"
+    ],
+    "completed": "Retained in completed history outside the unfinished list.",
+    "fixtures": [
+      "W-017",
+      "W-042",
+      "W-043",
+      "W-044"
+    ],
+    "decisionContinuation": "Verified W-017 answer clears its pending question and updates the same task to running."
+  }
+}

@@ -1,0 +1,5413 @@
+{
+  "version": "2.6",
+  "date": "2026-11-15",
+  "sourceSha256": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87",
+  "frames": [
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "nodes": 469,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-checking",
+      "id": "63:4960",
+      "nodes": 472,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-error",
+      "id": "27:1310",
+      "nodes": 543,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "nodes": 532,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-submitted",
+      "id": "26:677",
+      "nodes": 532,
+      "text": 73,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-issues",
+      "id": "63:5375",
+      "nodes": 472,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "nodes": 321,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-delegation",
+      "id": "26:1829",
+      "nodes": 324,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "nodes": 309,
+      "text": 42,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-standards",
+      "id": "26:1385",
+      "nodes": 314,
+      "text": 42,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-submitted",
+      "id": "26:772",
+      "nodes": 537,
+      "text": 73,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "nodes": 346,
+      "text": 50,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-result",
+      "id": "27:1028",
+      "nodes": 351,
+      "text": 50,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-submittedCustom",
+      "id": "28:1857",
+      "nodes": 597,
+      "text": 79,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-resumedB",
+      "id": "28:1582",
+      "nodes": 336,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-resumedB",
+      "id": "28:1672",
+      "nodes": 341,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-submittedCustom",
+      "id": "28:1762",
+      "nodes": 591,
+      "text": 79,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-resumed",
+      "id": "26:867",
+      "nodes": 336,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-resumed",
+      "id": "26:966",
+      "nodes": 341,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-expired",
+      "id": "27:1126",
+      "nodes": 542,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "nodes": 527,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "nodes": 420,
+      "text": 58,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-expired",
+      "id": "27:1218",
+      "nodes": 547,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-error",
+      "id": "27:1448",
+      "nodes": 548,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "nodes": 538,
+      "text": 75,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "nodes": 336,
+      "text": 52,
+      "images": 0,
+      "instances": 5,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "nodes": 360,
+      "text": 52,
+      "images": 0,
+      "instances": 5,
+      "logo": 0
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "nodes": 469,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "nodes": 335,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-submittedB",
+      "id": "28:1492",
+      "nodes": 537,
+      "text": 73,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "nodes": 356,
+      "text": 48,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-system",
+      "id": "26:2046",
+      "nodes": 359,
+      "text": 48,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-freechat",
+      "id": "26:1065",
+      "nodes": 344,
+      "text": 42,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-freechat",
+      "id": "26:1161",
+      "nodes": 349,
+      "text": 42,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "nodes": 528,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-custom",
+      "id": "26:549",
+      "nodes": 533,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-details",
+      "id": "26:280",
+      "nodes": 532,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "id": "63:5790",
+      "nodes": 472,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "nodes": 457,
+      "text": 57,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "nodes": 460,
+      "text": 57,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "nodes": 469,
+      "text": 59,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "nodes": 356,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-knowledge",
+      "id": "26:1617",
+      "nodes": 359,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-offline",
+      "id": "27:1682",
+      "nodes": 543,
+      "text": 75,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "nodes": 407,
+      "text": 58,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-submittedB",
+      "id": "28:1400",
+      "nodes": 532,
+      "text": 73,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "nodes": 306,
+      "text": 41,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-setup",
+      "id": "26:2258",
+      "nodes": 310,
+      "text": 41,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "nodes": 338,
+      "text": 48,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "nodes": 527,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing-running",
+      "id": "114:14523",
+      "nodes": 342,
+      "text": 48,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing-running",
+      "id": "114:14851",
+      "nodes": 345,
+      "text": 48,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "id": "114:15182",
+      "nodes": 306,
+      "text": 41,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-task-citations",
+      "id": "115:2660",
+      "nodes": 272,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-task-blocked",
+      "id": "115:2918",
+      "nodes": 269,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-task-blocked",
+      "id": "115:3173",
+      "nodes": 272,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-pause-dialog",
+      "id": "115:6516",
+      "nodes": 377,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-stop-dialog",
+      "id": "115:6879",
+      "nodes": 373,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-stop-dialog",
+      "id": "115:7238",
+      "nodes": 377,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-standards-expanded",
+      "id": "115:27311",
+      "nodes": 333,
+      "text": 49,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-standards-expanded",
+      "id": "115:27615",
+      "nodes": 340,
+      "text": 49,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "id": "115:27926",
+      "nodes": 380,
+      "text": 52,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-result-dialog",
+      "id": "115:4632",
+      "nodes": 391,
+      "text": 56,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-expired-dialog",
+      "id": "115:5009",
+      "nodes": 585,
+      "text": 81,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-validate",
+      "id": "115:13679",
+      "nodes": 338,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "id": "115:14213",
+      "nodes": 459,
+      "text": 64,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-source-error",
+      "id": "95:5795",
+      "nodes": 278,
+      "text": 37,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "nodes": 309,
+      "text": 42,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-candidate",
+      "id": "114:11738",
+      "nodes": 309,
+      "text": 43,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "nodes": 255,
+      "text": 34,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "nodes": 410,
+      "text": 62,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "nodes": 407,
+      "text": 62,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "id": "115:17267",
+      "nodes": 487,
+      "text": 70,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "id": "115:17891",
+      "nodes": 381,
+      "text": 55,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-selected-a",
+      "id": "115:24200",
+      "nodes": 528,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-selected-a",
+      "id": "115:24713",
+      "nodes": 533,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "id": "115:14809",
+      "nodes": 463,
+      "text": 64,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "id": "115:15409",
+      "nodes": 480,
+      "text": 69,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "id": "115:11134",
+      "nodes": 503,
+      "text": 79,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "id": "115:11607",
+      "nodes": 510,
+      "text": 79,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "id": "115:12087",
+      "nodes": 566,
+      "text": 87,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "id": "115:16026",
+      "nodes": 485,
+      "text": 69,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "id": "115:16648",
+      "nodes": 482,
+      "text": 70,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-system-expanded",
+      "id": "115:29260",
+      "nodes": 393,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-system-expanded",
+      "id": "115:29597",
+      "nodes": 398,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "id": "115:29939",
+      "nodes": 272,
+      "text": 36,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "id": "115:12617",
+      "nodes": 571,
+      "text": 87,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-validate",
+      "id": "115:13152",
+      "nodes": 335,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "nodes": 410,
+      "text": 62,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "nodes": 269,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "nodes": 272,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-candidate",
+      "id": "114:12033",
+      "nodes": 316,
+      "text": 43,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-standard-history",
+      "id": "114:12335",
+      "nodes": 282,
+      "text": 38,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-standard-history",
+      "id": "114:12595",
+      "nodes": 285,
+      "text": 38,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "id": "115:28283",
+      "nodes": 383,
+      "text": 52,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-delegation-expanded",
+      "id": "115:28643",
+      "nodes": 321,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "id": "115:28950",
+      "nodes": 324,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-trusted-dialog",
+      "id": "115:7601",
+      "nodes": 373,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "id": "115:7960",
+      "nodes": 377,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-rollback-dialog",
+      "id": "115:8323",
+      "nodes": 358,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-expired-dialog",
+      "id": "115:5580",
+      "nodes": 591,
+      "text": 81,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "en-pause-dialog",
+      "id": "115:6157",
+      "nodes": 373,
+      "text": 54,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "id": "115:8676",
+      "nodes": 363,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "id": "115:9036",
+      "nodes": 398,
+      "text": 59,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "id": "115:9523",
+      "nodes": 401,
+      "text": 59,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-setup-preview",
+      "id": "114:13661",
+      "nodes": 312,
+      "text": 42,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing-decision",
+      "id": "114:13936",
+      "nodes": 306,
+      "text": 41,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "id": "114:14228",
+      "nodes": 309,
+      "text": 41,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "id": "115:20731",
+      "nodes": 453,
+      "text": 65,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "id": "115:21309",
+      "nodes": 302,
+      "text": 42,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "id": "115:21599",
+      "nodes": 305,
+      "text": 42,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "nodes": 272,
+      "text": 36,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-addsource",
+      "id": "95:5002",
+      "nodes": 275,
+      "text": 36,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "nodes": 258,
+      "text": 34,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-source-dialog",
+      "id": "115:3431",
+      "nodes": 411,
+      "text": 57,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-source-dialog",
+      "id": "115:3844",
+      "nodes": 414,
+      "text": 57,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-result-dialog",
+      "id": "115:4260",
+      "nodes": 386,
+      "text": 56,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "id": "115:23038",
+      "nodes": 396,
+      "text": 58,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422",
+      "nodes": 395,
+      "text": 61,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803",
+      "nodes": 408,
+      "text": 61,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "id": "115:30221",
+      "nodes": 275,
+      "text": 36,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "id": "115:30506",
+      "nodes": 300,
+      "text": 42,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "id": "115:30788",
+      "nodes": 303,
+      "text": 42,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-selected-b",
+      "id": "115:25231",
+      "nodes": 528,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-selected-b",
+      "id": "115:25744",
+      "nodes": 533,
+      "text": 72,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "nodes": 410,
+      "text": 58,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "nodes": 407,
+      "text": 62,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "nodes": 306,
+      "text": 42,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "id": "114:15474",
+      "nodes": 309,
+      "text": 41,
+      "images": 0,
+      "instances": 14,
+      "logo": 1
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "id": "114:15769",
+      "nodes": 274,
+      "text": 35,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "id": "114:16029",
+      "nodes": 277,
+      "text": 35,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "id": "115:10017",
+      "nodes": 587,
+      "text": 88,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "id": "115:10574",
+      "nodes": 590,
+      "text": 88,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "id": "115:18407",
+      "nodes": 384,
+      "text": 55,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "id": "115:18930",
+      "nodes": 473,
+      "text": 68,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-materials",
+      "id": "62:6880",
+      "nodes": 338,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-execution",
+      "id": "62:8117",
+      "nodes": 423,
+      "text": 58,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-operation",
+      "id": "63:3997",
+      "nodes": 341,
+      "text": 48,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-task-decision",
+      "id": "115:1892",
+      "nodes": 269,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-task-decision",
+      "id": "115:2147",
+      "nodes": 272,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-task-citations",
+      "id": "115:2405",
+      "nodes": 269,
+      "text": 35,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "nodes": 336,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-decisions-empty",
+      "id": "95:4245",
+      "nodes": 341,
+      "text": 40,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "nodes": 233,
+      "text": 44,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "nodes": 244,
+      "text": 44,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "nodes": 346,
+      "text": 50,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "id": "95:4715",
+      "nodes": 349,
+      "text": 50,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "id": "115:21892",
+      "nodes": 393,
+      "text": 58,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "id": "115:22273",
+      "nodes": 396,
+      "text": 58,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "id": "115:22657",
+      "nodes": 393,
+      "text": 58,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-translated",
+      "id": "115:26262",
+      "nodes": 536,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-translated",
+      "id": "115:26784",
+      "nodes": 541,
+      "text": 74,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-setup-scope",
+      "id": "114:12858",
+      "nodes": 302,
+      "text": 40,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-setup-scope",
+      "id": "114:13123",
+      "nodes": 306,
+      "text": 40,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-setup-preview",
+      "id": "114:13392",
+      "nodes": 306,
+      "text": 42,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "id": "115:19540",
+      "nodes": 482,
+      "text": 68,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "id": "115:20159",
+      "nodes": 449,
+      "text": 65,
+      "images": 0,
+      "instances": 20,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "nodes": 346,
+      "text": 50,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "id": "95:5474",
+      "nodes": 349,
+      "text": 50,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "nodes": 275,
+      "text": 37,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-candidate-shadow",
+      "id": "117:3421",
+      "nodes": 315,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "id": "117:3722",
+      "nodes": 322,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-candidate-rejected",
+      "id": "117:4030",
+      "nodes": 313,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "id": "117:8988",
+      "nodes": 353,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "id": "117:9329",
+      "nodes": 356,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "id": "117:6511",
+      "nodes": 477,
+      "text": 70,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "id": "117:7124",
+      "nodes": 464,
+      "text": 71,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "id": "117:7711",
+      "nodes": 467,
+      "text": 71,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "id": "117:8303",
+      "nodes": 353,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "id": "117:8644",
+      "nodes": 356,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "id": "117:4329",
+      "nodes": 320,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-delegation-paused",
+      "id": "117:4635",
+      "nodes": 331,
+      "text": 47,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-delegation-paused",
+      "id": "117:4952",
+      "nodes": 334,
+      "text": 47,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-delegation-stopped",
+      "id": "117:5272",
+      "nodes": 327,
+      "text": 46,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "id": "117:5585",
+      "nodes": 330,
+      "text": 46,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "id": "117:5901",
+      "nodes": 474,
+      "text": 70,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664",
+      "nodes": 410,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070",
+      "nodes": 418,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484",
+      "nodes": 410,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:7890",
+      "nodes": 418,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8304",
+      "nodes": 410,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:8710",
+      "nodes": 418,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9124",
+      "nodes": 410,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530",
+      "nodes": 418,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:9944",
+      "nodes": 410,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10350",
+      "nodes": 418,
+      "text": 64,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764",
+      "nodes": 238,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003",
+      "nodes": 248,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobilestats-all",
+      "id": "122:4683",
+      "nodes": 248,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobilestats-counting",
+      "id": "122:4932",
+      "nodes": 238,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobilestats-counting",
+      "id": "122:5171",
+      "nodes": 248,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobilestats-month",
+      "id": "122:3956",
+      "nodes": 238,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobilestats-month",
+      "id": "122:4195",
+      "nodes": 248,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobilestats-all",
+      "id": "122:4444",
+      "nodes": 238,
+      "text": 46,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "id": "122:5420",
+      "nodes": 400,
+      "text": 63,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "id": "122:5816",
+      "nodes": 412,
+      "text": 63,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-home",
+      "id": "172:5101",
+      "nodes": 326,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-review",
+      "id": "172:5457",
+      "nodes": 366,
+      "text": 53,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-adopted",
+      "id": "172:5844",
+      "nodes": 324,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-draft",
+      "id": "187:15484",
+      "nodes": 339,
+      "text": 47,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-draft",
+      "id": "187:15824",
+      "nodes": 342,
+      "text": 47,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-review",
+      "id": "187:16167",
+      "nodes": 363,
+      "text": 53,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-ready",
+      "id": "187:16531",
+      "nodes": 343,
+      "text": 48,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-ready",
+      "id": "187:16875",
+      "nodes": 346,
+      "text": 48,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-install",
+      "id": "187:17222",
+      "nodes": 335,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-install",
+      "id": "187:17558",
+      "nodes": 338,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-guide",
+      "id": "187:17897",
+      "nodes": 377,
+      "text": 55,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-guide",
+      "id": "187:18275",
+      "nodes": 380,
+      "text": 55,
+      "images": 0,
+      "instances": 19,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-home",
+      "id": "187:18656",
+      "nodes": 329,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-connect",
+      "id": "187:18986",
+      "nodes": 356,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-connect",
+      "id": "187:19343",
+      "nodes": 359,
+      "text": 50,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-pair",
+      "id": "187:19703",
+      "nodes": 335,
+      "text": 46,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-pair",
+      "id": "187:20039",
+      "nodes": 338,
+      "text": 46,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-owner",
+      "id": "187:20378",
+      "nodes": 345,
+      "text": 48,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-owner",
+      "id": "188:5623",
+      "nodes": 348,
+      "text": 48,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-test",
+      "id": "188:5972",
+      "nodes": 369,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-test",
+      "id": "188:6342",
+      "nodes": 372,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-preview",
+      "id": "188:6715",
+      "nodes": 442,
+      "text": 67,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-preview",
+      "id": "188:7158",
+      "nodes": 447,
+      "text": 67,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-return",
+      "id": "188:7606",
+      "nodes": 369,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-return",
+      "id": "188:7976",
+      "nodes": 372,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-enable",
+      "id": "188:8349",
+      "nodes": 427,
+      "text": 64,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-enable",
+      "id": "188:8777",
+      "nodes": 430,
+      "text": 64,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-ready",
+      "id": "188:9208",
+      "nodes": 338,
+      "text": 48,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-ready",
+      "id": "188:9547",
+      "nodes": 341,
+      "text": 48,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-disable",
+      "id": "188:9889",
+      "nodes": 377,
+      "text": 56,
+      "images": 0,
+      "instances": 23,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-disable",
+      "id": "188:10267",
+      "nodes": 380,
+      "text": 56,
+      "images": 0,
+      "instances": 23,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-draining",
+      "id": "188:10648",
+      "nodes": 326,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-draining",
+      "id": "188:10975",
+      "nodes": 329,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-error",
+      "id": "188:11305",
+      "nodes": 329,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-error",
+      "id": "188:11635",
+      "nodes": 332,
+      "text": 46,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-timeout",
+      "id": "188:11968",
+      "nodes": 372,
+      "text": 53,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-timeout",
+      "id": "188:12341",
+      "nodes": 375,
+      "text": 53,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-recovery",
+      "id": "188:12717",
+      "nodes": 326,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-recovery",
+      "id": "188:13044",
+      "nodes": 329,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-knowledge",
+      "id": "188:13374",
+      "nodes": 415,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-knowledge",
+      "id": "188:13790",
+      "nodes": 418,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-knowledge-ingested",
+      "id": "188:14209",
+      "nodes": 415,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-knowledge-ingested",
+      "id": "188:14625",
+      "nodes": 418,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-new",
+      "id": "188:15044",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-new",
+      "id": "188:15419",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard",
+      "id": "188:15799",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard",
+      "id": "188:16174",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-open",
+      "id": "188:16554",
+      "nodes": 436,
+      "text": 66,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-open",
+      "id": "188:16991",
+      "nodes": 442,
+      "text": 66,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-evaluating",
+      "id": "188:17434",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-evaluating",
+      "id": "188:17809",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-adopted",
+      "id": "188:18189",
+      "nodes": 327,
+      "text": 44,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-pending",
+      "id": "188:18517",
+      "nodes": 328,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-pending",
+      "id": "188:18846",
+      "nodes": 331,
+      "text": 45,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-conflict",
+      "id": "188:19178",
+      "nodes": 370,
+      "text": 52,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-conflict",
+      "id": "188:19549",
+      "nodes": 375,
+      "text": 52,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-mobile-feishu-home",
+      "id": "188:19925",
+      "nodes": 151,
+      "text": 27,
+      "images": 0,
+      "instances": 10,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-feishu-home",
+      "id": "188:20077",
+      "nodes": 154,
+      "text": 27,
+      "images": 0,
+      "instances": 10,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-feishu-connect",
+      "id": "188:20232",
+      "nodes": 175,
+      "text": 32,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-feishu-connect",
+      "id": "188:20408",
+      "nodes": 180,
+      "text": 32,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-feishu-pair",
+      "id": "188:20589",
+      "nodes": 161,
+      "text": 28,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-feishu-pair",
+      "id": "188:20751",
+      "nodes": 163,
+      "text": 28,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-feishu-enable",
+      "id": "188:20915",
+      "nodes": 249,
+      "text": 46,
+      "images": 0,
+      "instances": 16,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-feishu-enable",
+      "id": "188:21165",
+      "nodes": 253,
+      "text": 46,
+      "images": 0,
+      "instances": 16,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-obs-ready",
+      "id": "188:21419",
+      "nodes": 164,
+      "text": 30,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-obs-ready",
+      "id": "188:21584",
+      "nodes": 166,
+      "text": 30,
+      "images": 0,
+      "instances": 12,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-obs-review",
+      "id": "188:21751",
+      "nodes": 186,
+      "text": 35,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-obs-review",
+      "id": "188:21938",
+      "nodes": 192,
+      "text": 35,
+      "images": 0,
+      "instances": 11,
+      "logo": 0
+    },
+    {
+      "key": "en-mobile-edit-standard-adopted",
+      "id": "188:22131",
+      "nodes": 155,
+      "text": 26,
+      "images": 0,
+      "instances": 5,
+      "logo": 0
+    },
+    {
+      "key": "zh-mobile-edit-standard-adopted",
+      "id": "188:22287",
+      "nodes": 163,
+      "text": 26,
+      "images": 0,
+      "instances": 5,
+      "logo": 0
+    },
+    {
+      "key": "en-feishu-ready-expanded",
+      "id": "188:22451",
+      "nodes": 383,
+      "text": 58,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-ready-expanded",
+      "id": "188:22835",
+      "nodes": 386,
+      "text": 58,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "en-obs-ready-expanded",
+      "id": "188:23222",
+      "nodes": 406,
+      "text": 61,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "zh-obs-ready-expanded",
+      "id": "188:23629",
+      "nodes": 409,
+      "text": 61,
+      "images": 0,
+      "instances": 18,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-adopted-expanded",
+      "id": "188:24039",
+      "nodes": 351,
+      "text": 50,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-adopted-expanded",
+      "id": "188:24391",
+      "nodes": 354,
+      "text": 50,
+      "images": 0,
+      "instances": 10,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-guide",
+      "id": "188:24746",
+      "nodes": 398,
+      "text": 59,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-guide",
+      "id": "188:25145",
+      "nodes": 401,
+      "text": 59,
+      "images": 0,
+      "instances": 21,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-sent",
+      "id": "188:25547",
+      "nodes": 369,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-sent",
+      "id": "188:25917",
+      "nodes": 372,
+      "text": 52,
+      "images": 0,
+      "instances": 16,
+      "logo": 1
+    },
+    {
+      "key": "en-feishu-disabled",
+      "id": "188:26290",
+      "nodes": 326,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "zh-feishu-disabled",
+      "id": "188:26617",
+      "nodes": 329,
+      "text": 45,
+      "images": 0,
+      "instances": 15,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-knowledge-open",
+      "id": "188:26947",
+      "nodes": 477,
+      "text": 70,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-knowledge-open",
+      "id": "188:27425",
+      "nodes": 481,
+      "text": 70,
+      "images": 0,
+      "instances": 17,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-knowledge-evaluating",
+      "id": "188:27907",
+      "nodes": 415,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-knowledge-evaluating",
+      "id": "188:28323",
+      "nodes": 418,
+      "text": 57,
+      "images": 0,
+      "instances": 13,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-knowledge-adopted",
+      "id": "188:28742",
+      "nodes": 411,
+      "text": 56,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-knowledge-adopted",
+      "id": "188:29154",
+      "nodes": 414,
+      "text": 56,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-new-evaluating",
+      "id": "188:29569",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-new-evaluating",
+      "id": "188:29944",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-new-adopted",
+      "id": "188:30324",
+      "nodes": 370,
+      "text": 52,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-new-adopted",
+      "id": "188:30695",
+      "nodes": 375,
+      "text": 52,
+      "images": 0,
+      "instances": 11,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-ingested",
+      "id": "188:31071",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-ingested",
+      "id": "188:31446",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "en-edit-standard-new-ingested",
+      "id": "188:31826",
+      "nodes": 374,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    },
+    {
+      "key": "zh-edit-standard-new-ingested",
+      "id": "188:32201",
+      "nodes": 379,
+      "text": 53,
+      "images": 0,
+      "instances": 12,
+      "logo": 1
+    }
+  ],
+  "sections": [
+    {
+      "id": "123:4186",
+      "name": "01 · 主要页面 / Main pages",
+      "type": "SECTION",
+      "count": 16
+    },
+    {
+      "id": "123:4187",
+      "name": "02 · 决策对话 / Decisions",
+      "type": "SECTION",
+      "count": 32
+    },
+    {
+      "id": "123:4202",
+      "name": "03 · 工作进展 / Ongoing work",
+      "type": "SECTION",
+      "count": 22
+    },
+    {
+      "id": "123:4203",
+      "name": "04 · 判断成长 / Learning",
+      "type": "SECTION",
+      "count": 16
+    },
+    {
+      "id": "123:4204",
+      "name": "05 · 委托与开始 / Delegation",
+      "type": "SECTION",
+      "count": 18
+    },
+    {
+      "id": "123:4205",
+      "name": "06 · 设置 / Settings",
+      "type": "SECTION",
+      "count": 42
+    },
+    {
+      "id": "123:4206",
+      "name": "07 · 采集 / Collection",
+      "type": "SECTION",
+      "count": 26
+    },
+    {
+      "id": "123:4207",
+      "name": "08 · 统计 / Statistics",
+      "type": "SECTION",
+      "count": 8
+    },
+    {
+      "id": "123:4208",
+      "name": "09 · 移动端 / Mobile",
+      "type": "SECTION",
+      "count": 30
+    },
+    {
+      "id": "189:7433",
+      "name": "10 · 资料与交互 / Notes & interaction",
+      "type": "SECTION",
+      "count": 82
+    }
+  ],
+  "settings": [
+    {
+      "id": "26:2361",
+      "categories": 6,
+      "interactionInstances": 1
+    },
+    {
+      "id": "26:2477",
+      "categories": 6,
+      "interactionInstances": 1
+    }
+  ],
+  "updatedScreens": [
+    "en-feishu-home",
+    "zh-obs-review",
+    "en-edit-standard-adopted",
+    "en-settings",
+    "en-settings-issues",
+    "zh-settings-checking",
+    "zh-settings-issues",
+    "en-standards",
+    "zh-standards",
+    "en-settings-execution",
+    "en-settings-checking",
+    "en-settings-materials",
+    "en-system",
+    "zh-system",
+    "zh-settings-rechecked",
+    "zh-settings",
+    "en-settings-rechecked",
+    "en-knowledge",
+    "zh-knowledge",
+    "en-settings-preferences",
+    "en-setup",
+    "zh-setup",
+    "en-settings-operation",
+    "en-standards-expanded",
+    "zh-standards-expanded",
+    "en-knowledge-expanded",
+    "zh-settings-validate",
+    "en-settings-review-dialog",
+    "zh-settings-source-error",
+    "zh-settings-collection",
+    "en-settings-source-preview",
+    "zh-settings-signin-dialog",
+    "en-settings-backup-dialog",
+    "zh-settings-review-dialog",
+    "en-settings-trusted-dialog",
+    "en-settings-operation-expanded",
+    "zh-settings-operation-expanded",
+    "en-settings-preferences-expanded",
+    "zh-settings-trusted-dialog",
+    "en-settings-signin-dialog",
+    "en-system-expanded",
+    "zh-system-expanded",
+    "en-settings-addsource-populated",
+    "zh-settings-preferences-expanded",
+    "en-settings-validate",
+    "en-standard-history",
+    "zh-standard-history",
+    "zh-knowledge-expanded",
+    "en-rollback-dialog",
+    "zh-rollback-dialog",
+    "en-settings-materials-expanded",
+    "zh-settings-materials-expanded",
+    "zh-setup-preview",
+    "zh-settings-notification-dialog",
+    "en-collection-confirm-dialog",
+    "zh-collection-confirm-dialog",
+    "en-settings-addsource",
+    "zh-settings-addsource",
+    "zh-settings-source-preview",
+    "en-source-dialog",
+    "zh-source-dialog",
+    "zh-collection-disconnect-dialog",
+    "zh-settings-addsource-populated",
+    "en-collect-options-expanded",
+    "zh-collect-options-expanded",
+    "zh-settings-preferences",
+    "en-settings-collection",
+    "en-settings-execution-expanded",
+    "zh-settings-execution-expanded",
+    "zh-settings-backup-dialog",
+    "en-settings-bundle-dialog",
+    "zh-settings-materials",
+    "zh-settings-execution",
+    "zh-settings-operation",
+    "en-settings-source-paused",
+    "zh-settings-source-paused",
+    "en-collection-pause-dialog",
+    "zh-collection-pause-dialog",
+    "en-collection-disconnect-dialog",
+    "en-setup-scope",
+    "zh-setup-scope",
+    "en-setup-preview",
+    "zh-settings-bundle-dialog",
+    "en-settings-notification-dialog",
+    "en-settings-source-enabled",
+    "zh-settings-source-enabled",
+    "en-settings-source-error",
+    "en-collection-disconnect-github-dialog",
+    "zh-collection-disconnect-github-dialog",
+    "zh-settings-execution-signedin",
+    "en-settings-preferences-saved",
+    "zh-settings-preferences-saved",
+    "en-collection-pause-github-dialog",
+    "zh-collection-pause-github-dialog",
+    "en-settings-execution-signedin",
+    "en-obs-draft",
+    "zh-obs-draft",
+    "en-obs-review",
+    "en-obs-ready",
+    "zh-obs-ready",
+    "en-obs-install",
+    "zh-obs-install",
+    "en-obs-guide",
+    "zh-obs-guide",
+    "zh-feishu-home",
+    "en-feishu-connect",
+    "zh-feishu-connect",
+    "en-feishu-pair",
+    "zh-feishu-pair",
+    "en-feishu-owner",
+    "zh-feishu-owner",
+    "en-feishu-test",
+    "zh-feishu-test",
+    "en-feishu-preview",
+    "zh-feishu-preview",
+    "en-feishu-return",
+    "zh-feishu-return",
+    "en-feishu-enable",
+    "zh-feishu-enable",
+    "en-feishu-ready",
+    "zh-feishu-ready",
+    "en-feishu-disable",
+    "zh-feishu-disable",
+    "en-feishu-draining",
+    "zh-feishu-draining",
+    "en-feishu-error",
+    "zh-feishu-error",
+    "en-feishu-timeout",
+    "zh-feishu-timeout",
+    "en-feishu-recovery",
+    "zh-feishu-recovery",
+    "en-edit-knowledge",
+    "zh-edit-knowledge",
+    "en-edit-knowledge-ingested",
+    "zh-edit-knowledge-ingested",
+    "en-edit-standard-new",
+    "zh-edit-standard-new",
+    "en-edit-standard",
+    "zh-edit-standard",
+    "en-edit-standard-open",
+    "zh-edit-standard-open",
+    "en-edit-standard-evaluating",
+    "zh-edit-standard-evaluating",
+    "zh-edit-standard-adopted",
+    "en-edit-standard-pending",
+    "zh-edit-standard-pending",
+    "en-edit-standard-conflict",
+    "zh-edit-standard-conflict",
+    "en-mobile-feishu-home",
+    "zh-mobile-feishu-home",
+    "en-mobile-feishu-connect",
+    "zh-mobile-feishu-connect",
+    "en-mobile-feishu-pair",
+    "zh-mobile-feishu-pair",
+    "en-mobile-feishu-enable",
+    "zh-mobile-feishu-enable",
+    "en-mobile-obs-ready",
+    "zh-mobile-obs-ready",
+    "en-mobile-obs-review",
+    "zh-mobile-obs-review",
+    "en-mobile-edit-standard-adopted",
+    "zh-mobile-edit-standard-adopted",
+    "en-feishu-ready-expanded",
+    "zh-feishu-ready-expanded",
+    "en-obs-ready-expanded",
+    "zh-obs-ready-expanded",
+    "en-edit-standard-adopted-expanded",
+    "zh-edit-standard-adopted-expanded",
+    "en-feishu-guide",
+    "zh-feishu-guide",
+    "en-feishu-sent",
+    "zh-feishu-sent",
+    "en-feishu-disabled",
+    "zh-feishu-disabled",
+    "en-edit-knowledge-open",
+    "zh-edit-knowledge-open",
+    "en-edit-knowledge-evaluating",
+    "zh-edit-knowledge-evaluating",
+    "en-edit-knowledge-adopted",
+    "zh-edit-knowledge-adopted",
+    "en-edit-standard-new-evaluating",
+    "zh-edit-standard-new-evaluating",
+    "en-edit-standard-new-adopted",
+    "zh-edit-standard-new-adopted",
+    "en-edit-standard-ingested",
+    "zh-edit-standard-ingested",
+    "en-edit-standard-new-ingested",
+    "zh-edit-standard-new-ingested"
+  ],
+  "newScreens": [
+    "en-feishu-home",
+    "zh-obs-review",
+    "en-edit-standard-adopted",
+    "en-obs-draft",
+    "zh-obs-draft",
+    "en-obs-review",
+    "en-obs-ready",
+    "zh-obs-ready",
+    "en-obs-install",
+    "zh-obs-install",
+    "en-obs-guide",
+    "zh-obs-guide",
+    "zh-feishu-home",
+    "en-feishu-connect",
+    "zh-feishu-connect",
+    "en-feishu-pair",
+    "zh-feishu-pair",
+    "en-feishu-owner",
+    "zh-feishu-owner",
+    "en-feishu-test",
+    "zh-feishu-test",
+    "en-feishu-preview",
+    "zh-feishu-preview",
+    "en-feishu-return",
+    "zh-feishu-return",
+    "en-feishu-enable",
+    "zh-feishu-enable",
+    "en-feishu-ready",
+    "zh-feishu-ready",
+    "en-feishu-disable",
+    "zh-feishu-disable",
+    "en-feishu-draining",
+    "zh-feishu-draining",
+    "en-feishu-error",
+    "zh-feishu-error",
+    "en-feishu-timeout",
+    "zh-feishu-timeout",
+    "en-feishu-recovery",
+    "zh-feishu-recovery",
+    "en-edit-knowledge",
+    "zh-edit-knowledge",
+    "en-edit-knowledge-ingested",
+    "zh-edit-knowledge-ingested",
+    "en-edit-standard-new",
+    "zh-edit-standard-new",
+    "en-edit-standard",
+    "zh-edit-standard",
+    "en-edit-standard-open",
+    "zh-edit-standard-open",
+    "en-edit-standard-evaluating",
+    "zh-edit-standard-evaluating",
+    "zh-edit-standard-adopted",
+    "en-edit-standard-pending",
+    "zh-edit-standard-pending",
+    "en-edit-standard-conflict",
+    "zh-edit-standard-conflict",
+    "en-mobile-feishu-home",
+    "zh-mobile-feishu-home",
+    "en-mobile-feishu-connect",
+    "zh-mobile-feishu-connect",
+    "en-mobile-feishu-pair",
+    "zh-mobile-feishu-pair",
+    "en-mobile-feishu-enable",
+    "zh-mobile-feishu-enable",
+    "en-mobile-obs-ready",
+    "zh-mobile-obs-ready",
+    "en-mobile-obs-review",
+    "zh-mobile-obs-review",
+    "en-mobile-edit-standard-adopted",
+    "zh-mobile-edit-standard-adopted",
+    "en-feishu-ready-expanded",
+    "zh-feishu-ready-expanded",
+    "en-obs-ready-expanded",
+    "zh-obs-ready-expanded",
+    "en-edit-standard-adopted-expanded",
+    "zh-edit-standard-adopted-expanded",
+    "en-feishu-guide",
+    "zh-feishu-guide",
+    "en-feishu-sent",
+    "zh-feishu-sent",
+    "en-feishu-disabled",
+    "zh-feishu-disabled",
+    "en-edit-knowledge-open",
+    "zh-edit-knowledge-open",
+    "en-edit-knowledge-evaluating",
+    "zh-edit-knowledge-evaluating",
+    "en-edit-knowledge-adopted",
+    "zh-edit-knowledge-adopted",
+    "en-edit-standard-new-evaluating",
+    "zh-edit-standard-new-evaluating",
+    "en-edit-standard-new-adopted",
+    "zh-edit-standard-new-adopted",
+    "en-edit-standard-ingested",
+    "zh-edit-standard-ingested",
+    "en-edit-standard-new-ingested",
+    "zh-edit-standard-new-ingested"
+  ],
+  "ownership": {
+    "en-settings-issues": {
+      "id": "63:5167",
+      "children": [
+        "175:6628"
+      ]
+    },
+    "zh-settings-checking": {
+      "id": "63:4960",
+      "children": [
+        "175:7097"
+      ]
+    },
+    "en-error": {
+      "id": "27:1310",
+      "children": [
+        "111:3997"
+      ]
+    },
+    "zh-conversation": {
+      "id": "24:204",
+      "children": [
+        "110:5137"
+      ]
+    },
+    "en-submitted": {
+      "id": "26:677",
+      "children": [
+        "110:7712"
+      ]
+    },
+    "zh-settings-issues": {
+      "id": "63:5375",
+      "children": [
+        "175:7569"
+      ]
+    },
+    "en-delegation": {
+      "id": "26:1721",
+      "children": [
+        "110:11387"
+      ]
+    },
+    "zh-delegation": {
+      "id": "26:1829",
+      "children": [
+        "110:11693"
+      ]
+    },
+    "en-standards": {
+      "id": "26:1257",
+      "children": [
+        "175:8041"
+      ]
+    },
+    "zh-standards": {
+      "id": "26:1385",
+      "children": [
+        "175:8350"
+      ]
+    },
+    "zh-submitted": {
+      "id": "26:772",
+      "children": [
+        "110:8228"
+      ]
+    },
+    "en-result": {
+      "id": "26:2593",
+      "children": [
+        "110:14028"
+      ]
+    },
+    "zh-result": {
+      "id": "27:1028",
+      "children": [
+        "110:14359"
+      ]
+    },
+    "zh-submittedCustom": {
+      "id": "28:1857",
+      "children": [
+        "111:9062"
+      ]
+    },
+    "en-resumedB": {
+      "id": "28:1582",
+      "children": [
+        "111:7840"
+      ]
+    },
+    "zh-resumedB": {
+      "id": "28:1672",
+      "children": [
+        "111:8161"
+      ]
+    },
+    "en-submittedCustom": {
+      "id": "28:1762",
+      "children": [
+        "111:8487"
+      ]
+    },
+    "en-resumed": {
+      "id": "26:867",
+      "children": [
+        "110:8749"
+      ]
+    },
+    "zh-resumed": {
+      "id": "26:966",
+      "children": [
+        "110:9070"
+      ]
+    },
+    "en-expired": {
+      "id": "27:1126",
+      "children": [
+        "110:14695"
+      ]
+    },
+    "en-details": {
+      "id": "26:138",
+      "children": [
+        "110:5654"
+      ]
+    },
+    "en-settings-execution": {
+      "id": "59:2171",
+      "children": [
+        "175:8664"
+      ]
+    },
+    "zh-expired": {
+      "id": "27:1218",
+      "children": [
+        "110:15222"
+      ]
+    },
+    "zh-error": {
+      "id": "27:1448",
+      "children": [
+        "111:4524"
+      ]
+    },
+    "en-offline": {
+      "id": "27:1586",
+      "children": [
+        "111:5056"
+      ]
+    },
+    "en-mobileconversation": {
+      "id": "27:1778",
+      "children": [
+        "111:6107"
+      ]
+    },
+    "zh-mobileconversation": {
+      "id": "27:1875",
+      "children": [
+        "111:6443"
+      ]
+    },
+    "en-settings-checking": {
+      "id": "63:4753",
+      "children": [
+        "175:9084"
+      ]
+    },
+    "en-settings-materials": {
+      "id": "62:6635",
+      "children": [
+        "175:9553"
+      ]
+    },
+    "zh-submittedB": {
+      "id": "28:1492",
+      "children": [
+        "111:7319"
+      ]
+    },
+    "en-system": {
+      "id": "26:1937",
+      "children": [
+        "175:9888"
+      ]
+    },
+    "zh-system": {
+      "id": "26:2046",
+      "children": [
+        "175:10244"
+      ]
+    },
+    "en-freechat": {
+      "id": "26:1065",
+      "children": [
+        "110:9396"
+      ]
+    },
+    "zh-freechat": {
+      "id": "26:1161",
+      "children": [
+        "110:9725"
+      ]
+    },
+    "en-custom": {
+      "id": "26:421",
+      "children": [
+        "110:6683"
+      ]
+    },
+    "zh-custom": {
+      "id": "26:549",
+      "children": [
+        "110:7195"
+      ]
+    },
+    "zh-details": {
+      "id": "26:280",
+      "children": [
+        "110:6166"
+      ]
+    },
+    "zh-settings-rechecked": {
+      "id": "63:5790",
+      "children": [
+        "175:10603"
+      ]
+    },
+    "en-settings": {
+      "id": "26:2361",
+      "children": [
+        "175:6171"
+      ]
+    },
+    "zh-settings": {
+      "id": "26:2477",
+      "children": [
+        "175:11075"
+      ]
+    },
+    "en-settings-rechecked": {
+      "id": "63:5583",
+      "children": [
+        "175:11535"
+      ]
+    },
+    "en-knowledge": {
+      "id": "26:1513",
+      "children": [
+        "175:12004"
+      ]
+    },
+    "zh-knowledge": {
+      "id": "26:1617",
+      "children": [
+        "175:12360"
+      ]
+    },
+    "zh-offline": {
+      "id": "27:1682",
+      "children": [
+        "111:5579"
+      ]
+    },
+    "en-settings-preferences": {
+      "id": "63:2719",
+      "children": [
+        "175:12719"
+      ]
+    },
+    "en-submittedB": {
+      "id": "28:1400",
+      "children": [
+        "111:6803"
+      ]
+    },
+    "en-setup": {
+      "id": "26:2155",
+      "children": [
+        "175:13126"
+      ]
+    },
+    "zh-setup": {
+      "id": "26:2258",
+      "children": [
+        "175:13432"
+      ]
+    },
+    "en-settings-operation": {
+      "id": "63:3745",
+      "children": [
+        "175:13742"
+      ]
+    },
+    "en-conversation": {
+      "id": "24:67",
+      "children": [
+        "109:5137"
+      ]
+    },
+    "en-ongoing-running": {
+      "id": "114:14523",
+      "children": [
+        "114:14524"
+      ]
+    },
+    "zh-ongoing-running": {
+      "id": "114:14851",
+      "children": [
+        "114:14852"
+      ]
+    },
+    "en-ongoing-blocked": {
+      "id": "114:15182",
+      "children": [
+        "114:15183"
+      ]
+    },
+    "zh-task-citations": {
+      "id": "115:2660",
+      "children": [
+        "115:2661"
+      ]
+    },
+    "en-task-blocked": {
+      "id": "115:2918",
+      "children": [
+        "115:2919"
+      ]
+    },
+    "zh-task-blocked": {
+      "id": "115:3173",
+      "children": [
+        "115:3174"
+      ]
+    },
+    "zh-pause-dialog": {
+      "id": "115:6516",
+      "children": [
+        "115:6517",
+        "115:6826"
+      ]
+    },
+    "en-stop-dialog": {
+      "id": "115:6879",
+      "children": [
+        "115:6880",
+        "115:7186"
+      ]
+    },
+    "zh-stop-dialog": {
+      "id": "115:7238",
+      "children": [
+        "115:7239",
+        "115:7548"
+      ]
+    },
+    "en-standards-expanded": {
+      "id": "115:27311",
+      "children": [
+        "182:5194"
+      ]
+    },
+    "zh-standards-expanded": {
+      "id": "115:27615",
+      "children": [
+        "182:5527"
+      ]
+    },
+    "en-knowledge-expanded": {
+      "id": "115:27926",
+      "children": [
+        "182:5867"
+      ]
+    },
+    "zh-result-dialog": {
+      "id": "115:4632",
+      "children": [
+        "115:4633",
+        "115:4969"
+      ]
+    },
+    "en-expired-dialog": {
+      "id": "115:5009",
+      "children": [
+        "115:5010",
+        "115:5537"
+      ]
+    },
+    "zh-settings-validate": {
+      "id": "115:13679",
+      "children": [
+        "182:6247"
+      ]
+    },
+    "en-settings-review-dialog": {
+      "id": "115:14213",
+      "children": [
+        "182:6585",
+        "182:7005"
+      ]
+    },
+    "zh-settings-source-error": {
+      "id": "95:5795",
+      "children": [
+        "182:7044"
+      ]
+    },
+    "zh-settings-collection": {
+      "id": "95:5936",
+      "children": [
+        "182:7322"
+      ]
+    },
+    "en-candidate": {
+      "id": "114:11738",
+      "children": [
+        "114:11739"
+      ]
+    },
+    "en-settings-source-preview": {
+      "id": "94:3836",
+      "children": [
+        "182:7631"
+      ]
+    },
+    "zh-ongoing": {
+      "id": "94:4535",
+      "children": [
+        "114:5906"
+      ]
+    },
+    "en-ongoing-updated": {
+      "id": "94:4688",
+      "children": [
+        "114:6301"
+      ]
+    },
+    "zh-settings-signin-dialog": {
+      "id": "115:17267",
+      "children": [
+        "182:7886",
+        "182:8309"
+      ]
+    },
+    "en-settings-backup-dialog": {
+      "id": "115:17891",
+      "children": [
+        "182:8373",
+        "182:8711"
+      ]
+    },
+    "en-selected-a": {
+      "id": "115:24200",
+      "children": [
+        "115:24201"
+      ]
+    },
+    "zh-selected-a": {
+      "id": "115:24713",
+      "children": [
+        "115:24714"
+      ]
+    },
+    "zh-settings-review-dialog": {
+      "id": "115:14809",
+      "children": [
+        "182:8754",
+        "182:9177"
+      ]
+    },
+    "en-settings-trusted-dialog": {
+      "id": "115:15409",
+      "children": [
+        "182:9217",
+        "182:9637"
+      ]
+    },
+    "en-settings-operation-expanded": {
+      "id": "115:11134",
+      "children": [
+        "182:9697"
+      ]
+    },
+    "zh-settings-operation-expanded": {
+      "id": "115:11607",
+      "children": [
+        "182:10200"
+      ]
+    },
+    "en-settings-preferences-expanded": {
+      "id": "115:12087",
+      "children": [
+        "182:10710"
+      ]
+    },
+    "zh-settings-trusted-dialog": {
+      "id": "115:16026",
+      "children": [
+        "182:11276",
+        "182:11699"
+      ]
+    },
+    "en-settings-signin-dialog": {
+      "id": "115:16648",
+      "children": [
+        "182:11761",
+        "182:12181"
+      ]
+    },
+    "en-system-expanded": {
+      "id": "115:29260",
+      "children": [
+        "182:12243"
+      ]
+    },
+    "zh-system-expanded": {
+      "id": "115:29597",
+      "children": [
+        "182:12636"
+      ]
+    },
+    "en-settings-addsource-populated": {
+      "id": "115:29939",
+      "children": [
+        "182:13034"
+      ]
+    },
+    "zh-settings-preferences-expanded": {
+      "id": "115:12617",
+      "children": [
+        "182:13306"
+      ]
+    },
+    "en-settings-validate": {
+      "id": "115:13152",
+      "children": [
+        "182:13877"
+      ]
+    },
+    "zh-ongoing-updated": {
+      "id": "94:4842",
+      "children": [
+        "114:6693"
+      ]
+    },
+    "en-work-detail": {
+      "id": "94:4995",
+      "children": [
+        "114:7088"
+      ]
+    },
+    "zh-work-detail": {
+      "id": "95:4028",
+      "children": [
+        "114:7342"
+      ]
+    },
+    "zh-candidate": {
+      "id": "114:12033",
+      "children": [
+        "114:12034"
+      ]
+    },
+    "en-standard-history": {
+      "id": "114:12335",
+      "children": [
+        "182:14212"
+      ]
+    },
+    "zh-standard-history": {
+      "id": "114:12595",
+      "children": [
+        "182:14494"
+      ]
+    },
+    "zh-knowledge-expanded": {
+      "id": "115:28283",
+      "children": [
+        "182:14779"
+      ]
+    },
+    "en-delegation-expanded": {
+      "id": "115:28643",
+      "children": [
+        "115:28644"
+      ]
+    },
+    "zh-delegation-expanded": {
+      "id": "115:28950",
+      "children": [
+        "115:28951"
+      ]
+    },
+    "en-trusted-dialog": {
+      "id": "115:7601",
+      "children": [
+        "115:7602",
+        "115:7908"
+      ]
+    },
+    "zh-trusted-dialog": {
+      "id": "115:7960",
+      "children": [
+        "115:7961",
+        "115:8270"
+      ]
+    },
+    "en-rollback-dialog": {
+      "id": "115:8323",
+      "children": [
+        "182:15162",
+        "182:15471"
+      ]
+    },
+    "zh-expired-dialog": {
+      "id": "115:5580",
+      "children": [
+        "115:5581",
+        "115:6113"
+      ]
+    },
+    "en-pause-dialog": {
+      "id": "115:6157",
+      "children": [
+        "115:6158",
+        "115:6464"
+      ]
+    },
+    "zh-rollback-dialog": {
+      "id": "115:8676",
+      "children": [
+        "182:15520",
+        "182:15834"
+      ]
+    },
+    "en-settings-materials-expanded": {
+      "id": "115:9036",
+      "children": [
+        "182:15883"
+      ]
+    },
+    "zh-settings-materials-expanded": {
+      "id": "115:9523",
+      "children": [
+        "182:16281"
+      ]
+    },
+    "zh-setup-preview": {
+      "id": "114:13661",
+      "children": [
+        "182:16682"
+      ]
+    },
+    "en-ongoing-decision": {
+      "id": "114:13936",
+      "children": [
+        "114:13937"
+      ]
+    },
+    "zh-ongoing-decision": {
+      "id": "114:14228",
+      "children": [
+        "114:14229"
+      ]
+    },
+    "zh-settings-notification-dialog": {
+      "id": "115:20731",
+      "children": [
+        "183:5209",
+        "183:5619"
+      ]
+    },
+    "en-collection-confirm-dialog": {
+      "id": "115:21309",
+      "children": [
+        "183:5662",
+        "183:5917"
+      ]
+    },
+    "zh-collection-confirm-dialog": {
+      "id": "115:21599",
+      "children": [
+        "183:5964",
+        "183:6222"
+      ]
+    },
+    "en-settings-addsource": {
+      "id": "95:4857",
+      "children": [
+        "183:6269"
+      ]
+    },
+    "zh-settings-addsource": {
+      "id": "95:5002",
+      "children": [
+        "183:6541"
+      ]
+    },
+    "zh-settings-source-preview": {
+      "id": "95:5148",
+      "children": [
+        "183:6816"
+      ]
+    },
+    "en-source-dialog": {
+      "id": "115:3431",
+      "children": [
+        "185:5209",
+        "185:5565"
+      ]
+    },
+    "zh-source-dialog": {
+      "id": "115:3844",
+      "children": [
+        "185:5620",
+        "185:5979"
+      ]
+    },
+    "en-result-dialog": {
+      "id": "115:4260",
+      "children": [
+        "115:4261",
+        "115:4592"
+      ]
+    },
+    "zh-collection-disconnect-dialog": {
+      "id": "115:23038",
+      "children": [
+        "185:6034",
+        "185:6383"
+      ]
+    },
+    "en-mobile-menu": {
+      "id": "115:23422",
+      "children": [
+        "115:23423"
+      ]
+    },
+    "zh-mobile-menu": {
+      "id": "115:23803",
+      "children": [
+        "115:23804"
+      ]
+    },
+    "zh-settings-addsource-populated": {
+      "id": "115:30221",
+      "children": [
+        "185:6430"
+      ]
+    },
+    "en-collect-options-expanded": {
+      "id": "115:30506",
+      "children": [
+        "185:6705"
+      ]
+    },
+    "zh-collect-options-expanded": {
+      "id": "115:30788",
+      "children": [
+        "185:7005"
+      ]
+    },
+    "en-selected-b": {
+      "id": "115:25231",
+      "children": [
+        "115:25232"
+      ]
+    },
+    "zh-selected-b": {
+      "id": "115:25744",
+      "children": [
+        "115:25745"
+      ]
+    },
+    "zh-settings-preferences": {
+      "id": "63:2981",
+      "children": [
+        "185:7308"
+      ]
+    },
+    "en-ongoing": {
+      "id": "94:3523",
+      "children": [
+        "114:4979"
+      ]
+    },
+    "en-settings-collection": {
+      "id": "94:3678",
+      "children": [
+        "185:7718"
+      ]
+    },
+    "zh-ongoing-blocked": {
+      "id": "114:15474",
+      "children": [
+        "114:15475"
+      ]
+    },
+    "en-ongoing-search-empty": {
+      "id": "114:15769",
+      "children": [
+        "114:15770"
+      ]
+    },
+    "zh-ongoing-search-empty": {
+      "id": "114:16029",
+      "children": [
+        "114:16030"
+      ]
+    },
+    "en-settings-execution-expanded": {
+      "id": "115:10017",
+      "children": [
+        "185:8024"
+      ]
+    },
+    "zh-settings-execution-expanded": {
+      "id": "115:10574",
+      "children": [
+        "185:8611"
+      ]
+    },
+    "zh-settings-backup-dialog": {
+      "id": "115:18407",
+      "children": [
+        "187:5533",
+        "187:5874"
+      ]
+    },
+    "en-settings-bundle-dialog": {
+      "id": "115:18930",
+      "children": [
+        "187:5917",
+        "187:6337"
+      ]
+    },
+    "zh-settings-materials": {
+      "id": "62:6880",
+      "children": [
+        "187:6390"
+      ]
+    },
+    "zh-settings-execution": {
+      "id": "62:8117",
+      "children": [
+        "187:6728"
+      ]
+    },
+    "zh-settings-operation": {
+      "id": "63:3997",
+      "children": [
+        "187:7151"
+      ]
+    },
+    "en-task-decision": {
+      "id": "115:1892",
+      "children": [
+        "115:1893"
+      ]
+    },
+    "zh-task-decision": {
+      "id": "115:2147",
+      "children": [
+        "115:2148"
+      ]
+    },
+    "en-task-citations": {
+      "id": "115:2405",
+      "children": [
+        "115:2406"
+      ]
+    },
+    "en-decisions-empty": {
+      "id": "95:4148",
+      "children": [
+        "114:7599"
+      ]
+    },
+    "zh-decisions-empty": {
+      "id": "95:4245",
+      "children": [
+        "114:7920"
+      ]
+    },
+    "en-mobileongoing": {
+      "id": "95:4343",
+      "children": [
+        "114:8246"
+      ]
+    },
+    "zh-mobileongoing": {
+      "id": "95:4458",
+      "children": [
+        "114:8479"
+      ]
+    },
+    "en-settings-source-paused": {
+      "id": "95:4574",
+      "children": [
+        "187:7492"
+      ]
+    },
+    "zh-settings-source-paused": {
+      "id": "95:4715",
+      "children": [
+        "187:7838"
+      ]
+    },
+    "en-collection-pause-dialog": {
+      "id": "115:21892",
+      "children": [
+        "187:8187",
+        "187:8533"
+      ]
+    },
+    "zh-collection-pause-dialog": {
+      "id": "115:22273",
+      "children": [
+        "187:8580",
+        "187:8929"
+      ]
+    },
+    "en-collection-disconnect-dialog": {
+      "id": "115:22657",
+      "children": [
+        "187:8976",
+        "187:9322"
+      ]
+    },
+    "en-translated": {
+      "id": "115:26262",
+      "children": [
+        "115:26263"
+      ]
+    },
+    "zh-translated": {
+      "id": "115:26784",
+      "children": [
+        "115:26785"
+      ]
+    },
+    "en-setup-scope": {
+      "id": "114:12858",
+      "children": [
+        "187:9369"
+      ]
+    },
+    "zh-setup-scope": {
+      "id": "114:13123",
+      "children": [
+        "187:9671"
+      ]
+    },
+    "en-setup-preview": {
+      "id": "114:13392",
+      "children": [
+        "187:9977"
+      ]
+    },
+    "zh-settings-bundle-dialog": {
+      "id": "115:19540",
+      "children": [
+        "187:10283",
+        "187:10706"
+      ]
+    },
+    "en-settings-notification-dialog": {
+      "id": "115:20159",
+      "children": [
+        "187:10765",
+        "187:11172"
+      ]
+    },
+    "en-settings-source-enabled": {
+      "id": "95:5294",
+      "children": [
+        "187:11214"
+      ]
+    },
+    "zh-settings-source-enabled": {
+      "id": "95:5474",
+      "children": [
+        "187:11560"
+      ]
+    },
+    "en-settings-source-error": {
+      "id": "95:5653",
+      "children": [
+        "187:11909"
+      ]
+    },
+    "en-candidate-shadow": {
+      "id": "117:3421",
+      "children": [
+        "117:3422"
+      ]
+    },
+    "zh-candidate-shadow": {
+      "id": "117:3722",
+      "children": [
+        "117:3723"
+      ]
+    },
+    "en-candidate-rejected": {
+      "id": "117:4030",
+      "children": [
+        "117:4031"
+      ]
+    },
+    "en-collection-disconnect-github-dialog": {
+      "id": "117:8988",
+      "children": [
+        "187:12184",
+        "187:12490"
+      ]
+    },
+    "zh-collection-disconnect-github-dialog": {
+      "id": "117:9329",
+      "children": [
+        "187:12537",
+        "187:12846"
+      ]
+    },
+    "zh-settings-execution-signedin": {
+      "id": "117:6511",
+      "children": [
+        "187:12893"
+      ]
+    },
+    "en-settings-preferences-saved": {
+      "id": "117:7124",
+      "children": [
+        "187:13370"
+      ]
+    },
+    "zh-settings-preferences-saved": {
+      "id": "117:7711",
+      "children": [
+        "187:13834"
+      ]
+    },
+    "en-collection-pause-github-dialog": {
+      "id": "117:8303",
+      "children": [
+        "187:14301",
+        "187:14607"
+      ]
+    },
+    "zh-collection-pause-github-dialog": {
+      "id": "117:8644",
+      "children": [
+        "187:14654",
+        "187:14963"
+      ]
+    },
+    "zh-candidate-rejected": {
+      "id": "117:4329",
+      "children": [
+        "117:4330"
+      ]
+    },
+    "en-delegation-paused": {
+      "id": "117:4635",
+      "children": [
+        "117:4636"
+      ]
+    },
+    "zh-delegation-paused": {
+      "id": "117:4952",
+      "children": [
+        "117:4953"
+      ]
+    },
+    "en-delegation-stopped": {
+      "id": "117:5272",
+      "children": [
+        "117:5273"
+      ]
+    },
+    "zh-delegation-stopped": {
+      "id": "117:5585",
+      "children": [
+        "117:5586"
+      ]
+    },
+    "en-settings-execution-signedin": {
+      "id": "117:5901",
+      "children": [
+        "187:15010"
+      ]
+    },
+    "en-stats": {
+      "id": "119:6664",
+      "children": [
+        "119:6665"
+      ]
+    },
+    "zh-stats": {
+      "id": "119:7070",
+      "children": [
+        "119:7071"
+      ]
+    },
+    "en-stats-month": {
+      "id": "119:7484",
+      "children": [
+        "119:7485"
+      ]
+    },
+    "zh-stats-month": {
+      "id": "119:7890",
+      "children": [
+        "119:7891"
+      ]
+    },
+    "en-stats-all": {
+      "id": "119:8304",
+      "children": [
+        "119:8305"
+      ]
+    },
+    "zh-stats-all": {
+      "id": "119:8710",
+      "children": [
+        "119:8711"
+      ]
+    },
+    "en-stats-counting": {
+      "id": "119:9124",
+      "children": [
+        "119:9125"
+      ]
+    },
+    "zh-stats-counting": {
+      "id": "119:9530",
+      "children": [
+        "119:9531"
+      ]
+    },
+    "en-stats-after-decision": {
+      "id": "119:9944",
+      "children": [
+        "119:9945"
+      ]
+    },
+    "zh-stats-after-decision": {
+      "id": "119:10350",
+      "children": [
+        "119:10351"
+      ]
+    },
+    "en-mobilestats": {
+      "id": "119:10764",
+      "children": [
+        "119:10765"
+      ]
+    },
+    "zh-mobilestats": {
+      "id": "119:11003",
+      "children": [
+        "119:11004"
+      ]
+    },
+    "zh-mobilestats-all": {
+      "id": "122:4683",
+      "children": [
+        "122:4684"
+      ]
+    },
+    "en-mobilestats-counting": {
+      "id": "122:4932",
+      "children": [
+        "122:4933"
+      ]
+    },
+    "zh-mobilestats-counting": {
+      "id": "122:5171",
+      "children": [
+        "122:5172"
+      ]
+    },
+    "en-mobilestats-month": {
+      "id": "122:3956",
+      "children": [
+        "122:3957"
+      ]
+    },
+    "zh-mobilestats-month": {
+      "id": "122:4195",
+      "children": [
+        "122:4196"
+      ]
+    },
+    "en-mobilestats-all": {
+      "id": "122:4444",
+      "children": [
+        "122:4445"
+      ]
+    },
+    "en-mobilestats-menu": {
+      "id": "122:5420",
+      "children": [
+        "122:5421"
+      ]
+    },
+    "zh-mobilestats-menu": {
+      "id": "122:5816",
+      "children": [
+        "122:5817"
+      ]
+    },
+    "en-feishu-home": {
+      "id": "172:5101",
+      "children": [
+        "175:5175"
+      ]
+    },
+    "zh-obs-review": {
+      "id": "172:5457",
+      "children": [
+        "175:5501"
+      ]
+    },
+    "en-edit-standard-adopted": {
+      "id": "172:5844",
+      "children": [
+        "187:5209"
+      ]
+    },
+    "en-obs-draft": {
+      "id": "187:15484",
+      "children": [
+        "187:15485"
+      ]
+    },
+    "zh-obs-draft": {
+      "id": "187:15824",
+      "children": [
+        "187:15825"
+      ]
+    },
+    "en-obs-review": {
+      "id": "187:16167",
+      "children": [
+        "187:16168"
+      ]
+    },
+    "en-obs-ready": {
+      "id": "187:16531",
+      "children": [
+        "187:16532"
+      ]
+    },
+    "zh-obs-ready": {
+      "id": "187:16875",
+      "children": [
+        "187:16876"
+      ]
+    },
+    "en-obs-install": {
+      "id": "187:17222",
+      "children": [
+        "187:17223"
+      ]
+    },
+    "zh-obs-install": {
+      "id": "187:17558",
+      "children": [
+        "187:17559"
+      ]
+    },
+    "en-obs-guide": {
+      "id": "187:17897",
+      "children": [
+        "187:17898",
+        "187:18233"
+      ]
+    },
+    "zh-obs-guide": {
+      "id": "187:18275",
+      "children": [
+        "187:18276",
+        "187:18614"
+      ]
+    },
+    "zh-feishu-home": {
+      "id": "187:18656",
+      "children": [
+        "187:18657"
+      ]
+    },
+    "en-feishu-connect": {
+      "id": "187:18986",
+      "children": [
+        "187:18987"
+      ]
+    },
+    "zh-feishu-connect": {
+      "id": "187:19343",
+      "children": [
+        "187:19344"
+      ]
+    },
+    "en-feishu-pair": {
+      "id": "187:19703",
+      "children": [
+        "187:19704"
+      ]
+    },
+    "zh-feishu-pair": {
+      "id": "187:20039",
+      "children": [
+        "187:20040"
+      ]
+    },
+    "en-feishu-owner": {
+      "id": "187:20378",
+      "children": [
+        "187:20379"
+      ]
+    },
+    "zh-feishu-owner": {
+      "id": "188:5623",
+      "children": [
+        "188:5624"
+      ]
+    },
+    "en-feishu-test": {
+      "id": "188:5972",
+      "children": [
+        "188:5973"
+      ]
+    },
+    "zh-feishu-test": {
+      "id": "188:6342",
+      "children": [
+        "188:6343"
+      ]
+    },
+    "en-feishu-preview": {
+      "id": "188:6715",
+      "children": [
+        "188:6716",
+        "188:7085"
+      ]
+    },
+    "zh-feishu-preview": {
+      "id": "188:7158",
+      "children": [
+        "188:7159",
+        "188:7531"
+      ]
+    },
+    "en-feishu-return": {
+      "id": "188:7606",
+      "children": [
+        "188:7607"
+      ]
+    },
+    "zh-feishu-return": {
+      "id": "188:7976",
+      "children": [
+        "188:7977"
+      ]
+    },
+    "en-feishu-enable": {
+      "id": "188:8349",
+      "children": [
+        "188:8350",
+        "188:8719"
+      ]
+    },
+    "zh-feishu-enable": {
+      "id": "188:8777",
+      "children": [
+        "188:8778",
+        "188:9150"
+      ]
+    },
+    "en-feishu-ready": {
+      "id": "188:9208",
+      "children": [
+        "188:9209"
+      ]
+    },
+    "zh-feishu-ready": {
+      "id": "188:9547",
+      "children": [
+        "188:9548"
+      ]
+    },
+    "en-feishu-disable": {
+      "id": "188:9889",
+      "children": [
+        "188:9890",
+        "188:10228"
+      ]
+    },
+    "zh-feishu-disable": {
+      "id": "188:10267",
+      "children": [
+        "188:10268",
+        "188:10609"
+      ]
+    },
+    "en-feishu-draining": {
+      "id": "188:10648",
+      "children": [
+        "188:10649"
+      ]
+    },
+    "zh-feishu-draining": {
+      "id": "188:10975",
+      "children": [
+        "188:10976"
+      ]
+    },
+    "en-feishu-error": {
+      "id": "188:11305",
+      "children": [
+        "188:11306"
+      ]
+    },
+    "zh-feishu-error": {
+      "id": "188:11635",
+      "children": [
+        "188:11636"
+      ]
+    },
+    "en-feishu-timeout": {
+      "id": "188:11968",
+      "children": [
+        "188:11969"
+      ]
+    },
+    "zh-feishu-timeout": {
+      "id": "188:12341",
+      "children": [
+        "188:12342"
+      ]
+    },
+    "en-feishu-recovery": {
+      "id": "188:12717",
+      "children": [
+        "188:12718"
+      ]
+    },
+    "zh-feishu-recovery": {
+      "id": "188:13044",
+      "children": [
+        "188:13045"
+      ]
+    },
+    "en-edit-knowledge": {
+      "id": "188:13374",
+      "children": [
+        "188:13375"
+      ]
+    },
+    "zh-edit-knowledge": {
+      "id": "188:13790",
+      "children": [
+        "188:13791"
+      ]
+    },
+    "en-edit-knowledge-ingested": {
+      "id": "188:14209",
+      "children": [
+        "188:14210"
+      ]
+    },
+    "zh-edit-knowledge-ingested": {
+      "id": "188:14625",
+      "children": [
+        "188:14626"
+      ]
+    },
+    "en-edit-standard-new": {
+      "id": "188:15044",
+      "children": [
+        "188:15045"
+      ]
+    },
+    "zh-edit-standard-new": {
+      "id": "188:15419",
+      "children": [
+        "188:15420"
+      ]
+    },
+    "en-edit-standard": {
+      "id": "188:15799",
+      "children": [
+        "188:15800"
+      ]
+    },
+    "zh-edit-standard": {
+      "id": "188:16174",
+      "children": [
+        "188:16175"
+      ]
+    },
+    "en-edit-standard-open": {
+      "id": "188:16554",
+      "children": [
+        "188:16555",
+        "188:16929"
+      ]
+    },
+    "zh-edit-standard-open": {
+      "id": "188:16991",
+      "children": [
+        "188:16992",
+        "188:17371"
+      ]
+    },
+    "en-edit-standard-evaluating": {
+      "id": "188:17434",
+      "children": [
+        "188:17435"
+      ]
+    },
+    "zh-edit-standard-evaluating": {
+      "id": "188:17809",
+      "children": [
+        "188:17810"
+      ]
+    },
+    "zh-edit-standard-adopted": {
+      "id": "188:18189",
+      "children": [
+        "188:18190"
+      ]
+    },
+    "en-edit-standard-pending": {
+      "id": "188:18517",
+      "children": [
+        "188:18518"
+      ]
+    },
+    "zh-edit-standard-pending": {
+      "id": "188:18846",
+      "children": [
+        "188:18847"
+      ]
+    },
+    "en-edit-standard-conflict": {
+      "id": "188:19178",
+      "children": [
+        "188:19179"
+      ]
+    },
+    "zh-edit-standard-conflict": {
+      "id": "188:19549",
+      "children": [
+        "188:19550"
+      ]
+    },
+    "en-mobile-feishu-home": {
+      "id": "188:19925",
+      "children": [
+        "188:19926"
+      ]
+    },
+    "zh-mobile-feishu-home": {
+      "id": "188:20077",
+      "children": [
+        "188:20078"
+      ]
+    },
+    "en-mobile-feishu-connect": {
+      "id": "188:20232",
+      "children": [
+        "188:20233"
+      ]
+    },
+    "zh-mobile-feishu-connect": {
+      "id": "188:20408",
+      "children": [
+        "188:20409"
+      ]
+    },
+    "en-mobile-feishu-pair": {
+      "id": "188:20589",
+      "children": [
+        "188:20590"
+      ]
+    },
+    "zh-mobile-feishu-pair": {
+      "id": "188:20751",
+      "children": [
+        "188:20752"
+      ]
+    },
+    "en-mobile-feishu-enable": {
+      "id": "188:20915",
+      "children": [
+        "188:20916",
+        "188:21109"
+      ]
+    },
+    "zh-mobile-feishu-enable": {
+      "id": "188:21165",
+      "children": [
+        "188:21166",
+        "188:21362"
+      ]
+    },
+    "en-mobile-obs-ready": {
+      "id": "188:21419",
+      "children": [
+        "188:21420"
+      ]
+    },
+    "zh-mobile-obs-ready": {
+      "id": "188:21584",
+      "children": [
+        "188:21585"
+      ]
+    },
+    "en-mobile-obs-review": {
+      "id": "188:21751",
+      "children": [
+        "188:21752"
+      ]
+    },
+    "zh-mobile-obs-review": {
+      "id": "188:21938",
+      "children": [
+        "188:21939"
+      ]
+    },
+    "en-mobile-edit-standard-adopted": {
+      "id": "188:22131",
+      "children": [
+        "188:22132"
+      ]
+    },
+    "zh-mobile-edit-standard-adopted": {
+      "id": "188:22287",
+      "children": [
+        "188:22288"
+      ]
+    },
+    "en-feishu-ready-expanded": {
+      "id": "188:22451",
+      "children": [
+        "188:22452"
+      ]
+    },
+    "zh-feishu-ready-expanded": {
+      "id": "188:22835",
+      "children": [
+        "188:22836"
+      ]
+    },
+    "en-obs-ready-expanded": {
+      "id": "188:23222",
+      "children": [
+        "188:23223"
+      ]
+    },
+    "zh-obs-ready-expanded": {
+      "id": "188:23629",
+      "children": [
+        "188:23630"
+      ]
+    },
+    "en-edit-standard-adopted-expanded": {
+      "id": "188:24039",
+      "children": [
+        "188:24040"
+      ]
+    },
+    "zh-edit-standard-adopted-expanded": {
+      "id": "188:24391",
+      "children": [
+        "188:24392"
+      ]
+    },
+    "en-feishu-guide": {
+      "id": "188:24746",
+      "children": [
+        "188:24747",
+        "188:25103"
+      ]
+    },
+    "zh-feishu-guide": {
+      "id": "188:25145",
+      "children": [
+        "188:25146",
+        "188:25505"
+      ]
+    },
+    "en-feishu-sent": {
+      "id": "188:25547",
+      "children": [
+        "188:25548"
+      ]
+    },
+    "zh-feishu-sent": {
+      "id": "188:25917",
+      "children": [
+        "188:25918"
+      ]
+    },
+    "en-feishu-disabled": {
+      "id": "188:26290",
+      "children": [
+        "188:26291"
+      ]
+    },
+    "zh-feishu-disabled": {
+      "id": "188:26617",
+      "children": [
+        "188:26618"
+      ]
+    },
+    "en-edit-knowledge-open": {
+      "id": "188:26947",
+      "children": [
+        "188:26948",
+        "188:27363"
+      ]
+    },
+    "zh-edit-knowledge-open": {
+      "id": "188:27425",
+      "children": [
+        "188:27426",
+        "188:27844"
+      ]
+    },
+    "en-edit-knowledge-evaluating": {
+      "id": "188:27907",
+      "children": [
+        "188:27908"
+      ]
+    },
+    "zh-edit-knowledge-evaluating": {
+      "id": "188:28323",
+      "children": [
+        "188:28324"
+      ]
+    },
+    "en-edit-knowledge-adopted": {
+      "id": "188:28742",
+      "children": [
+        "188:28743"
+      ]
+    },
+    "zh-edit-knowledge-adopted": {
+      "id": "188:29154",
+      "children": [
+        "188:29155"
+      ]
+    },
+    "en-edit-standard-new-evaluating": {
+      "id": "188:29569",
+      "children": [
+        "188:29570"
+      ]
+    },
+    "zh-edit-standard-new-evaluating": {
+      "id": "188:29944",
+      "children": [
+        "188:29945"
+      ]
+    },
+    "en-edit-standard-new-adopted": {
+      "id": "188:30324",
+      "children": [
+        "188:30325"
+      ]
+    },
+    "zh-edit-standard-new-adopted": {
+      "id": "188:30695",
+      "children": [
+        "188:30696"
+      ]
+    },
+    "en-edit-standard-ingested": {
+      "id": "188:31071",
+      "children": [
+        "188:31072"
+      ]
+    },
+    "zh-edit-standard-ingested": {
+      "id": "188:31446",
+      "children": [
+        "188:31447"
+      ]
+    },
+    "en-edit-standard-new-ingested": {
+      "id": "188:31826",
+      "children": [
+        "188:31827"
+      ]
+    },
+    "zh-edit-standard-new-ingested": {
+      "id": "188:32201",
+      "children": [
+        "188:32202"
+      ]
+    }
+  },
+  "editableLayerCheck": {
+    "screens": 292,
+    "imageFillNodes": 0,
+    "allHaveText": true
+  },
+  "prototypeLinks": {
+    "written": 3838,
+    "readBack": 64,
+    "mismatches": [],
+    "sample": [
+      {
+        "id": "175:5480",
+        "from": "en-feishu-home",
+        "to": "en-feishu-connect",
+        "action": "v26:fs-connect",
+        "matched": true
+      },
+      {
+        "id": "175:5750",
+        "from": "zh-obs-review",
+        "to": "zh-feishu-home",
+        "action": "settings:group:interaction",
+        "matched": true
+      },
+      {
+        "id": "175:5845",
+        "from": "zh-obs-review",
+        "to": "zh-obs-ready",
+        "action": "v26:obs-apply",
+        "matched": true
+      },
+      {
+        "id": "175:5849",
+        "from": "zh-obs-review",
+        "to": "zh-obs-draft",
+        "action": "v26:obs-back",
+        "matched": true
+      },
+      {
+        "id": "187:5433",
+        "from": "en-edit-standard-adopted",
+        "to": "en-edit-standard",
+        "action": "v26:edit-standard",
+        "matched": true
+      },
+      {
+        "id": "187:5437",
+        "from": "en-edit-standard-adopted",
+        "to": "en-edit-standard-new",
+        "action": "v26:edit-standard-new",
+        "matched": true
+      },
+      {
+        "id": "187:5519",
+        "from": "en-edit-standard-adopted",
+        "to": "en-edit-standard-open",
+        "action": "v26:edit-open",
+        "matched": true
+      },
+      {
+        "id": "175:6549",
+        "from": "en-settings",
+        "to": "en-feishu-home",
+        "action": "settings:group:interaction",
+        "matched": true
+      },
+      {
+        "id": "175:8577",
+        "from": "zh-standards",
+        "to": "zh-edit-standard",
+        "action": "v26:edit-standard",
+        "matched": true
+      },
+      {
+        "id": "175:8581",
+        "from": "zh-standards",
+        "to": "zh-edit-standard-new",
+        "action": "v26:edit-standard-new",
+        "matched": true
+      },
+      {
+        "id": "175:9858",
+        "from": "en-settings-materials",
+        "to": "en-obs-draft",
+        "action": "v26:obs-check",
+        "matched": true
+      },
+      {
+        "id": "182:6555",
+        "from": "zh-settings-validate",
+        "to": "zh-obs-draft",
+        "action": "v26:obs-check",
+        "matched": true
+      },
+      {
+        "id": "185:5611",
+        "from": "en-source-dialog",
+        "to": "en-edit-knowledge",
+        "action": "v26:edit-supplement",
+        "matched": true
+      },
+      {
+        "id": "185:6025",
+        "from": "zh-source-dialog",
+        "to": "zh-edit-knowledge",
+        "action": "v26:edit-supplement",
+        "matched": true
+      },
+      {
+        "id": "187:15802",
+        "from": "en-obs-draft",
+        "to": "en-obs-review",
+        "action": "v26:obs-review",
+        "matched": true
+      },
+      {
+        "id": "187:15806",
+        "from": "en-obs-draft",
+        "to": "en-settings-materials",
+        "action": "v26:wizard-close",
+        "matched": true
+      },
+      {
+        "id": "187:16145",
+        "from": "zh-obs-draft",
+        "to": "zh-obs-review",
+        "action": "v26:obs-review",
+        "matched": true
+      },
+      {
+        "id": "187:16149",
+        "from": "zh-obs-draft",
+        "to": "zh-settings-materials",
+        "action": "v26:wizard-close",
+        "matched": true
+      },
+      {
+        "id": "187:16509",
+        "from": "en-obs-review",
+        "to": "en-obs-ready",
+        "action": "v26:obs-apply",
+        "matched": true
+      },
+      {
+        "id": "187:16513",
+        "from": "en-obs-review",
+        "to": "en-obs-draft",
+        "action": "v26:obs-back",
+        "matched": true
+      },
+      {
+        "id": "187:16845",
+        "from": "en-obs-ready",
+        "to": "en-obs-draft",
+        "action": "v26:obs-connect",
+        "matched": true
+      },
+      {
+        "id": "187:17192",
+        "from": "zh-obs-ready",
+        "to": "zh-obs-draft",
+        "action": "v26:obs-connect",
+        "matched": true
+      },
+      {
+        "id": "187:17528",
+        "from": "en-obs-install",
+        "to": "en-obs-guide",
+        "action": "v26:obs-guide",
+        "matched": true
+      },
+      {
+        "id": "187:17867",
+        "from": "zh-obs-install",
+        "to": "zh-obs-guide",
+        "action": "v26:obs-guide",
+        "matched": true
+      },
+      {
+        "id": "187:18270",
+        "from": "en-obs-guide",
+        "to": "en-obs-install",
+        "action": "v26:dialog-close",
+        "matched": true
+      },
+      {
+        "id": "187:18651",
+        "from": "zh-obs-guide",
+        "to": "zh-obs-install",
+        "action": "v26:dialog-close",
+        "matched": true
+      },
+      {
+        "id": "187:18965",
+        "from": "zh-feishu-home",
+        "to": "zh-feishu-connect",
+        "action": "v26:fs-connect",
+        "matched": true
+      },
+      {
+        "id": "187:19329",
+        "from": "en-feishu-connect",
+        "to": "en-feishu-pair",
+        "action": "v26:fs-check",
+        "matched": true
+      },
+      {
+        "id": "187:19333",
+        "from": "en-feishu-connect",
+        "to": "en-feishu-guide",
+        "action": "v26:fs-guide",
+        "matched": true
+      },
+      {
+        "id": "187:19689",
+        "from": "zh-feishu-connect",
+        "to": "zh-feishu-pair",
+        "action": "v26:fs-check",
+        "matched": true
+      },
+      {
+        "id": "187:19693",
+        "from": "zh-feishu-connect",
+        "to": "zh-feishu-guide",
+        "action": "v26:fs-guide",
+        "matched": true
+      },
+      {
+        "id": "187:20029",
+        "from": "en-feishu-pair",
+        "to": "en-feishu-owner",
+        "action": "v26:fs-poll-pair",
+        "matched": true
+      },
+      {
+        "id": "187:20368",
+        "from": "zh-feishu-pair",
+        "to": "zh-feishu-owner",
+        "action": "v26:fs-poll-pair",
+        "matched": true
+      },
+      {
+        "id": "187:20714",
+        "from": "en-feishu-owner",
+        "to": "en-feishu-test",
+        "action": "v26:fs-confirm-owner",
+        "matched": true
+      },
+      {
+        "id": "187:20718",
+        "from": "en-feishu-owner",
+        "to": "en-feishu-pair",
+        "action": "v26:fs-reject-owner",
+        "matched": true
+      },
+      {
+        "id": "188:5962",
+        "from": "zh-feishu-owner",
+        "to": "zh-feishu-test",
+        "action": "v26:fs-confirm-owner",
+        "matched": true
+      },
+      {
+        "id": "188:5966",
+        "from": "zh-feishu-owner",
+        "to": "zh-feishu-pair",
+        "action": "v26:fs-reject-owner",
+        "matched": true
+      },
+      {
+        "id": "188:6332",
+        "from": "en-feishu-test",
+        "to": "en-feishu-preview",
+        "action": "v26:fs-test-preview",
+        "matched": true
+      },
+      {
+        "id": "188:6705",
+        "from": "zh-feishu-test",
+        "to": "zh-feishu-preview",
+        "action": "v26:fs-test-preview",
+        "matched": true
+      },
+      {
+        "id": "188:7153",
+        "from": "en-feishu-preview",
+        "to": "en-feishu-sent",
+        "action": "v26:fs-send-test",
+        "matched": true
+      },
+      {
+        "id": "188:7601",
+        "from": "zh-feishu-preview",
+        "to": "zh-feishu-sent",
+        "action": "v26:fs-send-test",
+        "matched": true
+      },
+      {
+        "id": "188:7966",
+        "from": "en-feishu-return",
+        "to": "en-feishu-enable",
+        "action": "v26:fs-enable-preview",
+        "matched": true
+      },
+      {
+        "id": "188:8339",
+        "from": "zh-feishu-return",
+        "to": "zh-feishu-enable",
+        "action": "v26:fs-enable-preview",
+        "matched": true
+      },
+      {
+        "id": "188:8772",
+        "from": "en-feishu-enable",
+        "to": "en-feishu-ready",
+        "action": "v26:fs-enable",
+        "matched": true
+      },
+      {
+        "id": "188:9203",
+        "from": "zh-feishu-enable",
+        "to": "zh-feishu-ready",
+        "action": "v26:fs-enable",
+        "matched": true
+      },
+      {
+        "id": "188:9522",
+        "from": "en-feishu-ready",
+        "to": "en-feishu-pair",
+        "action": "v26:fs-rebind",
+        "matched": true
+      },
+      {
+        "id": "188:9526",
+        "from": "en-feishu-ready",
+        "to": "en-feishu-disable",
+        "action": "v26:fs-disable",
+        "matched": true
+      },
+      {
+        "id": "188:9864",
+        "from": "zh-feishu-ready",
+        "to": "zh-feishu-pair",
+        "action": "v26:fs-rebind",
+        "matched": true
+      },
+      {
+        "id": "188:9868",
+        "from": "zh-feishu-ready",
+        "to": "zh-feishu-disable",
+        "action": "v26:fs-disable",
+        "matched": true
+      },
+      {
+        "id": "188:10262",
+        "from": "en-feishu-disable",
+        "to": "en-feishu-draining",
+        "action": "v26:fs-confirm-disable",
+        "matched": true
+      },
+      {
+        "id": "188:10643",
+        "from": "zh-feishu-disable",
+        "to": "zh-feishu-draining",
+        "action": "v26:fs-confirm-disable",
+        "matched": true
+      },
+      {
+        "id": "188:10954",
+        "from": "en-feishu-draining",
+        "to": "en-feishu-disabled",
+        "action": "v26:fs-reconcile",
+        "matched": true
+      },
+      {
+        "id": "188:11284",
+        "from": "zh-feishu-draining",
+        "to": "zh-feishu-disabled",
+        "action": "v26:fs-reconcile",
+        "matched": true
+      },
+      {
+        "id": "188:13647",
+        "from": "en-edit-knowledge",
+        "to": "en-edit-knowledge-ingested",
+        "action": "v26:edit-file",
+        "matched": true
+      },
+      {
+        "id": "188:14062",
+        "from": "zh-edit-knowledge",
+        "to": "zh-edit-knowledge-open",
+        "action": "v26:edit-open",
+        "matched": true
+      },
+      {
+        "id": "188:14066",
+        "from": "zh-edit-knowledge",
+        "to": "zh-edit-knowledge-ingested",
+        "action": "v26:edit-file",
+        "matched": true
+      },
+      {
+        "id": "188:14482",
+        "from": "en-edit-knowledge-ingested",
+        "to": "en-edit-knowledge-evaluating",
+        "action": "v26:edit-evaluate",
+        "matched": true
+      },
+      {
+        "id": "188:14901",
+        "from": "zh-edit-knowledge-ingested",
+        "to": "zh-edit-knowledge-evaluating",
+        "action": "v26:edit-evaluate",
+        "matched": true
+      },
+      {
+        "id": "188:17795",
+        "from": "en-edit-standard-evaluating",
+        "to": "en-edit-standard-adopted",
+        "action": "v26:edit-result",
+        "matched": true
+      },
+      {
+        "id": "188:18175",
+        "from": "zh-edit-standard-evaluating",
+        "to": "zh-edit-standard-adopted",
+        "action": "v26:edit-result",
+        "matched": true
+      },
+      {
+        "id": "188:18832",
+        "from": "en-edit-standard-pending",
+        "to": "en-edit-standard-adopted",
+        "action": "v26:edit-export",
+        "matched": true
+      },
+      {
+        "id": "188:19164",
+        "from": "zh-edit-standard-pending",
+        "to": "zh-edit-standard-adopted",
+        "action": "v26:edit-export",
+        "matched": true
+      },
+      {
+        "id": "188:25907",
+        "from": "en-feishu-sent",
+        "to": "en-feishu-return",
+        "action": "v26:fs-poll-test",
+        "matched": true
+      },
+      {
+        "id": "188:26280",
+        "from": "zh-feishu-sent",
+        "to": "zh-feishu-return",
+        "action": "v26:fs-poll-test",
+        "matched": true
+      }
+    ]
+  },
+  "chineseSlogan": {
+    "changed": 133,
+    "nodes": [
+      "175:7126",
+      "110:5166",
+      "175:7598",
+      "110:11722",
+      "175:8379",
+      "110:8257",
+      "110:14388",
+      "111:9091",
+      "111:8190",
+      "110:9099",
+      "110:15251",
+      "111:4553",
+      "111:7348",
+      "175:10273",
+      "110:9754",
+      "110:7224",
+      "110:6195",
+      "175:10632",
+      "175:11104",
+      "175:12389",
+      "111:5604",
+      "175:13461",
+      "114:14881",
+      "115:2690",
+      "115:3203",
+      "115:6546",
+      "115:7268",
+      "182:5556",
+      "115:4662",
+      "182:6276",
+      "182:7073",
+      "182:7351",
+      "114:5935",
+      "182:7915",
+      "115:24743",
+      "182:8783",
+      "182:10229",
+      "182:11305",
+      "182:12665",
+      "182:13335",
+      "114:6722",
+      "114:7371",
+      "114:12063",
+      "182:14523",
+      "182:14808",
+      "115:28980",
+      "115:7990",
+      "115:5610",
+      "182:15549",
+      "182:16310",
+      "182:16711",
+      "114:14258",
+      "183:5238",
+      "183:5993",
+      "183:6570",
+      "183:6845",
+      "185:5649",
+      "185:6063",
+      "115:24075",
+      "185:6459",
+      "185:7034",
+      "115:25774",
+      "185:7337",
+      "114:15504",
+      "114:16059",
+      "185:8640",
+      "187:5562",
+      "187:6419",
+      "187:6757",
+      "187:7180",
+      "115:2177",
+      "114:7949",
+      "187:7867",
+      "187:8609",
+      "115:26814",
+      "187:9700",
+      "187:10312",
+      "187:11589",
+      "117:3752",
+      "187:12566",
+      "187:12922",
+      "187:13863",
+      "187:14683",
+      "117:4359",
+      "117:4982",
+      "117:5615",
+      "119:7100",
+      "119:7920",
+      "119:8740",
+      "119:9560",
+      "119:10380",
+      "122:6092",
+      "175:5530",
+      "187:15854",
+      "187:16905",
+      "187:17588",
+      "187:18305",
+      "187:18686",
+      "187:19373",
+      "187:20069",
+      "188:5653",
+      "188:6372",
+      "188:7188",
+      "188:8006",
+      "188:8807",
+      "188:9577",
+      "188:10297",
+      "188:11005",
+      "188:11665",
+      "188:12371",
+      "188:13074",
+      "188:13820",
+      "188:14655",
+      "188:15449",
+      "188:16204",
+      "188:17021",
+      "188:17839",
+      "188:18219",
+      "188:18876",
+      "188:19579",
+      "188:22865",
+      "188:23659",
+      "188:24421",
+      "188:25175",
+      "188:25947",
+      "188:26647",
+      "188:27455",
+      "188:28353",
+      "188:29184",
+      "188:29974",
+      "188:30725",
+      "188:31476",
+      "188:32231"
+    ],
+    "lineBreak": "让你的判断，\n持续向顶尖进化。"
+  },
+  "visualReview": {
+    "inspected": [
+      "en-feishu-home",
+      "zh-obs-review",
+      "zh-mobile-feishu-pair",
+      "en-edit-standard-adopted"
+    ],
+    "method": "Compare native Figma exports with rendered HTML; repair collapsed details, tab alignment, markers and Chinese slogan wrapping.",
+    "independentReview": false
+  },
+  "playbackRecording": false
+}

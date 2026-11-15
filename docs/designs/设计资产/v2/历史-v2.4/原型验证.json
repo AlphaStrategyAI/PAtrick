@@ -1,0 +1,396 @@
+{
+  "version": "2.4",
+  "validatedAt": "2026-11-14",
+  "visualDirection": "Luminous cyan / 流光青 + Curious P / 好奇的P",
+  "checks": [
+    "six navigation items",
+    "navigation order",
+    "all unfinished tasks visible",
+    "running filter",
+    "task detail identity",
+    "answer verified",
+    "decision queue links continuing work",
+    "same task continues",
+    "decision count updated",
+    "one answer receipt",
+    "five settings groups",
+    "known sources",
+    "language preserves source draft",
+    "source preview",
+    "localized trusted receipt",
+    "source registered",
+    "enabled differs from synced",
+    "pause future collection",
+    "pause preserves existing tasks",
+    "resume same source",
+    "duplicate rejected",
+    "cross-domain destination blocked",
+    "preview invalidated by config revision",
+    "failed check preserves draft",
+    "error keeps address",
+    "disconnect source only",
+    "no script errors"
+  ],
+  "matrix": [
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "sha256": {
+    "交互原型.html": "9a888b1a86064eb4d9443559a4e4d5529f09023025cfee6494e9c6995c366fec",
+    "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49"
+  },
+  "coverage": {
+    "interactionChecks": 27,
+    "responsiveCombinations": 52,
+    "locales": [
+      "en",
+      "zh"
+    ],
+    "widths": [
+      1440,
+      390
+    ],
+    "scenes": [
+      "decisions",
+      "answered",
+      "ongoing",
+      "detail",
+      "settings",
+      "collection",
+      "source-form",
+      "source-preview",
+      "source-error",
+      "materials",
+      "execution",
+      "operation",
+      "preferences"
+    ],
+    "taskSemantics": "Four unfinished fixture tasks; decision, running and blocked filters; one verified answer resumes the original W-017 and removes its pending question.",
+    "collectionSemantics": "Add and preview exact scope, localized receipt, first sync pending, pause/resume/disconnect preserving tasks; duplicate, cross-domain, stale revision and failure cases.",
+    "language": "Switch preserves source draft and localizes preview, receipt and errors; system preference behavior inherited from v2.3."
+  },
+  "visuallyInspected": [
+    "en-ongoing-390",
+    "zh-source-form-1440"
+  ],
+  "verificationScripts": [
+    "验证源码-v2.4/test-prototype.cjs"
+  ],
+  "scope": "Local simulated UI only. No source URL was fetched, no credentials were used, no account settings were changed, and no business task was executed. Figma presets and HTML simulated states are separate artifacts.",
+  "priorVersionValidation": {
+    "version": "2.3",
+    "report": "历史-v2.3/原型验证.json",
+    "scope": "Historical checks, including broad locale, logo playback and independent review, were not counted as v2.4 reruns."
+  }
+}

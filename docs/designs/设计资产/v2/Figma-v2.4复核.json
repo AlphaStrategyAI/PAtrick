@@ -1,0 +1,1715 @@
+{
+  "version": "2.4",
+  "date": "2026-11-14",
+  "reviewer": "primary agent",
+  "independentReview": false,
+  "nativeStructuralAudit": {
+    "staleLabels": [],
+    "navErrors": [],
+    "logoPlacement": [
+      {
+        "key": "en-conversation",
+        "id": "90:3543",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-conversation",
+        "id": "90:3555",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-details",
+        "id": "90:3567",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-details",
+        "id": "90:3579",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-custom",
+        "id": "90:3591",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-custom",
+        "id": "90:3603",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submitted",
+        "id": "90:3615",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submitted",
+        "id": "90:3627",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-resumed",
+        "id": "90:3639",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-resumed",
+        "id": "90:3651",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-freechat",
+        "id": "90:3663",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-freechat",
+        "id": "90:3675",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-standards",
+        "id": "90:3687",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-standards",
+        "id": "90:3699",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-knowledge",
+        "id": "90:3711",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-knowledge",
+        "id": "90:3723",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-delegation",
+        "id": "90:3735",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-delegation",
+        "id": "90:3747",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-system",
+        "id": "90:3759",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-system",
+        "id": "90:3771",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-setup",
+        "id": "90:3783",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-setup",
+        "id": "90:3795",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings",
+        "id": "94:3986",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings",
+        "id": "94:4144",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-result",
+        "id": "90:3831",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-result",
+        "id": "90:3843",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-expired",
+        "id": "90:3855",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-expired",
+        "id": "90:3867",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-error",
+        "id": "90:3879",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-error",
+        "id": "90:3891",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-offline",
+        "id": "88:5963",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-offline",
+        "id": "88:5974",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-mobileconversation",
+        "id": "94:4303",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-mobileconversation",
+        "id": "94:4420",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submittedB",
+        "id": "90:3927",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submittedB",
+        "id": "90:3939",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-resumedB",
+        "id": "90:3951",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-resumedB",
+        "id": "90:3963",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submittedCustom",
+        "id": "90:3975",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submittedCustom",
+        "id": "90:3987",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-checking",
+        "id": "95:7574",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-checking",
+        "id": "95:7769",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-issues",
+        "id": "95:7964",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-issues",
+        "id": "95:8167",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-rechecked",
+        "id": "95:8370",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-rechecked",
+        "id": "95:8556",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-materials",
+        "id": "95:6097",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-execution",
+        "id": "95:6432",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-operation",
+        "id": "95:6834",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-preferences",
+        "id": "95:7194",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-materials",
+        "id": "95:6264",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-execution",
+        "id": "95:6633",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-operation",
+        "id": "95:7014",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-preferences",
+        "id": "95:7384",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-ongoing",
+        "id": "94:3526",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-collection",
+        "id": "94:3681",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-source-preview",
+        "id": "94:3839",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-ongoing",
+        "id": "94:4538",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-ongoing-updated",
+        "id": "94:4691",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-ongoing-updated",
+        "id": "94:4845",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-work-detail",
+        "id": "94:4998",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-work-detail",
+        "id": "95:4031",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-decisions-empty",
+        "id": "95:4151",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-decisions-empty",
+        "id": "95:4248",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-mobileongoing",
+        "id": "95:4346",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-mobileongoing",
+        "id": "95:4461",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-source-paused",
+        "id": "95:4577",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-source-paused",
+        "id": "95:4718",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-addsource",
+        "id": "95:4860",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-addsource",
+        "id": "95:5005",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-source-preview",
+        "id": "95:5151",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-source-enabled",
+        "id": "95:5297",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-source-enabled",
+        "id": "95:5477",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-source-error",
+        "id": "95:5656",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-source-error",
+        "id": "95:5798",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-collection",
+        "id": "95:5939",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      }
+    ],
+    "logoErrors": [],
+    "wrappedControls": [],
+    "stats": [
+      {
+        "key": "en-conversation",
+        "id": "24:67",
+        "w": 1440,
+        "h": 1100,
+        "total": 125,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "zh-conversation",
+        "id": "24:204",
+        "w": 1440,
+        "h": 1100,
+        "total": 125,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "en-details",
+        "id": "26:138",
+        "w": 1440,
+        "h": 1398,
+        "total": 148,
+        "types": {
+          "FRAME": 57,
+          "INSTANCE": 24,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 49
+        }
+      },
+      {
+        "key": "zh-details",
+        "id": "26:280",
+        "w": 1440,
+        "h": 1398,
+        "total": 148,
+        "types": {
+          "FRAME": 57,
+          "INSTANCE": 24,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 49
+        }
+      },
+      {
+        "key": "en-custom",
+        "id": "26:421",
+        "w": 1440,
+        "h": 1112,
+        "total": 125,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "zh-custom",
+        "id": "26:549",
+        "w": 1440,
+        "h": 1112,
+        "total": 125,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "en-submitted",
+        "id": "26:677",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "zh-submitted",
+        "id": "26:772",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "en-resumed",
+        "id": "26:867",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 36,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "zh-resumed",
+        "id": "26:966",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 36,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "en-freechat",
+        "id": "26:1065",
+        "w": 1440,
+        "h": 1100,
+        "total": 104,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 31
+        }
+      },
+      {
+        "key": "zh-freechat",
+        "id": "26:1161",
+        "w": 1440,
+        "h": 1100,
+        "total": 104,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 31
+        }
+      },
+      {
+        "key": "en-standards",
+        "id": "26:1257",
+        "w": 1440,
+        "h": 1728,
+        "total": 135,
+        "types": {
+          "FRAME": 55,
+          "INSTANCE": 19,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 52
+        }
+      },
+      {
+        "key": "zh-standards",
+        "id": "26:1385",
+        "w": 1440,
+        "h": 1672,
+        "total": 135,
+        "types": {
+          "FRAME": 55,
+          "INSTANCE": 19,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 52
+        }
+      },
+      {
+        "key": "en-knowledge",
+        "id": "26:1513",
+        "w": 1440,
+        "h": 1210,
+        "total": 110,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 17,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 41
+        }
+      },
+      {
+        "key": "zh-knowledge",
+        "id": "26:1617",
+        "w": 1440,
+        "h": 1210,
+        "total": 110,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 17,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 41
+        }
+      },
+      {
+        "key": "en-delegation",
+        "id": "26:1721",
+        "w": 1440,
+        "h": 1288,
+        "total": 114,
+        "types": {
+          "FRAME": 46,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "zh-delegation",
+        "id": "26:1829",
+        "w": 1440,
+        "h": 1260,
+        "total": 114,
+        "types": {
+          "FRAME": 46,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "en-system",
+        "id": "26:1937",
+        "w": 1440,
+        "h": 1216,
+        "total": 115,
+        "types": {
+          "FRAME": 47,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "zh-system",
+        "id": "26:2046",
+        "w": 1440,
+        "h": 1216,
+        "total": 115,
+        "types": {
+          "FRAME": 47,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "en-setup",
+        "id": "26:2155",
+        "w": 1440,
+        "h": 1162,
+        "total": 102,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      },
+      {
+        "key": "zh-setup",
+        "id": "26:2258",
+        "w": 1440,
+        "h": 1134,
+        "total": 102,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      },
+      {
+        "key": "en-settings",
+        "id": "26:2361",
+        "w": 1440,
+        "h": 1100,
+        "total": 121,
+        "types": {
+          "FRAME": 53,
+          "INSTANCE": 21,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 38
+        }
+      },
+      {
+        "key": "zh-settings",
+        "id": "26:2477",
+        "w": 1440,
+        "h": 1100,
+        "total": 121,
+        "types": {
+          "FRAME": 53,
+          "INSTANCE": 21,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 38
+        }
+      },
+      {
+        "key": "en-result",
+        "id": "26:2593",
+        "w": 1440,
+        "h": 1100,
+        "total": 111,
+        "types": {
+          "FRAME": 41,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "zh-result",
+        "id": "27:1028",
+        "w": 1440,
+        "h": 1100,
+        "total": 111,
+        "types": {
+          "FRAME": 41,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "en-expired",
+        "id": "27:1126",
+        "w": 1440,
+        "h": 1100,
+        "total": 106,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "zh-expired",
+        "id": "27:1218",
+        "w": 1440,
+        "h": 1100,
+        "total": 106,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 18,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "en-error",
+        "id": "27:1310",
+        "w": 1440,
+        "h": 1404,
+        "total": 129,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 23,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "zh-error",
+        "id": "27:1448",
+        "w": 1440,
+        "h": 1352,
+        "total": 129,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 23,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "en-offline",
+        "id": "27:1586",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 34,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "zh-offline",
+        "id": "27:1682",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 34,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "en-mobileconversation",
+        "id": "27:1778",
+        "w": 390,
+        "h": 1618,
+        "total": 98,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 14,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "zh-mobileconversation",
+        "id": "27:1875",
+        "w": 390,
+        "h": 1642,
+        "total": 98,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 14,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "en-submittedB",
+        "id": "28:1400",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "zh-submittedB",
+        "id": "28:1492",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "en-resumedB",
+        "id": "28:1582",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "zh-resumedB",
+        "id": "28:1672",
+        "w": 1440,
+        "h": 1100,
+        "total": 95,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 28
+        }
+      },
+      {
+        "key": "en-submittedCustom",
+        "id": "28:1762",
+        "w": 1440,
+        "h": 1100,
+        "total": 101,
+        "types": {
+          "FRAME": 35,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 31
+        }
+      },
+      {
+        "key": "zh-submittedCustom",
+        "id": "28:1857",
+        "w": 1440,
+        "h": 1100,
+        "total": 101,
+        "types": {
+          "FRAME": 35,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 31
+        }
+      },
+      {
+        "key": "en-settings-checking",
+        "id": "63:4753",
+        "w": 1440,
+        "h": 1275,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 51
+        }
+      },
+      {
+        "key": "zh-settings-checking",
+        "id": "63:4960",
+        "w": 1440,
+        "h": 1275,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 51
+        }
+      },
+      {
+        "key": "en-settings-issues",
+        "id": "63:5167",
+        "w": 1440,
+        "h": 1626,
+        "total": 159,
+        "types": {
+          "FRAME": 68,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 55
+        }
+      },
+      {
+        "key": "zh-settings-issues",
+        "id": "63:5375",
+        "w": 1440,
+        "h": 1626,
+        "total": 159,
+        "types": {
+          "FRAME": 68,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 55
+        }
+      },
+      {
+        "key": "en-settings-rechecked",
+        "id": "63:5583",
+        "w": 1440,
+        "h": 1216,
+        "total": 144,
+        "types": {
+          "FRAME": 62,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 47
+        }
+      },
+      {
+        "key": "zh-settings-rechecked",
+        "id": "63:5790",
+        "w": 1440,
+        "h": 1188,
+        "total": 144,
+        "types": {
+          "FRAME": 62,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 47
+        }
+      },
+      {
+        "key": "en-settings-materials",
+        "id": "62:6635",
+        "w": 1440,
+        "h": 1100,
+        "total": 130,
+        "types": {
+          "FRAME": 54,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 41
+        }
+      },
+      {
+        "key": "en-settings-execution",
+        "id": "59:2171",
+        "w": 1440,
+        "h": 1222,
+        "total": 159,
+        "types": {
+          "FRAME": 68,
+          "INSTANCE": 30,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 52
+        }
+      },
+      {
+        "key": "en-settings-operation",
+        "id": "63:3745",
+        "w": 1440,
+        "h": 1100,
+        "total": 140,
+        "types": {
+          "FRAME": 60,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "en-settings-preferences",
+        "id": "63:2719",
+        "w": 1440,
+        "h": 1191,
+        "total": 144,
+        "types": {
+          "FRAME": 64,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 44
+        }
+      },
+      {
+        "key": "zh-settings-materials",
+        "id": "62:6880",
+        "w": 1440,
+        "h": 1100,
+        "total": 130,
+        "types": {
+          "FRAME": 54,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 41
+        }
+      },
+      {
+        "key": "zh-settings-execution",
+        "id": "62:8117",
+        "w": 1440,
+        "h": 1222,
+        "total": 159,
+        "types": {
+          "FRAME": 68,
+          "INSTANCE": 30,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 52
+        }
+      },
+      {
+        "key": "zh-settings-operation",
+        "id": "63:3997",
+        "w": 1440,
+        "h": 1100,
+        "total": 140,
+        "types": {
+          "FRAME": 60,
+          "INSTANCE": 26,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "zh-settings-preferences",
+        "id": "63:2981",
+        "w": 1440,
+        "h": 1145,
+        "total": 144,
+        "types": {
+          "FRAME": 64,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 44
+        }
+      },
+      {
+        "key": "en-ongoing",
+        "id": "94:3523",
+        "w": 1440,
+        "h": 1228,
+        "total": 120,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "en-settings-collection",
+        "id": "94:3678",
+        "w": 1440,
+        "h": 1100,
+        "total": 116,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      },
+      {
+        "key": "en-settings-source-preview",
+        "id": "94:3836",
+        "w": 1440,
+        "h": 1100,
+        "total": 107,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 22,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "zh-ongoing",
+        "id": "94:4535",
+        "w": 1440,
+        "h": 1100,
+        "total": 120,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "en-ongoing-updated",
+        "id": "94:4688",
+        "w": 1440,
+        "h": 1228,
+        "total": 120,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "zh-ongoing-updated",
+        "id": "94:4842",
+        "w": 1440,
+        "h": 1100,
+        "total": 120,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "en-work-detail",
+        "id": "94:4995",
+        "w": 1440,
+        "h": 1100,
+        "total": 89,
+        "types": {
+          "FRAME": 33,
+          "INSTANCE": 17,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "zh-work-detail",
+        "id": "95:4028",
+        "w": 1440,
+        "h": 1100,
+        "total": 89,
+        "types": {
+          "FRAME": 33,
+          "INSTANCE": 17,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "en-decisions-empty",
+        "id": "95:4148",
+        "w": 1440,
+        "h": 1100,
+        "total": 72,
+        "types": {
+          "FRAME": 26,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 22
+        }
+      },
+      {
+        "key": "zh-decisions-empty",
+        "id": "95:4245",
+        "w": 1440,
+        "h": 1100,
+        "total": 72,
+        "types": {
+          "FRAME": 26,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 22
+        }
+      },
+      {
+        "key": "en-mobileongoing",
+        "id": "95:4343",
+        "w": 390,
+        "h": 1936,
+        "total": 96,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      },
+      {
+        "key": "zh-mobileongoing",
+        "id": "95:4458",
+        "w": 390,
+        "h": 1820,
+        "total": 96,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      },
+      {
+        "key": "en-settings-source-paused",
+        "id": "95:4574",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 22,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "zh-settings-source-paused",
+        "id": "95:4715",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 22,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "en-settings-addsource",
+        "id": "95:4857",
+        "w": 1440,
+        "h": 1100,
+        "total": 106,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "zh-settings-addsource",
+        "id": "95:5002",
+        "w": 1440,
+        "h": 1100,
+        "total": 106,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 23,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "zh-settings-source-preview",
+        "id": "95:5148",
+        "w": 1440,
+        "h": 1100,
+        "total": 107,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 22,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "en-settings-source-enabled",
+        "id": "95:5294",
+        "w": 1440,
+        "h": 1168,
+        "total": 134,
+        "types": {
+          "FRAME": 56,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "zh-settings-source-enabled",
+        "id": "95:5474",
+        "w": 1440,
+        "h": 1144,
+        "total": 134,
+        "types": {
+          "FRAME": 56,
+          "INSTANCE": 27,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "en-settings-source-error",
+        "id": "95:5653",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 21,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "zh-settings-source-error",
+        "id": "95:5795",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 21,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "zh-settings-collection",
+        "id": "95:5936",
+        "w": 1440,
+        "h": 1100,
+        "total": 116,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 35
+        }
+      }
+    ],
+    "badFonts": [],
+    "imageNodes": [],
+    "outside": [],
+    "parentOverflow": [],
+    "brandErrors": [],
+    "routeFailures": [],
+    "checkedRoutes": 1196,
+    "logos": 102,
+    "slogans": 76,
+    "overlaps": []
+  },
+  "visualReview": {
+    "screens": [
+      "zh-ongoing",
+      "en-settings",
+      "zh-settings-collection",
+      "en-settings-source-preview",
+      "en-mobileongoing"
+    ],
+    "passed": true,
+    "scope": "Final native PNGs: navigation and headings, centered square logo, unclipped labels, task state/action identity, five settings groups, source preview and mobile stacking. Static appearance only; reactions were read separately."
+  },
+  "prototypeVisualReview": {
+    "screens": [
+      "en-ongoing-390",
+      "zh-source-form-1440"
+    ],
+    "passed": true
+  },
+  "priorVersion": "v2.3 independent reviews remain historical; they were not rerun or counted here."
+}

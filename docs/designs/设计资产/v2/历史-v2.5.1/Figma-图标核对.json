@@ -1,0 +1,3936 @@
+{
+  "version": "2.5.1",
+  "validatedAt": "2026-11-14T12:08:52.758863+00:00",
+  "scope": "System/Settings navigation and five settings categories; preserves screen IDs, labels, routes and layout.",
+  "prototypeSha256": "803ea91773c30258e86e4986d4732ecb45d0df5465cf737ff09f5e3653d244ef",
+  "native": {
+    "icons": 408,
+    "vectors": 624,
+    "counts": {
+      "system": 184,
+      "settings": 184,
+      "settings-collection": 8,
+      "settings-materials": 8,
+      "settings-execution": 8,
+      "settings-operation": 8,
+      "settings-preferences": 8
+    },
+    "fontFamilies": [
+      "Noto Sans SC"
+    ],
+    "issues": []
+  },
+  "componentValidation": {
+    "system": {
+      "id": "132:4087",
+      "width": 20,
+      "height": 20,
+      "vectors": 2,
+      "bound": true
+    },
+    "settings": {
+      "id": "132:4091",
+      "width": 20,
+      "height": 20,
+      "vectors": 1,
+      "bound": true
+    },
+    "settings-collection": {
+      "id": "132:4096",
+      "width": 20,
+      "height": 20,
+      "vectors": 1,
+      "bound": true
+    },
+    "settings-materials": {
+      "id": "132:4099",
+      "width": 20,
+      "height": 20,
+      "vectors": 1,
+      "bound": true
+    },
+    "settings-execution": {
+      "id": "132:4104",
+      "width": 20,
+      "height": 20,
+      "vectors": 1,
+      "bound": true
+    },
+    "settings-operation": {
+      "id": "132:4109",
+      "width": 20,
+      "height": 20,
+      "vectors": 2,
+      "bound": true
+    },
+    "settings-preferences": {
+      "id": "132:4113",
+      "width": 20,
+      "height": 20,
+      "vectors": 4,
+      "bound": true
+    }
+  },
+  "slotBoundsUnchanged": true,
+  "replacementCount": 408,
+  "affectedScreens": 184,
+  "components": {
+    "system": {
+      "id": "132:4087",
+      "art": "132:4088",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 3,
+      "library": null
+    },
+    "settings": {
+      "id": "132:4091",
+      "art": "132:4094",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 1,
+      "library": "d2f8e6ce9f3995df265f0245b255358f577f4d6a"
+    },
+    "settings-collection": {
+      "id": "132:4096",
+      "art": "132:4097",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 2,
+      "library": null
+    },
+    "settings-materials": {
+      "id": "132:4099",
+      "art": "132:4102",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 2,
+      "library": "6782fac76f0de7668d68c045badafb8ab5135099"
+    },
+    "settings-execution": {
+      "id": "132:4104",
+      "art": "132:4107",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 2,
+      "library": "a484319729a90da226a3d0f4a414d49d9f1132c2"
+    },
+    "settings-operation": {
+      "id": "132:4109",
+      "art": "132:4110",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 3,
+      "library": null
+    },
+    "settings-preferences": {
+      "id": "132:4113",
+      "art": "132:4114",
+      "width": 20,
+      "height": 20,
+      "paintedPaths": 5,
+      "library": null
+    }
+  },
+  "slots": [
+    {
+      "key": "en-settings-issues",
+      "role": "system",
+      "slot": "111:10814",
+      "instance": "136:4066",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings",
+      "slot": "111:10848",
+      "instance": "136:4070",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings-collection",
+      "slot": "111:10966",
+      "instance": "136:4074",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings-materials",
+      "slot": "111:10996",
+      "instance": "136:4077",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings-execution",
+      "slot": "111:11026",
+      "instance": "136:4081",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings-operation",
+      "slot": "111:11056",
+      "instance": "136:4085",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-issues",
+      "role": "settings-preferences",
+      "slot": "111:11086",
+      "instance": "136:4089",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "system",
+      "slot": "111:10273",
+      "instance": "136:4095",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings",
+      "slot": "111:10310",
+      "instance": "136:4099",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings-collection",
+      "slot": "111:10428",
+      "instance": "136:4102",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings-materials",
+      "slot": "111:10458",
+      "instance": "136:4105",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings-execution",
+      "slot": "111:10488",
+      "instance": "136:4108",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings-operation",
+      "slot": "111:10518",
+      "instance": "136:4111",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-checking",
+      "role": "settings-preferences",
+      "slot": "111:10548",
+      "instance": "136:4115",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-error",
+      "role": "system",
+      "slot": "111:4088",
+      "instance": "136:4121",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-error",
+      "role": "settings",
+      "slot": "111:4122",
+      "instance": "136:4125",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-conversation",
+      "role": "system",
+      "slot": "110:5229",
+      "instance": "136:4128",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-conversation",
+      "role": "settings",
+      "slot": "110:5266",
+      "instance": "136:4132",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submitted",
+      "role": "system",
+      "slot": "110:7803",
+      "instance": "136:4135",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submitted",
+      "role": "settings",
+      "slot": "110:7837",
+      "instance": "136:4139",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "system",
+      "slot": "111:11352",
+      "instance": "136:4142",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings",
+      "slot": "111:11389",
+      "instance": "136:4146",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings-collection",
+      "slot": "111:11507",
+      "instance": "136:4149",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings-materials",
+      "slot": "111:11537",
+      "instance": "136:4152",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings-execution",
+      "slot": "111:11567",
+      "instance": "136:4155",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings-operation",
+      "slot": "111:11597",
+      "instance": "136:4158",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-issues",
+      "role": "settings-preferences",
+      "slot": "111:11627",
+      "instance": "136:4162",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation",
+      "role": "system",
+      "slot": "110:11479",
+      "instance": "136:4168",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation",
+      "role": "settings",
+      "slot": "110:11513",
+      "instance": "136:4172",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation",
+      "role": "system",
+      "slot": "110:11785",
+      "instance": "136:4175",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation",
+      "role": "settings",
+      "slot": "110:11822",
+      "instance": "136:4179",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standards",
+      "role": "system",
+      "slot": "110:10151",
+      "instance": "136:4182",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standards",
+      "role": "settings",
+      "slot": "110:10185",
+      "instance": "136:4186",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standards",
+      "role": "system",
+      "slot": "110:10454",
+      "instance": "136:4189",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standards",
+      "role": "settings",
+      "slot": "110:10491",
+      "instance": "136:4193",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submitted",
+      "role": "system",
+      "slot": "110:8320",
+      "instance": "136:4196",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submitted",
+      "role": "settings",
+      "slot": "110:8357",
+      "instance": "136:4200",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-result",
+      "role": "system",
+      "slot": "110:14120",
+      "instance": "136:4203",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-result",
+      "role": "settings",
+      "slot": "110:14154",
+      "instance": "136:4207",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-result",
+      "role": "system",
+      "slot": "110:14451",
+      "instance": "136:4210",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-result",
+      "role": "settings",
+      "slot": "110:14488",
+      "instance": "136:4214",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submittedCustom",
+      "role": "system",
+      "slot": "111:9154",
+      "instance": "136:4217",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submittedCustom",
+      "role": "settings",
+      "slot": "111:9191",
+      "instance": "136:4221",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-resumedB",
+      "role": "system",
+      "slot": "111:7931",
+      "instance": "136:4224",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-resumedB",
+      "role": "settings",
+      "slot": "111:7965",
+      "instance": "136:4228",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-resumedB",
+      "role": "system",
+      "slot": "111:8253",
+      "instance": "136:4231",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-resumedB",
+      "role": "settings",
+      "slot": "111:8290",
+      "instance": "136:4235",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submittedCustom",
+      "role": "system",
+      "slot": "111:8578",
+      "instance": "136:4238",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submittedCustom",
+      "role": "settings",
+      "slot": "111:8612",
+      "instance": "136:4242",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-resumed",
+      "role": "system",
+      "slot": "110:8840",
+      "instance": "136:4245",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-resumed",
+      "role": "settings",
+      "slot": "110:8874",
+      "instance": "136:4249",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-resumed",
+      "role": "system",
+      "slot": "110:9162",
+      "instance": "136:4252",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-resumed",
+      "role": "settings",
+      "slot": "110:9199",
+      "instance": "136:4256",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-expired",
+      "role": "system",
+      "slot": "110:14786",
+      "instance": "136:4259",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-expired",
+      "role": "settings",
+      "slot": "110:14820",
+      "instance": "136:4263",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-details",
+      "role": "system",
+      "slot": "110:5745",
+      "instance": "136:4266",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-details",
+      "role": "settings",
+      "slot": "110:5779",
+      "instance": "136:4270",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution",
+      "role": "system",
+      "slot": "111:13458",
+      "instance": "136:4273",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution",
+      "role": "settings",
+      "slot": "111:13492",
+      "instance": "136:4277",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-expired",
+      "role": "system",
+      "slot": "110:15314",
+      "instance": "136:4280",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-expired",
+      "role": "settings",
+      "slot": "110:15351",
+      "instance": "136:4284",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-error",
+      "role": "system",
+      "slot": "111:4616",
+      "instance": "136:4287",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-error",
+      "role": "settings",
+      "slot": "111:4653",
+      "instance": "136:4291",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-offline",
+      "role": "system",
+      "slot": "111:5143",
+      "instance": "136:4294",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-offline",
+      "role": "settings",
+      "slot": "111:5177",
+      "instance": "136:4298",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "system",
+      "slot": "111:9735",
+      "instance": "136:4301",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings",
+      "slot": "111:9769",
+      "instance": "136:4305",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings-collection",
+      "slot": "111:9887",
+      "instance": "136:4308",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings-materials",
+      "slot": "111:9917",
+      "instance": "136:4311",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings-execution",
+      "slot": "111:9947",
+      "instance": "136:4314",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings-operation",
+      "slot": "111:9977",
+      "instance": "136:4317",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-checking",
+      "role": "settings-preferences",
+      "slot": "111:10007",
+      "instance": "136:4321",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-materials",
+      "role": "system",
+      "slot": "111:12972",
+      "instance": "136:4327",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-materials",
+      "role": "settings",
+      "slot": "111:13006",
+      "instance": "136:4331",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submittedB",
+      "role": "system",
+      "slot": "111:7411",
+      "instance": "136:4334",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-submittedB",
+      "role": "settings",
+      "slot": "111:7448",
+      "instance": "136:4338",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-system",
+      "role": "system",
+      "slot": "110:12094",
+      "instance": "136:4341",
+      "component": "132:4087",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-system",
+      "role": "settings",
+      "slot": "110:12128",
+      "instance": "136:4345",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-system",
+      "role": "system",
+      "slot": "110:12430",
+      "instance": "136:4348",
+      "component": "132:4087",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-system",
+      "role": "settings",
+      "slot": "110:12467",
+      "instance": "136:4352",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-freechat",
+      "role": "system",
+      "slot": "110:9487",
+      "instance": "136:4355",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-freechat",
+      "role": "settings",
+      "slot": "110:9521",
+      "instance": "136:4359",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-freechat",
+      "role": "system",
+      "slot": "110:9817",
+      "instance": "136:4362",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-freechat",
+      "role": "settings",
+      "slot": "110:9854",
+      "instance": "136:4366",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-custom",
+      "role": "system",
+      "slot": "110:6774",
+      "instance": "136:4369",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-custom",
+      "role": "settings",
+      "slot": "110:6808",
+      "instance": "136:4373",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-custom",
+      "role": "system",
+      "slot": "110:7287",
+      "instance": "136:4376",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-custom",
+      "role": "settings",
+      "slot": "110:7324",
+      "instance": "136:4380",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-details",
+      "role": "system",
+      "slot": "110:6258",
+      "instance": "136:4383",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-details",
+      "role": "settings",
+      "slot": "110:6295",
+      "instance": "136:4387",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "system",
+      "slot": "111:12431",
+      "instance": "136:4390",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings",
+      "slot": "111:12468",
+      "instance": "136:4394",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings-collection",
+      "slot": "111:12586",
+      "instance": "136:4397",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings-materials",
+      "slot": "111:12616",
+      "instance": "136:4400",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings-execution",
+      "slot": "111:12646",
+      "instance": "136:4403",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings-operation",
+      "slot": "111:12676",
+      "instance": "136:4406",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "role": "settings-preferences",
+      "slot": "111:12706",
+      "instance": "136:4410",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "system",
+      "slot": "110:13311",
+      "instance": "136:4416",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings",
+      "slot": "110:13345",
+      "instance": "136:4420",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings-collection",
+      "slot": "110:13463",
+      "instance": "136:4423",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings-materials",
+      "slot": "110:13493",
+      "instance": "136:4426",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings-execution",
+      "slot": "110:13523",
+      "instance": "136:4429",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings-operation",
+      "slot": "110:13553",
+      "instance": "136:4432",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings",
+      "role": "settings-preferences",
+      "slot": "110:13583",
+      "instance": "136:4436",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "system",
+      "slot": "110:13714",
+      "instance": "136:4442",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings",
+      "slot": "110:13751",
+      "instance": "136:4446",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings-collection",
+      "slot": "110:13869",
+      "instance": "136:4449",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings-materials",
+      "slot": "110:13899",
+      "instance": "136:4452",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings-execution",
+      "slot": "110:13929",
+      "instance": "136:4455",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings-operation",
+      "slot": "110:13959",
+      "instance": "136:4458",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings",
+      "role": "settings-preferences",
+      "slot": "110:13989",
+      "instance": "136:4462",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "system",
+      "slot": "111:11893",
+      "instance": "136:4468",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings",
+      "slot": "111:11927",
+      "instance": "136:4472",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings-collection",
+      "slot": "111:12045",
+      "instance": "136:4475",
+      "component": "132:4096",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings-materials",
+      "slot": "111:12075",
+      "instance": "136:4478",
+      "component": "132:4099",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings-execution",
+      "slot": "111:12105",
+      "instance": "136:4481",
+      "component": "132:4104",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings-operation",
+      "slot": "111:12135",
+      "instance": "136:4484",
+      "component": "132:4109",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-rechecked",
+      "role": "settings-preferences",
+      "slot": "111:12165",
+      "instance": "136:4488",
+      "component": "132:4113",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-knowledge",
+      "role": "system",
+      "slot": "110:10764",
+      "instance": "136:4494",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-knowledge",
+      "role": "settings",
+      "slot": "110:10798",
+      "instance": "136:4498",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-knowledge",
+      "role": "system",
+      "slot": "110:11120",
+      "instance": "136:4501",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-knowledge",
+      "role": "settings",
+      "slot": "110:11157",
+      "instance": "136:4505",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-offline",
+      "role": "system",
+      "slot": "111:5667",
+      "instance": "136:4508",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-offline",
+      "role": "settings",
+      "slot": "111:5704",
+      "instance": "136:4512",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences",
+      "role": "system",
+      "slot": "111:14486",
+      "instance": "136:4515",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences",
+      "role": "settings",
+      "slot": "111:14520",
+      "instance": "136:4519",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submittedB",
+      "role": "system",
+      "slot": "111:6894",
+      "instance": "136:4522",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-submittedB",
+      "role": "settings",
+      "slot": "111:6928",
+      "instance": "136:4526",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup",
+      "role": "system",
+      "slot": "110:12771",
+      "instance": "136:4529",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup",
+      "role": "settings",
+      "slot": "110:12805",
+      "instance": "136:4533",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup",
+      "role": "system",
+      "slot": "110:13039",
+      "instance": "136:4536",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup",
+      "role": "settings",
+      "slot": "110:13076",
+      "instance": "136:4540",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-operation",
+      "role": "system",
+      "slot": "111:14014",
+      "instance": "136:4543",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-operation",
+      "role": "settings",
+      "slot": "111:14048",
+      "instance": "136:4547",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-conversation",
+      "role": "system",
+      "slot": "109:5228",
+      "instance": "136:4550",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-conversation",
+      "role": "settings",
+      "slot": "109:5262",
+      "instance": "136:4554",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-running",
+      "role": "system",
+      "slot": "114:14616",
+      "instance": "136:4557",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-running",
+      "role": "settings",
+      "slot": "114:14650",
+      "instance": "136:4561",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-running",
+      "role": "system",
+      "slot": "114:14944",
+      "instance": "136:4564",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-running",
+      "role": "settings",
+      "slot": "114:14981",
+      "instance": "136:4568",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "role": "system",
+      "slot": "114:15275",
+      "instance": "136:4571",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "role": "settings",
+      "slot": "114:15309",
+      "instance": "136:4575",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-citations",
+      "role": "system",
+      "slot": "115:2753",
+      "instance": "136:4578",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-citations",
+      "role": "settings",
+      "slot": "115:2790",
+      "instance": "136:4582",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-blocked",
+      "role": "system",
+      "slot": "115:3011",
+      "instance": "136:4585",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-blocked",
+      "role": "settings",
+      "slot": "115:3045",
+      "instance": "136:4589",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-blocked",
+      "role": "system",
+      "slot": "115:3266",
+      "instance": "136:4592",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-blocked",
+      "role": "settings",
+      "slot": "115:3303",
+      "instance": "136:4596",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-pause-dialog",
+      "role": "system",
+      "slot": "115:6609",
+      "instance": "136:4599",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-pause-dialog",
+      "role": "settings",
+      "slot": "115:6646",
+      "instance": "136:4603",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stop-dialog",
+      "role": "system",
+      "slot": "115:6972",
+      "instance": "136:4606",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stop-dialog",
+      "role": "settings",
+      "slot": "115:7006",
+      "instance": "136:4610",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stop-dialog",
+      "role": "system",
+      "slot": "115:7331",
+      "instance": "136:4613",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stop-dialog",
+      "role": "settings",
+      "slot": "115:7368",
+      "instance": "136:4617",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standards-expanded",
+      "role": "system",
+      "slot": "115:27404",
+      "instance": "136:4620",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standards-expanded",
+      "role": "settings",
+      "slot": "115:27438",
+      "instance": "136:4624",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standards-expanded",
+      "role": "system",
+      "slot": "115:27708",
+      "instance": "136:4627",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standards-expanded",
+      "role": "settings",
+      "slot": "115:27745",
+      "instance": "136:4631",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "role": "system",
+      "slot": "115:28019",
+      "instance": "136:4634",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "role": "settings",
+      "slot": "115:28053",
+      "instance": "136:4638",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-result-dialog",
+      "role": "system",
+      "slot": "115:4725",
+      "instance": "136:4641",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-result-dialog",
+      "role": "settings",
+      "slot": "115:4762",
+      "instance": "136:4645",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-expired-dialog",
+      "role": "system",
+      "slot": "115:5101",
+      "instance": "136:4648",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-expired-dialog",
+      "role": "settings",
+      "slot": "115:5135",
+      "instance": "136:4652",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-validate",
+      "role": "system",
+      "slot": "115:13772",
+      "instance": "136:4655",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-validate",
+      "role": "settings",
+      "slot": "115:13809",
+      "instance": "136:4659",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "role": "system",
+      "slot": "115:14306",
+      "instance": "136:4662",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "role": "settings",
+      "slot": "115:14340",
+      "instance": "136:4666",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-error",
+      "role": "system",
+      "slot": "114:11247",
+      "instance": "136:4669",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-error",
+      "role": "settings",
+      "slot": "114:11284",
+      "instance": "136:4673",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-collection",
+      "role": "system",
+      "slot": "114:11534",
+      "instance": "136:4676",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-collection",
+      "role": "settings",
+      "slot": "114:11571",
+      "instance": "136:4680",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate",
+      "role": "system",
+      "slot": "114:11831",
+      "instance": "136:4683",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate",
+      "role": "settings",
+      "slot": "114:11865",
+      "instance": "136:4687",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-preview",
+      "role": "system",
+      "slot": "114:5756",
+      "instance": "136:4690",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-preview",
+      "role": "settings",
+      "slot": "114:5790",
+      "instance": "136:4694",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing",
+      "role": "system",
+      "slot": "114:5998",
+      "instance": "136:4697",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing",
+      "role": "settings",
+      "slot": "114:6035",
+      "instance": "136:4701",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-updated",
+      "role": "system",
+      "slot": "114:6393",
+      "instance": "136:4704",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-updated",
+      "role": "settings",
+      "slot": "114:6427",
+      "instance": "136:4708",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "role": "system",
+      "slot": "115:17360",
+      "instance": "136:4711",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "role": "settings",
+      "slot": "115:17397",
+      "instance": "136:4715",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "role": "system",
+      "slot": "115:17984",
+      "instance": "136:4718",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "role": "settings",
+      "slot": "115:18018",
+      "instance": "136:4722",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-selected-a",
+      "role": "system",
+      "slot": "115:24292",
+      "instance": "136:4725",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-selected-a",
+      "role": "settings",
+      "slot": "115:24326",
+      "instance": "136:4729",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-selected-a",
+      "role": "system",
+      "slot": "115:24806",
+      "instance": "136:4732",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-selected-a",
+      "role": "settings",
+      "slot": "115:24843",
+      "instance": "136:4736",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "role": "system",
+      "slot": "115:14902",
+      "instance": "136:4739",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "role": "settings",
+      "slot": "115:14939",
+      "instance": "136:4743",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "role": "system",
+      "slot": "115:15502",
+      "instance": "136:4746",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "role": "settings",
+      "slot": "115:15536",
+      "instance": "136:4750",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "role": "system",
+      "slot": "115:11227",
+      "instance": "136:4753",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "role": "settings",
+      "slot": "115:11261",
+      "instance": "136:4757",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "role": "system",
+      "slot": "115:11700",
+      "instance": "136:4760",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "role": "settings",
+      "slot": "115:11737",
+      "instance": "136:4764",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "role": "system",
+      "slot": "115:12180",
+      "instance": "136:4767",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "role": "settings",
+      "slot": "115:12214",
+      "instance": "136:4771",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "role": "system",
+      "slot": "115:16119",
+      "instance": "136:4774",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "role": "settings",
+      "slot": "115:16156",
+      "instance": "136:4778",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "role": "system",
+      "slot": "115:16741",
+      "instance": "136:4781",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "role": "settings",
+      "slot": "115:16775",
+      "instance": "136:4785",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-system-expanded",
+      "role": "system",
+      "slot": "115:29353",
+      "instance": "136:4788",
+      "component": "132:4087",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-system-expanded",
+      "role": "settings",
+      "slot": "115:29387",
+      "instance": "136:4792",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-system-expanded",
+      "role": "system",
+      "slot": "115:29690",
+      "instance": "136:4795",
+      "component": "132:4087",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-system-expanded",
+      "role": "settings",
+      "slot": "115:29727",
+      "instance": "136:4799",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "role": "system",
+      "slot": "115:30032",
+      "instance": "136:4802",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "role": "settings",
+      "slot": "115:30066",
+      "instance": "136:4806",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "role": "system",
+      "slot": "115:12710",
+      "instance": "136:4809",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "role": "settings",
+      "slot": "115:12747",
+      "instance": "136:4813",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-validate",
+      "role": "system",
+      "slot": "115:13245",
+      "instance": "136:4816",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-validate",
+      "role": "settings",
+      "slot": "115:13279",
+      "instance": "136:4820",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "role": "system",
+      "slot": "114:6785",
+      "instance": "136:4823",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "role": "settings",
+      "slot": "114:6822",
+      "instance": "136:4827",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-work-detail",
+      "role": "system",
+      "slot": "114:7180",
+      "instance": "136:4830",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-work-detail",
+      "role": "settings",
+      "slot": "114:7214",
+      "instance": "136:4834",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-work-detail",
+      "role": "system",
+      "slot": "114:7434",
+      "instance": "136:4837",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-work-detail",
+      "role": "settings",
+      "slot": "114:7471",
+      "instance": "136:4841",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate",
+      "role": "system",
+      "slot": "114:12126",
+      "instance": "136:4844",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate",
+      "role": "settings",
+      "slot": "114:12163",
+      "instance": "136:4848",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standard-history",
+      "role": "system",
+      "slot": "114:12428",
+      "instance": "136:4851",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-standard-history",
+      "role": "settings",
+      "slot": "114:12462",
+      "instance": "136:4855",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standard-history",
+      "role": "system",
+      "slot": "114:12688",
+      "instance": "136:4858",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-standard-history",
+      "role": "settings",
+      "slot": "114:12725",
+      "instance": "136:4862",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "role": "system",
+      "slot": "115:28376",
+      "instance": "136:4865",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "role": "settings",
+      "slot": "115:28413",
+      "instance": "136:4869",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-expanded",
+      "role": "system",
+      "slot": "115:28736",
+      "instance": "136:4872",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-expanded",
+      "role": "settings",
+      "slot": "115:28770",
+      "instance": "136:4876",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "role": "system",
+      "slot": "115:29043",
+      "instance": "136:4879",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "role": "settings",
+      "slot": "115:29080",
+      "instance": "136:4883",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-trusted-dialog",
+      "role": "system",
+      "slot": "115:7694",
+      "instance": "136:4886",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-trusted-dialog",
+      "role": "settings",
+      "slot": "115:7728",
+      "instance": "136:4890",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "role": "system",
+      "slot": "115:8053",
+      "instance": "136:4893",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "role": "settings",
+      "slot": "115:8090",
+      "instance": "136:4897",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-rollback-dialog",
+      "role": "system",
+      "slot": "115:8416",
+      "instance": "136:4900",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-rollback-dialog",
+      "role": "settings",
+      "slot": "115:8450",
+      "instance": "136:4904",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-expired-dialog",
+      "role": "system",
+      "slot": "115:5673",
+      "instance": "136:4907",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-expired-dialog",
+      "role": "settings",
+      "slot": "115:5710",
+      "instance": "136:4911",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-pause-dialog",
+      "role": "system",
+      "slot": "115:6250",
+      "instance": "136:4914",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-pause-dialog",
+      "role": "settings",
+      "slot": "115:6284",
+      "instance": "136:4918",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "role": "system",
+      "slot": "115:8769",
+      "instance": "136:4921",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "role": "settings",
+      "slot": "115:8806",
+      "instance": "136:4925",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "role": "system",
+      "slot": "115:9129",
+      "instance": "136:4928",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "role": "settings",
+      "slot": "115:9163",
+      "instance": "136:4932",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "role": "system",
+      "slot": "115:9616",
+      "instance": "136:4935",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "role": "settings",
+      "slot": "115:9653",
+      "instance": "136:4939",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup-preview",
+      "role": "system",
+      "slot": "114:13754",
+      "instance": "136:4942",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup-preview",
+      "role": "settings",
+      "slot": "114:13791",
+      "instance": "136:4946",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-decision",
+      "role": "system",
+      "slot": "114:14029",
+      "instance": "136:4949",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-decision",
+      "role": "settings",
+      "slot": "114:14063",
+      "instance": "136:4953",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "role": "system",
+      "slot": "114:14321",
+      "instance": "136:4956",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "role": "settings",
+      "slot": "114:14358",
+      "instance": "136:4960",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "role": "system",
+      "slot": "115:20824",
+      "instance": "136:4963",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "role": "settings",
+      "slot": "115:20861",
+      "instance": "136:4967",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "role": "system",
+      "slot": "115:21402",
+      "instance": "136:4970",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "role": "settings",
+      "slot": "115:21436",
+      "instance": "136:4974",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "role": "system",
+      "slot": "115:21692",
+      "instance": "136:4977",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "role": "settings",
+      "slot": "115:21729",
+      "instance": "136:4981",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-addsource",
+      "role": "system",
+      "slot": "114:9484",
+      "instance": "136:4984",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-addsource",
+      "role": "settings",
+      "slot": "114:9518",
+      "instance": "136:4988",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-addsource",
+      "role": "system",
+      "slot": "114:9765",
+      "instance": "136:4991",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-addsource",
+      "role": "settings",
+      "slot": "114:9802",
+      "instance": "136:4995",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "role": "system",
+      "slot": "114:10049",
+      "instance": "136:4998",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "role": "settings",
+      "slot": "114:10086",
+      "instance": "136:5002",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-source-dialog",
+      "role": "system",
+      "slot": "115:3524",
+      "instance": "136:5005",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-source-dialog",
+      "role": "settings",
+      "slot": "115:3558",
+      "instance": "136:5009",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-source-dialog",
+      "role": "system",
+      "slot": "115:3937",
+      "instance": "136:5012",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-source-dialog",
+      "role": "settings",
+      "slot": "115:3974",
+      "instance": "136:5016",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-result-dialog",
+      "role": "system",
+      "slot": "115:4353",
+      "instance": "136:5019",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-result-dialog",
+      "role": "settings",
+      "slot": "115:4387",
+      "instance": "136:5023",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "role": "system",
+      "slot": "115:23131",
+      "instance": "136:5026",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "role": "settings",
+      "slot": "115:23168",
+      "instance": "136:5030",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-mobile-menu",
+      "role": "system",
+      "slot": "115:23746",
+      "instance": "136:5033",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-mobile-menu",
+      "role": "settings",
+      "slot": "115:23779",
+      "instance": "136:5037",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-mobile-menu",
+      "role": "system",
+      "slot": "115:24139",
+      "instance": "136:5040",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-mobile-menu",
+      "role": "settings",
+      "slot": "115:24176",
+      "instance": "136:5044",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "role": "system",
+      "slot": "115:30314",
+      "instance": "136:5047",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "role": "settings",
+      "slot": "115:30351",
+      "instance": "136:5051",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "role": "system",
+      "slot": "115:30599",
+      "instance": "136:5054",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "role": "settings",
+      "slot": "115:30633",
+      "instance": "136:5058",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "role": "system",
+      "slot": "115:30881",
+      "instance": "136:5061",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "role": "settings",
+      "slot": "115:30918",
+      "instance": "136:5065",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-selected-b",
+      "role": "system",
+      "slot": "115:25323",
+      "instance": "136:5068",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-selected-b",
+      "role": "settings",
+      "slot": "115:25357",
+      "instance": "136:5072",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-selected-b",
+      "role": "system",
+      "slot": "115:25837",
+      "instance": "136:5075",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-selected-b",
+      "role": "settings",
+      "slot": "115:25874",
+      "instance": "136:5079",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences",
+      "role": "system",
+      "slot": "114:4537",
+      "instance": "136:5082",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences",
+      "role": "settings",
+      "slot": "114:4574",
+      "instance": "136:5086",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing",
+      "role": "system",
+      "slot": "114:5071",
+      "instance": "136:5089",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing",
+      "role": "settings",
+      "slot": "114:5105",
+      "instance": "136:5093",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-collection",
+      "role": "system",
+      "slot": "114:5463",
+      "instance": "136:5096",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-collection",
+      "role": "settings",
+      "slot": "114:5497",
+      "instance": "136:5100",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "role": "system",
+      "slot": "114:15567",
+      "instance": "136:5103",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "role": "settings",
+      "slot": "114:15604",
+      "instance": "136:5107",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "role": "system",
+      "slot": "114:15862",
+      "instance": "136:5110",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "role": "settings",
+      "slot": "114:15896",
+      "instance": "136:5114",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "role": "system",
+      "slot": "114:16122",
+      "instance": "136:5117",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "role": "settings",
+      "slot": "114:16159",
+      "instance": "136:5121",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "role": "system",
+      "slot": "115:10110",
+      "instance": "136:5124",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "role": "settings",
+      "slot": "115:10144",
+      "instance": "136:5128",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "role": "system",
+      "slot": "115:10667",
+      "instance": "136:5131",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "role": "settings",
+      "slot": "115:10704",
+      "instance": "136:5135",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "role": "system",
+      "slot": "115:18500",
+      "instance": "136:5138",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "role": "settings",
+      "slot": "115:18537",
+      "instance": "136:5142",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "role": "system",
+      "slot": "115:19023",
+      "instance": "136:5145",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "role": "settings",
+      "slot": "115:19057",
+      "instance": "136:5149",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-materials",
+      "role": "system",
+      "slot": "114:3006",
+      "instance": "136:5152",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-materials",
+      "role": "settings",
+      "slot": "114:3043",
+      "instance": "136:5156",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution",
+      "role": "system",
+      "slot": "114:3499",
+      "instance": "136:5159",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution",
+      "role": "settings",
+      "slot": "114:3536",
+      "instance": "136:5163",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-operation",
+      "role": "system",
+      "slot": "114:4058",
+      "instance": "136:5166",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-operation",
+      "role": "settings",
+      "slot": "114:4095",
+      "instance": "136:5170",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-decision",
+      "role": "system",
+      "slot": "115:1985",
+      "instance": "136:5173",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-decision",
+      "role": "settings",
+      "slot": "115:2019",
+      "instance": "136:5177",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-decision",
+      "role": "system",
+      "slot": "115:2240",
+      "instance": "136:5180",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-task-decision",
+      "role": "settings",
+      "slot": "115:2277",
+      "instance": "136:5184",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-citations",
+      "role": "system",
+      "slot": "115:2498",
+      "instance": "136:5187",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-task-citations",
+      "role": "settings",
+      "slot": "115:2532",
+      "instance": "136:5191",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-decisions-empty",
+      "role": "system",
+      "slot": "114:7690",
+      "instance": "136:5194",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-decisions-empty",
+      "role": "settings",
+      "slot": "114:7724",
+      "instance": "136:5198",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-decisions-empty",
+      "role": "system",
+      "slot": "114:8012",
+      "instance": "136:5201",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-decisions-empty",
+      "role": "settings",
+      "slot": "114:8049",
+      "instance": "136:5205",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-paused",
+      "role": "system",
+      "slot": "114:8815",
+      "instance": "136:5208",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-paused",
+      "role": "settings",
+      "slot": "114:8849",
+      "instance": "136:5212",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "role": "system",
+      "slot": "114:9148",
+      "instance": "136:5215",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "role": "settings",
+      "slot": "114:9185",
+      "instance": "136:5219",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "role": "system",
+      "slot": "115:21985",
+      "instance": "136:5222",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "role": "settings",
+      "slot": "115:22019",
+      "instance": "136:5226",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "role": "system",
+      "slot": "115:22366",
+      "instance": "136:5229",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "role": "settings",
+      "slot": "115:22403",
+      "instance": "136:5233",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "role": "system",
+      "slot": "115:22750",
+      "instance": "136:5236",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "role": "settings",
+      "slot": "115:22784",
+      "instance": "136:5240",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-translated",
+      "role": "system",
+      "slot": "115:26354",
+      "instance": "136:5243",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-translated",
+      "role": "settings",
+      "slot": "115:26388",
+      "instance": "136:5247",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-translated",
+      "role": "system",
+      "slot": "115:26877",
+      "instance": "136:5250",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-translated",
+      "role": "settings",
+      "slot": "115:26914",
+      "instance": "136:5254",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup-scope",
+      "role": "system",
+      "slot": "114:12951",
+      "instance": "136:5257",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup-scope",
+      "role": "settings",
+      "slot": "114:12985",
+      "instance": "136:5261",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup-scope",
+      "role": "system",
+      "slot": "114:13216",
+      "instance": "136:5264",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-setup-scope",
+      "role": "settings",
+      "slot": "114:13253",
+      "instance": "136:5268",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup-preview",
+      "role": "system",
+      "slot": "114:13485",
+      "instance": "136:5271",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-setup-preview",
+      "role": "settings",
+      "slot": "114:13519",
+      "instance": "136:5275",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "role": "system",
+      "slot": "115:19633",
+      "instance": "136:5278",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "role": "settings",
+      "slot": "115:19670",
+      "instance": "136:5282",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "role": "system",
+      "slot": "115:20252",
+      "instance": "136:5285",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "role": "settings",
+      "slot": "115:20286",
+      "instance": "136:5289",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "role": "system",
+      "slot": "114:10294",
+      "instance": "136:5292",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "role": "settings",
+      "slot": "114:10328",
+      "instance": "136:5296",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "role": "system",
+      "slot": "114:10627",
+      "instance": "136:5299",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "role": "settings",
+      "slot": "114:10664",
+      "instance": "136:5303",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-error",
+      "role": "system",
+      "slot": "114:10963",
+      "instance": "136:5306",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-source-error",
+      "role": "settings",
+      "slot": "114:10997",
+      "instance": "136:5310",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate-shadow",
+      "role": "system",
+      "slot": "117:3514",
+      "instance": "136:5313",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate-shadow",
+      "role": "settings",
+      "slot": "117:3548",
+      "instance": "136:5317",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "role": "system",
+      "slot": "117:3815",
+      "instance": "136:5320",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "role": "settings",
+      "slot": "117:3852",
+      "instance": "136:5324",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate-rejected",
+      "role": "system",
+      "slot": "117:4123",
+      "instance": "136:5327",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-candidate-rejected",
+      "role": "settings",
+      "slot": "117:4157",
+      "instance": "136:5331",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "role": "system",
+      "slot": "117:9081",
+      "instance": "136:5334",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "role": "settings",
+      "slot": "117:9115",
+      "instance": "136:5338",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "role": "system",
+      "slot": "117:9422",
+      "instance": "136:5341",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "role": "settings",
+      "slot": "117:9459",
+      "instance": "136:5345",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "role": "system",
+      "slot": "117:6604",
+      "instance": "136:5348",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "role": "settings",
+      "slot": "117:6641",
+      "instance": "136:5352",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "role": "system",
+      "slot": "117:7217",
+      "instance": "136:5355",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "role": "settings",
+      "slot": "117:7251",
+      "instance": "136:5359",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "role": "system",
+      "slot": "117:7804",
+      "instance": "136:5362",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "role": "settings",
+      "slot": "117:7841",
+      "instance": "136:5366",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "role": "system",
+      "slot": "117:8396",
+      "instance": "136:5369",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "role": "settings",
+      "slot": "117:8430",
+      "instance": "136:5373",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "role": "system",
+      "slot": "117:8737",
+      "instance": "136:5376",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "role": "settings",
+      "slot": "117:8774",
+      "instance": "136:5380",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "role": "system",
+      "slot": "117:4422",
+      "instance": "136:5383",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "role": "settings",
+      "slot": "117:4459",
+      "instance": "136:5387",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-paused",
+      "role": "system",
+      "slot": "117:4728",
+      "instance": "136:5390",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-paused",
+      "role": "settings",
+      "slot": "117:4762",
+      "instance": "136:5394",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-paused",
+      "role": "system",
+      "slot": "117:5045",
+      "instance": "136:5397",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-paused",
+      "role": "settings",
+      "slot": "117:5082",
+      "instance": "136:5401",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-stopped",
+      "role": "system",
+      "slot": "117:5365",
+      "instance": "136:5404",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-delegation-stopped",
+      "role": "settings",
+      "slot": "117:5399",
+      "instance": "136:5408",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "role": "system",
+      "slot": "117:5678",
+      "instance": "136:5411",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "role": "settings",
+      "slot": "117:5715",
+      "instance": "136:5415",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "role": "system",
+      "slot": "117:5994",
+      "instance": "136:5418",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "role": "settings",
+      "slot": "117:6028",
+      "instance": "136:5422",
+      "component": "132:4091",
+      "color": "#087b96",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats",
+      "role": "system",
+      "slot": "119:6757",
+      "instance": "136:5425",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats",
+      "role": "settings",
+      "slot": "119:6801",
+      "instance": "136:5429",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats",
+      "role": "system",
+      "slot": "119:7163",
+      "instance": "136:5432",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats",
+      "role": "settings",
+      "slot": "119:7210",
+      "instance": "136:5436",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-month",
+      "role": "system",
+      "slot": "119:7577",
+      "instance": "136:5439",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-month",
+      "role": "settings",
+      "slot": "119:7621",
+      "instance": "136:5443",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-month",
+      "role": "system",
+      "slot": "119:7983",
+      "instance": "136:5446",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-month",
+      "role": "settings",
+      "slot": "119:8030",
+      "instance": "136:5450",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-all",
+      "role": "system",
+      "slot": "119:8397",
+      "instance": "136:5453",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-all",
+      "role": "settings",
+      "slot": "119:8441",
+      "instance": "136:5457",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-all",
+      "role": "system",
+      "slot": "119:8803",
+      "instance": "136:5460",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-all",
+      "role": "settings",
+      "slot": "119:8850",
+      "instance": "136:5464",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-counting",
+      "role": "system",
+      "slot": "119:9217",
+      "instance": "136:5467",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-counting",
+      "role": "settings",
+      "slot": "119:9261",
+      "instance": "136:5471",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-counting",
+      "role": "system",
+      "slot": "119:9623",
+      "instance": "136:5474",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-counting",
+      "role": "settings",
+      "slot": "119:9670",
+      "instance": "136:5478",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-after-decision",
+      "role": "system",
+      "slot": "119:10037",
+      "instance": "136:5481",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-stats-after-decision",
+      "role": "settings",
+      "slot": "119:10081",
+      "instance": "136:5485",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "role": "system",
+      "slot": "119:10443",
+      "instance": "136:5488",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "role": "settings",
+      "slot": "119:10490",
+      "instance": "136:5492",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "role": "system",
+      "slot": "122:5749",
+      "instance": "136:5495",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "role": "settings",
+      "slot": "122:5792",
+      "instance": "136:5499",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "role": "system",
+      "slot": "122:6156",
+      "instance": "136:5502",
+      "component": "132:4087",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "role": "settings",
+      "slot": "122:6200",
+      "instance": "136:5506",
+      "component": "132:4091",
+      "color": "#5a707b",
+      "boundsUnchanged": true
+    }
+  ],
+  "browser": {
+    "errors": [],
+    "reviews": [
+      {
+        "lang": "en",
+        "width": 1440,
+        "nav": [
+          "work",
+          "ongoing",
+          "standards",
+          "knowledge",
+          "delegation",
+          "system",
+          "stats",
+          "settings"
+        ],
+        "categories": [
+          "settings-collection",
+          "settings-materials",
+          "settings-execution",
+          "settings-operation",
+          "settings-preferences"
+        ],
+        "unique": 13,
+        "overflow": false
+      },
+      {
+        "lang": "en",
+        "width": 390,
+        "nav": [
+          "work",
+          "ongoing",
+          "standards",
+          "knowledge",
+          "delegation",
+          "system",
+          "stats",
+          "settings"
+        ],
+        "categories": [
+          "settings-collection",
+          "settings-materials",
+          "settings-execution",
+          "settings-operation",
+          "settings-preferences"
+        ],
+        "unique": 13,
+        "overflow": false
+      },
+      {
+        "lang": "zh",
+        "width": 1440,
+        "nav": [
+          "work",
+          "ongoing",
+          "standards",
+          "knowledge",
+          "delegation",
+          "system",
+          "stats",
+          "settings"
+        ],
+        "categories": [
+          "settings-collection",
+          "settings-materials",
+          "settings-execution",
+          "settings-operation",
+          "settings-preferences"
+        ],
+        "unique": 13,
+        "overflow": false
+      },
+      {
+        "lang": "zh",
+        "width": 390,
+        "nav": [
+          "work",
+          "ongoing",
+          "standards",
+          "knowledge",
+          "delegation",
+          "system",
+          "stats",
+          "settings"
+        ],
+        "categories": [
+          "settings-collection",
+          "settings-materials",
+          "settings-execution",
+          "settings-operation",
+          "settings-preferences"
+        ],
+        "unique": 13,
+        "overflow": false
+      },
+      {
+        "route": "system",
+        "heading": "系统"
+      },
+      {
+        "route": "settings",
+        "heading": "设置"
+      }
+    ]
+  },
+  "visualReview": {
+    "native": [
+      "en-settings",
+      "zh-system"
+    ],
+    "result": "Distinct glyphs, consistent colors, transparent icon containers and unchanged layout.",
+    "browserScreenshotsInspected": [
+      "en-settings desktop"
+    ],
+    "browserAutomatedChecks": [
+      "en-settings desktop",
+      "en-settings mobile",
+      "zh-settings desktop",
+      "zh-settings mobile"
+    ]
+  },
+  "nodeDelta": {
+    "createdDescendants": 1440,
+    "removedDescendants": 408,
+    "net": 1032
+  },
+  "historicalBaseline": "历史-v2.5/Figma-v2.5复核.json"
+}

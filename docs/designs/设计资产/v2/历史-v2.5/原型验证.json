@@ -1,0 +1,473 @@
+{
+  "version": "2.5",
+  "validatedAt": "2026-11-14T11:40:56.986789+00:00",
+  "sha256": "c9d46cb330c3aae05618473a346c2959700b1cb364ad68e25592a88e2cf95e4d",
+  "checks": [
+    "seven navigation items",
+    "navigation order",
+    "all unfinished tasks visible",
+    "running filter",
+    "task detail identity",
+    "answer verified",
+    "decision queue links continuing work",
+    "same task continues",
+    "decision count updated",
+    "one answer receipt",
+    "five settings groups",
+    "known sources",
+    "language preserves source draft",
+    "source preview",
+    "localized trusted receipt",
+    "source registered",
+    "enabled differs from synced",
+    "pause future collection",
+    "pause preserves existing tasks",
+    "resume same source",
+    "duplicate rejected",
+    "cross-domain destination blocked",
+    "preview invalidated by config revision",
+    "failed check preserves draft",
+    "error keeps address",
+    "disconnect source only",
+    "no script errors",
+    "seven main navigation entries",
+    "Stats immediately follows System",
+    "six requested metrics",
+    "seven-day activity default",
+    "period updates activity",
+    "period does not alter current stock",
+    "Chinese heading",
+    "language preserves period",
+    "metric labels localized",
+    "blocked count opens matching work filter",
+    "verified owner answer adds once",
+    "language does not duplicate decisions",
+    "answer does not count as completed task",
+    "counting definition available",
+    "en/1440/7d no page overflow",
+    "en/1440/30d no page overflow",
+    "en/1440/all no page overflow",
+    "en/390/7d no page overflow",
+    "en/390/30d no page overflow",
+    "en/390/all no page overflow",
+    "zh/1440/7d no page overflow",
+    "zh/1440/30d no page overflow",
+    "zh/1440/all no page overflow",
+    "zh/390/7d no page overflow",
+    "zh/390/30d no page overflow",
+    "zh/390/all no page overflow",
+    "offline retains dated snapshot",
+    "no script errors"
+  ],
+  "matrix": [
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 1440,
+      "period": "7d",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 1440,
+      "period": "30d",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 1440,
+      "period": "all",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 390,
+      "period": "7d",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 390,
+      "period": "30d",
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 390,
+      "period": "all",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 1440,
+      "period": "7d",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 1440,
+      "period": "30d",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 1440,
+      "period": "all",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 390,
+      "period": "7d",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 390,
+      "period": "30d",
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 390,
+      "period": "all",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "suites": {
+    "taskAndCollection": {
+      "checks": 27,
+      "matrix": 52
+    },
+    "statistics": {
+      "checks": 28,
+      "matrix": 12
+    }
+  },
+  "coverage": [
+    "Seven navigation entries; Stats after System",
+    "Six metrics; 7/30/all periods; current stock independent of period",
+    "Accepted owner answers counted once; completion remains separate",
+    "Localized labels and state-preserving language switch",
+    "Ongoing/blocked drilldowns; offline dated snapshot",
+    "Existing decision and collection flows"
+  ],
+  "verificationScripts": [
+    "验证源码-v2.5/test-statistics.cjs",
+    "验证源码-v2.5/test-regression.cjs"
+  ],
+  "scope": "Local simulated UI; no real accounts, external collection or execution.",
+  "priorVersionValidation": "历史-v2.4/原型验证.json"
+}

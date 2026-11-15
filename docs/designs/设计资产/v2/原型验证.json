@@ -1,0 +1,53 @@
+{
+  "version": "2.6",
+  "validatedAt": "2026-11-15",
+  "sha256": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87",
+  "scope": "Local deterministic HTML simulation; no real account, message, file or service action.",
+  "source": {
+    "html": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87",
+    "css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49",
+    "extension": "ac61b8728f43f5fdd7c625ee0e6ee7159d6fcec3f66b149ffc7ec199019a7dd8"
+  },
+  "tests": {
+    "integrations": {
+      "checks": 50,
+      "configurations": 152,
+      "errors": [],
+      "evidence": "验证源码-v2.6/results/integrations-tests.json"
+    },
+    "regression": {
+      "checks": 27,
+      "configurations": 56,
+      "errors": [],
+      "evidence": "验证源码-v2.6/results/regression-tests.json"
+    },
+    "statistics": {
+      "checks": 28,
+      "configurations": 12,
+      "errors": [],
+      "evidence": "验证源码-v2.6/results/statistics-tests.json"
+    }
+  },
+  "totals": {
+    "checks": 105,
+    "configurations": 220
+  },
+  "settingsGroups": 6,
+  "uniqueNavigationAndCategoryGlyphs": 14,
+  "integrationScenes": 38,
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "viewports": [
+    1440,
+    390
+  ],
+  "errors": [],
+  "limits": [
+    "No real Feishu credentials, message delivery or Obsidian file writes.",
+    "Figma demonstrates preset states; dynamic continuity and arbitrary input are exercised in the HTML simulation.",
+    "Authentication, backend integration, real recovery and deployment remain implementation acceptance work."
+  ],
+  "previousEvidence": "历史-v2.5.1/原型验证.json"
+}

@@ -1,0 +1,970 @@
+{
+  "checks": [
+    "dedicated Interaction category",
+    "six settings groups",
+    "fourteen navigation and settings icons distinct",
+    "locale preserves application draft",
+    "Interaction localized",
+    "read-only credentials check proceeds to pairing",
+    "secret cleared after credential reference saved",
+    "secret excluded from browser storage",
+    "checking sends no test",
+    "owner confirmation precedes test",
+    "test preview has no send effect",
+    "dialog keyboard focus wraps to its first control",
+    "modal switches locale",
+    "Escape dismisses preview",
+    "send and return are separate receipts",
+    "repeated send keeps one test identity",
+    "verified return still needs explicit enable",
+    "verified channel enabled",
+    "connection and test never create work decisions or stats",
+    "disable clears previous test proof",
+    "rebinding invalidates old destination and proof",
+    "pending replies reconcile before disabled",
+    "recovery cannot reuse owner or tests",
+    "wrong sender cannot bind",
+    "expired pairing rejected",
+    "pairing can be renewed",
+    "pairing proof cannot authorize a changed connection",
+    "unknown test return cannot enable",
+    "offline channel cannot be enabled",
+    "old verification cannot enable changed configuration",
+    "invalid credentials reported",
+    "offline check retains connection draft",
+    "missing permissions has a concrete error",
+    "closing wizard clears unsaved secret",
+    "offline send cannot produce a test receipt",
+    "missing editor has installation guide",
+    "invalid Vault path rejected",
+    "scope preview grants no connection",
+    "stale scope confirmation rejected",
+    "confirmed exact Vault is connected",
+    "reopening pending edit reuses the draft",
+    "saving file does not activate standard",
+    "evaluation of old file revision rejected",
+    "adoption and Vault export are distinct",
+    "existing task retains original standard version",
+    "export retries do not duplicate adoption or counts",
+    "first standard adopted only once",
+    "failed candidate keeps active standard",
+    "knowledge verification completes before export",
+    "no runtime errors across all integration states"
+  ],
+  "matrix": [
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "obs-draft",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "obs-review",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "obs-ready",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "obs-install",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "obs-guide",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-home",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-connect",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-pair",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-owner",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-test",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-return",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-enable",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-ready",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-disable",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-draining",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-timeout",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-recovery",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-knowledge",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-knowledge-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-new",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-open",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-pending",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-conflict",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-guide",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-sent",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "feishu-disabled",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-knowledge-open",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-knowledge-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-knowledge-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-new-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-new-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "edit-standard-new-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "obs-draft",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "obs-review",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "obs-ready",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "obs-install",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "obs-guide",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-home",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-connect",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-pair",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-owner",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-test",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-return",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-enable",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-ready",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-disable",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-draining",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-timeout",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-recovery",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-knowledge",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-knowledge-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-new",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-open",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-pending",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-conflict",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-guide",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-sent",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "feishu-disabled",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-knowledge-open",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-knowledge-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-knowledge-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-new-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-new-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "edit-standard-new-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "obs-draft",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "obs-review",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "obs-ready",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "obs-install",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "obs-guide",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-home",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-connect",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-pair",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-owner",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-test",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-return",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-enable",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-ready",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-disable",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-draining",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-timeout",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-recovery",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-knowledge",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-knowledge-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-new",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-open",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-pending",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-conflict",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-guide",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-sent",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "feishu-disabled",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-knowledge-open",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-knowledge-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-knowledge-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-new-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-new-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "edit-standard-new-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "obs-draft",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "obs-review",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "obs-ready",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "obs-install",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "obs-guide",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-home",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-connect",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-pair",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-owner",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-test",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-return",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-enable",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-ready",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-disable",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-draining",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-timeout",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-recovery",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-knowledge",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-knowledge-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-new",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-open",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-pending",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-conflict",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-guide",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-sent",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "feishu-disabled",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-knowledge-open",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-knowledge-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-knowledge-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-new-evaluating",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-new-adopted",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-ingested",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "edit-standard-new-ingested",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "sha256": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87"
+}

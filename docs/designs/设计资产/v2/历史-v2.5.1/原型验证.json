@@ -1,0 +1,120 @@
+{
+  "version": "2.5.1",
+  "validatedAt": "2026-11-14T12:08:52.758863+00:00",
+  "sha256": "803ea91773c30258e86e4986d4732ecb45d0df5465cf737ff09f5e3653d244ef",
+  "scope": "Scoped icon, bilingual layout and System/Settings navigation review; no functional changes.",
+  "uniqueNavigationAndCategoryGlyphs": 13,
+  "configurations": [
+    {
+      "lang": "en",
+      "width": 1440,
+      "nav": [
+        "work",
+        "ongoing",
+        "standards",
+        "knowledge",
+        "delegation",
+        "system",
+        "stats",
+        "settings"
+      ],
+      "categories": [
+        "settings-collection",
+        "settings-materials",
+        "settings-execution",
+        "settings-operation",
+        "settings-preferences"
+      ],
+      "unique": 13,
+      "overflow": false
+    },
+    {
+      "lang": "en",
+      "width": 390,
+      "nav": [
+        "work",
+        "ongoing",
+        "standards",
+        "knowledge",
+        "delegation",
+        "system",
+        "stats",
+        "settings"
+      ],
+      "categories": [
+        "settings-collection",
+        "settings-materials",
+        "settings-execution",
+        "settings-operation",
+        "settings-preferences"
+      ],
+      "unique": 13,
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 1440,
+      "nav": [
+        "work",
+        "ongoing",
+        "standards",
+        "knowledge",
+        "delegation",
+        "system",
+        "stats",
+        "settings"
+      ],
+      "categories": [
+        "settings-collection",
+        "settings-materials",
+        "settings-execution",
+        "settings-operation",
+        "settings-preferences"
+      ],
+      "unique": 13,
+      "overflow": false
+    },
+    {
+      "lang": "zh",
+      "width": 390,
+      "nav": [
+        "work",
+        "ongoing",
+        "standards",
+        "knowledge",
+        "delegation",
+        "system",
+        "stats",
+        "settings"
+      ],
+      "categories": [
+        "settings-collection",
+        "settings-materials",
+        "settings-execution",
+        "settings-operation",
+        "settings-preferences"
+      ],
+      "unique": 13,
+      "overflow": false
+    }
+  ],
+  "navigation": [
+    {
+      "route": "system",
+      "heading": "系统"
+    },
+    {
+      "route": "settings",
+      "heading": "设置"
+    }
+  ],
+  "errors": [],
+  "previousRegression": {
+    "version": "2.5",
+    "checks": 55,
+    "matrix": 64,
+    "rerunThisPatch": false,
+    "evidence": "历史-v2.5/原型验证.json",
+    "sourceSha256": "c9d46cb330c3aae05618473a346c2959700b1cb364ad68e25592a88e2cf95e4d"
+  }
+}

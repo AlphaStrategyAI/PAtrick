@@ -1,0 +1,88 @@
+{
+  "version": "2.3",
+  "date": "2026-11-14",
+  "timezone": "Asia/Shanghai",
+  "animation": {
+    "logo-live.gif": {
+      "size": [
+        160,
+        160
+      ],
+      "frames": 60,
+      "loop": 0,
+      "durationsMs": [
+        80
+      ],
+      "durationMs": 4800,
+      "distinctFrames": 60,
+      "bytes": 337205,
+      "sha256": "5cadeced2b618c5c868136b9543019bc848c84c54591a3ab8b200c89c311cb74"
+    },
+    "logo-live.webp": {
+      "size": [
+        160,
+        160
+      ],
+      "frames": 60,
+      "loop": 0,
+      "durationsMs": [
+        80
+      ],
+      "durationMs": 4800,
+      "distinctFrames": 60,
+      "bytes": 43496,
+      "sha256": "e12b76e5243d99124721a355fb83cbb4b514ce5624ae084c0c29264cc0a5b7e6"
+    }
+  },
+  "browser": {
+    "checks": [
+      "System locale resolves Chinese",
+      "System locale resolves English",
+      "Only running marks animate",
+      "Explicit reduced motion stops all animations",
+      "OS reduced motion stops all animations",
+      "Manual locale replaces visible text",
+      "Square SVG bounds",
+      "Ordered system locale en-GB/zh-CN",
+      "Ordered system locale fr-FR/zh-TW/en-US",
+      "Ordered system locale es/de",
+      "Manual override ignores languagechange",
+      "Hidden document pauses decorative motion"
+    ]
+  },
+  "assets": {
+    "logo-live.gif": "logo-running.gif",
+    "logo-live.webp": "logo-running.webp",
+    "logo-live.svg": "logo-running.svg",
+    "logo-live-static.svg": "logo-still.svg",
+    "logo-paused.svg": "logo-paused.svg",
+    "logo-offline.svg": "logo-connection-lost.svg",
+    "logo-unknown.svg": "logo-checking.svg",
+    "logo-poster.png": "logo-running-poster.png"
+  },
+  "figmaNative": {
+    "readback": {
+      "phaseCount": 16,
+      "closedCycle": true,
+      "seconds": 4.799999920651317,
+      "errors": [],
+      "running": {
+        "id": "81:3988",
+        "child": "89:4825",
+        "main": "85:3988",
+        "trackNodeOpacity": 0.1599999964237213
+      },
+      "showcase": {
+        "id": "89:4847",
+        "main": "81:3988",
+        "trackNodeOpacity": 0.1599999964237213
+      },
+      "loopSet": "86:3988",
+      "previewFrame": "86:4016"
+    },
+    "playbackRecordingVerified": false,
+    "renderedLogoOnly": true,
+    "uploadAttempt": "GIF upload URL was unreachable from workspace (HTTP 403); native editable component loop used instead.",
+    "allCurrentRunningInstancesRefreshed": 52
+  }
+}

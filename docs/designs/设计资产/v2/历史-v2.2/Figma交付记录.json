@@ -1,0 +1,1146 @@
+{
+  "version": "2.2",
+  "date": "2026-11-14",
+  "timezone": "Etc/UTC",
+  "team": "TJ",
+  "fileKey": "kPSkB5zeZSKaK7Yrz3PslQ",
+  "designUrl": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67",
+  "prototypeUrl": "https://www.figma.com/proto/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67&starting-point-node-id=24%3A67",
+  "defaultLocale": "en",
+  "supportedLocales": [
+    "en",
+    "zh-CN"
+  ],
+  "frames": {
+    "en-conversation": "24:67",
+    "zh-conversation": "24:204",
+    "en-details": "26:138",
+    "zh-details": "26:280",
+    "en-custom": "26:421",
+    "zh-custom": "26:549",
+    "en-submitted": "26:677",
+    "zh-submitted": "26:772",
+    "en-resumed": "26:867",
+    "zh-resumed": "26:966",
+    "en-freechat": "26:1065",
+    "zh-freechat": "26:1161",
+    "en-standards": "26:1257",
+    "zh-standards": "26:1385",
+    "en-knowledge": "26:1513",
+    "zh-knowledge": "26:1617",
+    "en-delegation": "26:1721",
+    "zh-delegation": "26:1829",
+    "en-system": "26:1937",
+    "zh-system": "26:2046",
+    "en-setup": "26:2155",
+    "zh-setup": "26:2258",
+    "en-settings": "26:2361",
+    "zh-settings": "26:2477",
+    "en-result": "26:2593",
+    "zh-result": "27:1028",
+    "en-expired": "27:1126",
+    "zh-expired": "27:1218",
+    "en-error": "27:1310",
+    "zh-error": "27:1448",
+    "en-offline": "27:1586",
+    "zh-offline": "27:1682",
+    "en-mobileconversation": "27:1778",
+    "zh-mobileconversation": "27:1875",
+    "en-submittedB": "28:1400",
+    "zh-submittedB": "28:1492",
+    "en-resumedB": "28:1582",
+    "zh-resumedB": "28:1672",
+    "en-submittedCustom": "28:1762",
+    "zh-submittedCustom": "28:1857",
+    "en-settings-executors": "59:2171",
+    "en-settings-sources": "62:6635",
+    "zh-settings-sources": "62:6880",
+    "en-settings-knowledge": "62:7125",
+    "zh-settings-knowledge": "62:7373",
+    "en-settings-standards": "62:7621",
+    "zh-settings-standards": "62:7869",
+    "zh-settings-executors": "62:8117",
+    "en-settings-interaction": "63:2719",
+    "zh-settings-interaction": "63:2981",
+    "en-settings-access": "63:3241",
+    "zh-settings-access": "63:3493",
+    "en-settings-devices": "63:3745",
+    "zh-settings-devices": "63:3997",
+    "en-settings-backup": "63:4249",
+    "zh-settings-backup": "63:4501",
+    "en-settings-checking": "63:4753",
+    "zh-settings-checking": "63:4960",
+    "en-settings-issues": "63:5167",
+    "zh-settings-issues": "63:5375",
+    "en-settings-rechecked": "63:5583",
+    "zh-settings-rechecked": "63:5790"
+  },
+  "components": {
+    "statusSetId": "20:697",
+    "inputComponent": {
+      "id": "26:126",
+      "valueKey": "Value#26:0"
+    },
+    "semanticVariables": 50,
+    "primitives": 50,
+    "textStyles": 13,
+    "logoComponentId": "37:1622"
+  },
+  "nativeValidation": {
+    "frames": 62,
+    "preservedFrameIds": 40,
+    "addedFrames": 22,
+    "navigationLinks": 856,
+    "scrollToLinks": 66,
+    "activeLinks": 922,
+    "currentPageEntriesWithoutAction": 94,
+    "checkedEntries": 1016,
+    "routeFailures": 0,
+    "nodeTypes": {
+      "FRAME": 3690,
+      "INSTANCE": 1346,
+      "VECTOR": 176,
+      "TEXT": 2924
+    },
+    "imageNodes": 0,
+    "fontMismatch": 0,
+    "outsideFrameText": 0,
+    "immediateParentTextOverflow": 0,
+    "overlappingScreens": 0,
+    "wrappedButtonLabels": 0,
+    "logoInstances": 88,
+    "localizedSlogans": 62,
+    "brandTextRemaining": 0,
+    "brandTextScope": "Standalone assistant branding; project names, source paths and original user text remain intact."
+  },
+  "motion": {
+    "frameId": "22:2",
+    "timelineSeconds": 2,
+    "nativeKeyframes": "Existing 320/220/280ms tracks recolored cyan; 360ms one-shot logo nod written and read back",
+    "nativePlayback": "Not re-exported for the color/nod change; previous native video asset download returned HTTP 403. Local HTML playback verified separately.",
+    "localVideo": "动效演示.mp4",
+    "localVideoSeconds": 7.6,
+    "localVideoVerified": true,
+    "logoNodeId": "42:1855",
+    "logoNodSeconds": 0.36,
+    "scope": "Existing v2.1 standalone motion example retained; no new v2.2 application video recorded.",
+    "localVideoVerifiedInVersion": "2.1"
+  },
+  "limits": [
+    "Figma uses preset states with navigation and scroll-to details; free-form edits and validation are exercised in the HTML prototype.",
+    "Sample receipts and readiness checks do not configure or probe real services.",
+    "Backend authentication, cross-channel arbitration, applied revisions and real recovery still require implementation and production validation.",
+    "Existing motion demonstration is illustrative, not a newly recorded v2.2 application video."
+  ],
+  "sourceLibraries": [
+    "Material 3 Button",
+    "Simple Design System Navigation Button"
+  ],
+  "localInputReason": "Imported textarea kept an 88px value width after overrides; replaced with responsive native PAtrick input component.",
+  "localPrototypeValidation": {
+    "existingInteractionChecks": 41,
+    "brandChecks": 11,
+    "settingsChecks": 75,
+    "settingsRegressionChecks": 18,
+    "presetLayoutChecks": 12,
+    "responsiveStateLanguageCombinations": 104,
+    "viewStates": 26,
+    "sha256": "ed25c395a38d8164990fc9ceed3e2e4e61ed853bbea0cd8d175625f109f1f83b",
+    "scriptErrors": 0,
+    "externalRequests": 0,
+    "customInput": "Always visible; A/B reasons, benefits and trade-offs remain beside each action. Chat does not submit a decision.",
+    "independentReview": "Reported settings and state-isolation issues fixed and independently rechecked."
+  },
+  "brand": {
+    "palette": "流光青 / Luminous cyan",
+    "logo": "好奇的 P / Curious P",
+    "svg": "logo-curious-p.svg",
+    "primary": "#087B96",
+    "eye": "#45CECF",
+    "sidebar": "#EAF5F7",
+    "secondary": "#5A707B",
+    "soft": "#ECF8FB",
+    "slogan": {
+      "en": "Keep evolving toward exceptional judgment.",
+      "zh-CN": "让你的判断，持续向顶尖进化。"
+    },
+    "placement": "Directly under sidebar logo; natural two-line Chinese wrapping",
+    "contrast": {
+      "secondaryOnSidebar": 4.681,
+      "primaryOnSoft": 4.525
+    }
+  },
+  "exports": {
+    "Figma-components.png": {
+      "sha256": "d2a85c20366618206d88811fb8bbfffbb2c583b23a65e70b678360d21992929d",
+      "bytes": 106389
+    },
+    "Figma-en-conversation.png": {
+      "sha256": "b62800ca3f0b61eff682b493434166967ab3501832cc912e91338d2b7e724de6",
+      "bytes": 107560
+    },
+    "Figma-en-delegation.png": {
+      "sha256": "80fa4dcf89afe8072b044229a322ef5e9e8bc7167addb13fe2eee6d43d2695c1",
+      "bytes": 137664
+    },
+    "Figma-en-error.png": {
+      "sha256": "10011c42af4602ae4e96431bcee317d2d711240df931661f7963d4286daaf14c",
+      "bytes": 126363
+    },
+    "Figma-en-knowledge.png": {
+      "sha256": "b279a829bfa53c835cfe680c79aaa7b75e61f549c5f6854276df905864c44f88",
+      "bytes": 123784
+    },
+    "Figma-en-mobileconversation.png": {
+      "sha256": "81fc8f55c29c78db888b921959917be0380ce0e4761b6da3d082496aa5502afa",
+      "bytes": 88545
+    },
+    "Figma-en-settings-access.png": {
+      "sha256": "77cd98813cf0bc0021afa5e1caec5ae3868d98dea673c1a46f56a2ab89312a23",
+      "bytes": 240179
+    },
+    "Figma-en-settings-backup.png": {
+      "sha256": "09df7aecf216672d97e147f274e8fcbe3d222afd06e62ad0a4c582969e0329e2",
+      "bytes": 248202
+    },
+    "Figma-en-settings-checking.png": {
+      "sha256": "a0eb7c49d19bed5d67f0535adaa3fd259b91247fac15d5d00f795b3bf70459a8",
+      "bytes": 150106
+    },
+    "Figma-en-settings-devices.png": {
+      "sha256": "dd9b494232e136d00fc8bfe764421448609bdb0d8780d1461706ec78283cf252",
+      "bytes": 240128
+    },
+    "Figma-en-settings-executors.png": {
+      "sha256": "de62c05b3be15608805298dd43119dab15d97bdda991664ea1bdcd8246615139",
+      "bytes": 287174
+    },
+    "Figma-en-settings-interaction.png": {
+      "sha256": "5eecf098247b3c1fa33da10b102e6bf9837d633d8ac4474674249ded820d4daf",
+      "bytes": 245386
+    },
+    "Figma-en-settings-issues.png": {
+      "sha256": "1fe7e1f97b4c33e2c87b12cf953810fdbc9c25dcdceaeb81009929f9b9a843e0",
+      "bytes": 177001
+    },
+    "Figma-en-settings-knowledge.png": {
+      "sha256": "37cd62ecc90d2f50422738f208ec76c3285b3edd7ef56e7bf7b905c6fec8dfa2",
+      "bytes": 224064
+    },
+    "Figma-en-settings-rechecked.png": {
+      "sha256": "ce5e8b60b0bab30e40d5f7f19dda37197b7c416f7ca3cc4ddf65a67086f9fc8f",
+      "bytes": 150935
+    },
+    "Figma-en-settings-sources.png": {
+      "sha256": "27cb7c940ee14bce505bd24d95ce50df4dbefbce9c85fe4d828ceb7408408ba2",
+      "bytes": 209810
+    },
+    "Figma-en-settings-standards.png": {
+      "sha256": "809e84bf4578e33a93feb141041cb4d3436dd72bfb49e6c4aaa0c2ac0ee4034a",
+      "bytes": 228776
+    },
+    "Figma-en-settings.png": {
+      "sha256": "2cbce99b318c19bd561831a06ee97273080bf929078f52cfccce882a0f02ee28",
+      "bytes": 92918
+    },
+    "Figma-en-standards.png": {
+      "sha256": "3809f11e44f2309326fdea0aca4ff0e3af228c133dc2ec1fd1399606a2af4011",
+      "bytes": 179516
+    },
+    "Figma-en-system.png": {
+      "sha256": "615a34476f16ca193bdd122ca68118947a633d4447f3a13b5eb7514666c60e3a",
+      "bytes": 120402
+    },
+    "Figma-motion.png": {
+      "sha256": "605ead4c2074b689e43084fe05c762cd8d8e915a5578482b6b41c2202349dd5e",
+      "bytes": 108866
+    },
+    "Figma-zh-conversation.png": {
+      "sha256": "538a2c3a77adc7ff8b162ed9acb67b10c27b86c603b18fb4aa8f68f851033274",
+      "bytes": 107728
+    },
+    "Figma-zh-settings.png": {
+      "sha256": "6984645240b2bfbb28979a10b54deb8694cd0511d65743dda56c32cf1f68c05c",
+      "bytes": 84480
+    }
+  },
+  "visualReview": "All 23 native PNGs reviewed. Settings states reviewed independently. After English text-action spacing corrections, all 62 native frames and 1,016 route entries were rechecked; representative final exports inspected again.",
+  "settings": {
+    "groups": [
+      "Sources",
+      "Knowledge",
+      "Standards",
+      "Executors",
+      "Interaction",
+      "Access & automation",
+      "Devices & network",
+      "Backup & recovery"
+    ],
+    "diagnosticStates": [
+      "Checking",
+      "Issues",
+      "Rechecked"
+    ],
+    "flow": "Inspect authorized scope → suggest values → correct missing fields → validate exact draft → trusted receipt → verify affected and previously healthy paths",
+    "simulation": "No real account configuration, scans, network repair or notification sends."
+  },
+  "layout": {
+    "heading": "32/40 px",
+    "body": "17/28 px",
+    "supporting": "15–16/24 px",
+    "conversationFrameHeight": 1100,
+    "settingsOverviewFrameHeight": 1100,
+    "hierarchy": "Overview → decision detail → technical evidence",
+    "nativeDetails": "Native scroll-to anchors in preset Figma states; HTML uses interactive disclosure."
+  },
+  "history": [
+    {
+      "version": "2.1",
+      "nativeValidation": {
+        "frames": 40,
+        "links": 410,
+        "currentPageEntries": 62,
+        "nodeTypes": {
+          "FRAME": 1408,
+          "INSTANCE": 650,
+          "VECTOR": 160,
+          "TEXT": 1330
+        },
+        "imageNodes": 0,
+        "fontMismatch": 0,
+        "outsideFrameText": 0,
+        "immediateParentTextOverflow": 0,
+        "logoInstances": 80,
+        "localizedSlogans": 40,
+        "brandTextRemaining": 0,
+        "brandTextScope": "Standalone assistant branding; project names, source paths and original user text remain intact."
+      },
+      "localPrototypeValidation": {
+        "assertions": 41,
+        "responsiveCombinations": 56,
+        "sha256": "fa58a290e29e5cebf4295cae93983bec29ff3db7fa06355d230afe1f713c09b8",
+        "customInput": "always visible; focus and input explicitly select custom; never automatically submit",
+        "brandAssertions": 11
+      },
+      "motion": {
+        "frameId": "22:2",
+        "timelineSeconds": 2,
+        "nativeKeyframes": "Existing 320/220/280ms tracks recolored cyan; 360ms one-shot logo nod written and read back",
+        "nativePlayback": "Not re-exported for the color/nod change; previous native video asset download returned HTTP 403. Local HTML playback verified separately.",
+        "localVideo": "动效演示.mp4",
+        "localVideoSeconds": 7.6,
+        "localVideoVerified": true,
+        "logoNodeId": "42:1855",
+        "logoNodSeconds": 0.36
+      }
+    }
+  ],
+  "screenInventory": [
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "w": 1440,
+      "h": 1100,
+      "total": 107,
+      "types": {
+        "FRAME": 45,
+        "INSTANCE": 20,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "w": 1440,
+      "h": 1100,
+      "total": 107,
+      "types": {
+        "FRAME": 45,
+        "INSTANCE": 20,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "w": 1440,
+      "h": 1398,
+      "total": 130,
+      "types": {
+        "FRAME": 57,
+        "INSTANCE": 22,
+        "VECTOR": 4,
+        "TEXT": 47
+      }
+    },
+    {
+      "key": "zh-details",
+      "id": "26:280",
+      "w": 1440,
+      "h": 1398,
+      "total": 130,
+      "types": {
+        "FRAME": 57,
+        "INSTANCE": 22,
+        "VECTOR": 4,
+        "TEXT": 47
+      }
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "w": 1440,
+      "h": 1112,
+      "total": 107,
+      "types": {
+        "FRAME": 45,
+        "INSTANCE": 20,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "zh-custom",
+      "id": "26:549",
+      "w": 1440,
+      "h": 1112,
+      "total": 107,
+      "types": {
+        "FRAME": 45,
+        "INSTANCE": 20,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "en-submitted",
+      "id": "26:677",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "zh-submitted",
+      "id": "26:772",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "en-resumed",
+      "id": "26:867",
+      "w": 1440,
+      "h": 1100,
+      "total": 84,
+      "types": {
+        "FRAME": 36,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 28
+      }
+    },
+    {
+      "key": "zh-resumed",
+      "id": "26:966",
+      "w": 1440,
+      "h": 1100,
+      "total": 84,
+      "types": {
+        "FRAME": 36,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 28
+      }
+    },
+    {
+      "key": "en-freechat",
+      "id": "26:1065",
+      "w": 1440,
+      "h": 1100,
+      "total": 86,
+      "types": {
+        "FRAME": 37,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 29
+      }
+    },
+    {
+      "key": "zh-freechat",
+      "id": "26:1161",
+      "w": 1440,
+      "h": 1100,
+      "total": 86,
+      "types": {
+        "FRAME": 37,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 29
+      }
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "w": 1440,
+      "h": 1728,
+      "total": 124,
+      "types": {
+        "FRAME": 55,
+        "INSTANCE": 17,
+        "VECTOR": 2,
+        "TEXT": 50
+      }
+    },
+    {
+      "key": "zh-standards",
+      "id": "26:1385",
+      "w": 1440,
+      "h": 1672,
+      "total": 124,
+      "types": {
+        "FRAME": 55,
+        "INSTANCE": 17,
+        "VECTOR": 2,
+        "TEXT": 50
+      }
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "w": 1440,
+      "h": 1210,
+      "total": 99,
+      "types": {
+        "FRAME": 43,
+        "INSTANCE": 15,
+        "VECTOR": 2,
+        "TEXT": 39
+      }
+    },
+    {
+      "key": "zh-knowledge",
+      "id": "26:1617",
+      "w": 1440,
+      "h": 1210,
+      "total": 99,
+      "types": {
+        "FRAME": 43,
+        "INSTANCE": 15,
+        "VECTOR": 2,
+        "TEXT": 39
+      }
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "w": 1440,
+      "h": 1288,
+      "total": 103,
+      "types": {
+        "FRAME": 46,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 41
+      }
+    },
+    {
+      "key": "zh-delegation",
+      "id": "26:1829",
+      "w": 1440,
+      "h": 1260,
+      "total": 103,
+      "types": {
+        "FRAME": 46,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 41
+      }
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "w": 1440,
+      "h": 1216,
+      "total": 104,
+      "types": {
+        "FRAME": 47,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 41
+      }
+    },
+    {
+      "key": "zh-system",
+      "id": "26:2046",
+      "w": 1440,
+      "h": 1216,
+      "total": 104,
+      "types": {
+        "FRAME": 47,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 41
+      }
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "w": 1440,
+      "h": 1162,
+      "total": 91,
+      "types": {
+        "FRAME": 42,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 33
+      }
+    },
+    {
+      "key": "zh-setup",
+      "id": "26:2258",
+      "w": 1440,
+      "h": 1134,
+      "total": 91,
+      "types": {
+        "FRAME": 42,
+        "INSTANCE": 14,
+        "VECTOR": 2,
+        "TEXT": 33
+      }
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "w": 1440,
+      "h": 1100,
+      "total": 136,
+      "types": {
+        "FRAME": 67,
+        "INSTANCE": 22,
+        "VECTOR": 2,
+        "TEXT": 45
+      }
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "w": 1440,
+      "h": 1100,
+      "total": 136,
+      "types": {
+        "FRAME": 67,
+        "INSTANCE": 22,
+        "VECTOR": 2,
+        "TEXT": 45
+      }
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "w": 1440,
+      "h": 1100,
+      "total": 93,
+      "types": {
+        "FRAME": 41,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 32
+      }
+    },
+    {
+      "key": "zh-result",
+      "id": "27:1028",
+      "w": 1440,
+      "h": 1100,
+      "total": 93,
+      "types": {
+        "FRAME": 41,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 32
+      }
+    },
+    {
+      "key": "en-expired",
+      "id": "27:1126",
+      "w": 1440,
+      "h": 1100,
+      "total": 88,
+      "types": {
+        "FRAME": 37,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 31
+      }
+    },
+    {
+      "key": "zh-expired",
+      "id": "27:1218",
+      "w": 1440,
+      "h": 1100,
+      "total": 88,
+      "types": {
+        "FRAME": 37,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 31
+      }
+    },
+    {
+      "key": "en-error",
+      "id": "27:1310",
+      "w": 1440,
+      "h": 1404,
+      "total": 111,
+      "types": {
+        "FRAME": 48,
+        "INSTANCE": 21,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "zh-error",
+      "id": "27:1448",
+      "w": 1440,
+      "h": 1352,
+      "total": 111,
+      "types": {
+        "FRAME": 48,
+        "INSTANCE": 21,
+        "VECTOR": 4,
+        "TEXT": 38
+      }
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "w": 1440,
+      "h": 1100,
+      "total": 79,
+      "types": {
+        "FRAME": 34,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 25
+      }
+    },
+    {
+      "key": "zh-offline",
+      "id": "27:1682",
+      "w": 1440,
+      "h": 1100,
+      "total": 79,
+      "types": {
+        "FRAME": 34,
+        "INSTANCE": 16,
+        "VECTOR": 4,
+        "TEXT": 25
+      }
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "w": 390,
+      "h": 1502,
+      "total": 84,
+      "types": {
+        "FRAME": 39,
+        "INSTANCE": 12,
+        "VECTOR": 2,
+        "TEXT": 31
+      }
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "w": 390,
+      "h": 1526,
+      "total": 84,
+      "types": {
+        "FRAME": 39,
+        "INSTANCE": 12,
+        "VECTOR": 2,
+        "TEXT": 31
+      }
+    },
+    {
+      "key": "en-submittedB",
+      "id": "28:1400",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "zh-submittedB",
+      "id": "28:1492",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "en-resumedB",
+      "id": "28:1582",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "zh-resumedB",
+      "id": "28:1672",
+      "w": 1440,
+      "h": 1100,
+      "total": 77,
+      "types": {
+        "FRAME": 32,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 26
+      }
+    },
+    {
+      "key": "en-submittedCustom",
+      "id": "28:1762",
+      "w": 1440,
+      "h": 1100,
+      "total": 83,
+      "types": {
+        "FRAME": 35,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 29
+      }
+    },
+    {
+      "key": "zh-submittedCustom",
+      "id": "28:1857",
+      "w": 1440,
+      "h": 1100,
+      "total": 83,
+      "types": {
+        "FRAME": 35,
+        "INSTANCE": 15,
+        "VECTOR": 4,
+        "TEXT": 29
+      }
+    },
+    {
+      "key": "en-settings-executors",
+      "id": "59:2171",
+      "w": 1440,
+      "h": 2551,
+      "total": 223,
+      "types": {
+        "FRAME": 103,
+        "INSTANCE": 34,
+        "VECTOR": 2,
+        "TEXT": 84
+      }
+    },
+    {
+      "key": "en-settings-sources",
+      "id": "62:6635",
+      "w": 1440,
+      "h": 1877,
+      "total": 197,
+      "types": {
+        "FRAME": 92,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 71
+      }
+    },
+    {
+      "key": "zh-settings-sources",
+      "id": "62:6880",
+      "w": 1440,
+      "h": 1821,
+      "total": 197,
+      "types": {
+        "FRAME": 92,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 71
+      }
+    },
+    {
+      "key": "en-settings-knowledge",
+      "id": "62:7125",
+      "w": 1440,
+      "h": 1961,
+      "total": 200,
+      "types": {
+        "FRAME": 93,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 73
+      }
+    },
+    {
+      "key": "zh-settings-knowledge",
+      "id": "62:7373",
+      "w": 1440,
+      "h": 1877,
+      "total": 200,
+      "types": {
+        "FRAME": 93,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 73
+      }
+    },
+    {
+      "key": "en-settings-standards",
+      "id": "62:7621",
+      "w": 1440,
+      "h": 1961,
+      "total": 200,
+      "types": {
+        "FRAME": 93,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 73
+      }
+    },
+    {
+      "key": "zh-settings-standards",
+      "id": "62:7869",
+      "w": 1440,
+      "h": 1877,
+      "total": 200,
+      "types": {
+        "FRAME": 93,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 73
+      }
+    },
+    {
+      "key": "zh-settings-executors",
+      "id": "62:8117",
+      "w": 1440,
+      "h": 2439,
+      "total": 223,
+      "types": {
+        "FRAME": 103,
+        "INSTANCE": 34,
+        "VECTOR": 2,
+        "TEXT": 84
+      }
+    },
+    {
+      "key": "en-settings-interaction",
+      "id": "63:2719",
+      "w": 1440,
+      "h": 2159,
+      "total": 210,
+      "types": {
+        "FRAME": 97,
+        "INSTANCE": 33,
+        "VECTOR": 2,
+        "TEXT": 78
+      }
+    },
+    {
+      "key": "zh-settings-interaction",
+      "id": "63:2981",
+      "w": 1440,
+      "h": 2101,
+      "total": 210,
+      "types": {
+        "FRAME": 97,
+        "INSTANCE": 33,
+        "VECTOR": 2,
+        "TEXT": 78
+      }
+    },
+    {
+      "key": "en-settings-access",
+      "id": "63:3241",
+      "w": 1440,
+      "h": 2081,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "zh-settings-access",
+      "id": "63:3493",
+      "w": 1440,
+      "h": 1969,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "en-settings-devices",
+      "id": "63:3745",
+      "w": 1440,
+      "h": 2053,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "zh-settings-devices",
+      "id": "63:3997",
+      "w": 1440,
+      "h": 1969,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "en-settings-backup",
+      "id": "63:4249",
+      "w": 1440,
+      "h": 2109,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "zh-settings-backup",
+      "id": "63:4501",
+      "w": 1440,
+      "h": 1969,
+      "total": 204,
+      "types": {
+        "FRAME": 95,
+        "INSTANCE": 32,
+        "VECTOR": 2,
+        "TEXT": 75
+      }
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "w": 1440,
+      "h": 1371,
+      "total": 161,
+      "types": {
+        "FRAME": 77,
+        "INSTANCE": 28,
+        "VECTOR": 2,
+        "TEXT": 54
+      }
+    },
+    {
+      "key": "zh-settings-checking",
+      "id": "63:4960",
+      "w": 1440,
+      "h": 1315,
+      "total": 161,
+      "types": {
+        "FRAME": 77,
+        "INSTANCE": 28,
+        "VECTOR": 2,
+        "TEXT": 54
+      }
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "w": 1440,
+      "h": 1519,
+      "total": 164,
+      "types": {
+        "FRAME": 78,
+        "INSTANCE": 27,
+        "VECTOR": 2,
+        "TEXT": 57
+      }
+    },
+    {
+      "key": "zh-settings-issues",
+      "id": "63:5375",
+      "w": 1440,
+      "h": 1435,
+      "total": 164,
+      "types": {
+        "FRAME": 78,
+        "INSTANCE": 27,
+        "VECTOR": 2,
+        "TEXT": 57
+      }
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "w": 1440,
+      "h": 1343,
+      "total": 161,
+      "types": {
+        "FRAME": 77,
+        "INSTANCE": 28,
+        "VECTOR": 2,
+        "TEXT": 54
+      }
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "id": "63:5790",
+      "w": 1440,
+      "h": 1315,
+      "total": 161,
+      "types": {
+        "FRAME": 77,
+        "INSTANCE": 28,
+        "VECTOR": 2,
+        "TEXT": 54
+      }
+    }
+  ]
+}

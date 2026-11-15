@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 96 96" class="patrick-live" data-state="offline" role="img" aria-label="PAtrick">
+<style>
+/* PAtrick v2.3 · 80px square running mark. Keep text status alongside it. */
+.patrick-live { width: var(--patrick-mark-size, 80px); height: var(--patrick-mark-size, 80px); display: block; flex: 0 0 var(--patrick-mark-size, 80px); overflow: visible; }
+.patrick-live .orbit-runner { transform-origin: 48px 48px; animation: patrick-orbit 4.8s linear infinite; }
+.patrick-live .curious-eye { animation: patrick-gaze 4.8s ease-in-out infinite; }
+.patrick-live:not([data-state="running"]) .orbit-runner { display: none; animation: none; }
+.patrick-live:not([data-state="running"]) .curious-eye { animation: none; }
+.patrick-live[data-state="paused"] .orbit-track { opacity: .36; }
+.patrick-live[data-state="offline"] .patrick-glyph,
+.patrick-live[data-state="unknown"] .patrick-glyph { opacity: .56; }
+.patrick-live[data-state="offline"] .orbit-track,
+.patrick-live[data-state="unknown"] .orbit-track { opacity: .25; }
+.patrick-live[data-reduced-motion="true"] .orbit-runner,
+.patrick-live[data-reduced-motion="true"] .curious-eye,
+.motion-reduced .patrick-live .orbit-runner,
+.motion-reduced .patrick-live .curious-eye { animation: none; }
+.patrick-live[data-background="true"] .orbit-runner,
+.patrick-live[data-background="true"] .curious-eye { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .patrick-live .orbit-runner, .patrick-live .curious-eye { animation: none; }
+}
+@keyframes patrick-orbit { to { transform: rotate(360deg); } }
+@keyframes patrick-gaze {
+  0%, 32%, 100% { transform: translate(0,0); }
+  44%, 60% { transform: translate(-5px,2px); }
+  74%, 86% { transform: translate(3px,-3px); }
+}
+</style>
+<title>PAtrick</title>
+<rect x=".6" y=".6" width="94.8" height="94.8" rx="22" fill="#ECF8FB" stroke="#D8E8ED" stroke-width="1.2"/>
+<circle class="orbit-track" cx="48" cy="48" r="43" fill="none" stroke="#087B96" stroke-opacity=".16" stroke-width="1.2"/>
+<g class="orbit-runner">
+ <path d="M87.82 31.7A43 43 0 0 1 91 48" fill="none" stroke="#21B2C5" stroke-opacity=".38" stroke-width="1.8" stroke-linecap="round"/>
+ <circle cx="91" cy="48" r="2.35" fill="#087B96"/>
+</g>
+<g class="patrick-glyph" transform="translate(7.2 7.2) scale(.34)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M28 100C28 49 66 16 119 16C173 16 212 50 212 99C212 148 175 180 128 180C110 180 95 176 82 169V197C82 212 70 224 55 224C40 224 28 212 28 197V100ZM181 94C181 87.9592 179.81 81.9775 177.498 76.3966C175.187 70.8156 171.798 65.7446 167.527 61.4731C163.255 57.2016 158.184 53.8133 152.603 51.5015C147.022 49.1898 141.041 48 135 48C128.959 48 122.978 49.1898 117.397 51.5015C111.816 53.8133 106.745 57.2016 102.473 61.4731C98.2016 65.7446 94.8133 70.8156 92.5015 76.3966C90.1898 81.9775 89 87.9592 89 94C89 100.041 90.1898 106.022 92.5015 111.603C94.8133 117.184 98.2016 122.255 102.473 126.527C106.745 130.798 111.816 134.187 117.397 136.498C122.978 138.81 128.959 140 135 140C141.041 140 147.022 138.81 152.603 136.498C158.184 134.187 163.255 130.798 167.527 126.527C171.798 122.255 175.187 117.184 177.498 111.603C179.81 106.022 181 100.041 181 94Z" fill="#087B96"/>
+<g class="curious-eye"><path d="M151 100C155.418 100 159 96.4183 159 92C159 87.5817 155.418 84 151 84C146.582 84 143 87.5817 143 92C143 96.4183 146.582 100 151 100Z" fill="#45CECF"/></g>
+</g>
+</svg>

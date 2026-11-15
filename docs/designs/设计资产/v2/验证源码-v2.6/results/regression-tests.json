@@ -1,0 +1,371 @@
+{
+  "checks": [
+    "seven navigation items",
+    "navigation order",
+    "all unfinished tasks visible",
+    "running filter",
+    "task detail identity",
+    "answer verified",
+    "decision queue links continuing work",
+    "same task continues",
+    "decision count updated",
+    "one answer receipt",
+    "six settings groups",
+    "known sources",
+    "language preserves source draft",
+    "source preview",
+    "localized trusted receipt",
+    "source registered",
+    "enabled differs from synced",
+    "pause future collection",
+    "pause preserves existing tasks",
+    "resume same source",
+    "duplicate rejected",
+    "cross-domain destination blocked",
+    "preview invalidated by config revision",
+    "failed check preserves draft",
+    "error keeps address",
+    "disconnect source only",
+    "no script errors"
+  ],
+  "matrix": [
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "interaction",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "interaction",
+      "overflow": false
+    },
+    {
+      "locale": "en",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "interaction",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 1440,
+      "scene": "preferences",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "decisions",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "answered",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "ongoing",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "detail",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "settings",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "collection",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-form",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-preview",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "source-error",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "materials",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "execution",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "operation",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "interaction",
+      "overflow": false
+    },
+    {
+      "locale": "zh",
+      "width": 390,
+      "scene": "preferences",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "sha256": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87"
+}

@@ -1,0 +1,1661 @@
+{
+  "version": "2.3",
+  "date": "2026-11-14",
+  "timezone": "Asia/Shanghai",
+  "team": "TJ",
+  "fileKey": "kPSkB5zeZSKaK7Yrz3PslQ",
+  "designUrl": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67",
+  "prototypeUrl": "https://www.figma.com/proto/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67&starting-point-node-id=24%3A67",
+  "defaultLocale": "system",
+  "supportedLocales": [
+    "en",
+    "zh"
+  ],
+  "language": {
+    "defaultPreference": "system",
+    "choices": [
+      "system",
+      "en",
+      "zh"
+    ],
+    "match": "First supported zh* or en* in navigator.languages; fallback navigator.language; otherwise en",
+    "manualOverride": "Immediate and persistent; languagechange ignored until system is selected again",
+    "figmaBoundary": "Localized preset views; actual system detection and preference persistence are verified in the HTML prototype"
+  },
+  "frames": {
+    "en-conversation": "24:67",
+    "zh-conversation": "24:204",
+    "en-details": "26:138",
+    "zh-details": "26:280",
+    "en-custom": "26:421",
+    "zh-custom": "26:549",
+    "en-submitted": "26:677",
+    "zh-submitted": "26:772",
+    "en-resumed": "26:867",
+    "zh-resumed": "26:966",
+    "en-freechat": "26:1065",
+    "zh-freechat": "26:1161",
+    "en-standards": "26:1257",
+    "zh-standards": "26:1385",
+    "en-knowledge": "26:1513",
+    "zh-knowledge": "26:1617",
+    "en-delegation": "26:1721",
+    "zh-delegation": "26:1829",
+    "en-system": "26:1937",
+    "zh-system": "26:2046",
+    "en-setup": "26:2155",
+    "zh-setup": "26:2258",
+    "en-settings": "26:2361",
+    "zh-settings": "26:2477",
+    "en-result": "26:2593",
+    "zh-result": "27:1028",
+    "en-expired": "27:1126",
+    "zh-expired": "27:1218",
+    "en-error": "27:1310",
+    "zh-error": "27:1448",
+    "en-offline": "27:1586",
+    "zh-offline": "27:1682",
+    "en-mobileconversation": "27:1778",
+    "zh-mobileconversation": "27:1875",
+    "en-submittedB": "28:1400",
+    "zh-submittedB": "28:1492",
+    "en-resumedB": "28:1582",
+    "zh-resumedB": "28:1672",
+    "en-submittedCustom": "28:1762",
+    "zh-submittedCustom": "28:1857",
+    "en-settings-checking": "63:4753",
+    "zh-settings-checking": "63:4960",
+    "en-settings-issues": "63:5167",
+    "zh-settings-issues": "63:5375",
+    "en-settings-rechecked": "63:5583",
+    "zh-settings-rechecked": "63:5790",
+    "en-settings-materials": "62:6635",
+    "en-settings-execution": "59:2171",
+    "en-settings-operation": "63:3745",
+    "en-settings-preferences": "63:2719",
+    "zh-settings-materials": "62:6880",
+    "zh-settings-execution": "62:8117",
+    "zh-settings-operation": "63:3997",
+    "zh-settings-preferences": "63:2981"
+  },
+  "archivedSettings": {
+    "pageId": "88:6334",
+    "frames": {
+      "en-settings-knowledge": "62:7125",
+      "zh-settings-knowledge": "62:7373",
+      "en-settings-standards": "62:7621",
+      "zh-settings-standards": "62:7869",
+      "en-settings-access": "63:3241",
+      "zh-settings-access": "63:3493",
+      "en-settings-backup": "63:4249",
+      "zh-settings-backup": "63:4501"
+    },
+    "currentRoutesToArchivedFrames": 0
+  },
+  "screenInventory": {
+    "active": 54,
+    "locales": 2,
+    "statesPerLocale": 27,
+    "originalFrameIdsPreserved": 40,
+    "retiredSettingsFrames": 8
+  },
+  "components": {
+    "statusSetId": "20:697",
+    "inputComponent": {
+      "id": "26:126",
+      "valueKey": "Value#26:0"
+    },
+    "semanticVariables": 50,
+    "primitives": 50,
+    "textStyles": 13,
+    "logoComponentId": "37:1622",
+    "runningLogoFamily": "81:3993",
+    "logoStates": {
+      "Running": "81:3988",
+      "Still": "81:3989",
+      "Paused": "81:3990",
+      "Connection lost": "81:3991",
+      "Checking": "81:3992"
+    },
+    "runningLoopSet": "86:3988",
+    "runningNestedInstance": "89:4825",
+    "logoShowcase": "86:4016"
+  },
+  "nativeValidation": {
+    "logoPlacement": [
+      {
+        "key": "en-conversation",
+        "id": "90:3543",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-conversation",
+        "id": "90:3555",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-details",
+        "id": "90:3567",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-details",
+        "id": "90:3579",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-custom",
+        "id": "90:3591",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-custom",
+        "id": "90:3603",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submitted",
+        "id": "90:3615",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submitted",
+        "id": "90:3627",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-resumed",
+        "id": "90:3639",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-resumed",
+        "id": "90:3651",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-freechat",
+        "id": "90:3663",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-freechat",
+        "id": "90:3675",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-standards",
+        "id": "90:3687",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-standards",
+        "id": "90:3699",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-knowledge",
+        "id": "90:3711",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-knowledge",
+        "id": "90:3723",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-delegation",
+        "id": "90:3735",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-delegation",
+        "id": "90:3747",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-system",
+        "id": "90:3759",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-system",
+        "id": "90:3771",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-setup",
+        "id": "90:3783",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-setup",
+        "id": "90:3795",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings",
+        "id": "90:3807",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings",
+        "id": "90:3819",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-result",
+        "id": "90:3831",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-result",
+        "id": "90:3843",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-expired",
+        "id": "90:3855",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-expired",
+        "id": "90:3867",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-error",
+        "id": "90:3879",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-error",
+        "id": "90:3891",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-offline",
+        "id": "88:5963",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-offline",
+        "id": "88:5974",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-mobileconversation",
+        "id": "90:3903",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-mobileconversation",
+        "id": "90:3915",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submittedB",
+        "id": "90:3927",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submittedB",
+        "id": "90:3939",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-resumedB",
+        "id": "90:3951",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-resumedB",
+        "id": "90:3963",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-submittedCustom",
+        "id": "90:3975",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-submittedCustom",
+        "id": "90:3987",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-checking",
+        "id": "90:3999",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-checking",
+        "id": "90:4011",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-issues",
+        "id": "90:4023",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-issues",
+        "id": "90:4035",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-rechecked",
+        "id": "90:4047",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-rechecked",
+        "id": "90:4059",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-materials",
+        "id": "90:4071",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-execution",
+        "id": "90:4083",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-operation",
+        "id": "90:4095",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "en-settings-preferences",
+        "id": "90:4107",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-materials",
+        "id": "90:4119",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-execution",
+        "id": "90:4131",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-operation",
+        "id": "90:4143",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      },
+      {
+        "key": "zh-settings-preferences",
+        "id": "90:4155",
+        "w": 80,
+        "h": 80,
+        "centerDelta": 0
+      }
+    ],
+    "logoErrors": [],
+    "wrappedControls": [],
+    "stats": [
+      {
+        "key": "en-conversation",
+        "id": "24:67",
+        "w": 1440,
+        "h": 1100,
+        "total": 123,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 21,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "zh-conversation",
+        "id": "24:204",
+        "w": 1440,
+        "h": 1100,
+        "total": 123,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 21,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "en-details",
+        "id": "26:138",
+        "w": 1440,
+        "h": 1398,
+        "total": 146,
+        "types": {
+          "FRAME": 57,
+          "INSTANCE": 23,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 48
+        }
+      },
+      {
+        "key": "zh-details",
+        "id": "26:280",
+        "w": 1440,
+        "h": 1398,
+        "total": 146,
+        "types": {
+          "FRAME": 57,
+          "INSTANCE": 23,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 48
+        }
+      },
+      {
+        "key": "en-custom",
+        "id": "26:421",
+        "w": 1440,
+        "h": 1112,
+        "total": 123,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 21,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "zh-custom",
+        "id": "26:549",
+        "w": 1440,
+        "h": 1112,
+        "total": 123,
+        "types": {
+          "FRAME": 45,
+          "INSTANCE": 21,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "en-submitted",
+        "id": "26:677",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "zh-submitted",
+        "id": "26:772",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "en-resumed",
+        "id": "26:867",
+        "w": 1440,
+        "h": 1100,
+        "total": 100,
+        "types": {
+          "FRAME": 36,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "zh-resumed",
+        "id": "26:966",
+        "w": 1440,
+        "h": 1100,
+        "total": 100,
+        "types": {
+          "FRAME": 36,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 29
+        }
+      },
+      {
+        "key": "en-freechat",
+        "id": "26:1065",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "zh-freechat",
+        "id": "26:1161",
+        "w": 1440,
+        "h": 1100,
+        "total": 102,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "en-standards",
+        "id": "26:1257",
+        "w": 1440,
+        "h": 1728,
+        "total": 133,
+        "types": {
+          "FRAME": 55,
+          "INSTANCE": 18,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 51
+        }
+      },
+      {
+        "key": "zh-standards",
+        "id": "26:1385",
+        "w": 1440,
+        "h": 1672,
+        "total": 133,
+        "types": {
+          "FRAME": 55,
+          "INSTANCE": 18,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 51
+        }
+      },
+      {
+        "key": "en-knowledge",
+        "id": "26:1513",
+        "w": 1440,
+        "h": 1210,
+        "total": 108,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "zh-knowledge",
+        "id": "26:1617",
+        "w": 1440,
+        "h": 1210,
+        "total": 108,
+        "types": {
+          "FRAME": 43,
+          "INSTANCE": 16,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 40
+        }
+      },
+      {
+        "key": "en-delegation",
+        "id": "26:1721",
+        "w": 1440,
+        "h": 1288,
+        "total": 112,
+        "types": {
+          "FRAME": 46,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "zh-delegation",
+        "id": "26:1829",
+        "w": 1440,
+        "h": 1260,
+        "total": 112,
+        "types": {
+          "FRAME": 46,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "en-system",
+        "id": "26:1937",
+        "w": 1440,
+        "h": 1216,
+        "total": 113,
+        "types": {
+          "FRAME": 47,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "zh-system",
+        "id": "26:2046",
+        "w": 1440,
+        "h": 1216,
+        "total": 113,
+        "types": {
+          "FRAME": 47,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "en-setup",
+        "id": "26:2155",
+        "w": 1440,
+        "h": 1162,
+        "total": 100,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "zh-setup",
+        "id": "26:2258",
+        "w": 1440,
+        "h": 1134,
+        "total": 100,
+        "types": {
+          "FRAME": 42,
+          "INSTANCE": 15,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "en-settings",
+        "id": "26:2361",
+        "w": 1440,
+        "h": 1100,
+        "total": 111,
+        "types": {
+          "FRAME": 49,
+          "INSTANCE": 19,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "zh-settings",
+        "id": "26:2477",
+        "w": 1440,
+        "h": 1100,
+        "total": 111,
+        "types": {
+          "FRAME": 49,
+          "INSTANCE": 19,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 34
+        }
+      },
+      {
+        "key": "en-result",
+        "id": "26:2593",
+        "w": 1440,
+        "h": 1100,
+        "total": 109,
+        "types": {
+          "FRAME": 41,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "zh-result",
+        "id": "27:1028",
+        "w": 1440,
+        "h": 1100,
+        "total": 109,
+        "types": {
+          "FRAME": 41,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 33
+        }
+      },
+      {
+        "key": "en-expired",
+        "id": "27:1126",
+        "w": 1440,
+        "h": 1100,
+        "total": 104,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "zh-expired",
+        "id": "27:1218",
+        "w": 1440,
+        "h": 1100,
+        "total": 104,
+        "types": {
+          "FRAME": 37,
+          "INSTANCE": 17,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "en-error",
+        "id": "27:1310",
+        "w": 1440,
+        "h": 1404,
+        "total": 127,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "zh-error",
+        "id": "27:1448",
+        "w": 1440,
+        "h": 1352,
+        "total": 127,
+        "types": {
+          "FRAME": 48,
+          "INSTANCE": 22,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "en-offline",
+        "id": "27:1586",
+        "w": 1440,
+        "h": 1100,
+        "total": 91,
+        "types": {
+          "FRAME": 34,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "TEXT": 26
+        }
+      },
+      {
+        "key": "zh-offline",
+        "id": "27:1682",
+        "w": 1440,
+        "h": 1100,
+        "total": 91,
+        "types": {
+          "FRAME": 34,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "TEXT": 26
+        }
+      },
+      {
+        "key": "en-mobileconversation",
+        "id": "27:1778",
+        "w": 390,
+        "h": 1618,
+        "total": 94,
+        "types": {
+          "FRAME": 40,
+          "INSTANCE": 13,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "zh-mobileconversation",
+        "id": "27:1875",
+        "w": 390,
+        "h": 1642,
+        "total": 94,
+        "types": {
+          "FRAME": 40,
+          "INSTANCE": 13,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 32
+        }
+      },
+      {
+        "key": "en-submittedB",
+        "id": "28:1400",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "zh-submittedB",
+        "id": "28:1492",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "en-resumedB",
+        "id": "28:1582",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "zh-resumedB",
+        "id": "28:1672",
+        "w": 1440,
+        "h": 1100,
+        "total": 93,
+        "types": {
+          "FRAME": 32,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 27
+        }
+      },
+      {
+        "key": "en-submittedCustom",
+        "id": "28:1762",
+        "w": 1440,
+        "h": 1100,
+        "total": 99,
+        "types": {
+          "FRAME": 35,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "zh-submittedCustom",
+        "id": "28:1857",
+        "w": 1440,
+        "h": 1100,
+        "total": 99,
+        "types": {
+          "FRAME": 35,
+          "INSTANCE": 16,
+          "VECTOR": 10,
+          "GROUP": 5,
+          "ELLIPSE": 3,
+          "TEXT": 30
+        }
+      },
+      {
+        "key": "en-settings-checking",
+        "id": "63:4753",
+        "w": 1440,
+        "h": 1275,
+        "total": 147,
+        "types": {
+          "FRAME": 64,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 49
+        }
+      },
+      {
+        "key": "zh-settings-checking",
+        "id": "63:4960",
+        "w": 1440,
+        "h": 1275,
+        "total": 147,
+        "types": {
+          "FRAME": 64,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 49
+        }
+      },
+      {
+        "key": "en-settings-issues",
+        "id": "63:5167",
+        "w": 1440,
+        "h": 1626,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 53
+        }
+      },
+      {
+        "key": "zh-settings-issues",
+        "id": "63:5375",
+        "w": 1440,
+        "h": 1626,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 53
+        }
+      },
+      {
+        "key": "en-settings-rechecked",
+        "id": "63:5583",
+        "w": 1440,
+        "h": 1216,
+        "total": 138,
+        "types": {
+          "FRAME": 60,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "zh-settings-rechecked",
+        "id": "63:5790",
+        "w": 1440,
+        "h": 1188,
+        "total": 138,
+        "types": {
+          "FRAME": 60,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 45
+        }
+      },
+      {
+        "key": "en-settings-materials",
+        "id": "62:6635",
+        "w": 1440,
+        "h": 1100,
+        "total": 124,
+        "types": {
+          "FRAME": 52,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "en-settings-execution",
+        "id": "59:2171",
+        "w": 1440,
+        "h": 1222,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 28,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 50
+        }
+      },
+      {
+        "key": "en-settings-operation",
+        "id": "63:3745",
+        "w": 1440,
+        "h": 1100,
+        "total": 134,
+        "types": {
+          "FRAME": 58,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "en-settings-preferences",
+        "id": "63:2719",
+        "w": 1440,
+        "h": 1191,
+        "total": 138,
+        "types": {
+          "FRAME": 62,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      },
+      {
+        "key": "zh-settings-materials",
+        "id": "62:6880",
+        "w": 1440,
+        "h": 1100,
+        "total": 124,
+        "types": {
+          "FRAME": 52,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 39
+        }
+      },
+      {
+        "key": "zh-settings-execution",
+        "id": "62:8117",
+        "w": 1440,
+        "h": 1222,
+        "total": 153,
+        "types": {
+          "FRAME": 66,
+          "INSTANCE": 28,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 50
+        }
+      },
+      {
+        "key": "zh-settings-operation",
+        "id": "63:3997",
+        "w": 1440,
+        "h": 1100,
+        "total": 134,
+        "types": {
+          "FRAME": 58,
+          "INSTANCE": 24,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 43
+        }
+      },
+      {
+        "key": "zh-settings-preferences",
+        "id": "63:2981",
+        "w": 1440,
+        "h": 1145,
+        "total": 138,
+        "types": {
+          "FRAME": 62,
+          "INSTANCE": 25,
+          "VECTOR": 4,
+          "GROUP": 2,
+          "ELLIPSE": 3,
+          "TEXT": 42
+        }
+      }
+    ],
+    "badFonts": [],
+    "imageNodes": [],
+    "outside": [],
+    "parentOverflow": [],
+    "brandErrors": [],
+    "routeFailures": [],
+    "checkedRoutes": 756,
+    "logos": 80,
+    "slogans": 54,
+    "overlaps": [],
+    "navigationLinks": 638,
+    "anchorLinks": 38,
+    "currentPageEntries": 80,
+    "currentFrames": 54,
+    "original40IdsPreserved": true,
+    "nativeScreenExports": 23,
+    "nativeLogoExport": 1
+  },
+  "settings": {
+    "groups": [
+      "Work materials / 工作资料",
+      "Execution / 执行",
+      "Operation & backup / 运行与备份",
+      "Preferences / 偏好"
+    ],
+    "routineEditableFields": 9,
+    "countsByGroup": [
+      2,
+      2,
+      1,
+      4
+    ],
+    "backupTarget": "Input only when missing or explicitly changed",
+    "diagnostics": "Inspect approved scope; validate exact draft; trusted apply receipt; separate recheck",
+    "futureControlsRemoved": true
+  },
+  "brand": {
+    "palette": "流光青",
+    "logo": "好奇的P",
+    "largeMark": {
+      "width": 80,
+      "height": 80,
+      "glyphSize": 68,
+      "horizontalAlignment": "center",
+      "loopSeconds": 4.8
+    },
+    "currentLogoInstances": 80,
+    "runningLargeInstances": 52,
+    "connectionLostLargeInstances": 2,
+    "staticMessageInstances": 26,
+    "localizedSlogans": 54,
+    "slogan": {
+      "en": "Keep evolving toward exceptional judgment.",
+      "zh": "让你的判断，持续向顶尖进化。"
+    },
+    "assets": [
+      "logo-running.gif",
+      "logo-running.webp",
+      "logo-running.svg",
+      "logo-still.svg",
+      "logo-paused.svg",
+      "logo-connection-lost.svg",
+      "logo-checking.svg"
+    ],
+    "truthfulState": "Running describes service availability, not task completion; waiting and one blocked executor do not stop a healthy service indicator"
+  },
+  "motion": {
+    "logo": {
+      "assetFrames": 60,
+      "assetFrameDurationMs": 80,
+      "assetLoopSeconds": 4.8,
+      "assetInfiniteLoop": true,
+      "actualAssetPlaybackVerified": true,
+      "nativeMechanism": "AFTER_TIMEOUT + CHANGE_TO + SMART_ANIMATE closed cycle",
+      "nativePhases": 16,
+      "nativeCycleSeconds": 4.8,
+      "nativeReactionReadbackPassed": true,
+      "nativePrototypePlaybackRecordingVerified": false,
+      "evidence": "Figma-Logo循环验证.json"
+    },
+    "reducedMotion": "Static logo plus truthful status; hidden browser tab pauses decoration",
+    "priorExamples": "Existing 320/220/280ms motion examples and video are v2.1 history, not v2.3 logo playback evidence"
+  },
+  "exports": [
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "exported": true,
+      "asset": "Figma-en-conversation.png",
+      "sha256": "4fa7a3afd4f5c29afc7615a289a8ee85c285da8fbe8c6705efb479eba00db6f2"
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "exported": true,
+      "asset": "Figma-zh-conversation.png",
+      "sha256": "062e879bef107e781865843e3621b653966d3eb93fd33b94b411b292c92c9e76"
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "exported": true,
+      "asset": "Figma-en-settings.png",
+      "sha256": "be428d6c72fabd08fdab17fd29c3c0c31e2d193103a3e0e4ac08799ecabef940"
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "exported": true,
+      "asset": "Figma-zh-settings.png",
+      "sha256": "44ad5d639425c93561777c3d9b4a3478aec36e969aa7bd7403161dffac246d2c"
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "exported": true,
+      "asset": "Figma-en-settings-materials.png",
+      "sha256": "6be3bdd8c1ba8ba28f354aab435818a81a745a78ca2ea522ee6b9e1d71d9caf4"
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "exported": true,
+      "asset": "Figma-en-settings-execution.png",
+      "sha256": "8a9d730006aa88c0c250278bbcfbbc69c75780e51ec05fbf6aeeb89f37f81e76"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "exported": true,
+      "asset": "Figma-en-settings-operation.png",
+      "sha256": "b8558a05cebb94b1f99554fdfa2d8c31d22b664e937a14106b94cd86425386f1"
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "exported": true,
+      "asset": "Figma-en-settings-preferences.png",
+      "sha256": "0218405522d112c296dd36c4a68ab78e613cb64d68ba96286ed9ceba95ddb92a"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "exported": true,
+      "asset": "Figma-zh-settings-preferences.png",
+      "sha256": "363f016037ba4608576241ff353ceb2a91cd0628663eba1271f75c0366a0b529"
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "exported": true,
+      "asset": "Figma-en-settings-checking.png",
+      "sha256": "d6a63daea6b5c87393bafbc0648e20553b2bb8b582514b877925fef9bbaab083"
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "exported": true,
+      "asset": "Figma-en-settings-issues.png",
+      "sha256": "a035eacb9e18cc4c3281eeaf3888ae5aea14938940766536856482a1258e7f1c"
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "exported": true,
+      "asset": "Figma-en-settings-rechecked.png",
+      "sha256": "c24fdc62193ad7b909b8258f5723a29f4251deeb70491189e3f5e0b39974a618"
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "exported": true,
+      "asset": "Figma-en-mobileconversation.png",
+      "sha256": "acb49ca95979eaac3f4e7dbe8f81210dff6572fb0eaa74d689d797b7860d9991"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "exported": true,
+      "asset": "Figma-zh-mobileconversation.png",
+      "sha256": "4e518c6a5af1721bd6d2ac195d36184cfdd8d2559cf44c0eb05db1418a8f4191"
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "exported": true,
+      "asset": "Figma-en-details.png",
+      "sha256": "60c219c2466fd5a131b06c1f5bf4706581fb30ce2a4b17be55036eba17bc0370"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "exported": true,
+      "asset": "Figma-en-custom.png",
+      "sha256": "2e64a657b60447b716f2a28ae1435631636b35ae125f49d459873ee4971dad15"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "exported": true,
+      "asset": "Figma-en-standards.png",
+      "sha256": "1d2269ad660dc497bfefafc3018f5f166156fb912eec185ab708c90fcc12b07b"
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "exported": true,
+      "asset": "Figma-en-knowledge.png",
+      "sha256": "2b1fac5a071b4a7920e28513e616cd4792e7f696054b024ea41821b618e45172"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "exported": true,
+      "asset": "Figma-en-delegation.png",
+      "sha256": "6028e8c9143c4f0dad84899a3b349697578e425a453557f988d0c2b0584d8f0b"
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "exported": true,
+      "asset": "Figma-en-system.png",
+      "sha256": "98aa5ae309007c6b1e4002031d24a8205b3880e9bc0471059d5223b7510d811a"
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "exported": true,
+      "asset": "Figma-en-setup.png",
+      "sha256": "40b97dbc4fdfeb95995a6aa7ff29bd232204313d9ce4ae2a38c2208c49c5cc55"
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "exported": true,
+      "asset": "Figma-en-result.png",
+      "sha256": "3bd6970af1207dcf1087ef9b441b7fbafb3730d9e71e455e3ea86a487875a2c6"
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "exported": true,
+      "asset": "Figma-en-offline.png",
+      "sha256": "b8b418651828fde7cc818fc1cbadb2affd7a173ec02fd5c51a7ae6380e7b836c"
+    },
+    {
+      "key": "logo-motion",
+      "id": "86:4016",
+      "asset": "Figma-logo-motion.png",
+      "exported": true,
+      "sha256": "c4ae632acb716d9281a5bcf0659f0fb0538594efc4d7e61492d97255c0fe4aa1"
+    }
+  ],
+  "visualReview": {
+    "independent": "Figma静态复核.json",
+    "independentScreens": 8,
+    "rootAdditionalScreens": [
+      "en-settings-materials",
+      "en-settings-operation",
+      "en-standards",
+      "en-knowledge",
+      "en-offline",
+      "en-settings-rechecked"
+    ],
+    "passed": true,
+    "scope": "Static appearance only; navigation was checked separately against native reactions"
+  },
+  "sourceLibraries": [
+    "Material 3 Button",
+    "Simple Design System Navigation Button"
+  ],
+  "localInputReason": "Imported textarea kept an 88px value width after overrides; replaced with responsive native PAtrick input component.",
+  "localPrototypeValidation": {
+    "report": "原型验证.json",
+    "currentSha256": {
+      "交互原型.html": "30724279697228bb6924d6d87b667e67787edce834e794c5868135b4060833fe",
+      "设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49"
+    },
+    "broadValidationSha256": "c6a4c9c1694a42cde64d9eb9d70043041c5360ff5dbfa32bf88315940e8fb512",
+    "coreChecks": 41,
+    "settingsAndLogoChecks": 73,
+    "languageChecks": 8,
+    "additionalChecks": 5,
+    "independentChecks": 25,
+    "finalPatchIndependentChecks": 5,
+    "responsiveCombinations": 88,
+    "finalPatchScope": "Offline sample timestamp, 44px language/send targets, draft preservation, EN/ZH and mobile/desktop. Broad tests were not unnecessarily repeated."
+  },
+  "limits": [
+    "Figma is a localized preset prototype, not a browser-language detector.",
+    "Native loop reactions and static appearance are verified; no native prototype playback recording was captured.",
+    "Configuration, account checks and receipts are illustrative; no real service, credential, notification or network action is performed.",
+    "Production authentication, backend integration, real restore and accessibility/usability acceptance remain implementation work."
+  ],
+  "history": [
+    {
+      "version": "2.1",
+      "nativeValidation": {
+        "frames": 40,
+        "links": 410,
+        "currentPageEntries": 62,
+        "nodeTypes": {
+          "FRAME": 1408,
+          "INSTANCE": 650,
+          "VECTOR": 160,
+          "TEXT": 1330
+        },
+        "imageNodes": 0,
+        "fontMismatch": 0,
+        "outsideFrameText": 0,
+        "immediateParentTextOverflow": 0,
+        "logoInstances": 80,
+        "localizedSlogans": 40,
+        "brandTextRemaining": 0,
+        "brandTextScope": "Standalone assistant branding; project names, source paths and original user text remain intact."
+      },
+      "localPrototypeValidation": {
+        "assertions": 41,
+        "responsiveCombinations": 56,
+        "sha256": "fa58a290e29e5cebf4295cae93983bec29ff3db7fa06355d230afe1f713c09b8",
+        "customInput": "always visible; focus and input explicitly select custom; never automatically submit",
+        "brandAssertions": 11
+      },
+      "motion": {
+        "frameId": "22:2",
+        "timelineSeconds": 2,
+        "nativeKeyframes": "Existing 320/220/280ms tracks recolored cyan; 360ms one-shot logo nod written and read back",
+        "nativePlayback": "Not re-exported for the color/nod change; previous native video asset download returned HTTP 403. Local HTML playback verified separately.",
+        "localVideo": "动效演示.mp4",
+        "localVideoSeconds": 7.6,
+        "localVideoVerified": true,
+        "logoNodeId": "42:1855",
+        "logoNodSeconds": 0.36
+      }
+    },
+    {
+      "version": "2.2",
+      "activeFramesThen": 62,
+      "nativeScreenshotsThen": 23,
+      "defaultLocaleThen": "en",
+      "archive": "历史-v2.2/Figma交付记录.json",
+      "scope": "Historical results only; not counted as v2.3 validation."
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+/* PAtrick 2.1 — 流光青 / Curious P. Existing v2 paths remain stable. */
+:root {
+  color-scheme: light dark;
+  --patrick-v2-color-background: light-dark(#F5FAFC, #111C22);
+  --patrick-v2-color-surface: light-dark(#FFFFFF, #18262E);
+  --patrick-v2-color-side: light-dark(#EAF5F7, #15272F);
+  --patrick-v2-color-text: light-dark(#203D49, #E3EFF3);
+  --patrick-v2-color-secondary: light-dark(#5A707B, #ABC1CA);
+  --patrick-v2-color-border: light-dark(#D8E8ED, #304550);
+  --patrick-v2-color-primary: light-dark(#087B96, #6DD1E8);
+  --patrick-v2-color-onPrimary: light-dark(#FFFFFF, #07343F);
+  --patrick-v2-color-muted: light-dark(#ECF8FB, #193F4C);
+  --patrick-v2-color-accent: light-dark(#21B2C5, #75DDE6);
+  --patrick-v2-color-user: light-dark(#E8F3F8, #263B4B);
+  --patrick-v2-color-amber: light-dark(#9B6422, #E1BB7D);
+  --patrick-v2-color-amberSoft: light-dark(#FFF4E4, #3D3020);
+  --patrick-v2-color-red: light-dark(#A33D4F, #F2A1B0);
+  --patrick-v2-color-redSoft: light-dark(#FCEEF1, #44232C);
+  --patrick-v2-color-logoBody: #087B96;
+  --patrick-v2-color-logoEye: #45CECF;
+  --patrick-v2-color-green: var(--patrick-v2-color-primary);
+  --patrick-v2-color-greenSoft: var(--patrick-v2-color-muted);
+  --patrick-v2-color-info: var(--patrick-v2-color-primary);
+  --patrick-v2-color-infoSoft: var(--patrick-v2-color-muted);
+  --patrick-v2-color-navText: var(--patrick-v2-color-secondary);
+  --patrick-v2-color-navActive: var(--patrick-v2-color-muted);
+  --patrick-v2-color-white: var(--patrick-v2-color-surface);
+  --patrick-v2-color-hover: color-mix(in srgb, var(--patrick-v2-color-primary) 8%, var(--patrick-v2-color-surface));
+  --patrick-v2-color-primaryHover: color-mix(in srgb, var(--patrick-v2-color-primary) 87%, var(--patrick-v2-color-text));
+  --patrick-v2-color-shadow: color-mix(in srgb, var(--patrick-v2-color-text) 10%, transparent);
+  --patrick-v2-color-overlay: color-mix(in srgb, var(--patrick-v2-color-text) 30%, transparent);
+  --patrick-font: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --motion-evidence: 320ms;
+  --motion-receipt: 220ms;
+  --motion-candidate: 280ms;
+}

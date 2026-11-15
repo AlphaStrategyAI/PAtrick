@@ -1,0 +1,46 @@
+{
+  "version": "2.6",
+  "date": "2026-11-15",
+  "source": "icons/manifest.json",
+  "uniqueNavigationAndSettingsGlyphs": 14,
+  "settingsGroups": 6,
+  "navigationSize": 20,
+  "settingsCategorySize": 17,
+  "sharedComponents": {
+    "system": "132:4087",
+    "settings": "132:4091",
+    "settings-collection": "132:4096",
+    "settings-materials": "132:4099",
+    "settings-execution": "132:4104",
+    "settings-operation": "132:4109",
+    "settings-preferences": "132:4113",
+    "settings-interaction": "169:5122"
+  },
+  "newInteractionIcon": {
+    "createdNodeIds": [
+      "169:5122",
+      "169:5123",
+      "169:5124",
+      "169:5125"
+    ],
+    "componentId": "169:5122",
+    "key": "5fb37b190ec1f88b9767441a7f3f4b8c153f53d4",
+    "boundVectors": 2,
+    "width": 20,
+    "height": 20
+  },
+  "settingsReadback": [
+    {
+      "id": "26:2361",
+      "categories": 6,
+      "interactionInstances": 1
+    },
+    {
+      "id": "26:2477",
+      "categories": 6,
+      "interactionInstances": 1
+    }
+  ],
+  "issues": [],
+  "method": "Compare all 14 prototype glyph definitions; read back both native settings home frames and the new token-bound icon component."
+}

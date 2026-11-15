@@ -1,0 +1,2992 @@
+{
+  "version": "2.5.1",
+  "date": "2026-11-14",
+  "timezone": "Asia/Shanghai",
+  "team": "TJ",
+  "fileKey": "kPSkB5zeZSKaK7Yrz3PslQ",
+  "designUrl": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67",
+  "prototypeUrl": "https://www.figma.com/proto/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67&starting-point-node-id=24%3A67",
+  "defaultLocale": "system",
+  "supportedLocales": [
+    "en",
+    "zh"
+  ],
+  "language": {
+    "defaultPreference": "system",
+    "choices": [
+      "system",
+      "en",
+      "zh"
+    ],
+    "match": "First supported zh* or en* in navigator.languages; fallback navigator.language; otherwise en",
+    "manualOverride": "Immediate and persistent; languagechange ignored until system is selected again",
+    "figmaBoundary": "Localized preset views; actual system detection and preference persistence are verified in the HTML prototype"
+  },
+  "frames": {
+    "en-settings-issues": "63:5167",
+    "zh-settings-checking": "63:4960",
+    "en-error": "27:1310",
+    "zh-conversation": "24:204",
+    "en-submitted": "26:677",
+    "zh-settings-issues": "63:5375",
+    "en-delegation": "26:1721",
+    "zh-delegation": "26:1829",
+    "en-standards": "26:1257",
+    "zh-standards": "26:1385",
+    "zh-submitted": "26:772",
+    "en-result": "26:2593",
+    "zh-result": "27:1028",
+    "zh-submittedCustom": "28:1857",
+    "en-resumedB": "28:1582",
+    "zh-resumedB": "28:1672",
+    "en-submittedCustom": "28:1762",
+    "en-resumed": "26:867",
+    "zh-resumed": "26:966",
+    "en-expired": "27:1126",
+    "en-details": "26:138",
+    "en-settings-execution": "59:2171",
+    "zh-expired": "27:1218",
+    "zh-error": "27:1448",
+    "en-offline": "27:1586",
+    "en-mobileconversation": "27:1778",
+    "zh-mobileconversation": "27:1875",
+    "en-settings-checking": "63:4753",
+    "en-settings-materials": "62:6635",
+    "zh-submittedB": "28:1492",
+    "en-system": "26:1937",
+    "zh-system": "26:2046",
+    "en-freechat": "26:1065",
+    "zh-freechat": "26:1161",
+    "en-custom": "26:421",
+    "zh-custom": "26:549",
+    "zh-details": "26:280",
+    "zh-settings-rechecked": "63:5790",
+    "en-settings": "26:2361",
+    "zh-settings": "26:2477",
+    "en-settings-rechecked": "63:5583",
+    "en-knowledge": "26:1513",
+    "zh-knowledge": "26:1617",
+    "zh-offline": "27:1682",
+    "en-settings-preferences": "63:2719",
+    "en-submittedB": "28:1400",
+    "en-setup": "26:2155",
+    "zh-setup": "26:2258",
+    "en-settings-operation": "63:3745",
+    "en-conversation": "24:67",
+    "en-ongoing-running": "114:14523",
+    "zh-ongoing-running": "114:14851",
+    "en-ongoing-blocked": "114:15182",
+    "zh-task-citations": "115:2660",
+    "en-task-blocked": "115:2918",
+    "zh-task-blocked": "115:3173",
+    "zh-pause-dialog": "115:6516",
+    "en-stop-dialog": "115:6879",
+    "zh-stop-dialog": "115:7238",
+    "en-standards-expanded": "115:27311",
+    "zh-standards-expanded": "115:27615",
+    "en-knowledge-expanded": "115:27926",
+    "zh-result-dialog": "115:4632",
+    "en-expired-dialog": "115:5009",
+    "zh-settings-validate": "115:13679",
+    "en-settings-review-dialog": "115:14213",
+    "zh-settings-source-error": "95:5795",
+    "zh-settings-collection": "95:5936",
+    "en-candidate": "114:11738",
+    "en-settings-source-preview": "94:3836",
+    "zh-ongoing": "94:4535",
+    "en-ongoing-updated": "94:4688",
+    "zh-settings-signin-dialog": "115:17267",
+    "en-settings-backup-dialog": "115:17891",
+    "en-selected-a": "115:24200",
+    "zh-selected-a": "115:24713",
+    "zh-settings-review-dialog": "115:14809",
+    "en-settings-trusted-dialog": "115:15409",
+    "en-settings-operation-expanded": "115:11134",
+    "zh-settings-operation-expanded": "115:11607",
+    "en-settings-preferences-expanded": "115:12087",
+    "zh-settings-trusted-dialog": "115:16026",
+    "en-settings-signin-dialog": "115:16648",
+    "en-system-expanded": "115:29260",
+    "zh-system-expanded": "115:29597",
+    "en-settings-addsource-populated": "115:29939",
+    "zh-settings-preferences-expanded": "115:12617",
+    "en-settings-validate": "115:13152",
+    "zh-ongoing-updated": "94:4842",
+    "en-work-detail": "94:4995",
+    "zh-work-detail": "95:4028",
+    "zh-candidate": "114:12033",
+    "en-standard-history": "114:12335",
+    "zh-standard-history": "114:12595",
+    "zh-knowledge-expanded": "115:28283",
+    "en-delegation-expanded": "115:28643",
+    "zh-delegation-expanded": "115:28950",
+    "en-trusted-dialog": "115:7601",
+    "zh-trusted-dialog": "115:7960",
+    "en-rollback-dialog": "115:8323",
+    "zh-expired-dialog": "115:5580",
+    "en-pause-dialog": "115:6157",
+    "zh-rollback-dialog": "115:8676",
+    "en-settings-materials-expanded": "115:9036",
+    "zh-settings-materials-expanded": "115:9523",
+    "zh-setup-preview": "114:13661",
+    "en-ongoing-decision": "114:13936",
+    "zh-ongoing-decision": "114:14228",
+    "zh-settings-notification-dialog": "115:20731",
+    "en-collection-confirm-dialog": "115:21309",
+    "zh-collection-confirm-dialog": "115:21599",
+    "en-settings-addsource": "95:4857",
+    "zh-settings-addsource": "95:5002",
+    "zh-settings-source-preview": "95:5148",
+    "en-source-dialog": "115:3431",
+    "zh-source-dialog": "115:3844",
+    "en-result-dialog": "115:4260",
+    "zh-collection-disconnect-dialog": "115:23038",
+    "en-mobile-menu": "115:23422",
+    "zh-mobile-menu": "115:23803",
+    "zh-settings-addsource-populated": "115:30221",
+    "en-collect-options-expanded": "115:30506",
+    "zh-collect-options-expanded": "115:30788",
+    "en-selected-b": "115:25231",
+    "zh-selected-b": "115:25744",
+    "zh-settings-preferences": "63:2981",
+    "en-ongoing": "94:3523",
+    "en-settings-collection": "94:3678",
+    "zh-ongoing-blocked": "114:15474",
+    "en-ongoing-search-empty": "114:15769",
+    "zh-ongoing-search-empty": "114:16029",
+    "en-settings-execution-expanded": "115:10017",
+    "zh-settings-execution-expanded": "115:10574",
+    "zh-settings-backup-dialog": "115:18407",
+    "en-settings-bundle-dialog": "115:18930",
+    "zh-settings-materials": "62:6880",
+    "zh-settings-execution": "62:8117",
+    "zh-settings-operation": "63:3997",
+    "en-task-decision": "115:1892",
+    "zh-task-decision": "115:2147",
+    "en-task-citations": "115:2405",
+    "en-decisions-empty": "95:4148",
+    "zh-decisions-empty": "95:4245",
+    "en-mobileongoing": "95:4343",
+    "zh-mobileongoing": "95:4458",
+    "en-settings-source-paused": "95:4574",
+    "zh-settings-source-paused": "95:4715",
+    "en-collection-pause-dialog": "115:21892",
+    "zh-collection-pause-dialog": "115:22273",
+    "en-collection-disconnect-dialog": "115:22657",
+    "en-translated": "115:26262",
+    "zh-translated": "115:26784",
+    "en-setup-scope": "114:12858",
+    "zh-setup-scope": "114:13123",
+    "en-setup-preview": "114:13392",
+    "zh-settings-bundle-dialog": "115:19540",
+    "en-settings-notification-dialog": "115:20159",
+    "en-settings-source-enabled": "95:5294",
+    "zh-settings-source-enabled": "95:5474",
+    "en-settings-source-error": "95:5653",
+    "en-candidate-shadow": "117:3421",
+    "zh-candidate-shadow": "117:3722",
+    "en-candidate-rejected": "117:4030",
+    "en-collection-disconnect-github-dialog": "117:8988",
+    "zh-collection-disconnect-github-dialog": "117:9329",
+    "zh-settings-execution-signedin": "117:6511",
+    "en-settings-preferences-saved": "117:7124",
+    "zh-settings-preferences-saved": "117:7711",
+    "en-collection-pause-github-dialog": "117:8303",
+    "zh-collection-pause-github-dialog": "117:8644",
+    "zh-candidate-rejected": "117:4329",
+    "en-delegation-paused": "117:4635",
+    "zh-delegation-paused": "117:4952",
+    "en-delegation-stopped": "117:5272",
+    "zh-delegation-stopped": "117:5585",
+    "en-settings-execution-signedin": "117:5901",
+    "en-stats": "119:6664",
+    "zh-stats": "119:7070",
+    "en-stats-month": "119:7484",
+    "zh-stats-month": "119:7890",
+    "en-stats-all": "119:8304",
+    "zh-stats-all": "119:8710",
+    "en-stats-counting": "119:9124",
+    "zh-stats-counting": "119:9530",
+    "en-stats-after-decision": "119:9944",
+    "zh-stats-after-decision": "119:10350",
+    "en-mobilestats": "119:10764",
+    "zh-mobilestats": "119:11003",
+    "zh-mobilestats-all": "122:4683",
+    "en-mobilestats-counting": "122:4932",
+    "zh-mobilestats-counting": "122:5171",
+    "en-mobilestats-month": "122:3956",
+    "zh-mobilestats-month": "122:4195",
+    "en-mobilestats-all": "122:4444",
+    "en-mobilestats-menu": "122:5420",
+    "zh-mobilestats-menu": "122:5816"
+  },
+  "archivedSettings": {
+    "pageId": "88:6334",
+    "frames": {
+      "en-settings-knowledge": "62:7125",
+      "zh-settings-knowledge": "62:7373",
+      "en-settings-standards": "62:7621",
+      "zh-settings-standards": "62:7869",
+      "en-settings-access": "63:3241",
+      "zh-settings-access": "63:3493",
+      "en-settings-backup": "63:4249",
+      "zh-settings-backup": "63:4501"
+    },
+    "currentRoutesToArchivedFrames": 0
+  },
+  "screenInventory": [
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "nodes": 567,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-5167",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-checking",
+      "id": "63:4960",
+      "nodes": 570,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-4960",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-error",
+      "id": "27:1310",
+      "nodes": 543,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1310",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-204",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-submitted",
+      "id": "26:677",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-677",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-issues",
+      "id": "63:5375",
+      "nodes": 570,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-5375",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "nodes": 321,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1721",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-delegation",
+      "id": "26:1829",
+      "nodes": 324,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1829",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "nodes": 318,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1257",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-standards",
+      "id": "26:1385",
+      "nodes": 325,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1385",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-submitted",
+      "id": "26:772",
+      "nodes": 537,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-772",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "nodes": 346,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2593",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-result",
+      "id": "27:1028",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1028",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-submittedCustom",
+      "id": "28:1857",
+      "nodes": 597,
+      "nav": 7,
+      "logos": 3,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1857",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-resumedB",
+      "id": "28:1582",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1582",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-resumedB",
+      "id": "28:1672",
+      "nodes": 341,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1672",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-submittedCustom",
+      "id": "28:1762",
+      "nodes": 591,
+      "nav": 7,
+      "logos": 3,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1762",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-resumed",
+      "id": "26:867",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-867",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-resumed",
+      "id": "26:966",
+      "nodes": 341,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-966",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-expired",
+      "id": "27:1126",
+      "nodes": 542,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1126",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-138",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "nodes": 571,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=59-2171",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-expired",
+      "id": "27:1218",
+      "nodes": 547,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1218",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-error",
+      "id": "27:1448",
+      "nodes": 548,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1448",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "nodes": 538,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1586",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "nodes": 336,
+      "nav": 0,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1778"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "nodes": 360,
+      "nav": 0,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1875"
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "nodes": 567,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-4753",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "nodes": 501,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=62-6635",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-submittedB",
+      "id": "28:1492",
+      "nodes": 537,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1492",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1937",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-system",
+      "id": "26:2046",
+      "nodes": 356,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2046",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-freechat",
+      "id": "26:1065",
+      "nodes": 344,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1065",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-freechat",
+      "id": "26:1161",
+      "nodes": 349,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1161",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-421",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-custom",
+      "id": "26:549",
+      "nodes": 533,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-549",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-details",
+      "id": "26:280",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-280",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "id": "63:5790",
+      "nodes": 570,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-5790",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "nodes": 432,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2361",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "nodes": 435,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2477",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "nodes": 567,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-5583",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "nodes": 371,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1513",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-knowledge",
+      "id": "26:1617",
+      "nodes": 374,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-1617",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-offline",
+      "id": "27:1682",
+      "nodes": 543,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=27-1682",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "nodes": 544,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-2719",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-submittedB",
+      "id": "28:1400",
+      "nodes": 532,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=28-1400",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "nodes": 283,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2155",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-setup",
+      "id": "26:2258",
+      "nodes": 287,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=26-2258",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "nodes": 487,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-3745",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "nodes": 527,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing-running",
+      "id": "114:14523",
+      "nodes": 342,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-14523",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing-running",
+      "id": "114:14851",
+      "nodes": 345,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-14851",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "id": "114:15182",
+      "nodes": 306,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-15182",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-task-citations",
+      "id": "115:2660",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-2660",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-task-blocked",
+      "id": "115:2918",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-2918",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-task-blocked",
+      "id": "115:3173",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-3173",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-pause-dialog",
+      "id": "115:6516",
+      "nodes": 377,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-6516",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stop-dialog",
+      "id": "115:6879",
+      "nodes": 373,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-6879",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stop-dialog",
+      "id": "115:7238",
+      "nodes": 377,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-7238",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-standards-expanded",
+      "id": "115:27311",
+      "nodes": 318,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-27311",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-standards-expanded",
+      "id": "115:27615",
+      "nodes": 325,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-27615",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "id": "115:27926",
+      "nodes": 371,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-27926",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-result-dialog",
+      "id": "115:4632",
+      "nodes": 391,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-4632",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-expired-dialog",
+      "id": "115:5009",
+      "nodes": 585,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-5009",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-validate",
+      "id": "115:13679",
+      "nodes": 548,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-13679",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "id": "115:14213",
+      "nodes": 610,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-14213",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-source-error",
+      "id": "95:5795",
+      "nodes": 302,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5795",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "nodes": 311,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5936",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-candidate",
+      "id": "114:11738",
+      "nodes": 309,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-11738",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "nodes": 257,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-3836",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-4535",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "nodes": 407,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-4688",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "id": "115:17267",
+      "nodes": 638,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-17267",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "id": "115:17891",
+      "nodes": 530,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-17891",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-selected-a",
+      "id": "115:24200",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-24200",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-selected-a",
+      "id": "115:24713",
+      "nodes": 533,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-24713",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "id": "115:14809",
+      "nodes": 614,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-14809",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "id": "115:15409",
+      "nodes": 631,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-15409",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "id": "115:11134",
+      "nodes": 487,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-11134",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "id": "115:11607",
+      "nodes": 494,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-11607",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "id": "115:12087",
+      "nodes": 544,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-12087",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "id": "115:16026",
+      "nodes": 636,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-16026",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "id": "115:16648",
+      "nodes": 633,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-16648",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-system-expanded",
+      "id": "115:29260",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-29260",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-system-expanded",
+      "id": "115:29597",
+      "nodes": 356,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-29597",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "id": "115:29939",
+      "nodes": 296,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-29939",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "id": "115:12617",
+      "nodes": 549,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-12617",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-validate",
+      "id": "115:13152",
+      "nodes": 541,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-13152",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-4842",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-4995",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4028",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-candidate",
+      "id": "114:12033",
+      "nodes": 316,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-12033",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-standard-history",
+      "id": "114:12335",
+      "nodes": 274,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-12335",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-standard-history",
+      "id": "114:12595",
+      "nodes": 277,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-12595",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "id": "115:28283",
+      "nodes": 374,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-28283",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-delegation-expanded",
+      "id": "115:28643",
+      "nodes": 321,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-28643",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "id": "115:28950",
+      "nodes": 324,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-28950",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-trusted-dialog",
+      "id": "115:7601",
+      "nodes": 373,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-7601",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "id": "115:7960",
+      "nodes": 377,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-7960",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-rollback-dialog",
+      "id": "115:8323",
+      "nodes": 367,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-8323",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-expired-dialog",
+      "id": "115:5580",
+      "nodes": 591,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-5580",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-pause-dialog",
+      "id": "115:6157",
+      "nodes": 373,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-6157",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "id": "115:8676",
+      "nodes": 374,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-8676",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "id": "115:9036",
+      "nodes": 501,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-9036",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "id": "115:9523",
+      "nodes": 508,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-9523",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-setup-preview",
+      "id": "114:13661",
+      "nodes": 289,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-13661",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing-decision",
+      "id": "114:13936",
+      "nodes": 306,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-13936",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "id": "114:14228",
+      "nodes": 309,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-14228",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "id": "115:20731",
+      "nodes": 592,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-20731",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "id": "115:21309",
+      "nodes": 304,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-21309",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "id": "115:21599",
+      "nodes": 307,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-21599",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "nodes": 296,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4857",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-addsource",
+      "id": "95:5002",
+      "nodes": 299,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5002",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "nodes": 260,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5148",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-source-dialog",
+      "id": "115:3431",
+      "nodes": 427,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-3431",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-source-dialog",
+      "id": "115:3844",
+      "nodes": 430,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-3844",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-result-dialog",
+      "id": "115:4260",
+      "nodes": 386,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-4260",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "id": "115:23038",
+      "nodes": 398,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-23038",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422",
+      "nodes": 395,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-23422",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803",
+      "nodes": 408,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-23803",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "id": "115:30221",
+      "nodes": 299,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-30221",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "id": "115:30506",
+      "nodes": 296,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-30506",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "id": "115:30788",
+      "nodes": 299,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-30788",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-selected-b",
+      "id": "115:25231",
+      "nodes": 528,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-25231",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-selected-b",
+      "id": "115:25744",
+      "nodes": 533,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-25744",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "nodes": 549,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-2981",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "nodes": 407,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-3523",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "nodes": 308,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=94-3678",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "id": "114:15474",
+      "nodes": 309,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-15474",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "id": "114:15769",
+      "nodes": 274,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-15769",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "id": "114:16029",
+      "nodes": 277,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-16029",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "id": "115:10017",
+      "nodes": 571,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-10017",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "id": "115:10574",
+      "nodes": 574,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-10574",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "id": "115:18407",
+      "nodes": 537,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-18407",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "id": "115:18930",
+      "nodes": 624,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-18930",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-materials",
+      "id": "62:6880",
+      "nodes": 508,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=62-6880",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-execution",
+      "id": "62:8117",
+      "nodes": 574,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=62-8117",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-operation",
+      "id": "63:3997",
+      "nodes": 494,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=63-3997",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-task-decision",
+      "id": "115:1892",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-1892",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-task-decision",
+      "id": "115:2147",
+      "nodes": 272,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-2147",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-task-citations",
+      "id": "115:2405",
+      "nodes": 269,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-2405",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "nodes": 336,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4148",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-decisions-empty",
+      "id": "95:4245",
+      "nodes": 341,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4245",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "nodes": 233,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4343"
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "nodes": 244,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4458"
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "nodes": 348,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4574",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "id": "95:4715",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-4715",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "id": "115:21892",
+      "nodes": 395,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-21892",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "id": "115:22273",
+      "nodes": 398,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-22273",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "id": "115:22657",
+      "nodes": 395,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-22657",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-translated",
+      "id": "115:26262",
+      "nodes": 536,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-26262",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-translated",
+      "id": "115:26784",
+      "nodes": 541,
+      "nav": 7,
+      "logos": 2,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-26784",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-setup-scope",
+      "id": "114:12858",
+      "nodes": 279,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-12858",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-setup-scope",
+      "id": "114:13123",
+      "nodes": 283,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-13123",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-setup-preview",
+      "id": "114:13392",
+      "nodes": 283,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=114-13392",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "id": "115:19540",
+      "nodes": 633,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-19540",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "id": "115:20159",
+      "nodes": 586,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=115-20159",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "nodes": 348,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5294",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "id": "95:5474",
+      "nodes": 351,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5474",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "nodes": 299,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=95-5653",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-candidate-shadow",
+      "id": "117:3421",
+      "nodes": 315,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-3421",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "id": "117:3722",
+      "nodes": 322,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-3722",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-candidate-rejected",
+      "id": "117:4030",
+      "nodes": 313,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-4030",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "id": "117:8988",
+      "nodes": 355,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-8988",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "id": "117:9329",
+      "nodes": 358,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-9329",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "id": "117:6511",
+      "nodes": 627,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-6511",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "id": "117:7124",
+      "nodes": 601,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-7124",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "id": "117:7711",
+      "nodes": 606,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-7711",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "id": "117:8303",
+      "nodes": 355,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-8303",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "id": "117:8644",
+      "nodes": 358,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-8644",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "id": "117:4329",
+      "nodes": 320,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-4329",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-delegation-paused",
+      "id": "117:4635",
+      "nodes": 331,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-4635",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-delegation-paused",
+      "id": "117:4952",
+      "nodes": 334,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-4952",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-delegation-stopped",
+      "id": "117:5272",
+      "nodes": 327,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-5272",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "id": "117:5585",
+      "nodes": 330,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-5585",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "id": "117:5901",
+      "nodes": 624,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=117-5901",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-6664",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070",
+      "nodes": 418,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-7070",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-7484",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:7890",
+      "nodes": 418,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-7890",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8304",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-8304",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:8710",
+      "nodes": 418,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-8710",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9124",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-9124",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530",
+      "nodes": 418,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-9530",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:9944",
+      "nodes": 410,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-9944",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10350",
+      "nodes": 418,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-10350",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-10764"
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=119-11003"
+    },
+    {
+      "key": "zh-mobilestats-all",
+      "id": "122:4683",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-4683"
+    },
+    {
+      "key": "en-mobilestats-counting",
+      "id": "122:4932",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-4932"
+    },
+    {
+      "key": "zh-mobilestats-counting",
+      "id": "122:5171",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-5171"
+    },
+    {
+      "key": "en-mobilestats-month",
+      "id": "122:3956",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-3956"
+    },
+    {
+      "key": "zh-mobilestats-month",
+      "id": "122:4195",
+      "nodes": 248,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-4195"
+    },
+    {
+      "key": "en-mobilestats-all",
+      "id": "122:4444",
+      "nodes": 238,
+      "nav": 0,
+      "logos": 0,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-4444"
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "id": "122:5420",
+      "nodes": 400,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-5420",
+      "iconRevision": "2.5.1"
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "id": "122:5816",
+      "nodes": 412,
+      "nav": 7,
+      "logos": 1,
+      "url": "https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=122-5816",
+      "iconRevision": "2.5.1"
+    }
+  ],
+  "components": {
+    "prototypeTextStyles": 50,
+    "prototypeButtonAppearances": 20,
+    "prototypeButtonSet": "104:5333",
+    "statsPeriodSet": "119:6663",
+    "logoStates": {
+      "Running": "81:3988",
+      "Still": "81:3989",
+      "Paused": "81:3990",
+      "Connection lost": "81:3991",
+      "Checking": "81:3992"
+    },
+    "runningLogoFamily": "81:3993",
+    "runningLoopSet": "86:3988",
+    "font": "Noto Sans SC; browser reference uses Noto Sans CJK SC",
+    "inputs": "Editable native frames and text matching HTML geometry; interactive typing remains in HTML.",
+    "menuIcons": {
+      "system": "132:4087",
+      "settings": "132:4091",
+      "settings-collection": "132:4096",
+      "settings-materials": "132:4099",
+      "settings-execution": "132:4104",
+      "settings-operation": "132:4109",
+      "settings-preferences": "132:4113"
+    }
+  },
+  "nativeValidation": {
+    "screens": 196,
+    "sidebarsWithSevenEntries": 184,
+    "nativeNodes": 80365,
+    "textNodes": 11508,
+    "logos": 222,
+    "navigateReactions": 3440,
+    "timedTransitions": 6,
+    "currentPageControls": 338,
+    "missingTargets": 0,
+    "navigationErrors": 0,
+    "fontErrors": 0,
+    "imageFillNodes": 0,
+    "screenOverlaps": 0,
+    "remainingParentTextOverflow": 0,
+    "textBoxRepairs": 39,
+    "evidence": "Figma-图标核对.json",
+    "version": "2.5.1",
+    "nodeCountMethod": "v2.5 full-tree count plus exact icon replacement delta",
+    "iconReplacements": 408,
+    "iconComponents": 7,
+    "iconIssues": 0,
+    "baselineEvidence": "历史-v2.5/Figma-v2.5复核.json"
+  },
+  "settings": {
+    "groups": [
+      "Collection / 采集",
+      "Work materials / 工作资料",
+      "Execution / 执行",
+      "Operation & backup / 运行与备份",
+      "Preferences / 偏好"
+    ],
+    "existingRoutineEditableFields": 9,
+    "perSourceConfigAdded": true,
+    "sourceAdaptersDesigned": [
+      "GitHub",
+      "Local folder",
+      "RSS feed",
+      "Single webpage"
+    ],
+    "sourceConfig": "Address/scope, domain and target, cadence, first-history scope and exclusions; detect existing values before asking.",
+    "sourceLifecycle": "Detect → preview exact scope → explicit confirmation → effective receipt → observe first collection; enable is distinct from successful sync.",
+    "sourcePause": "Stops new collection; keeps evidence and existing work. Disconnect stops future access without cancelling work or deleting shared credentials.",
+    "backupTarget": "Input only when missing or explicitly changed",
+    "diagnostics": "Inspect approved scope; validate exact draft; trusted apply receipt; separate recheck",
+    "futureControlsRemoved": true
+  },
+  "brand": {
+    "palette": "流光青",
+    "logo": "好奇的P",
+    "largeMark": {
+      "width": 80,
+      "height": 80,
+      "glyphSize": 68,
+      "horizontalAlignment": "center",
+      "loopSeconds": 4.8
+    },
+    "currentLogoInstances": 222,
+    "runningLargeInstances": 182,
+    "connectionLostLargeInstances": 2,
+    "staticMessageInstances": 38,
+    "localizedSlogans": 184,
+    "slogan": {
+      "en": "Keep evolving toward exceptional judgment.",
+      "zh": "让你的判断，持续向顶尖进化。"
+    },
+    "assets": [
+      "logo-running.gif",
+      "logo-running.webp",
+      "logo-running.svg",
+      "logo-still.svg",
+      "logo-paused.svg",
+      "logo-connection-lost.svg",
+      "logo-checking.svg"
+    ],
+    "truthfulState": "Running describes service availability, not task completion; waiting and one blocked executor do not stop a healthy service indicator",
+    "sloganPlacement": "Below centered sidebar logo; sidebar is an overlay drawer on mobile."
+  },
+  "motion": {
+    "logo": {
+      "assetFrames": 60,
+      "assetFrameDurationMs": 80,
+      "assetLoopSeconds": 4.8,
+      "assetInfiniteLoop": true,
+      "actualAssetPlaybackVerified": true,
+      "nativeMechanism": "AFTER_TIMEOUT + CHANGE_TO + SMART_ANIMATE closed cycle",
+      "nativePhases": 16,
+      "nativeCycleSeconds": 4.8,
+      "nativeReactionReadbackPassed": true,
+      "nativePrototypePlaybackRecordingVerified": false,
+      "evidence": "Figma-Logo循环验证.json"
+    },
+    "reducedMotion": "Static logo plus truthful status; hidden browser tab pauses decoration",
+    "priorExamples": "Existing 320/220/280ms motion examples and video are v2.1 history; current 4.8-second logo assets and native loop are reused unchanged from v2.3.",
+    "reuseVersion": "2.3"
+  },
+  "exports": [
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "asset": "Figma-en-settings-source-enabled.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "68baf358e49490fe32b8a631339e05e3806756211e9de728e069e5506c57cb7b"
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "asset": "Figma-en-details.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "bed92577d20f99ab900dce4ffbaba04ac4b1872a8b11b04dba3476fd4c167578"
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "asset": "Figma-zh-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "1ddc199b2fcdc826f7706db3d6519537d9aea241c3a76d6b7db9086c1977224b"
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "asset": "Figma-zh-settings.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "62b022438ecb487a6ea7429d184cacc0ba60be224577aca39c56f95de98cd989"
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "asset": "Figma-en-settings.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "3693110efcc805b640dcd01ea847c246cce930e16be55a49070c60cc743d4a55"
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "asset": "Figma-en-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d4c0245f31f539472757588a76a2f9c7336144c24d9ffdd6d68a502651f38c15"
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "asset": "Figma-en-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d9767a7b86f627895e7e6cf70dff846b6de535c3227bab0533535c3e40fcfe03"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "asset": "Figma-zh-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "a79338d4b29190df40c1828c0463a2ce2ac69156966808ba622de47092fd7f9b"
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "asset": "Figma-zh-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "3d58bf1dcf0987faa4f385e689a32586eae06a6624391143717c45862987cae9",
+      "reused": true
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "asset": "Figma-en-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "c7dc2031d2bfd2075adaaaa954b6369298b1c861172c12808442a689b152129f",
+      "reused": true
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "asset": "Figma-en-decisions-empty.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "9abd94c4ec764cd07413d777d47cd6e8f2999d9db883aa4fb5671f9622fcd3a3"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "asset": "Figma-en-delegation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "0032cae64f7489c13fe7451143bb118906cf5ab72d1b24622895cb09e928d5ad"
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "asset": "Figma-zh-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "0ec7fc54b0f01a3d9f9beb864a824024826a30a96184699508bd5260dd80be5e"
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "asset": "Figma-en-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "ce866e4ab1ef425625b4cfc5af0ff266b4d99e69492b0634ecb099693ecdcaa8"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "asset": "Figma-en-settings-operation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "3f94d176754e6957a1ce590c683ebdc6bb659bc5975b9f7a047d9da1799e82f7"
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "asset": "Figma-en-result.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "39b74f4f88a032109d8a0912c6452fd9620569e8d05d11244dde4113da10d84f"
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "asset": "Figma-en-settings-issues.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "877c93499746935ec394f4ec3e901d28e188c1024c2f005db45612f13ecff519"
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "asset": "Figma-zh-conversation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "96944332ab96946ef4f607128269ad78e2bee435f83636032ae09e30540c1473"
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "asset": "Figma-en-settings-materials.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "845fdad2da569359ad6176462a376608198a7b2f211506df76f038a5f953ca7e"
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "asset": "Figma-en-settings-execution.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "696bd0ce87fc08f9dfe1fdc1a97fba87c8643eb0c9676d0a0a93b985cf5f65a6"
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "asset": "Figma-en-setup.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "f622ef4d010068749be3da309a947e6bdb30764694611444e282ea617229baf9"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "asset": "Figma-zh-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "542522b0d3586ad051fcaf6b19574141e5bcb03a76301997402a214259e92e56",
+      "reused": true
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "asset": "Figma-en-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "5ab0622c26ac67ccfb105b4d31cd21b25645ab8fa18f56e94809328af18aa811",
+      "reused": true
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "asset": "Figma-en-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "2473a13a1fedb40dad3462308923301795117cb6eaabf8515c723782bb3ef580"
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "asset": "Figma-en-settings-checking.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "336703c1aa64cf11ef201281baf3c342dd071a85643982026fa1fcde0003b8c1"
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "asset": "Figma-zh-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "5c824e2897a569aa67f5037ccf826515a2990673a50339a9ffa550f5b75606b8"
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "asset": "Figma-zh-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "67bec8cf001f8f28a817edfbfa4092df8146a0984759e2262048ab05747f1461"
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "asset": "Figma-en-system.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "231ecb4182af3f55c6de45774f2997b4ac2596c50daa4e449b9e4dd39da03b05"
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "asset": "Figma-en-settings-addsource.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "69af9d43a912a5c5a694bbfab0c30edba0f372dd37280d50294cf6772ae5d9dd"
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "asset": "Figma-en-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "311236b9faa4d443e2ff4b461913ddb090f46c421666a623bbf41feb9e4ce960"
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "asset": "Figma-en-settings-source-paused.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "32ba4059673dd4dd82190c128172529cf4e0266517668cb2bc6fb0f51ab27b06"
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "asset": "Figma-en-settings-source-error.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "6e38ef788cfaaf057cfea569d5d50b927c32c8ceb1399f3b59737ed312a6599d"
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "asset": "Figma-en-knowledge.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "986c3711b57c8717c3962aa9ae88ae931509e10ab5b0e9936a05580c965979e1"
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "asset": "Figma-en-settings-rechecked.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "4fb5bdde77946481edd5322d99b432a8275d62a7e50c75e587edaadbbfb8dce2"
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "asset": "Figma-en-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "2798bd1b3b52a0009edfb13a71abdb758ee95bcb73894132f35adacf34ba8fef"
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "asset": "Figma-zh-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "64092fb727a23849f06c38eb162ea01bd0a18fb2672df26e186bcae1ec0dc553"
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "asset": "Figma-en-offline.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "59d80b2361cbd32fae25ca0c4f7fe7362bbef96742c988cb0843d52559390db2"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "asset": "Figma-en-custom.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "7130eaf44d9efb2c5b266b56a4110580bf0005fd71d7cbc947f103da639f6feb"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "asset": "Figma-en-standards.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "814c8f0a8a449d129efff0302265a43214889f8f753b64190d7121768aeca2bb"
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "asset": "Figma-en-conversation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "9d856960ab3b2f651d8a29e530925d52c756e5a7332dc5d2341887de483043bb"
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664",
+      "asset": "Figma-en-stats.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "2a4dadaf81260474e6e3b223dbbd88f95b47786967a131ff5782f73ec65f9dab"
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070",
+      "asset": "Figma-zh-stats.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "81003f0a5c232cbefc810558427a00383d96f88241756a5970c3e392859217fa"
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764",
+      "asset": "Figma-en-mobilestats.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "f8b99d6d9140cfb0e940392a44156c64ac772e4865f983911a549d923ac0ee5e",
+      "reused": true
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003",
+      "asset": "Figma-zh-mobilestats.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "d675151ff0a4d50cdab28727d059091ba7d83d88044f07d7e88431a79d90210f",
+      "reused": true
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484",
+      "asset": "Figma-en-stats-month.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d1141879f4878de34979d9544f0c447da1e079285b425eb849fc65d1667a80cf"
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530",
+      "asset": "Figma-zh-stats-counting.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "b6e6fc898e107f36af2924a48e3ef6f4529427121feb271caa85da69ba5964f1"
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422",
+      "asset": "Figma-en-mobile-menu.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "1db8c2b15983e877de4be516f6a84552500684615ba879506d6222b17cb1b9af"
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803",
+      "asset": "Figma-zh-mobile-menu.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "da9eaf888b16a4b2312fd8c3185921eafb0661111d3b919df2b6f25673b78ec2"
+    },
+    {
+      "key": "logo-motion",
+      "asset": "Figma-logo-motion.png",
+      "exported": true,
+      "exportVersion": "2.3",
+      "reused": true,
+      "sha256": "c4ae632acb716d9281a5bcf0659f0fb0538594efc4d7e61492d97255c0fe4aa1"
+    }
+  ],
+  "visualReview": {
+    "version": "2.5.1",
+    "reviewer": "Primary agent",
+    "inspected": [
+      "en-settings",
+      "zh-system"
+    ],
+    "method": "Compare updated native Figma icon instances with the rendered HTML; full layout and state colors retained.",
+    "independentReview": false
+  },
+  "localPrototypeValidation": {
+    "version": "2.5.1",
+    "scope": "Icon meanings, bilingual desktop/mobile layout and navigation",
+    "configurations": 4,
+    "routesChecked": 2,
+    "errors": [],
+    "sha256": "803ea91773c30258e86e4986d4732ecb45d0df5465cf737ff09f5e3653d244ef",
+    "evidence": "原型验证.json",
+    "priorFunctionalRegression": "历史-v2.5/原型验证.json"
+  },
+  "limits": [
+    "Figma is a preset-state prototype. Free text, arbitrary state persistence, live validation and contextual service receipts are demonstrated in the HTML prototype.",
+    "Counters are labelled sample data; production aggregation requires StatsSnapshot and authorized domain filtering.",
+    "Figma native logo loop is reused from v2.3; no new actual prototype playback recording is claimed."
+  ],
+  "history": {
+    "2.4": "历史-v2.4/Figma交付记录.json",
+    "2.3": "历史-v2.3/Figma交付记录.json",
+    "2.2": "历史-v2.2/Figma交付记录.json",
+    "2.5": "历史-v2.5/Figma交付记录.json"
+  },
+  "navigation": [
+    "Needs decision / 需要决策",
+    "Ongoing / 正在进行",
+    "Standards / 判断标准",
+    "Knowledge / 知识",
+    "Delegation / 委托",
+    "System / 系统",
+    "Stats / 统计"
+  ],
+  "workViews": {
+    "taskIdentity": "Shared task ID and authoritative status; pending questions and ongoing work are separate read views, not duplicate tasks.",
+    "ongoingStates": [
+      "waiting for decision",
+      "accepted/verifying/queued/running",
+      "blocked/paused/failure needing action"
+    ],
+    "completed": "Retained in completed history outside the unfinished list.",
+    "fixtures": [
+      "W-017",
+      "W-042",
+      "W-043",
+      "W-044"
+    ],
+    "decisionContinuation": "Verified W-017 answer clears its pending question and updates the same task to running."
+  },
+  "sections": {
+    "01 · 主要页面 / Main pages": {
+      "id": "123:4186",
+      "frames": [
+        "24:67",
+        "24:204",
+        "94:3523",
+        "94:4535",
+        "26:1257",
+        "26:1385",
+        "26:1513",
+        "26:1617",
+        "26:1721",
+        "26:1829",
+        "26:1937",
+        "26:2046",
+        "119:6664",
+        "119:7070",
+        "26:2361",
+        "26:2477"
+      ]
+    },
+    "02 · 决策对话 / Decisions": {
+      "id": "123:4187",
+      "frames": [
+        "26:138",
+        "26:280",
+        "26:421",
+        "26:549",
+        "26:677",
+        "26:772",
+        "26:867",
+        "26:966",
+        "26:1065",
+        "26:1161",
+        "27:1126",
+        "27:1218",
+        "27:1310",
+        "27:1448",
+        "27:1586",
+        "27:1682",
+        "28:1400",
+        "28:1492",
+        "28:1582",
+        "28:1672",
+        "28:1762",
+        "28:1857",
+        "95:4148",
+        "95:4245",
+        "115:5009",
+        "115:5580",
+        "115:24200",
+        "115:24713",
+        "115:25231",
+        "115:25744",
+        "115:26262",
+        "115:26784"
+      ]
+    },
+    "03 · 工作进展 / Ongoing work": {
+      "id": "123:4202",
+      "frames": [
+        "26:2593",
+        "27:1028",
+        "94:4688",
+        "94:4842",
+        "94:4995",
+        "95:4028",
+        "114:13936",
+        "114:14228",
+        "114:14523",
+        "114:14851",
+        "114:15182",
+        "114:15474",
+        "114:15769",
+        "114:16029",
+        "115:1892",
+        "115:2147",
+        "115:2405",
+        "115:2660",
+        "115:2918",
+        "115:3173",
+        "115:4260",
+        "115:4632"
+      ]
+    },
+    "04 · 判断成长 / Learning": {
+      "id": "123:4203",
+      "frames": [
+        "114:11738",
+        "114:12033",
+        "114:12335",
+        "114:12595",
+        "115:3431",
+        "115:3844",
+        "115:8323",
+        "115:8676",
+        "115:27311",
+        "115:27615",
+        "115:27926",
+        "115:28283",
+        "117:3421",
+        "117:3722",
+        "117:4030",
+        "117:4329"
+      ]
+    },
+    "05 · 委托与开始 / Delegation": {
+      "id": "123:4204",
+      "frames": [
+        "26:2155",
+        "26:2258",
+        "114:12858",
+        "114:13123",
+        "114:13392",
+        "114:13661",
+        "115:6157",
+        "115:6516",
+        "115:6879",
+        "115:7238",
+        "115:7601",
+        "115:7960",
+        "115:28643",
+        "115:28950",
+        "117:4635",
+        "117:4952",
+        "117:5272",
+        "117:5585"
+      ]
+    },
+    "06 · 设置 / Settings": {
+      "id": "123:4205",
+      "frames": [
+        "63:4753",
+        "63:4960",
+        "63:5167",
+        "63:5375",
+        "63:5583",
+        "63:5790",
+        "62:6635",
+        "62:6880",
+        "59:2171",
+        "62:8117",
+        "63:3745",
+        "63:3997",
+        "63:2719",
+        "63:2981",
+        "115:9036",
+        "115:9523",
+        "115:10017",
+        "115:10574",
+        "115:11134",
+        "115:11607",
+        "115:12087",
+        "115:12617",
+        "115:13152",
+        "115:13679",
+        "115:14213",
+        "115:14809",
+        "115:15409",
+        "115:16026",
+        "115:16648",
+        "115:17267",
+        "115:17891",
+        "115:18407",
+        "115:18930",
+        "115:19540",
+        "115:20159",
+        "115:20731",
+        "115:29260",
+        "115:29597",
+        "117:5901",
+        "117:6511",
+        "117:7124",
+        "117:7711"
+      ]
+    },
+    "07 · 采集 / Collection": {
+      "id": "123:4206",
+      "frames": [
+        "94:3678",
+        "95:5936",
+        "94:3836",
+        "95:5148",
+        "95:4574",
+        "95:4715",
+        "95:4857",
+        "95:5002",
+        "95:5294",
+        "95:5474",
+        "95:5653",
+        "95:5795",
+        "115:21309",
+        "115:21599",
+        "115:21892",
+        "115:22273",
+        "115:22657",
+        "115:23038",
+        "115:29939",
+        "115:30221",
+        "115:30506",
+        "115:30788",
+        "117:8303",
+        "117:8644",
+        "117:8988",
+        "117:9329"
+      ]
+    },
+    "08 · 统计 / Statistics": {
+      "id": "123:4207",
+      "frames": [
+        "119:7484",
+        "119:7890",
+        "119:8304",
+        "119:8710",
+        "119:9124",
+        "119:9530",
+        "119:9944",
+        "119:10350"
+      ]
+    },
+    "09 · 移动端 / Mobile": {
+      "id": "123:4208",
+      "frames": [
+        "27:1778",
+        "27:1875",
+        "95:4343",
+        "95:4458",
+        "115:23422",
+        "115:23803",
+        "119:10764",
+        "119:11003",
+        "122:3956",
+        "122:4195",
+        "122:4444",
+        "122:4683",
+        "122:4932",
+        "122:5171",
+        "122:5420",
+        "122:5816"
+      ]
+    }
+  },
+  "sourceOfTruth": {
+    "path": "交互原型.html",
+    "sha256": "803ea91773c30258e86e4986d4732ecb45d0df5465cf737ff09f5e3653d244ef",
+    "method": "Capture browser DOM and computed layout; reconstruct editable Figma text, SVG, auto-layout and reusable local controls.",
+    "staticLegacyDSL": "Historical v2.4 only; do not use it to overwrite current screens.",
+    "iconSource": "icons/manifest.json",
+    "iconSync": "Seven semantic components; replace only the existing icon slot children, preserving layout and interactions."
+  },
+  "statistics": {
+    "placement": "Immediately below System",
+    "metrics": [
+      "completedTasks",
+      "ownerDecisions",
+      "automaticDecisions",
+      "activeStandards",
+      "knowledgeRecords",
+      "delegationTypes"
+    ],
+    "periods": [
+      "7d",
+      "30d",
+      "all"
+    ],
+    "defaultPeriod": "7d",
+    "currentStockIndependentOfPeriod": true,
+    "sampleData": true,
+    "states": [
+      "en-stats",
+      "zh-stats",
+      "en-stats-month",
+      "zh-stats-month",
+      "en-stats-all",
+      "zh-stats-all",
+      "en-stats-counting",
+      "zh-stats-counting",
+      "en-stats-after-decision",
+      "zh-stats-after-decision",
+      "en-mobilestats",
+      "zh-mobilestats",
+      "zh-mobilestats-all",
+      "en-mobilestats-counting",
+      "zh-mobilestats-counting",
+      "en-mobilestats-month",
+      "zh-mobilestats-month",
+      "en-mobilestats-all",
+      "en-mobilestats-menu",
+      "zh-mobilestats-menu"
+    ],
+    "nativeVerification": {
+      "screens": 20,
+      "checkedLinks": 372,
+      "errors": 0,
+      "evidence": "Figma-统计验证.json"
+    }
+  },
+  "prototypeStarts": [
+    {
+      "nodeId": "24:67",
+      "name": "Needs decision · English"
+    },
+    {
+      "nodeId": "24:204",
+      "name": "需要决策 · 中文"
+    },
+    {
+      "nodeId": "119:6664",
+      "name": "Stats · English"
+    },
+    {
+      "nodeId": "119:7070",
+      "name": "统计 · 中文"
+    },
+    {
+      "nodeId": "119:10764",
+      "name": "Stats · Mobile"
+    },
+    {
+      "nodeId": "94:3523",
+      "name": "Ongoing · All tasks"
+    },
+    {
+      "nodeId": "26:2361",
+      "name": "Settings · Overview"
+    },
+    {
+      "nodeId": "94:3678",
+      "name": "Collection · Add source"
+    }
+  ],
+  "legacyComponents": {
+    "statusSetId": "20:697",
+    "inputComponent": {
+      "id": "26:126",
+      "valueKey": "Value#26:0"
+    },
+    "semanticVariables": 50,
+    "primitives": 50,
+    "textStyles": 13,
+    "logoComponentId": "37:1622",
+    "runningLogoFamily": "81:3993",
+    "logoStates": {
+      "Running": "81:3988",
+      "Still": "81:3989",
+      "Paused": "81:3990",
+      "Connection lost": "81:3991",
+      "Checking": "81:3992"
+    },
+    "runningLoopSet": "86:3988",
+    "runningNestedInstance": "89:4825",
+    "logoShowcase": "86:4016",
+    "prototypeTextStyles": 50,
+    "prototypeButtonAppearances": 20,
+    "prototypeButtonSet": "104:5333",
+    "statsPeriodSet": "119:6663",
+    "currentFont": "Noto Sans SC; browser reference uses Noto Sans CJK SC"
+  },
+  "priorDiscoveredLibraries": [
+    "Material 3 Button",
+    "Simple Design System Navigation Button"
+  ],
+  "sourceLibraries": [
+    "Existing PAtrick color/radius/spacing variables and logo components",
+    "Local Prototype / Buttons and Prototype / Stats period components",
+    "Material 3 Design Kit / settings outline",
+    "Simple Design System / Folder, Terminal"
+  ],
+  "icons": {
+    "semantics": {
+      "system": {
+        "en": "System",
+        "zh": "系统",
+        "componentId": "132:4087",
+        "asset": "icons/system.svg"
+      },
+      "settings": {
+        "en": "Settings",
+        "zh": "设置",
+        "componentId": "132:4091",
+        "asset": "icons/settings.svg"
+      },
+      "settings-collection": {
+        "en": "Collection",
+        "zh": "采集",
+        "componentId": "132:4096",
+        "asset": "icons/settings-collection.svg"
+      },
+      "settings-materials": {
+        "en": "Work materials",
+        "zh": "工作资料",
+        "componentId": "132:4099",
+        "asset": "icons/settings-materials.svg"
+      },
+      "settings-execution": {
+        "en": "Execution",
+        "zh": "执行",
+        "componentId": "132:4104",
+        "asset": "icons/settings-execution.svg"
+      },
+      "settings-operation": {
+        "en": "Operation & backup",
+        "zh": "运行与备份",
+        "componentId": "132:4109",
+        "asset": "icons/settings-operation.svg"
+      },
+      "settings-preferences": {
+        "en": "Preferences",
+        "zh": "偏好",
+        "componentId": "132:4113",
+        "asset": "icons/settings-preferences.svg"
+      }
+    },
+    "navigationSize": 20,
+    "settingsCategorySize": 17,
+    "distinctAcrossLevels": true,
+    "uniqueAcrossNavigationAndSettings": 13,
+    "currentSlots": 408,
+    "affectedScreens": 184,
+    "verification": "Figma-图标核对.json"
+  },
+  "screenInventoryBaselineVersion": "2.5 plus exact 2.5.1 icon node deltas"
+}

@@ -1,0 +1,38 @@
+{
+  "scope": "Independent focused v2.3 prototype QA; original service calls remain simulated",
+  "sha256": "c6a4c9c1694a42cde64d9eb9d70043041c5360ff5dbfa32bf88315940e8fb512",
+  "checks": [
+    "system language zh-CN null",
+    "system language zh-TW null",
+    "system language en-GB null",
+    "system language ja-JP null",
+    "system language en-US [\"fr-FR\",\"zh-CN\",\"en-US\"]",
+    "system language zh-CN [\"ja-JP\",\"en-US\",\"zh-CN\"]",
+    "manual override persists; return to system follows immediately",
+    "system change only affects system mode",
+    "locale preserves work/custom/chat and settings validation",
+    "running logo square centered and actually loops",
+    "small identity marks do not independently loop",
+    "static paused online true",
+    "static unknown online true",
+    "static running online false",
+    "waiting decision or one paused delegation does not stop service mark",
+    "system reduced motion stops logo and keeps running state text",
+    "hidden document pauses decorative loops",
+    "no script errors",
+    "four groups and nine current fields only",
+    "settings error and control modal switch language",
+    "Current three executors and Grok repair survive four-group merge",
+    "New work folder loses old readiness and stays permission gated",
+    "Backup target detected, restore stays an isolated plan",
+    "Standards no longer offers a false settings route",
+    "Reset action and check timestamp have deliberate spacing"
+  ],
+  "passed": 25,
+  "remainingProductFailures": [],
+  "foundAndFixed": [
+    "Standards settings button incorrectly led to Work materials; removed",
+    "Reset action touched Last check text; flex gap restored"
+  ],
+  "note": "Earlier failed assertions in raw scripts were QA selector/text assumptions; final targeted checks passed. No production services were contacted."
+}

@@ -1,0 +1,122 @@
+{
+  "passed": 5,
+  "checks": [
+    "EN/ZH last connection is explicitly marked sample",
+    "Disconnected service status is unknown and static with Connection lost label",
+    "Changing language retains decision and chat drafts and business state",
+    "Offline banner fits at 1440/390px in EN/ZH",
+    "Header language, send and modal language targets are at least44px"
+  ],
+  "en": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect",
+  "zh": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接",
+  "mark": {
+    "state": "unknown",
+    "animations": 0,
+    "label": "Connection lost"
+  },
+  "samples": [
+    {
+      "width": 1440,
+      "lang": "en",
+      "banner": {
+        "left": 228,
+        "right": 1440,
+        "scrollWidth": 1212,
+        "clientWidth": 1212,
+        "text": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect"
+      },
+      "controls": [
+        {
+          "selector": ".language button",
+          "width": 44,
+          "height": 44
+        },
+        {
+          "selector": ".send",
+          "width": 44,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "width": 1440,
+      "lang": "zh",
+      "banner": {
+        "left": 228,
+        "right": 1440,
+        "scrollWidth": 1212,
+        "clientWidth": 1212,
+        "text": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接"
+      },
+      "controls": [
+        {
+          "selector": ".language button",
+          "width": 44,
+          "height": 44
+        },
+        {
+          "selector": ".send",
+          "width": 44,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "lang": "en",
+      "banner": {
+        "left": 0,
+        "right": 390,
+        "scrollWidth": 390,
+        "clientWidth": 390,
+        "text": "You’re offline. Your draft is safe here.\nLast connection 09:42 · example\nReconnect"
+      },
+      "controls": [
+        {
+          "selector": ".language button",
+          "width": 44,
+          "height": 44
+        },
+        {
+          "selector": ".send",
+          "width": 44,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "lang": "zh",
+      "banner": {
+        "left": 0,
+        "right": 390,
+        "scrollWidth": 390,
+        "clientWidth": 390,
+        "text": "当前离线，草稿已保留。\n上次连接 09:42 · 示例\n重新连接"
+      },
+      "controls": [
+        {
+          "selector": ".language button",
+          "width": 44,
+          "height": 44
+        },
+        {
+          "selector": ".send",
+          "width": 44,
+          "height": 44
+        }
+      ]
+    }
+  ],
+  "modal": [
+    {
+      "width": 44,
+      "height": 44
+    },
+    {
+      "width": 44,
+      "height": 44
+    }
+  ],
+  "sha256": "30724279697228bb6924d6d87b667e67787edce834e794c5868135b4060833fe"
+}
