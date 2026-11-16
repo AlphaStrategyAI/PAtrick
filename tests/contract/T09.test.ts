@@ -302,12 +302,20 @@ test('a present backend is drained before the terminal is classified', async () 
       expect(receipt.exit_code).toBe(1);
     });
     const dsh = writeBackendStub(dir, 'dsh', DSH_OK, 0);
+    const dshHome = join(dir, 'dsh-home');
     await withBackendPath(dsh.bin, async () => {
-      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1), { backend: 'dsh' }), workGrant({ attempt_id: 'attempt-dsh-live' }));
+      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1), { backend: 'dsh', home: dshHome }), workGrant({ attempt_id: 'attempt-dsh-live' }));
       expect(receipt.classification).toBe('agent_completed');
       expect(receipt.session_id).toBe('session-fixture');
-      expect(readFileSync(dsh.args, 'utf8').trim().split('\n')).toEqual(['--profile', 'headless', '--json', '--approval-policy', 'never']);
-      expect(readFileSync(`${dsh.args}.dsh`, 'utf8')).toBe(HOME);
+      const argv = readFileSync(dsh.args, 'utf8').trim().split('\n');
+      expect(argv).toEqual(['--profile', 'headless', '--json', '--approval-policy', 'never']);
+      expect(argv).not.toContain('--model');
+      expect(argv).not.toContain('--effort');
+      expect(readFileSync(`${dsh.args}.dsh`, 'utf8')).toBe(dshHome);
+      expect(existsSync(join(dshHome, 'profiles', 'headless', 'patrick-overlay.json'))).toBe(true);
+      for (const name of ['manifest.json', 'patrick-memory.ts', 'patrick-judgment.ts', 'patrick-bridge.ts']) {
+        expect(existsSync(join(dshHome, 'profiles', 'headless', 'bundle', name))).toBe(true);
+      }
     });
   });
 });

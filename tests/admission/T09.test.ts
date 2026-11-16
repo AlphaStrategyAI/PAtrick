@@ -12,10 +12,14 @@ import type { BackendId, CommandResult } from '../../packages/executor/src/types
 
 const BACKENDS: readonly BackendId[] = ['codex', 'grok', 'dsh'];
 const PROBES = { codex: probeCodex, grok: probeGrok, dsh: probeDsh } as const;
+const HARNESS_TOOL_NAMES = ['patrick-memory', 'patrick-judgment', 'patrick-bridge'] as const;
 
 test('each backend probe records the command result and the hash of that observation', async () => {
   const isolated = limaGuestMarkerPresent();
-  const tool = await attemptHarnessTool();
+  const harnessModule = await attemptHarnessTool();
+  expect(harnessModule.result.exitCode).toBe(0);
+  expect(harnessModule.result.error).toBeNull();
+  expect(harnessModule.result.stdout).toContain('"evidenceId":"ev-1"');
   for (const backend of BACKENDS) {
     const home = mkdtempSync(join(tmpdir(), 'patrick-admit-'));
     try {
@@ -23,18 +27,19 @@ test('each backend probe records the command result and the hash of that observa
       const spec = versionCommand(backend);
       const version = await runCommand(spec.command, spec.args);
       const headless = await attemptHeadless(backend, home);
+      const liveToolCall = backendCalledHarness(headless.result);
       const record = assessProbe(backend, version, {
         isolated,
         liveTerminal: capability.liveTerminal,
-        liveToolCall: tool.live,
+        liveToolCall,
       }, [
+        noted(spec.command, spec.args, version),
         noted(headless.command, headless.args, headless.result),
-        noted(tool.command, tool.args, tool.result),
       ]);
       const versionText = version.stdout.trim();
       const commandMatched = version.exitCode === 0 && version.error === null && versionText.length > 0;
       const pinOk = backend === 'dsh' ? versionText === LOCKED_DSH_VERSION : commandMatched;
-      const ready = commandMatched && pinOk && isolated && capability.liveTerminal && tool.live;
+      const ready = commandMatched && pinOk && isolated && capability.liveTerminal && liveToolCall;
       expect(capability.backend).toBe(backend);
       expect(capability.command).toBe(`${spec.command} ${spec.args.join(' ')}`);
       expect(record.command).toBe(capability.command);
@@ -55,7 +60,7 @@ test('each backend probe records the command result and the hash of that observa
       }
       if (!isolated) expect(record.observation).toContain('blocked: executor is not inside the lima guest');
       if (!capability.liveTerminal) expect(record.observation).toContain('blocked: no isolated terminal readback');
-      if (!tool.live) expect(record.observation).toContain('blocked: no live harness tool call');
+      if (!liveToolCall) expect(record.observation).toContain('blocked: no live harness tool call');
       if (headless.result.stdout.trim()) expect(record.observation).toContain(headless.result.stdout.trim().split('\n')[0] ?? '');
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -99,6 +104,12 @@ process.stdout.write(JSON.stringify(records));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+function backendCalledHarness(result: CommandResult): boolean {
+  if (result.error?.includes('ENOENT')) return false;
+  const output = `${result.stdout}\n${result.stderr}`;
+  return HARNESS_TOOL_NAMES.some((name) => output.includes(name));
 }
 
 function noted(command: string, args: readonly string[], result: CommandResult): string {

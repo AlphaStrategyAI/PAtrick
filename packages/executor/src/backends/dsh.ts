@@ -1,6 +1,7 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonicalJson, evidenceSha256 } from '../hash.js';
+import { fileURLToPath } from 'node:url';
+import { HARNESS_FILES, canonicalJson, evidenceSha256 } from '../hash.js';
 import type { BackendCapability, TerminalParse, TokenUsage } from '../types.js';
 import { readCapability } from './capability.js';
 import { isRecord, jsonLines, positiveToken } from './parse.js';
@@ -43,6 +44,22 @@ export function writeDshOverlay(home: string): { path: string; configHash: strin
   return { path, configHash: evidenceSha256(body) };
 }
 
+const HARNESS_DIR = fileURLToPath(new URL('../../harness/', import.meta.url));
+
+export function dshBundleDir(home: string): string {
+  return join(home, 'profiles', 'headless', 'bundle');
+}
+
+export function installDshProfile(home: string): { path: string; configHash: string } {
+  const overlay = writeDshOverlay(home);
+  const bundleDir = dshBundleDir(home);
+  mkdirSync(bundleDir, { recursive: true });
+  for (const name of HARNESS_FILES) {
+    copyFileSync(join(HARNESS_DIR, name), join(bundleDir, name));
+  }
+  return overlay;
+}
+
 export function parseDshTerminal(stdout: string): TerminalParse {
   let sessionId: string | null = null;
   let usage: TokenUsage | null = null;
@@ -78,6 +95,7 @@ export function probe(): Promise<BackendCapability> {
     resumeMark: 'resume',
     invocation: (home) => dshInvocation(home),
     parse: parseDshTerminal,
+    prepare: installDshProfile,
   });
 }
 

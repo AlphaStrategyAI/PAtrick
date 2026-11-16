@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { RunGrant } from '../../domain/src/delegation.js';
 import { codexInvocation, parseCodexTerminal } from './backends/codex.js';
-import { dshInvocation, parseDshTerminal } from './backends/dsh.js';
+import { dshInvocation, installDshProfile, parseDshTerminal } from './backends/dsh.js';
 import { grokInvocation, parseGrokTerminal } from './backends/grok.js';
 import { dispatchPaidNext, type PaidDispatch } from '../harness/patrick-bridge.js';
 import { findExecutable, runClosed } from './command.js';
@@ -112,6 +112,7 @@ async function observeTerminal(snapshot: FrozenRun): Promise<ObservedProcess | n
   const invocation = backendInvocation(snapshot);
   const binary = findExecutable(invocation.command);
   if (!binary) return snapshot.terminal;
+  if (snapshot.backend === 'dsh') installDshProfile(snapshot.home);
   return runClosed(binary, invocation.args, {
     env: { ...process.env, ...invocation.env },
     pipeStdin: invocation.stdin,

@@ -23,6 +23,7 @@ export async function readCapability(input: {
   resumeMark: string;
   invocation: (home: string) => BackendLaunch;
   parse: (stdout: string) => TerminalParse;
+  prepare?: (home: string) => void;
 }): Promise<BackendCapability> {
   const spec = versionCommand(input.backend);
   const versionResult = await runCommand(spec.command, spec.args, 8000);
@@ -30,6 +31,7 @@ export async function readCapability(input: {
   const version = versionResult.exitCode === 0 && versionResult.error === null && versionText ? versionText : null;
   const home = mkdtempSync(join(tmpdir(), 'patrick-backend-'));
   try {
+    input.prepare?.(home);
     const invocation = input.invocation(home);
     const env = { ...process.env, ...invocation.env };
     let resumeSupported = false;
