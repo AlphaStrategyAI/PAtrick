@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "patrick-harness",
+  "tools": [
+    {"name": "patrick-memory", "entry": "patrick-memory.ts", "rpc": "evidence.query"},
+    {"name": "patrick-judgment", "entry": "patrick-judgment.ts", "rpc": "judgment.read"},
+    {"name": "patrick-bridge", "entry": "patrick-bridge.ts", "rpc": "budget.next"}
+  ],
+  "disabled": {
+    "sessionReport": true,
+    "inventory": true,
+    "pluginAdmin": true,
+    "hmr": true,
+    "unattributedBackground": true
+  },
+  "dsh": {
+    "commit": "e8f7b93a344964de3dca1ace9e72b6e4d6de87cb",
+    "packageVersion": "0.2.2-rc.2"
+  }
+}
