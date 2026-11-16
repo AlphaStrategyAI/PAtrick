@@ -618,6 +618,51 @@ test('a T06 revise draft posts the standard id and revise base', async () => {
   }
 });
 
+test('a second adopt on an already adopted candidate keeps adopted state', async () => {
+  const { fx, api, vaultId } = await ready();
+  try {
+    const vault = createVaultApi(fx.db, {
+      blobs: createBlobStore(join(fx.dir, 'blobs')),
+      now: () => new Date(NOW),
+      captureHost: 'mac-mini',
+    });
+    const create = await vault.createEdit(editor, {
+      operation: 'create_standard',
+      draft_key: 'adopt-guard',
+      expected_active_version: null,
+    });
+    const target = fx.db.prepare(`SELECT target_id FROM edit_intents WHERE edit_id = ?`).get(create.edit_id) as { target_id: string };
+    const candidate = await api.openCandidate(await api.ingestStandardDraft({
+      vaultId,
+      standardId: target.target_id,
+      draftKey: 'adopt-guard',
+      rules: passingRules(),
+    }));
+    const firstReport = await api.evaluate(candidate, { version: 1 });
+    expect(await api.adoptStandard(candidate.id, firstReport.id, candidate.revision)).toBe('adopted');
+    expect(fx.db.prepare(`SELECT status FROM standard_candidates WHERE candidate_id = ?`).get(candidate.id)).toEqual({ status: 'adopted' });
+    const adoptedReceipt = latestReceipt(fx.db, create.edit_id);
+    expect(adoptedReceipt.business_state).toBe('adopted');
+    const standardBefore = fx.db.prepare(`SELECT revision, active_version FROM standards WHERE standard_id = ?`).get(candidate.standard_id) as {
+      revision: number;
+      active_version: number;
+    };
+    fx.db.prepare(`INSERT INTO withdrawal_events (
+      event_id, data_domain, target_kind, target_id, target_version, epoch, reason, created_at
+    ) VALUES ('withdraw:evidence:adopt-guard', ?, 'evidence', 'ev-1', 1, 1, '水位变化', ?)`).run(DOMAIN, NOW);
+    const secondReport = await api.evaluate(candidate, { version: 1 });
+    expect(secondReport.id).not.toBe(firstReport.id);
+    expect(await api.adoptStandard(candidate.id, secondReport.id, candidate.revision)).toBe('adopted');
+    expect(fx.db.prepare(`SELECT status FROM standard_candidates WHERE candidate_id = ?`).get(candidate.id)).toEqual({ status: 'adopted' });
+    const afterReceipt = latestReceipt(fx.db, create.edit_id);
+    expect(afterReceipt.business_state).toBe('adopted');
+    expect(afterReceipt.receipt_revision).toBe(adoptedReceipt.receipt_revision);
+    expect(fx.db.prepare(`SELECT revision, active_version FROM standards WHERE standard_id = ?`).get(candidate.standard_id)).toEqual(standardBefore);
+  } finally {
+    fx.close();
+  }
+});
+
 test('a stale adopt after r9 and a rejected adopt record that business state', async () => {
   const { fx, api, vaultId, seeded } = await ready();
   try {

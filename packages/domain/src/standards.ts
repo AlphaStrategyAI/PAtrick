@@ -492,14 +492,15 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
     async adoptStandard(candidateId: string, reportId: string, expectedRevision: number): Promise<'adopted' | 'stale' | 'not_adopted'> {
       const stamped = stamp();
       return withImmediateTransaction(db, () => {
-        const already = db.prepare('SELECT fact_id FROM adoption_facts WHERE candidate_id = ? AND report_id = ?').get(candidateId, reportId) as {
+        const adopted = db.prepare('SELECT fact_id FROM adoption_facts WHERE candidate_id = ? LIMIT 1').get(candidateId) as {
           fact_id: string;
         } | undefined;
-        if (already) return 'adopted';
+        if (adopted) return 'adopted';
         const candidate = requireCandidate(db, candidateId);
         if (candidate.account_id !== principal.account_id) throw new Error('FORBIDDEN');
         const report = requireReport(db, reportId);
-        const reject = (result: 'stale' | 'not_adopted'): 'stale' | 'not_adopted' => {
+        const reject = (result: 'stale' | 'not_adopted'): 'adopted' | 'stale' | 'not_adopted' => {
+          if (candidate.status === 'adopted') return 'adopted';
           db.prepare(`UPDATE standard_candidates SET status = ?, updated_at = ? WHERE candidate_id = ?`).run(result, stamped, candidate.candidate_id);
           if (candidate.edit_id) appendEditReceipt(db, candidate.edit_id, result, candidate.candidate_id, report.report_id, null, stamped);
           return result;
