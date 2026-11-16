@@ -57,7 +57,11 @@ export type PolicyReading = {
 
 export type WorkerSettlement = {
   controller: 'policy_wait' | 'claimed';
-  hubResult: { outcome: 'done'; summary: 'no-op' | 'claimed' };
+  hubResult: {
+    outcome: 'done';
+    summary: 'no-op' | 'claimed';
+    later?: { key: 'answer'; cancel: true }[];
+  };
   noop: boolean;
   modelCalls: number;
   technicalRetries: number;
@@ -110,7 +114,7 @@ export async function settleNativeAnswer(
   if (claim.status !== 'claimed') {
     return {
       controller: 'policy_wait',
-      hubResult: { outcome: 'done', summary: 'no-op' },
+      hubResult: { outcome: 'done', summary: 'no-op', later: [{ key: 'answer', cancel: true }] },
       noop: true,
       modelCalls: 0,
       technicalRetries: 0,

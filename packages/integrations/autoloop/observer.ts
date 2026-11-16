@@ -7,6 +7,7 @@ export type HubRunEventView = {
   type: string;
   subject: string;
   summary: string;
+  detail?: string;
 };
 
 export type HubRunView = {

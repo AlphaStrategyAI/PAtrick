@@ -20,6 +20,7 @@ import {
   CONSULTATION_PARALLEL,
   CONSULTATION_RULE,
   PINNED_HUB_COMMIT,
+  RESUME_RULE,
   SOURCE_CHANGE_RULE,
   deriveResumeEvent,
   deriveStageEvent,
@@ -27,6 +28,7 @@ import {
   publishHubEvent,
   toHubEventBody,
   type HubEvent,
+  type HubEventAck,
   type PublishableHubEvent,
 } from '../../packages/integrations/autoloop/client.js';
 import { readHubView, rebuildHubView, storeHubView, type HubRunView, type HubStatePage } from '../../packages/integrations/autoloop/observer.js';
@@ -34,6 +36,7 @@ import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/da
 import { PinnedHubError, runCommandPlugin, startPinnedHub, type PinnedHub } from './pinned-hub.js';
 
 const RAW = '  先补证，再比较。  ';
+const NATIVE_COMMAND = 'plugins/command/agent.ts command/read; POST /v1/runs/:id/result {"outcome":"done","summary":"no-op","later":[{"key":"answer","cancel":true}]}';
 const ADMISSION_PATH = fileURLToPath(new URL('../../fixtures/contracts/admission-matrix.json', import.meta.url));
 const MANIFEST_PATH = fileURLToPath(new URL('../../packages/storage/migrations/manifest.json', import.meta.url));
 
@@ -91,14 +94,24 @@ function customObservation(answer: { choice: number | null; chosen: string | nul
   ].join('\n');
 }
 
-function nativeObservation(input: { state: string; attempts: number; summary: string; readText: string; laterClaimed: boolean }): string {
+function nativeObservation(input: {
+  state: string;
+  attempts: number;
+  summary: string;
+  readText: string;
+  resumeRule: string;
+  resumeType: string;
+  root: string;
+  stageKey: string;
+  claimStatus: string;
+}): string {
   return [
     'native-answer-before-receipt',
     `commit ${PINNED_HUB_COMMIT}`,
-    'command: plugins/command/agent.ts command/read; POST /v1/runs/:id/result {"outcome":"done","summary":"no-op"}',
+    `command: ${NATIVE_COMMAND}`,
     `early: state=${input.state} attempts=${input.attempts} summary=${JSON.stringify(input.summary)}`,
     `read.text=${JSON.stringify(input.readText)} modelCalls=0 technicalRetries=0`,
-    `later domain wake claimable=${input.laterClaimed}`,
+    `resume: rule=${input.resumeRule} type=${input.resumeType} root=${input.root} stage_key=${input.stageKey} claimContinuation=${input.claimStatus}`,
   ].join('\n');
 }
 
@@ -121,6 +134,12 @@ test('resume signals keep hops while only draft stages increase depth', () => {
   expect(resume.stage_key).toBe('work-1/2/q-1/e8/answer');
   const evidence = deriveResumeEvent({ ...parent, hops: 8 }, 'e8-evidence', 'evidence.ready', 'evidence_ready');
   expect(evidence.hops).toBe(8);
+  const evidenceBody = toHubEventBody(evidence);
+  expect(evidenceBody.type).toBe('evidence.ready');
+  expect(evidenceBody.subject).toBe('evidence_ready');
+  expect(JSON.parse(evidenceBody.detail)).toMatchObject({
+    root: 'e0', cause: 'e8', generation: 2, hops: 8, stage_key: 'evidence_ready',
+  });
   const body = toHubEventBody(resume);
   expect(body.hops).toBe(7);
   expect(body.type).toBe('answer.verified');
@@ -139,6 +158,11 @@ test('resume signals keep hops while only draft stages increase depth', () => {
     source: 'patrick',
     types: ['source.changed'],
   });
+  expect(rules.rules.find((rule) => rule.name === SOURCE_CHANGE_RULE)?.parallel).toBe(4);
+  const resumeRule = rules.rules.find((rule) => rule.name === RESUME_RULE);
+  expect(resumeRule?.when).toEqual({ source: 'patrick', types: ['answer.verified', 'evidence.ready'] });
+  expect(resumeRule?.group).toBe(RESUME_RULE);
+  expect(resumeRule).not.toHaveProperty('parallel');
 });
 
 test('custom hub answers send the raw text and omit choice', () => {
@@ -174,7 +198,7 @@ test('a native answer before the stage is claimable ends with policy_wait and no
   const early = await settleNativeAnswer(port, key, 'attempt-1');
   expect(early).toMatchObject({
     controller: 'policy_wait',
-    hubResult: { outcome: 'done', summary: 'no-op' },
+    hubResult: { outcome: 'done', summary: 'no-op', later: [{ key: 'answer', cancel: true }] },
     noop: true,
     modelCalls: 0,
     technicalRetries: 0,
@@ -496,31 +520,95 @@ async function expectNativeAndDoneAsk(row: AdmissionRow): Promise<void> {
     expect(waiting.stdout).toBe('no-op\n');
     expect(waiting.stderr ?? '').not.toContain('model-called');
     expect(waiting.reading.text).toBe('no-op\n');
-    await fresh.client.result(early.run, early.token, settled.hubResult);
+    const posted = await fresh.client.result(early.run, early.token, settled.hubResult);
+    expect(posted.rejected).toEqual([]);
     const earlyRun = (await fresh.client.state()).runs.find((run) => run.id === early.run);
     expect(earlyRun).toMatchObject({ state: 'done', attempts: 0, summary: 'no-op', error: '' });
-    const resume = deriveResumeEvent(workEvent('native-1'), 'wake-1', 'answer.verified', 'answer');
-    expect(resume.hops).toBe(0);
-    expect(resume.cause).toBe('native-1');
-    await fresh.client.postEvent(toHubEventBody(workEvent('wake-1')));
+    const parent = workEvent('native-1');
+    const resume = deriveResumeEvent(parent, 'wake-1', 'answer.verified', 'answer');
+    expect(resume).toMatchObject({
+      root: parent.root,
+      cause: parent.event_id,
+      generation: parent.generation,
+      hops: parent.hops,
+      kind: 'answer.verified',
+      stage_key: 'answer',
+    });
+    const wire = toHubEventBody(resume);
+    expect(wire.type).toBe('answer.verified');
+    expect(wire.subject).toBe('answer');
+    const holder = temporaryDatabase();
+    const acks: HubEventAck[] = [];
+    try {
+      const publisher = {
+        async postEvent(body: Parameters<PinnedHub['client']['postEvent']>[0]) {
+          const ack = await fresh.client.postEvent(body);
+          acks.push(ack);
+          return ack;
+        },
+      };
+      expect(await publishHubEvent(holder.db, publisher, resume)).toBe('accepted');
+      expect(acks.at(-1)?.routed).toEqual([RESUME_RULE]);
+      const stored = holder.db.prepare(
+        'SELECT root, cause, generation, hops, kind, stage_key FROM hub_events WHERE event_id = ?',
+      ).get('wake-1');
+      expect(stored).toEqual({
+        root: 'native-1',
+        cause: 'native-1',
+        generation: 1,
+        hops: 0,
+        kind: 'answer.verified',
+        stage_key: 'answer',
+      });
+    } finally {
+      holder.close();
+    }
     const later = await fresh.client.claim(`native-later-${randomUUID()}`);
-    expect(later).not.toBeNull();
-    const claimed = runCommandPlugin(fresh, 'native-claimed', context);
-    expect(claimed.reading.text).toBe('claimed\n');
+    if (!later) throw new Error('resume event produced no job');
+    expect(later.rule.name).toBe(RESUME_RULE);
+    expect(later.rule.name).not.toBe(SOURCE_CHANGE_RULE);
+    const wakeEvent = later.context.events.find((event) => event.type === 'answer.verified');
+    expect(wakeEvent?.subject).toBe('answer');
+    const detail = JSON.parse(wakeEvent?.detail ?? 'null') as {
+      root: string;
+      cause: string;
+      generation: number;
+      hops: number;
+      stage_key: string;
+    };
+    expect(detail).toMatchObject({
+      root: parent.root,
+      cause: parent.event_id,
+      generation: parent.generation,
+      hops: parent.hops,
+      stage_key: wakeEvent?.subject,
+    });
+    expect(later.context.events.some((event) => event.type === 'source.changed')).toBe(false);
     port.setClaimable(key, true);
-    const wake = await settleNativeAnswer(port, key, 'attempt-later');
-    expect(wake.claim.status).toBe('claimed');
-    expect(wake.modelCalls).toBe(0);
-    expect(wake.technicalRetries).toBe(0);
+    const continuation = await port.claimContinuation(key, 'attempt-later');
+    expect(continuation.status).toBe('claimed');
+    const evidence = deriveResumeEvent(parent, 'evidence-1', 'evidence.ready', 'evidence_ready');
+    const evidenceAck = await fresh.client.postEvent(toHubEventBody(evidence));
+    expect(evidenceAck.routed).toEqual([RESUME_RULE]);
+    const evidenceRun = (await fresh.client.state()).runs.find((run) => (
+      run.state === 'queued'
+      && run.rule === RESUME_RULE
+      && run.events.some((event) => event.type === 'evidence.ready' && event.subject === 'evidence_ready')
+    ));
+    expect(evidenceRun).toBeTruthy();
     const observation = nativeObservation({
-      state: 'done',
-      attempts: 0,
-      summary: 'no-op',
+      state: earlyRun?.state ?? '',
+      attempts: earlyRun?.attempts ?? -1,
+      summary: earlyRun?.summary ?? '',
       readText: waiting.reading.text ?? '',
-      laterClaimed: later !== null && claimed.reading.text === 'claimed\n',
+      resumeRule: later.rule.name,
+      resumeType: wakeEvent?.type ?? '',
+      root: detail.root,
+      stageKey: detail.stage_key,
+      claimStatus: continuation.status,
     });
     expect(row.status).toBe('verified');
-    expect(row.command).toBe('plugins/command/agent.ts command/read; POST /v1/runs/:id/result {"outcome":"done","summary":"no-op"}');
+    expect(row.command).toBe(NATIVE_COMMAND);
     expect(row.observation).toBe(observation);
     expect(row.evidenceSha256).toBe(sha256(observation));
   } finally {

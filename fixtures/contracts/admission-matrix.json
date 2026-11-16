@@ -5,9 +5,9 @@
       "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b"
     },
     "status": "verified",
-    "command": "plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\"}",
-    "observation": "native-answer-before-receipt\ncommit 45aecbf578289cda72d1fc773dcad069bfe7778b\ncommand: plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\"}\nearly: state=done attempts=0 summary=\"no-op\"\nread.text=\"no-op\\n\" modelCalls=0 technicalRetries=0\nlater domain wake claimable=true",
-    "evidenceSha256": "570b3bc5643f9ffb114af4dd3826d128a309bc6381dc0e205ca700d0cbf8e35d"
+    "command": "plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\",\"later\":[{\"key\":\"answer\",\"cancel\":true}]}",
+    "observation": "native-answer-before-receipt\ncommit 45aecbf578289cda72d1fc773dcad069bfe7778b\ncommand: plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\",\"later\":[{\"key\":\"answer\",\"cancel\":true}]}\nearly: state=done attempts=0 summary=\"no-op\"\nread.text=\"no-op\\n\" modelCalls=0 technicalRetries=0\nresume: rule=阶段恢复 type=answer.verified root=native-1 stage_key=answer claimContinuation=claimed",
+    "evidenceSha256": "d952bd77a07508648d87c52f3716cf2b344f772545253ede5005b94f06be5d27"
   },
   "autoloop_custom_text": {
     "upstream": {

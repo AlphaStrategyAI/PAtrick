@@ -55,6 +55,7 @@ export type HubPublisher = {
 
 export const SOURCE_CHANGE_RULE = '来源变化';
 export const CONSULTATION_RULE = '咨询';
+export const RESUME_RULE = '阶段恢复';
 export const CONSULTATION_GROUP = 'consultation';
 export const CONSULTATION_PARALLEL = 4;
 export const HUB_SOURCE = 'patrick';
@@ -117,6 +118,14 @@ export function hubRules(command: readonly string[]) {
         prompt: '回答咨询。',
         group: CONSULTATION_GROUP,
         parallel: CONSULTATION_PARALLEL,
+      },
+      {
+        name: RESUME_RULE,
+        when: { source: HUB_SOURCE, types: ['answer.verified', 'evidence.ready'] },
+        to: 'probe',
+        cwd: '/tmp',
+        prompt: '继续同一件工作。',
+        group: RESUME_RULE,
       },
     ],
     elsewhere: [],
@@ -188,7 +197,12 @@ export type HubClient = HubPublisher & {
   state(before?: number): Promise<HubStatePage>;
   answer(cardId: number, body: { text: string } | { choice: number }): Promise<{ changed: boolean; state: string }>;
   claim(claimId: string): Promise<HubJob | null>;
-  result(run: number, token: string, body: { outcome: 'done' | 'nothing' | 'failed'; summary?: string; ask?: unknown[] }): Promise<{ rejected: unknown[] }>;
+  result(run: number, token: string, body: {
+    outcome: 'done' | 'nothing' | 'failed';
+    summary?: string;
+    ask?: unknown[];
+    later?: { key: string; cancel: true }[];
+  }): Promise<{ rejected: unknown[] }>;
 };
 
 export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
@@ -303,7 +317,9 @@ function parseRunEvent(value: unknown): HubRunEventView {
   if (!isRecord(value) || typeof value.source !== 'string' || typeof value.type !== 'string' || typeof value.subject !== 'string' || typeof value.summary !== 'string') {
     throw new Error('HUB_STATE_INVALID');
   }
-  return { source: value.source, type: value.type, subject: value.subject, summary: value.summary };
+  const event: HubRunEventView = { source: value.source, type: value.type, subject: value.subject, summary: value.summary };
+  if (typeof value.detail === 'string') event.detail = value.detail;
+  return event;
 }
 
 function parseCard(value: unknown): HubCardView {
