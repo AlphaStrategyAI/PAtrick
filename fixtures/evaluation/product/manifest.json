@@ -1,0 +1,143 @@
+{
+  "dataset_id": "product-demand-v1",
+  "policy_id": "product-demand",
+  "policy_version": 1,
+  "min_samples": 10,
+  "threshold_thousandths": 800,
+  "budget_micros": 1000,
+  "external_method": {
+    "id": "method-demand-interview",
+    "revision": "2026.1",
+    "rules": [
+      { "when": [], "unless": [], "choice": "interview" }
+    ]
+  },
+  "candidate_rules": [
+    { "when": ["ordinary_feature"], "unless": [], "choice": "interview" },
+    { "when": ["repeated_fault", "measured_loss"], "unless": ["ordinary_feature"], "choice": "use_frequency" },
+    { "when": ["new_feature"], "unless": [], "choice": "interview" },
+    { "when": [], "unless": [], "choice": "interview" }
+  ],
+  "cases": [
+    {
+      "case_id": "seed-01",
+      "role": "training",
+      "situation": "夜间发布后的同一故障连续三周出现",
+      "visible_evidence": ["repeated_fault", "measured_loss"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "seed-02",
+      "role": "training",
+      "situation": "事故日志已经记录频次和回滚损失",
+      "visible_evidence": ["repeated_fault", "measured_loss", "incident_log"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "seed-03",
+      "role": "training",
+      "situation": "普通功能被写成故障，但没有事故证据",
+      "visible_evidence": ["ordinary_feature", "repeated_fault"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-04",
+      "role": "training",
+      "situation": "新功能只有想法，没有使用证据",
+      "visible_evidence": ["new_feature", "no_demand"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-05",
+      "role": "training",
+      "situation": "新功能只有一次口头兴趣",
+      "visible_evidence": ["new_feature", "weak_signal"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-06",
+      "role": "training",
+      "situation": "重复故障附带可核对的客诉损失",
+      "visible_evidence": ["repeated_fault", "measured_loss", "user_complaints"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "seed-07",
+      "role": "training",
+      "situation": "一个尚未发生的普通功能需求",
+      "visible_evidence": ["ordinary_feature"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-08",
+      "role": "training",
+      "situation": "只知道故障重复，损失还没有核对",
+      "visible_evidence": ["repeated_fault"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-09",
+      "role": "training",
+      "situation": "新功能声称有付费意愿，但证据不足",
+      "visible_evidence": ["new_feature", "paid_demand"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "seed-10",
+      "role": "training",
+      "situation": "重复故障已经导致多次回滚",
+      "visible_evidence": ["repeated_fault", "measured_loss", "rollback_history"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "hold-01",
+      "role": "holdout",
+      "situation": "值班记录里的重复故障和损失",
+      "visible_evidence": ["repeated_fault", "measured_loss", "oncall"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "hold-02",
+      "role": "holdout",
+      "situation": "普通功能附带一份未经核实的损失数字",
+      "visible_evidence": ["ordinary_feature", "measured_loss"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "hold-03",
+      "role": "holdout",
+      "situation": "竞品有类似功能，自己的需求未被验证",
+      "visible_evidence": ["new_feature", "competitor_copy"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    },
+    {
+      "case_id": "hold-04",
+      "role": "holdout",
+      "situation": "另一服务里的重复故障和可核对损失",
+      "visible_evidence": ["repeated_fault", "measured_loss"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "use_frequency"
+    },
+    {
+      "case_id": "hold-05",
+      "role": "holdout",
+      "situation": "高管要求跳过访谈，但取舍尚未授权",
+      "visible_evidence": ["repeated_fault", "measured_loss", "executive_override"],
+      "options": ["use_frequency", "interview"],
+      "expected_choice": "interview"
+    }
+  ]
+}

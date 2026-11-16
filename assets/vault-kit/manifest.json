@@ -4,6 +4,14 @@
     {
       "path": "模板/知识笔记.md",
       "sha256": "92bd80697992e39bd68d6b13f177bb1362fd09b28c632552022855b711eded9c"
+    },
+    {
+      "path": "判断案例.md",
+      "sha256": "173e720be5d5fbf641d6f76aa2bc9a0f0b0c332c66a919b3c46e47cbc5c78630"
+    },
+    {
+      "path": "标准修订.md",
+      "sha256": "27de7e671ba70e4fa70dc542b4af5589ef0cca2e17ed4b3074c43638ed706bb7"
     }
   ]
 }

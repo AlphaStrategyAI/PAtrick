@@ -1,0 +1,277 @@
+import { randomUUID } from 'node:crypto';
+import type { Context, Hono } from 'hono';
+import { routes, type Json } from '@patrick/contracts';
+import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { createStandardsApi, type StandardsPrincipal } from '../../../../packages/domain/src/standards.js';
+import { snapshot, type Principal } from '../auth.js';
+import { ApiError } from '../errors.js';
+import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
+
+type Ready = () => { db: SqliteDatabase; now: () => Date };
+type Envelope<T> = { client_request_id: string; expected_revision: number | null; payload_hash: string; payload: T };
+
+const createRequest = routeRequest('createStandardCandidate');
+const evaluateRequest = routeRequest('evaluateStandardCandidate');
+const adoptRequest = routeRequest('adoptStandardCandidate');
+
+export function mountStandardRoutes(app: Hono, ready: Ready): void {
+  app.get('/api/v1/standards', (c) => handle(c, () => listStandards(c, ready)));
+  app.get('/api/v1/standards/:id/versions', (c) => handle(c, () => listVersions(c, ready)));
+  app.get('/api/v1/evaluations/:id', (c) => handle(c, () => readEvaluation(c, ready)));
+  app.post('/api/v1/standard-candidates', (c) => handle(c, () => createCandidate(c, ready)));
+  app.post('/api/v1/standard-candidates/:id/evaluations', (c) => handle(c, () => evaluateCandidate(c, ready)));
+  app.post('/api/v1/standard-candidates/:id/adoptions', (c) => handle(c, () => adoptCandidate(c, ready)));
+}
+
+async function listStandards(c: Context, ready: Ready): Promise<Response> {
+  const principal = await requirePermission(c.req.raw, 'standards.read');
+  const { db, now } = ready();
+  const items = await standardsApi(db, principal, now).listStandards();
+  return c.json(snapshot(principal, { items }, now(), db));
+}
+
+async function listVersions(c: Context, ready: Ready): Promise<Response> {
+  const principal = await requirePermission(c.req.raw, 'standards.read');
+  const { db, now } = ready();
+  const items = await standardsApi(db, principal, now).listVersions(routeId(c.req.param('id')));
+  return c.json(snapshot(principal, { items }, now(), db));
+}
+
+async function readEvaluation(c: Context, ready: Ready): Promise<Response> {
+  const principal = await requirePermission(c.req.raw, 'standards.read');
+  const { db, now } = ready();
+  const report = await standardsApi(db, principal, now).getEvaluation(routeId(c.req.param('id')));
+  return c.json(snapshot(principal, report, now(), db));
+}
+
+async function createCandidate(c: Context, ready: Ready): Promise<Response> {
+  assertWriteOrigin(c.req.raw);
+  const principal = await requirePermission(c.req.raw, 'standards.write');
+  const parsed = createRequest.safeParse(await readJson(c.req.raw));
+  if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
+  const body = parsed.data as Envelope<{ standard_id: string | null; draft_key: string }>;
+  if (body.expected_revision !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'expected_revision' });
+  assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
+  const { db, now } = ready();
+  const document = draftDocument(db, principal, body.payload.draft_key);
+  const standardId = body.payload.standard_id ?? document.patrick_id;
+  if (!standardId) throw new ApiError(409, 'CONFLICT', { reason: 'standard' });
+  const fingerprint = commandFingerprint({
+    operation: 'createStandardCandidate',
+    resource_id: standardId,
+    data_domain: document.data_domain,
+    expected_revision: null,
+    payload_hash: body.payload_hash,
+  });
+  const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
+  if (existing) return c.json(accepted(existing, 'createStandardCandidate', commandResource(db, existing)), 202);
+  const api = standardsApi(db, principal, now, document.data_domain);
+  const candidate = await api.openCandidate({
+    vault_id: document.vault_id,
+    standard_id: standardId,
+    draft_key: body.payload.draft_key,
+    document_id: document.document_id,
+    source_revision: document.observed_seq,
+    content_hash: document.content_hash,
+  });
+  const commandId = storeCommand(db, principal, {
+    operation: 'createStandardCandidate',
+    resourceId: candidate.standard_id,
+    dataDomain: document.data_domain,
+    clientRequestId: body.client_request_id,
+    expectedRevision: null,
+    payloadHash: body.payload_hash,
+    permission: 'standards.write',
+    fingerprint,
+  });
+  return c.json(accepted(commandId, 'createStandardCandidate', candidate.standard_id), 202);
+}
+
+async function evaluateCandidate(c: Context, ready: Ready): Promise<Response> {
+  assertWriteOrigin(c.req.raw);
+  const principal = await requirePermission(c.req.raw, 'standards.write');
+  const parsed = evaluateRequest.safeParse(await readJson(c.req.raw));
+  if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
+  const body = parsed.data as Envelope<{ dataset_id: string }>;
+  assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
+  const { db, now } = ready();
+  const candidateId = routeId(c.req.param('id'));
+  const candidate = visibleCandidate(db, principal, candidateId);
+  if (body.expected_revision !== null && body.expected_revision !== candidate.pointer_revision) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'revision' });
+  }
+  const dataset = db.prepare('SELECT policy_version, data_domain FROM evaluation_datasets WHERE dataset_id = ?').get(body.payload.dataset_id) as {
+    policy_version: number;
+    data_domain: string;
+  } | undefined;
+  if (!dataset || dataset.data_domain !== candidate.data_domain) throw new ApiError(403, 'FORBIDDEN', { reason: 'dataset' });
+  const fingerprint = commandFingerprint({
+    operation: 'evaluateStandardCandidate',
+    resource_id: candidateId,
+    data_domain: candidate.data_domain,
+    expected_revision: body.expected_revision,
+    payload_hash: body.payload_hash,
+  });
+  const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
+  if (existing) return c.json(accepted(existing, 'evaluateStandardCandidate', commandResource(db, existing)), 202);
+  const report = await standardsApi(db, principal, now, candidate.data_domain).evaluate({ id: candidateId }, { version: dataset.policy_version });
+  if (report.dataset_id !== body.payload.dataset_id) throw new ApiError(409, 'CONFLICT', { reason: 'dataset' });
+  const commandId = storeCommand(db, principal, {
+    operation: 'evaluateStandardCandidate',
+    resourceId: report.id,
+    dataDomain: candidate.data_domain,
+    clientRequestId: body.client_request_id,
+    expectedRevision: body.expected_revision,
+    payloadHash: body.payload_hash,
+    permission: 'standards.write',
+    fingerprint,
+  });
+  return c.json(accepted(commandId, 'evaluateStandardCandidate', report.id), 202);
+}
+
+async function adoptCandidate(c: Context, ready: Ready): Promise<Response> {
+  assertWriteOrigin(c.req.raw);
+  const principal = await requirePermission(c.req.raw, 'owner');
+  const parsed = adoptRequest.safeParse(await readJson(c.req.raw));
+  if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
+  const body = parsed.data as Envelope<{ report_id: string }>;
+  if (body.expected_revision === null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'expected_revision' });
+  assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
+  const { db, now } = ready();
+  const candidateId = routeId(c.req.param('id'));
+  const candidate = visibleCandidate(db, principal, candidateId);
+  const fingerprint = commandFingerprint({
+    operation: 'adoptStandardCandidate',
+    resource_id: candidateId,
+    data_domain: candidate.data_domain,
+    expected_revision: body.expected_revision,
+    payload_hash: body.payload_hash,
+  });
+  const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
+  if (existing) return c.json(accepted(existing, 'adoptStandardCandidate', commandResource(db, existing)), 202);
+  await standardsApi(db, principal, now, candidate.data_domain).adoptStandard(candidateId, body.payload.report_id, body.expected_revision);
+  const commandId = storeCommand(db, principal, {
+    operation: 'adoptStandardCandidate',
+    resourceId: body.payload.report_id,
+    dataDomain: candidate.data_domain,
+    clientRequestId: body.client_request_id,
+    expectedRevision: body.expected_revision,
+    payloadHash: body.payload_hash,
+    permission: 'owner',
+    fingerprint,
+  });
+  return c.json(accepted(commandId, 'adoptStandardCandidate', body.payload.report_id), 202);
+}
+
+function standardsApi(db: SqliteDatabase, principal: Principal, now: () => Date, domain = principal.domains[0] ?? 'personal') {
+  const caller: StandardsPrincipal = {
+    account_id: principal.account_id,
+    caller_id: principal.caller_id,
+    auth_epoch: principal.auth_epoch,
+    domains: principal.domains,
+    operations: principal.operations,
+  };
+  return createStandardsApi(db, caller, { now, domain });
+}
+
+function draftDocument(db: SqliteDatabase, principal: Principal, draftKey: string) {
+  if (!draftKey || draftKey.includes('/') || draftKey.includes('\\') || draftKey.includes('..')) {
+    throw new ApiError(422, 'UNPROCESSABLE', { reason: 'draft_key' });
+  }
+  const rows = db.prepare(`SELECT document_id, vault_id, observed_seq, content_hash, patrick_id, data_domain, account_id
+    FROM vault_documents
+    WHERE account_id = ? AND relative_path = ? AND tombstone = 0`).all(principal.account_id, `标准修订/${draftKey}.md`) as Array<{
+    document_id: string;
+    vault_id: string;
+    observed_seq: number;
+    content_hash: string;
+    patrick_id: string | null;
+    data_domain: string;
+    account_id: string;
+  }>;
+  const visible = rows.filter((row) => principal.domains.includes(row.data_domain));
+  const document = visible[0];
+  if (!document || !document.content_hash || visible.length !== 1) throw new ApiError(409, 'CONFLICT', { reason: 'draft' });
+  return document;
+}
+
+function visibleCandidate(db: SqliteDatabase, principal: Principal, candidateId: string) {
+  const row = db.prepare(`SELECT candidate_id, account_id, data_domain, pointer_revision FROM standard_candidates
+    WHERE candidate_id = ?`).get(candidateId) as {
+    candidate_id: string;
+    account_id: string;
+    data_domain: string;
+    pointer_revision: number;
+  } | undefined;
+  if (!row || row.account_id !== principal.account_id) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+  return row;
+}
+
+function accepted(commandId: string, operation: string, resourceId: string) {
+  return { command_id: commandId, state: 'received' as const, receipt_url: receiptUrl(operation, resourceId) };
+}
+
+function receiptUrl(operation: string, resourceId: string): string {
+  if (operation === 'createStandardCandidate') return `/api/v1/standards/${resourceId}/versions`;
+  return `/api/v1/evaluations/${resourceId}`;
+}
+
+function existingCommand(db: SqliteDatabase, principal: Principal, clientRequestId: string, expectedFingerprint: string): string | undefined {
+  const row = db.prepare(`SELECT command_id, command_fingerprint FROM command_inbox
+    WHERE account_id = ? AND caller_id = ? AND client_request_id = ?`).get(principal.account_id, principal.caller_id, clientRequestId) as {
+    command_id: string;
+    command_fingerprint: string;
+  } | undefined;
+  if (!row) return undefined;
+  if (row.command_fingerprint !== expectedFingerprint) throw new ApiError(409, 'CONFLICT', { reason: 'idempotency' });
+  return row.command_id;
+}
+
+function commandResource(db: SqliteDatabase, commandId: string): string {
+  const row = db.prepare('SELECT resource_id FROM command_records WHERE command_id = ?').get(commandId) as { resource_id: string } | undefined;
+  if (!row) throw new ApiError(409, 'CONFLICT', { reason: 'command' });
+  return row.resource_id;
+}
+
+function storeCommand(db: SqliteDatabase, principal: Principal, input: {
+  operation: string;
+  resourceId: string;
+  dataDomain: string;
+  clientRequestId: string;
+  expectedRevision: number | null;
+  payloadHash: string;
+  permission: string;
+  fingerprint: string;
+}): string {
+  const commandId = randomUUID();
+  return withImmediateTransaction(db, () => {
+    const receipt = recordCommand(db, {
+      account_id: principal.account_id,
+      caller_id: principal.caller_id,
+      client_request_id: input.clientRequestId,
+      command_fingerprint: input.fingerprint,
+      command_id: commandId,
+    });
+    if (receipt.created) {
+      db.prepare(`INSERT INTO command_records (
+        command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        receipt.command_id,
+        principal.account_id,
+        principal.caller_id,
+        input.operation,
+        input.resourceId,
+        input.dataDomain,
+        input.permission,
+        new Date().toISOString(),
+      );
+    }
+    return receipt.command_id;
+  });
+}
+
+function routeRequest(operationId: string) {
+  const route = routes.find((item) => item.operationId === operationId);
+  if (!route) throw new Error(`ROUTE_MISSING:${operationId}`);
+  return route.request;
+}

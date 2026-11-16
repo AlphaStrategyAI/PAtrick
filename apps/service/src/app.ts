@@ -11,6 +11,7 @@ import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
 import { mountEditRoutes } from './routes/edits.js';
 import { mountKnowledgeRoutes } from './routes/knowledge.js';
+import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
 
 export type CreateAppOptions = {
@@ -78,6 +79,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountVaultRoutes(app, resources);
   mountKnowledgeRoutes(app, resources);
   mountEditRoutes(app, resources);
+  mountStandardRoutes(app, resources);
   return app;
 }
 

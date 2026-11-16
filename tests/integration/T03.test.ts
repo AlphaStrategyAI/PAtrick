@@ -833,6 +833,8 @@ test('the auth migration appends after the untouched core schema', () => {
   const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
   const vaultBytes = readFileSync(join(root, 'packages/storage/migrations/0006_vault_evidence.sql'));
   const vaultHash = createHash('sha256').update(vaultBytes).digest('hex');
+  const standardsBytes = readFileSync(join(root, 'packages/storage/migrations/0007_standards.sql'));
+  const standardsHash = createHash('sha256').update(standardsBytes).digest('hex');
   const manifest = JSON.parse(readFileSync(join(root, 'packages/storage/migrations/manifest.json'), 'utf8')) as {
     file: string;
     sha256: string;
@@ -843,6 +845,7 @@ test('the auth migration appends after the untouched core schema', () => {
     { file: '0004_hub_work.sql', sha256: hubHash },
     { file: '0005_sources.sql', sha256: sourceHash },
     { file: '0006_vault_evidence.sql', sha256: vaultHash },
+    { file: '0007_standards.sql', sha256: standardsHash },
   ]);
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);

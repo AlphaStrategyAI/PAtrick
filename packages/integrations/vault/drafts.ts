@@ -66,6 +66,7 @@ type IntentRow = {
 };
 
 const TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/知识笔记.md', import.meta.url));
+const STANDARD_TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/标准修订.md', import.meta.url));
 
 export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
   const now = () => (options.now ?? (() => new Date()))().toISOString();
@@ -352,10 +353,14 @@ function planEdit(db: SqliteDatabase, vault: VaultRecord, input: EditIntentReque
   }
   const known = db.prepare(`SELECT target_id FROM edit_intents
     WHERE vault_id = ? AND operation = 'create_standard' AND target_id = ?`).get(vault.vault_id, input.standard_id) as { target_id: string } | undefined;
-  if (!known) throw new Error('CONFLICT');
+  const standard = db.prepare('SELECT active_version FROM standards WHERE standard_id = ? AND data_domain = ?').get(input.standard_id, vault.data_domain) as {
+    active_version: number | null;
+  } | undefined;
+  if (!known && !standard) throw new Error('CONFLICT');
   const authority = db.prepare('SELECT active_version FROM authority_facts WHERE account_id = ? AND data_domain = ?').get(vault.account_id, vault.data_domain) as {
     active_version: number | null;
   } | undefined;
+  const active = standard ? standard.active_version : authority?.active_version ?? null;
   const documentId = `doc_${sha256(`${vault.vault_id}\0revise\0${input.standard_id}\0${input.base_version}`).slice(0, 24)}`;
   return {
     targetId: input.standard_id,
@@ -364,7 +369,7 @@ function planEdit(db: SqliteDatabase, vault: VaultRecord, input: EditIntentReque
     relativePath: `标准修订/修订-${safeSegment(input.standard_id)}-v${input.base_version}.md`,
     writes: true,
     bytes: Buffer.from(standardDraft({ patrickId: documentId, standardId: input.standard_id, baseVersion: input.base_version }), 'utf8'),
-    business: authority?.active_version === input.base_version ? 'pending' : 'stale',
+    business: active === input.base_version ? 'pending' : 'stale',
   };
 }
 
@@ -540,23 +545,10 @@ function supplementBytes(documentId: string, knowledgeId: string): Buffer {
 
 function standardDraft(input: { patrickId: string; standardId: string; baseVersion: number | null }): string {
   const base = input.baseVersion === null ? '' : String(input.baseVersion);
-  return `---
-patrick_id: ${input.patrickId}
-kind: standard
-standard_id: ${input.standardId}
-base_version: ${base}
----
-
-# 适用范围
-
-# 判断规则
-
-# 例外
-
-# 正反案例
-
-# 依据
-`;
+  return readFileSync(STANDARD_TEMPLATE_PATH, 'utf8')
+    .replace('patrick_id:', `patrick_id: ${input.patrickId}`)
+    .replace('standard_id:', `standard_id: ${input.standardId}`)
+    .replace('base_version:', `base_version: ${base}`);
 }
 
 function readTemplate(): string {
