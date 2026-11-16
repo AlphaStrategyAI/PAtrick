@@ -26,5 +26,9 @@
   {
     "file": "0008_admission_budget.sql",
     "sha256": "a2ebaaba784c6621a8d786e098f0a77e293e8bad9a7c4fa89890b34b63114a71"
+  },
+  {
+    "file": "0010_answers_channels.sql",
+    "sha256": "2d70545abe54c8ba81402f77db6de09c9153ae50ba0bfec844f38626957b752b"
   }
 ]

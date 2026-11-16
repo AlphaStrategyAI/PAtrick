@@ -773,7 +773,7 @@ export function workResumeAllowed(
   return workStillDispatchable(db, principal, nowIso, grant, { allowPaused: true });
 }
 
-function issueWorkGrant(
+export function issueWorkGrant(
   db: SqliteDatabase,
   principal: AdmissionPrincipal,
   domain: string,

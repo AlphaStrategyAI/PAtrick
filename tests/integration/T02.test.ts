@@ -70,6 +70,8 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
     expect(tables.map((row) => row.name)).toEqual([
       'accounts',
       'adoption_facts',
+      'answer_intents',
+      'answer_receipts',
       'auth_challenges',
       'authority_facts',
       'blobs',
@@ -80,12 +82,22 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'capability_profiles',
       'case_outcomes',
       'cases',
+      'channel_audit',
+      'channel_bindings',
+      'channel_connections',
+      'channel_inbound',
+      'channel_pairings',
+      'channel_permits',
+      'channel_receipts',
+      'channel_tests',
       'collection_receipts',
+      'collection_rounds',
       'command_inbox',
       'command_records',
       'consultations',
       'control_proposals',
       'control_receipts',
+      'decision_submissions',
       'delete_sweeps',
       'dependency_checks',
       'domain_events',
@@ -96,6 +108,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'evaluation_policies',
       'evaluation_reports',
       'evidence_dependencies',
+      'evidence_proofs',
       'evidence_refs',
       'execution_grants',
       'hub_events',
@@ -120,7 +133,11 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'projection_cursors',
       'projection_locks',
       'projection_pointers',
+      'question_bindings',
+      'question_locks',
+      'question_replacements',
       'raw_custom_answers',
+      'resume_intents',
       'schema_migrations',
       'sessions',
       'source_configs',
@@ -128,6 +145,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'source_objects',
       'source_revisions',
       'source_versions',
+      'stage_events',
       'standard_candidates',
       'standard_versions',
       'standards',
@@ -140,9 +158,10 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'withdrawal_events',
       'work_control_receipts',
       'work_generations',
+      'work_stages',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

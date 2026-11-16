@@ -1,0 +1,583 @@
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { expect, test } from 'vitest';
+import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
+import {
+  createAnswerGate,
+  type AnswerCommand,
+  type AnswerGate,
+  type BindQuestionInput,
+  type CardAnswer,
+  type Principal,
+  type QuestionBinding,
+} from '../../packages/domain/src/answer-gate.js';
+import { createDelegationApi, type AdmissionPrincipal } from '../../packages/domain/src/delegation.js';
+import {
+  claimContinuation,
+  confirmCollectedEvidence,
+  dispatchDelivery,
+  emitStage,
+  recordCollectionRound,
+  writePullRequest,
+  type ResumeKey,
+} from '../../packages/domain/src/work-continuation.js';
+import { settleNativeAnswer, type ContinuationPort } from '../../packages/integrations/autoloop/agent.js';
+import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '../../packages/integrations/autoloop/answers.js';
+import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+
+const NOW = '2026-11-17T02:00:00.000Z';
+const DOMAIN = 'product';
+const WORK_ID = 'W-017';
+const GENERATION = 2;
+
+const webPrincipal: Principal = {
+  account_id: 'owner',
+  caller_id: 'web',
+  auth_epoch: 1,
+  domains: [DOMAIN],
+  operations: ['owner', 'questions.answer'],
+};
+
+const feishuPrincipal: Principal = {
+  ...webPrincipal,
+  caller_id: 'feishu',
+};
+
+test('answer-once', async () => {
+  const scene = await openScene({ crashAfterAccept: true });
+  try {
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    const optionA = scene.command(webPrincipal, 'web-req-a', binding, { kind: 'option', option_id: 'A' });
+    const optionB = scene.command(feishuPrincipal, 'feishu-req-b', binding, { kind: 'option', option_id: 'B' });
+    const webAnswer = { submit: (command: AnswerCommand) => scene.web.submitAnswer(webPrincipal, command) };
+    const feishuAnswer = { submit: (command: AnswerCommand) => scene.feishu.submitAnswer(feishuPrincipal, command) };
+    const hubAnswersFor = (questionId: string) => scene.hub.list(questionId);
+    const consumeNativeAnswerBeforeReceipt = (questionId: string) => scene.consumeNative(questionId);
+    const modelCallsFor = async (workId: string) => scene.calls(workId).model;
+    const retryCallsFor = async (workId: string) => scene.calls(workId).retry;
+    const restartServiceAndReconcile = () => scene.restart();
+    const drainResumeQueue = () => scene.drain();
+    const verifiedReceiptsFor = (questionId: string) => scene.verified(questionId);
+    const attemptsForResumeKey = (workId: string, generation: number, questionId: string, phase: ResumeKey['phase']) =>
+      scene.attempts(workId, generation, questionId, phase);
+
+    const contenders = await Promise.allSettled([webAnswer.submit(optionA), feishuAnswer.submit(optionB)]);
+    expect(contenders).toHaveLength(2);
+    expect(await hubAnswersFor('Q-017')).toHaveLength(1);
+    await consumeNativeAnswerBeforeReceipt('Q-017');
+    expect(await modelCallsFor('W-017')).toBe(0);
+    expect(await retryCallsFor('W-017')).toBe(0);
+    await restartServiceAndReconcile();
+    await drainResumeQueue();
+    expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
+    expect(await attemptsForResumeKey('W-017', 2, 'Q-017', 'answer')).toBe(1);
+    expect(scene.encodeCalls).toBe(1);
+    expect(contenders.some((item) => item.status === 'rejected')).toBe(true);
+    const source = readFileSync(fileURLToPath(new URL('../../packages/domain/src/work-continuation.ts', import.meta.url)), 'utf8');
+    expect(source).toContain(`UPDATE resume_intents SET state = 'claimed', attempt_id = @attempt_id
+WHERE work_id = @work_id AND generation = @generation AND question_id = @question_id
+  AND answer_event_id = @answer_event_id AND phase = @phase AND state = 'ready'
+RETURNING next_action, evidence_ref;`);
+    const stored = await scene.hub.read('Q-017');
+    expect(stored?.body).toEqual(encodeHubAnswer({ kind: 'choice', index: stored?.body && 'choice' in stored.body ? stored.body.choice : -1 }));
+    const basis = scene.basisHash();
+    expect(basis).toMatch(/^[a-f0-9]{64}$/);
+    expect(scene.basisHash()).toBe(basis);
+  } finally {
+    scene.close();
+  }
+});
+
+test('bounded-evidence-resume', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const binding = await scene.bind(questionInput('Q-017', 17, [collectOption()], []));
+    const receipt = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-collect', binding, { kind: 'option', option_id: 'collect' }),
+    );
+    expect(receipt.validity).toBe('verified');
+    expect(scene.stageCount('draft.requested')).toBe(0);
+    expect(scene.prSends).toBe(0);
+    expect(scene.stageCount('work.delivered')).toBe(0);
+    const answerKey = scene.key('Q-017', 'answer');
+    expect(claimContinuation(scene.db, webPrincipal, DOMAIN, { ...answerKey, phase: 'evidence_ready' }, 'attempt-too-soon', scene.now())).toEqual({
+      status: 'waiting',
+    });
+    expect(() => dispatchDelivery(scene.db, WORK_ID, GENERATION)).toThrow(/WAITING_EVIDENCE/);
+    expect(() => emitStage(scene.db, WORK_ID, GENERATION, 'draft.requested', scene.now())).toThrow(/WAITING_EVIDENCE/);
+    expect(() => writePullRequest(scene.db, WORK_ID, GENERATION)).toThrow(/WAITING_EVIDENCE/);
+    expect(scene.stageCount('draft.requested')).toBe(0);
+    expect(scene.prSends).toBe(0);
+    expect(scene.stageCount('work.delivered')).toBe(0);
+
+    const collect = claimContinuation(scene.db, webPrincipal, DOMAIN, answerKey, 'attempt-collect', scene.now());
+    expect(collect.status).toBe('claimed');
+    if (collect.status === 'claimed') {
+      expect(collect.grant.phase).toBe('collect_evidence');
+      expect(collect.grant.allowed_effects).toEqual(['collect:col-017']);
+      expect(collect.grant.basis_hash).toBe(scene.basisHash());
+    }
+    recordCollectionRound(scene.db, webPrincipal, {
+      question_id: 'Q-017',
+      material: 'material-017',
+      evidence_ref: 'material-017',
+    }, scene.now());
+    confirmCollectedEvidence(scene.db, webPrincipal, DOMAIN, answerKey, 'material-017', scene.now());
+    await scene.restart();
+    confirmCollectedEvidence(scene.db, webPrincipal, DOMAIN, answerKey, 'material-017', scene.now());
+    const deliveryKey = scene.key('Q-017', 'evidence_ready');
+    const first = claimContinuation(scene.db, webPrincipal, DOMAIN, deliveryKey, 'attempt-deliver', scene.now());
+    const second = claimContinuation(scene.db, webPrincipal, DOMAIN, deliveryKey, 'attempt-deliver-2', scene.now());
+    expect(first.status).toBe('claimed');
+    expect(second.status).toBe('duplicate');
+    expect(scene.attempts(WORK_ID, GENERATION, 'Q-017', 'evidence_ready')).toBe(1);
+    if (first.status === 'claimed') {
+      expect(first.grant.phase).toBe('delivery');
+      expect(first.grant.allowed_effects).toEqual(['publish_pr']);
+      expect(first.grant.basis_hash).toBe(scene.basisHash());
+    }
+    expect(scene.stageCount('draft.requested')).toBe(0);
+    expect(scene.prSends).toBe(0);
+    expect(scene.stageCount('work.delivered')).toBe(0);
+  } finally {
+    scene.close();
+  }
+});
+
+test('custom-replacement', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const original = await scene.bind(questionInput('Q-017', 17, proceedOptions(), [
+      {
+        includes: 'OUT_OF_SCOPE',
+        disposition: 'clarification_required',
+        reason_code: 'OUT_OF_SCOPE',
+        next_action: null,
+        difference: '请求超出原授权范围',
+        missing: [],
+        collection_id: null,
+        expected_material: null,
+      },
+    ]));
+    const missingCard = await scene.bind(questionInput('Q-018', 18, proceedOptions(), [
+      {
+        includes: 'MISSING_INPUT',
+        disposition: 'clarification_required',
+        reason_code: 'MISSING_INPUT',
+        next_action: null,
+        difference: null,
+        missing: ['预算上限'],
+        collection_id: null,
+        expected_material: null,
+      },
+    ]));
+    const basis = scene.basisHash();
+    const scope = scene.scopeHash();
+    const first = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-scope', original, { kind: 'custom', raw_text: 'OUT_OF_SCOPE 改成发布到生产' }),
+    );
+    const again = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-scope-again', original, { kind: 'custom', raw_text: 'OUT_OF_SCOPE 再提一次扩权' }),
+    );
+    expect(first.disposition).toBe('clarification_required');
+    expect(first.reason_code).toBe('OUT_OF_SCOPE');
+    expect(first.difference).toBe('请求超出原授权范围');
+    expect(first.successor_question_id).toBeTruthy();
+    expect(again.successor_question_id).toBe(first.successor_question_id);
+    expect(scene.successorCount('Q-017')).toBe(1);
+    const successor = scene.question(first.successor_question_id ?? '');
+    expect(successor.work_id).toBe(WORK_ID);
+    expect(successor.judgment_basis_hash).toBe(basis);
+    const late = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-late', original, { kind: 'option', option_id: 'A' }),
+    );
+    expect(late.validity).toBe('rejected');
+    expect(scene.scopeHash()).toBe(scope);
+    expect(scene.basisHash()).toBe(basis);
+    expect(scene.workId(WORK_ID)).toBe(WORK_ID);
+    expect(await scene.hub.list('Q-017')).toHaveLength(0);
+    expect(scene.encodeCalls).toBe(0);
+
+    const asked = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-missing', missingCard, { kind: 'custom', raw_text: 'MISSING_INPUT 还缺预算上限' }),
+    );
+    expect(asked.reason_code).toBe('MISSING_INPUT');
+    expect(asked.missing).toEqual(['预算上限']);
+    expect(asked.question_id).toBe('Q-018');
+    expect(scene.question('Q-018').status).toBe('open');
+    const follow = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-follow', missingCard, { kind: 'option', option_id: 'A' }),
+    );
+    expect(follow.validity).toBe('verified');
+    expect(follow.question_id).toBe('Q-018');
+    expect(scene.question('Q-018').work_id).toBe(WORK_ID);
+    expect(scene.basisHash()).toBe(basis);
+    expect(scene.scopeHash()).toBe(scope);
+    expect(scene.encodeCalls).toBe(1);
+  } finally {
+    scene.close();
+  }
+});
+
+type Scene = {
+  db: SqliteDatabase;
+  web: AnswerGate;
+  feishu: AnswerGate;
+  hub: LocalHubPort;
+  encodeCalls: number;
+  prSends: number;
+  now: () => Date;
+  bind: (input: BindQuestionInput) => Promise<QuestionBinding>;
+  command: (principal: Principal, requestId: string, binding: QuestionBinding, answer: CardAnswer) => AnswerCommand;
+  consumeNative: (questionId: string) => Promise<void>;
+  calls: (workId: string) => { model: number; retry: number };
+  restart: () => Promise<void>;
+  drain: () => void;
+  verified: (questionId: string) => Promise<{ receipt_id: string }[]>;
+  attempts: (workId: string, generation: number, questionId: string, phase: ResumeKey['phase']) => number;
+  stageCount: (kind: string) => number;
+  key: (questionId: string, phase: ResumeKey['phase']) => ResumeKey;
+  basisHash: () => string;
+  scopeHash: () => string;
+  successorCount: (questionId: string) => number;
+  question: (questionId: string) => { work_id: string; status: string; judgment_basis_hash: string };
+  workId: (workId: string) => string;
+  close: () => void;
+};
+
+async function openScene(options: { crashAfterAccept: boolean }): Promise<Scene> {
+  const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-'));
+  const databasePath = join(dir, 'patrick.sqlite');
+  let db = openDatabase(databasePath);
+  const peer = openDatabase(databasePath);
+  const hub = createLocalHubPort();
+  let encodeCalls = 0;
+  const encode = (answer: { kind: 'choice'; index: number } | { kind: 'custom'; raw_text: string }) => {
+    encodeCalls += 1;
+    return encodeHubAnswer(answer);
+  };
+  let armed = options.crashAfterAccept;
+  const afterHubAccept = () => {
+    if (!armed) return;
+    armed = false;
+    throw new Error('RECEIPT_LOST');
+  };
+  const now = () => new Date(NOW);
+  const gateOptions = {
+    domain: DOMAIN,
+    now,
+    hub,
+    encode,
+    afterHubAccept: options.crashAfterAccept ? afterHubAccept : undefined,
+  };
+  let web = createAnswerGate(db, gateOptions);
+  const feishu = createAnswerGate(peer, gateOptions);
+  const admitted = await admit(db, now);
+  let modelCalls = 0;
+  let retryCalls = 0;
+
+  const scene: Scene = {
+    get db() {
+      return db;
+    },
+    get web() {
+      return web;
+    },
+    feishu,
+    hub,
+    get encodeCalls() {
+      return encodeCalls;
+    },
+    get prSends() {
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM stage_events WHERE work_id = ? AND kind = 'pr.sent'`).get(WORK_ID) as { n: number };
+      return row.n;
+    },
+    now,
+    bind: (input) => web.bindQuestion(webPrincipal, input),
+    command: (principal, requestId, binding, answer) => commandFor(principal, requestId, binding, answer),
+    async consumeNative(questionId: string) {
+      const found = await hub.read(questionId);
+      const key: ResumeKey = {
+        work_id: WORK_ID,
+        generation: GENERATION,
+        question_id: questionId,
+        answer_event_id: found?.answer_event_id ?? 'missing',
+        phase: 'answer',
+      };
+      const port: ContinuationPort = {
+        claimContinuation: (resumeKey, attemptId) => {
+          const result = claimContinuation(db, webPrincipal, DOMAIN, resumeKey, attemptId, now());
+          if (result.status !== 'claimed') return result;
+          return {
+            status: 'claimed',
+            grant: {
+              grant_id: result.grant.grant_id,
+              subject_kind: 'work',
+              work_id: result.grant.work_id,
+              generation: result.grant.generation,
+              phase: resumeKey.phase,
+              answer_event_id: resumeKey.answer_event_id,
+            },
+          };
+        },
+      };
+      const settlement = await settleNativeAnswer(port, key, 'attempt-native');
+      if (settlement.claim.status === 'claimed') {
+        modelCalls += 1;
+        retryCalls += 1;
+      }
+    },
+    calls(workId: string) {
+      if (workId !== WORK_ID) return { model: 0, retry: 0 };
+      return { model: modelCalls, retry: retryCalls };
+    },
+    async restart() {
+      db.close();
+      peer.close();
+      db = openDatabase(databasePath);
+      web = createAnswerGate(db, { domain: DOMAIN, now, hub, encode });
+      const intents = db.prepare('SELECT intent_id FROM answer_intents').all() as { intent_id: string }[];
+      for (const row of intents) await web.recoverAnswer(row.intent_id);
+    },
+    drain() {
+      const rows = db.prepare(`SELECT work_id, generation, question_id, answer_event_id, phase
+        FROM resume_intents WHERE state = 'ready'`).all() as ResumeKey[];
+      for (const row of rows) claimContinuation(db, webPrincipal, DOMAIN, row, `attempt-${row.phase}`, now());
+    },
+    async verified(questionId: string) {
+      return db.prepare(`SELECT receipt_id FROM answer_receipts WHERE question_id = ? AND validity = 'verified'`).all(questionId) as {
+        receipt_id: string;
+      }[];
+    },
+    attempts(workId, generation, questionId, phase) {
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM resume_intents
+        WHERE work_id = ? AND generation = ? AND question_id = ? AND phase = ? AND state = 'claimed'`).get(
+        workId,
+        generation,
+        questionId,
+        phase,
+      ) as { n: number };
+      return row.n;
+    },
+    stageCount(kind: string) {
+      const row = db.prepare('SELECT COUNT(*) AS n FROM stage_events WHERE work_id = ? AND kind = ?').get(WORK_ID, kind) as { n: number };
+      return row.n;
+    },
+    key(questionId, phase) {
+      const row = db.prepare(`SELECT answer_event_id FROM resume_intents
+        WHERE work_id = ? AND generation = ? AND question_id = ? AND phase = ?`).get(WORK_ID, GENERATION, questionId, phase) as {
+        answer_event_id: string;
+      } | undefined;
+      const hubRow = hubReadSync(questionId);
+      return {
+        work_id: WORK_ID,
+        generation: GENERATION,
+        question_id: questionId,
+        answer_event_id: row?.answer_event_id ?? hubRow,
+        phase,
+      };
+    },
+    basisHash() {
+      const row = db.prepare('SELECT basis_hash FROM judgment_bases WHERE work_id = ? AND generation = ?').get(WORK_ID, GENERATION) as {
+        basis_hash: string;
+      };
+      return row.basis_hash;
+    },
+    scopeHash() {
+      const row = db.prepare('SELECT scope_hash FROM mandates WHERE mandate_id = ?').get(admitted.mandateId) as { scope_hash: string };
+      return row.scope_hash;
+    },
+    successorCount(questionId: string) {
+      const row = db.prepare('SELECT COUNT(*) AS n FROM question_replacements WHERE question_id = ?').get(questionId) as { n: number };
+      return row.n;
+    },
+    question(questionId: string) {
+      const row = db.prepare(`SELECT work_id, status, judgment_basis_hash FROM question_bindings
+        WHERE question_id = ? ORDER BY question_version DESC LIMIT 1`).get(questionId) as {
+        work_id: string;
+        status: string;
+        judgment_basis_hash: string;
+      };
+      return row;
+    },
+    workId(workId: string) {
+      const row = db.prepare('SELECT work_id FROM work_generations WHERE work_id = ? AND generation = ?').get(workId, GENERATION) as {
+        work_id: string;
+      };
+      return row.work_id;
+    },
+    close() {
+      if (db.open) db.close();
+      if (peer.open) peer.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+
+  function hubReadSync(questionId: string): string {
+    return `pending:${questionId}`;
+  }
+
+  db.prepare(`INSERT INTO channel_connections (
+    connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
+    config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id,
+    current_test_id, owner_open_id, chat_id, status, transport_mode, reason_code, cutoff_seq,
+    schema_version, created_at, updated_at
+  ) VALUES (
+    'conn-017', 'owner', ?, 'app-017', 'tenant-017', 'cred-017', 1,
+    1, 1, 1, 1, NULL,
+    NULL, 'ou-owner', 'oc-owner', 'ready', 'active', NULL, NULL,
+    '1.0', ?, ?
+  )`).run(DOMAIN, NOW, NOW);
+  return scene;
+}
+
+function commandFor(principal: Principal, requestId: string, binding: QuestionBinding, answer: CardAnswer): AnswerCommand {
+  const payload = {
+    work_id: binding.work_id,
+    generation: binding.generation,
+    question_id: binding.question_id,
+    question_version: binding.question_version,
+    proposal_revision: binding.proposal_revision,
+    options_hash: binding.options_hash,
+    answer,
+  };
+  return {
+    client_request_id: requestId,
+    expected_revision: binding.proposal_revision,
+    payload_hash: sha256(canonicalPayload(payload as unknown as Json)),
+    entry: principal.caller_id === 'feishu' ? 'feishu' : 'web',
+    connection_id: principal.caller_id === 'feishu' ? 'conn-017' : undefined,
+    inbound_id: principal.caller_id === 'feishu' ? `in-${requestId}` : undefined,
+    payload,
+  };
+}
+
+function questionInput(
+  questionId: string,
+  hubCardId: number,
+  options: BindQuestionInput['options'],
+  customRules: BindQuestionInput['custom_rules'],
+): BindQuestionInput {
+  return {
+    question_id: questionId,
+    question_version: 3,
+    work_id: WORK_ID,
+    generation: GENERATION,
+    proposal_revision: 8,
+    hub_card_id: hubCardId,
+    custom_allowed: true,
+    options,
+    custom_rules: customRules,
+  };
+}
+
+function proceedOptions(): BindQuestionInput['options'] {
+  return [
+    {
+      option_id: 'A',
+      index: 0,
+      label: '方案 A',
+      disposition: 'proceed',
+      reason_code: null,
+      next_action: 'judge',
+      difference: null,
+      missing: [],
+      collection_id: null,
+      expected_material: null,
+    },
+    {
+      option_id: 'B',
+      index: 1,
+      label: '方案 B',
+      disposition: 'proceed',
+      reason_code: null,
+      next_action: 'judge',
+      difference: null,
+      missing: [],
+      collection_id: null,
+      expected_material: null,
+    },
+  ];
+}
+
+function collectOption(): BindQuestionInput['options'][number] {
+  return {
+    option_id: 'collect',
+    index: 0,
+    label: '先补证',
+    disposition: 'proceed',
+    reason_code: null,
+    next_action: 'collect_evidence',
+    difference: null,
+    missing: [],
+    collection_id: 'col-017',
+    expected_material: 'material-017',
+  };
+}
+
+async function admit(db: SqliteDatabase, now: () => Date) {
+  const delegation = createDelegationApi(db, webPrincipal as AdmissionPrincipal, { now, domain: DOMAIN });
+  await delegation.registerMandateType({
+    type_id: 'type-judge',
+    actions: ['judge', 'collect', 'publish_pr'],
+    resources: ['work'],
+    effects: ['publish_pr'],
+    domains: [DOMAIN],
+    risk: 'low',
+    level: 'L1',
+    budget_micros: 5000,
+    config_version: 1,
+  });
+  const mandate = await delegation.openMandate({
+    mandate_id: 'mandate-W-017',
+    type_id: 'type-judge',
+    actions: ['judge', 'collect', 'publish_pr'],
+    resources: ['work'],
+    effects: ['publish_pr'],
+    domains: [DOMAIN],
+    risk: 'low',
+    level: 'L1',
+    budget_micros: 5000,
+    expires_at: '2027-01-01T00:00:00.000Z',
+  });
+  await delegation.setCapability({
+    profile_id: 'cap-W-017',
+    level: 'L2',
+    actions: ['judge', 'collect', 'publish_pr'],
+    report_id: 'report-1',
+    report_version: 1,
+    config_version: 1,
+  });
+  await delegation.ensureJudgmentPolicy();
+  await delegation.openWork({
+    work_id: WORK_ID,
+    generation: GENERATION,
+    mandate_id: mandate.mandate_id,
+    phase: 'judgment',
+    next_action: 'judge',
+    budget_micros: 5000,
+  });
+  await delegation.authorizeAction({
+    work_id: WORK_ID,
+    generation: GENERATION,
+    attempt_id: 'attempt-1',
+    phase: 'judgment',
+    next_action: 'judge',
+    allowed_effects: [],
+    expires_at: '2026-11-18T00:00:00.000Z',
+  });
+  return { mandateId: mandate.mandate_id };
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}

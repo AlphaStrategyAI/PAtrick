@@ -767,6 +767,7 @@ test('the standards migration appends without changing earlier files', () => {
     '0006_vault_evidence.sql',
     '0007_standards.sql',
     '0008_admission_budget.sql',
+    '0010_answers_channels.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

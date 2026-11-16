@@ -5,10 +5,13 @@ import { Hono } from 'hono';
 import { generateOpenApi } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
+import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
+import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
+import { mountAnswerRoutes } from './routes/answers.js';
 import { mountDelegationRoutes } from './routes/delegations.js';
 import { mountEditRoutes } from './routes/edits.js';
 import { mountKnowledgeRoutes } from './routes/knowledge.js';
@@ -24,7 +27,13 @@ export type CreateAppOptions = {
 
 export function createApp(options: CreateAppOptions = {}): Hono {
   const now = options.now ?? (() => new Date());
-  const state: { db?: SqliteDatabase; credentials?: CredentialStore; databasePath?: string; vault?: ReturnType<typeof createVaultApi> } = {};
+  const state: {
+    db?: SqliteDatabase;
+    credentials?: CredentialStore;
+    databasePath?: string;
+    vault?: ReturnType<typeof createVaultApi>;
+    hub?: LocalHubPort;
+  } = {};
   function context(): AuthContext {
     if (!state.db || !state.credentials || !state.databasePath) {
       const databasePath = options.databasePath ?? join(tmpdir(), `patrick-${randomUUID()}.sqlite`);
@@ -77,6 +86,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
   mountAuthRoutes(app);
   mountControlRoutes(app);
+  mountAnswerRoutes(app, () => {
+    const current = context();
+    const hub = state.hub ?? createLocalHubPort();
+    state.hub = hub;
+    return {
+      db: current.db,
+      now,
+      gate: (domain: string) => createAnswerGate(current.db, { domain, now, hub, encode: encodeHubAnswer }),
+    };
+  });
   const resources = () => ({ db: context().db, api: vaultApi(), now });
   mountVaultRoutes(app, resources);
   mountKnowledgeRoutes(app, resources);
