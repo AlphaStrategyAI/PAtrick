@@ -46,19 +46,19 @@
       },
       {
         "id": "darwin-arm64-without-dsh",
-        "status": "pending",
+        "status": "blocked",
         "declared": "DSH CLI available for harness admission",
         "command": "command -v dsh",
-        "observation": "darwin-arm64 probe host: command not found: dsh",
-        "evidenceSha256": "c77772e82a81090a996f97acd3cdbaf893e9f78f16cd055c6d5b6b64553893cf"
+        "observation": "2026-11-16 recheck: command not found: dsh. ~/.dsh exists (profile data from 2026-11-05) but no dsh executable is on PATH.",
+        "evidenceSha256": "8909cb7ec24c2c443309970322c3690524eea2c361c9c630ebd3b58b51d57f0a"
       },
       {
         "id": "darwin-arm64-without-obsidian",
-        "status": "blocked",
+        "status": "verified",
         "declared": "Obsidian Desktop installed for vault-kit and core-function probes",
-        "command": "test -d /Applications/Obsidian.app",
-        "observation": "Obsidian.app not found under /Applications or ~/Applications",
-        "evidenceSha256": "c569b5981d1cbe4a9ee952526e9daf264988f9355d9c92d7d205a5f7776e0705"
+        "command": "test -d /Applications/Obsidian.app && file /Applications/Obsidian.app/Contents/MacOS/Obsidian",
+        "observation": "Obsidian.app present at /Applications/Obsidian.app, version 1.15.1, Mach-O universal x86_64+arm64.",
+        "evidenceSha256": "ebdbb140863f332e92f97ca1047a3c3df7288ff7f745b1d46874ef5236749e8e"
       }
     ]
   },
@@ -129,8 +129,8 @@
     "dsh-cli": {
       "status": "blocked",
       "command": "command -v dsh && dsh --version",
-      "observation": "command not found: dsh",
-      "evidenceSha256": "51c2b3f37ccc4d8444d81cfdce379357a3d81facbae772775c11185b735e680c"
+      "observation": "2026-11-16 recheck: command not found: dsh. ~/.dsh data directory exists; CLI binary is not on PATH.",
+      "evidenceSha256": "7c1625a6d5af6b04ef0e2d8ddf83ed43adfd0552021323b18d521c7402ef85eb"
     },
     "feishu-sdk": {
       "status": "pending",
@@ -139,50 +139,50 @@
       "evidenceSha256": "057e49cb9550f668ad4828debd92fd3e729b514f631ceb91cf39de9de403cd2e"
     },
     "obsidian-desktop": {
-      "status": "blocked",
-      "command": "defaults read \"/Applications/Obsidian.app/Contents/Info.plist\" CFBundleShortVersionString",
-      "observation": "Obsidian.app not found under /Applications or ~/Applications",
-      "evidenceSha256": "c569b5981d1cbe4a9ee952526e9daf264988f9355d9c92d7d205a5f7776e0705"
+      "status": "verified",
+      "command": "defaults read /Applications/Obsidian.app/Contents/Info.plist CFBundleShortVersionString",
+      "observation": "1.15.1",
+      "evidenceSha256": "9599debae673b5bcb946c2845e7f783d1b8e8f01289cadfa0e82cd44e9b54285"
     },
     "obsidian-core-properties": {
-      "status": "blocked",
-      "command": null,
-      "observation": "Obsidian.app not installed; Properties core-function probe requires installed desktop app (T27).",
-      "evidenceSha256": "9914a2be602ddca18a4d5aea8137327016d4b6c118312b38b731b30fdc35b082"
+      "status": "verified",
+      "command": "read /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json",
+      "observation": "properties=true in /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json; app 1.15.1. CLI not enabled (Settings > General > Advanced).",
+      "evidenceSha256": "aa1c4c16cc93b9ec6b4e8a8639ec7fbbdd7be54a6ad624b92ec2fa0232057621"
     },
     "obsidian-core-templates": {
-      "status": "blocked",
-      "command": null,
-      "observation": "Obsidian.app not installed; Templates core-function probe requires installed desktop app (T27).",
-      "evidenceSha256": "f51207299c78781c355ec94fe10cbdea07fbf9a7dc603d35d59b4ae6ea0ec6f0"
+      "status": "verified",
+      "command": "read /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json",
+      "observation": "templates=true in /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json; app 1.15.1. CLI not enabled (Settings > General > Advanced).",
+      "evidenceSha256": "2f8b4af49dfe596cb108fca8e8e7ce595aca4679d304b8b56070ed15e9c5ab0c"
     },
     "obsidian-core-bases": {
-      "status": "blocked",
-      "command": null,
-      "observation": "Obsidian.app not installed; Bases core-function probe requires installed desktop app (T27).",
-      "evidenceSha256": "ac6401491d3d55cd9035b8d446ec9cc04d79944259d839df0c7feec68052ce87"
+      "status": "verified",
+      "command": "read /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json",
+      "observation": "bases=true in /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json; app 1.15.1. CLI not enabled (Settings > General > Advanced).",
+      "evidenceSha256": "2e315ca790af81f7711616d65491df99c3ccb1f0e5e37cbd59e1b5737bc5d6ed"
     },
     "obsidian-core-backlinks-graph": {
-      "status": "blocked",
-      "command": null,
-      "observation": "Obsidian.app not installed; Backlinks/Graph core-function probe requires installed desktop app (T27).",
-      "evidenceSha256": "1cb8e5c6c587d495e785bda93ee2e1d3d884dad0e92d97e185ed091a61e8b068"
+      "status": "verified",
+      "command": "read /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json",
+      "observation": "graph=true backlink=true in /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json; app 1.15.1. CLI not enabled (Settings > General > Advanced).",
+      "evidenceSha256": "694152b51d740f1acbb915d882f3e3ea9a982f7ca3cafa7cde04a9f733921cb3"
     },
     "obsidian-core-canvas": {
-      "status": "blocked",
-      "command": null,
-      "observation": "Obsidian.app not installed; Canvas core-function probe requires installed desktop app (T27).",
-      "evidenceSha256": "21717a3395e7453f849f3cdee16a5a5b0ac19abca5c548c7d30be87cc29eaaea"
+      "status": "verified",
+      "command": "read /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json",
+      "observation": "canvas=true in /Users/fengpengcheng/Documents/Obsidian Vault/.obsidian/core-plugins.json; app 1.15.1. CLI not enabled (Settings > General > Advanced).",
+      "evidenceSha256": "4de9f79bd816cc3486caf2dc68d5172f664c34a44c93a2118fb819fa0a0f2730"
     },
     "obsidian-installer-arch": {
-      "status": "pending",
-      "command": null,
+      "status": "verified",
+      "command": "file /Applications/Obsidian.app/Contents/MacOS/Obsidian",
       "target": "Official macOS Universal installer (https://obsidian.md/help/install)",
-      "installerVersion": null,
+      "installerVersion": "1.15.1",
       "architecture": "universal",
       "packageHashSha256": null,
-      "observation": "Pending target: official macOS Universal package; installer version unknown; package hash unknown; download/hash command not run because Obsidian.app is absent on probe host.",
-      "evidenceSha256": null
+      "observation": "Installed app 1.15.1 is a universal Mach-O (x86_64+arm64). Installer package hash was not taken from a downloaded dmg.",
+      "evidenceSha256": "d812b19a31dbe69d7319c41a28480ecfad998c07f880f019dea1fc4c6abd0418"
     },
     "signing-chain": {
       "status": "pending",
