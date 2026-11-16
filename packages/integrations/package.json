@@ -1,0 +1,15 @@
+{
+  "name": "@patrick/integrations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./autoloop/answers": "./autoloop/answers.ts",
+    "./autoloop/agent": "./autoloop/agent.ts",
+    "./autoloop/client": "./autoloop/client.ts",
+    "./autoloop/observer": "./autoloop/observer.ts"
+  },
+  "dependencies": {
+    "@patrick/storage": "*"
+  }
+}

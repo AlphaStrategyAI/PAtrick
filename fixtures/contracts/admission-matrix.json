@@ -4,22 +4,22 @@
       "repo": "KKKKhazix/agent-autoloop",
       "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b"
     },
-    "status": "pending",
-    "command": "native-answer-before-receipt (isolated hub; T04)",
-    "observation": "Hub worker not running in T00; probe requires pinned Autoloop hub plus domain receipt wiring from T04.",
-    "evidenceSha256": null
+    "status": "verified",
+    "command": "plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\"}",
+    "observation": "native-answer-before-receipt\ncommit 45aecbf578289cda72d1fc773dcad069bfe7778b\ncommand: plugins/command/agent.ts command/read; POST /v1/runs/:id/result {\"outcome\":\"done\",\"summary\":\"no-op\"}\nearly: state=done attempts=0 summary=\"no-op\"\nread.text=\"no-op\\n\" modelCalls=0 technicalRetries=0\nlater domain wake claimable=true",
+    "evidenceSha256": "570b3bc5643f9ffb114af4dd3826d128a309bc6381dc0e205ca700d0cbf8e35d"
   },
   "autoloop_custom_text": {
     "upstream": {
       "repo": "KKKKhazix/agent-autoloop",
       "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b"
     },
-    "status": "pending",
-    "command": "custom-text-only (isolated hub; T04)",
-    "observation": "Payload contract is { text } without choice; fixture raw input reserved as \"  先补证，再比较。  \" until hub read-back is executed.",
+    "status": "verified",
+    "command": "POST /v1/cards/:id/answer {\"text\":\"  先补证，再比较。  \"}",
+    "observation": "custom-text-only\ncommit 45aecbf578289cda72d1fc773dcad069bfe7778b\ncommand: POST /v1/cards/:id/answer {\"text\":\"  先补证，再比较。  \"}\nplugin: plugins/command/agent.ts command/read\nread-back: choice=null chosen=\"先补证，再比较。\" text=\"先补证，再比较。\" card matches answers.card\nupstream trims text; raw_custom remains \"  先补证，再比较。  \"",
     "rawCustomInput": "  先补证，再比较。  ",
-    "expectedChosen": null,
-    "evidenceSha256": null
+    "expectedChosen": "先补证，再比较。",
+    "evidenceSha256": "cde419a65980803865dfa88014e8bbff3d16805366d89f8af106d1fea5dec525"
   },
   "feishu_deferred_card": {
     "upstream": {
