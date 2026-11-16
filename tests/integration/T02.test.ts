@@ -74,12 +74,16 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'authority_facts',
       'blobs',
       'bootstrap_tickets',
+      'budget_reservations',
+      'business_budgets',
       'caller_scopes',
+      'capability_profiles',
       'case_outcomes',
       'cases',
       'collection_receipts',
       'command_inbox',
       'command_records',
+      'consultations',
       'control_proposals',
       'control_receipts',
       'delete_sweeps',
@@ -93,6 +97,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'evaluation_reports',
       'evidence_dependencies',
       'evidence_refs',
+      'execution_grants',
       'hub_events',
       'hub_snapshots',
       'judgment_bases',
@@ -105,6 +110,9 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'knowledge_fts_idx',
       'knowledge_members',
       'knowledge_records',
+      'maintenance_jobs',
+      'mandate_types',
+      'mandates',
       'object_revisions',
       'outbox',
       'passkey_credentials',
@@ -123,15 +131,18 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'standard_candidates',
       'standard_versions',
       'standards',
+      'usage_receipts',
       'vault_clients',
       'vault_documents',
       'vault_revisions',
       'vaults',
       'webhook_deliveries',
       'withdrawal_events',
+      'work_control_receipts',
+      'work_generations',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

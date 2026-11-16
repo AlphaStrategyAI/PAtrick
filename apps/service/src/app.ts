@@ -9,10 +9,12 @@ import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
+import { mountDelegationRoutes } from './routes/delegations.js';
 import { mountEditRoutes } from './routes/edits.js';
 import { mountKnowledgeRoutes } from './routes/knowledge.js';
 import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
+import { mountWorkControlRoutes } from './routes/work-controls.js';
 
 export type CreateAppOptions = {
   databasePath?: string;
@@ -80,6 +82,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountKnowledgeRoutes(app, resources);
   mountEditRoutes(app, resources);
   mountStandardRoutes(app, resources);
+  mountDelegationRoutes(app, resources);
+  mountWorkControlRoutes(app, resources);
   return app;
 }
 

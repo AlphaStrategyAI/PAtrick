@@ -22,5 +22,9 @@
   {
     "file": "0007_standards.sql",
     "sha256": "32426e2501210cc250603f7e6dd64f3b8d56cd0225bef2f684be717c6e7559d7"
+  },
+  {
+    "file": "0008_admission_budget.sql",
+    "sha256": "a2ebaaba784c6621a8d786e098f0a77e293e8bad9a7c4fa89890b34b63114a71"
   }
 ]
