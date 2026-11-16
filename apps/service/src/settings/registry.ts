@@ -26,6 +26,15 @@ export async function runSettingsOperation(kind: string, input: unknown): Promis
   return handler(input);
 }
 
+export function runSettingsOperationNow(kind: string, input: unknown): unknown {
+  if (!isSettingsOperationKind(kind)) throw new Error('SETTINGS_OPERATION_UNSUPPORTED');
+  const handler = handlers.get(kind);
+  if (!handler) throw new Error('SETTINGS_OPERATION_UNREGISTERED');
+  const result = handler(input);
+  if (result instanceof Promise) throw new Error('SETTINGS_OPERATION_ASYNC');
+  return result;
+}
+
 export function clearSettingsOperations(): void {
   handlers.clear();
 }

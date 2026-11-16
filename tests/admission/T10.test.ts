@@ -65,6 +65,7 @@ test('feishu deferred card is blocked without app credentials and the web entry 
 async function submitWebAnswer() {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-admit-'));
   const db = openDatabase(join(dir, 'patrick.sqlite'));
+  const hub = createLocalHubPort(join(dir, 'hub-answers.sqlite'));
   try {
     const now = () => new Date(NOW);
     const principal: Principal = {
@@ -127,7 +128,7 @@ async function submitWebAnswer() {
     const gate = createAnswerGate(db, {
       domain: 'product',
       now,
-      hub: createLocalHubPort(),
+      hub,
       encode: encodeHubAnswer,
     });
     const options = [{
@@ -170,6 +171,7 @@ async function submitWebAnswer() {
       payload,
     });
   } finally {
+    hub.close();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   }

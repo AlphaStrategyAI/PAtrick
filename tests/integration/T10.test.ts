@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { createCredentialStore } from '@patrick/host';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
+import { createApp } from '../../apps/service/src/app.js';
+import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
+import { registerFeishuSettings } from '../../apps/service/src/routes/feishu.js';
+import { clearSettingsOperations, runSettingsOperation, settingsOperations } from '../../apps/service/src/settings/registry.js';
 import {
   createAnswerGate,
   type AnswerCommand,
@@ -15,6 +20,7 @@ import {
   type QuestionBinding,
 } from '../../packages/domain/src/answer-gate.js';
 import { createDelegationApi, type AdmissionPrincipal } from '../../packages/domain/src/delegation.js';
+import { createStopFixture, createWorkControlApi } from '../../packages/domain/src/work-control.js';
 import {
   claimContinuation,
   confirmCollectedEvidence,
@@ -88,6 +94,54 @@ RETURNING next_action, evidence_ref;`);
     const basis = scene.basisHash();
     expect(basis).toMatch(/^[a-f0-9]{64}$/);
     expect(scene.basisHash()).toBe(basis);
+  } finally {
+    scene.close();
+  }
+});
+
+test('a dropped hub reopens from the same file and recovers one verified receipt', async () => {
+  const scene = await openScene({ crashAfterAccept: true });
+  try {
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    await expect(scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-hub-drop', binding, { kind: 'option', option_id: 'A' }),
+    )).rejects.toThrow(/RECEIPT_LOST/);
+    const closed = scene.hub;
+    scene.reopenHub();
+    expect(scene.hub).not.toBe(closed);
+    await expect(closed.read('Q-017')).rejects.toThrow();
+    expect((await scene.hub.read('Q-017'))?.state).toBe('answered');
+    await scene.restart();
+    expect(await scene.verified('Q-017')).toHaveLength(1);
+  } finally {
+    scene.close();
+  }
+});
+
+test('an open attempt waits without forging a stopped tree', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    const receipt = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-open-attempt', binding, { kind: 'option', option_id: 'A' }),
+    );
+    expect(receipt.validity).toBe('verified');
+    scene.db.prepare(`UPDATE work_generations
+      SET attempt_closed = 0, process_tree_stopped = 0, effects_reconciled = 0, control_state = 'paused'
+      WHERE work_id = ? AND generation = ?`).run(WORK_ID, GENERATION);
+    expect(claimContinuation(scene.db, webPrincipal, DOMAIN, scene.key('Q-017', 'answer'), 'attempt-open', scene.now())).toEqual({
+      status: 'waiting',
+    });
+    expect(scene.db.prepare(`SELECT attempt_closed, process_tree_stopped, effects_reconciled, control_state
+      FROM work_generations WHERE work_id = ? AND generation = ?`).get(WORK_ID, GENERATION)).toEqual({
+      attempt_closed: 0,
+      process_tree_stopped: 0,
+      effects_reconciled: 0,
+      control_state: 'paused',
+    });
+    expect(scene.attempts(WORK_ID, GENERATION, 'Q-017', 'answer')).toBe(0);
   } finally {
     scene.close();
   }
@@ -180,9 +234,15 @@ test('channel-lifecycle', async () => {
     expect((await channel.disableWhileHubIsUncertain()).status).toBe('draining');
     expect((await channel.receive(oldCallback)).disposition).toBe('audit_only');
     await channel.releaseAcceptedHubAnswerReadback();
+    await scene.bind(questionInput('Q-other', 19, proceedOptions(), []));
+    scene.db.prepare(`INSERT INTO resume_intents (
+      work_id, generation, question_id, answer_event_id, phase, state, next_action, evidence_ref
+    ) VALUES (?, ?, 'Q-other', 'hub:Q-other:19', 'answer', 'ready', 'judge', NULL)`).run(WORK_ID, GENERATION);
     expect((await channel.finishAfterReconciliation()).status).toBe('disabled');
     expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
     expect(await attemptsForResumeKey('W-017', 2, 'Q-017', 'answer')).toBe(1);
+    expect(await attemptsForResumeKey('W-017', 2, 'Q-other', 'answer')).toBe(0);
+    expect(scene.db.prepare(`SELECT state FROM resume_intents WHERE question_id = 'Q-other'`).get()).toEqual({ state: 'ready' });
     expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: 1, terminal: false }, 1)).toBe(true);
     expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: 2, terminal: false }, 1)).toBe(false);
     expect(requiresChannelReconciliation({ permitRecorded: false, dispatchSeq: 1, terminal: false }, 1)).toBe(false);
@@ -405,11 +465,115 @@ test('custom-replacement', async () => {
   }
 });
 
+test('feishu enable and disable are registered on inspect, validate, apply, and recheck', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    registerFeishuSettings(() => ({ db: scene.db, now: scene.now, hub: scene.hub }));
+    expect(settingsOperations().slice().sort()).toEqual(['apply', 'inspect', 'recheck', 'validate']);
+    const channel = createFeishuChannel(scene.db, {
+      now: scene.now,
+      hub: scene.hub,
+      encode: encodeHubAnswer,
+      domain: DOMAIN,
+    });
+    const current = await channel.prepareSentTest();
+    await channel.recordTestCallback(current);
+    const proof = channel.currentProof();
+    expect(await runSettingsOperation('validate', { action: 'enable', connection_id: 'conn-017', proof })).toEqual({ valid: true });
+    expect(await runSettingsOperation('apply', { action: 'enable', connection_id: 'conn-017', proof })).toEqual({
+      effects: [{ item: 'enable', effect: 'ready' }],
+    });
+    expect((await channel.readConnection()).status).toBe('ready');
+    expect(await runSettingsOperation('inspect', { connection_id: 'conn-017' })).toEqual({
+      records: [{ target: 'feishu', observed: 'ready' }],
+    });
+    scene.db.prepare(`INSERT INTO channel_permits (
+      permit_id, connection_id, inbound_id, question_id, account_id, permit_recorded, dispatch_seq, terminal,
+      incarnation, epoch, config_revision, binding_revision, cutoff, disposition, intent_id, schema_version, created_at
+    ) VALUES ('permit-settings', 'conn-017', 'in-settings', 'Q-settings', 'owner', 1, 1, 0, 1, 1, 1, 1, NULL, NULL, NULL, '1.0', ?)`).run(NOW);
+    expect(await runSettingsOperation('apply', { action: 'disable', connection_id: 'conn-017' })).toEqual({
+      effects: [{ item: 'disable', effect: 'draining' }],
+    });
+    const checked = await runSettingsOperation('recheck', { connection_id: 'conn-017' }) as { ok: boolean; status: string };
+    expect(checked.ok).toBe(true);
+    expect(checked.status).toBe('draining');
+  } finally {
+    clearSettingsOperations();
+    scene.close();
+  }
+});
+
+test('a repeated pairing request returns the original pairing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-pair-'));
+  const databasePath = join(dir, 'patrick.sqlite');
+  const credentialDirectory = join(dir, 'credentials');
+  const db = openDatabase(databasePath);
+  try {
+    const now = () => new Date(NOW);
+    const store = createCredentialStore(credentialDirectory, now);
+    issueBootstrapTicket(db, { accountId: 'owner' }, now);
+    const session = issueCallerSession(db, {
+      accountId: 'owner',
+      callerId: 'web',
+      domain: 'personal',
+      permissions: ['owner'],
+    }, now, store);
+    const app = createApp({ databasePath, credentialDirectory, now });
+    expect(settingsOperations().slice().sort()).toEqual(['apply', 'inspect', 'recheck', 'validate']);
+    const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
+    const credential = await app.request('/api/v1/channels/feishu/credentials', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
+    });
+    expect(credential.status).toBe(200);
+    const payload = {};
+    const body = {
+      client_request_id: 'pair-once',
+      expected_revision: null,
+      payload_hash: sha256(canonicalPayload(payload)),
+      payload,
+    };
+    const created = await app.request('/api/v1/channels/feishu/bindings', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    expect(created.status).toBe(202);
+    const createdBody = await created.json() as { command_id: string; state: string; receipt_url: string };
+    const replay = await app.request('/api/v1/channels/feishu/bindings', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    expect(replay.status).toBe(202);
+    expect(await replay.json()).toEqual(createdBody);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM channel_pairings').get()).toEqual({ n: 1 });
+    const inspection = await app.request('/api/v1/channels/feishu/inspections', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, client_request_id: 'inspect-once' }),
+    });
+    expect(inspection.status).toBe(202);
+    const validation = await app.request('/api/v1/channels/feishu/validations', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, client_request_id: 'validate-once' }),
+    });
+    expect(validation.status).toBe(202);
+  } finally {
+    clearSettingsOperations();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 type Scene = {
   db: SqliteDatabase;
   web: AnswerGate;
   feishu: AnswerGate;
   hub: LocalHubPort;
+  reopenHub: () => void;
   encodeCalls: number;
   prSends: number;
   now: () => Date;
@@ -436,7 +600,8 @@ async function openScene(options: { crashAfterAccept: boolean }): Promise<Scene>
   const databasePath = join(dir, 'patrick.sqlite');
   let db = openDatabase(databasePath);
   const peer = openDatabase(databasePath);
-  const hub = createLocalHubPort();
+  const hubPath = join(dir, 'hub-answers.sqlite');
+  let hub = createLocalHubPort(hubPath);
   let encodeCalls = 0;
   const encode = (answer: { kind: 'choice'; index: number } | { kind: 'custom'; raw_text: string }) => {
     encodeCalls += 1;
@@ -470,7 +635,13 @@ async function openScene(options: { crashAfterAccept: boolean }): Promise<Scene>
       return web;
     },
     feishu,
-    hub,
+    get hub() {
+      return hub;
+    },
+    reopenHub() {
+      hub.close();
+      hub = createLocalHubPort(hubPath);
+    },
     get encodeCalls() {
       return encodeCalls;
     },
@@ -518,8 +689,10 @@ async function openScene(options: { crashAfterAccept: boolean }): Promise<Scene>
       return { model: modelCalls, retry: retryCalls };
     },
     async restart() {
-      db.close();
-      peer.close();
+      if (db.open) db.close();
+      if (peer.open) peer.close();
+      hub.close();
+      hub = createLocalHubPort(hubPath);
       db = openDatabase(databasePath);
       web = createAnswerGate(db, { domain: DOMAIN, now, hub, encode });
       const intents = db.prepare('SELECT intent_id FROM answer_intents').all() as { intent_id: string }[];
@@ -593,6 +766,7 @@ async function openScene(options: { crashAfterAccept: boolean }): Promise<Scene>
       return row.work_id;
     },
     close() {
+      hub.close();
       if (db.open) db.close();
       if (peer.open) peer.close();
       rmSync(dir, { recursive: true, force: true });
@@ -752,6 +926,14 @@ async function admit(db: SqliteDatabase, now: () => Date) {
     next_action: 'judge',
     allowed_effects: [],
     expires_at: '2026-11-18T00:00:00.000Z',
+  });
+  const stopPort = createStopFixture();
+  stopPort.report(WORK_ID, GENERATION, { process_tree_stopped: true, effects_reconciled: true });
+  await createWorkControlApi(db, webPrincipal, { now, stopPort }).applyWorkControl(webPrincipal, {
+    work_id: WORK_ID,
+    type: 'stop',
+    generation: GENERATION,
+    expected_revision: 0,
   });
   return { mandateId: mandate.mandate_id };
 }

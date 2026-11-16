@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
+  channelPermit,
   createAnswerGate,
   type AnswerCommand,
   type AnswerReceipt,
@@ -245,6 +246,8 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     },
 
     async submitHeld(principal: Principal, command: AnswerCommand) {
+      if (!command.connection_id || !command.inbound_id) throw new Error('UNPROCESSABLE');
+      channelPermit(db, command.connection_id, command.inbound_id, command.payload.question_id, stamp());
       const hold = new Promise<void>((resolve) => {
         releaseHold = resolve;
       });
@@ -335,8 +338,20 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
           terminal: row.terminal === 1,
         }, cutoff));
         if (waiting) return { status: connection.status };
-        const resumes = db.prepare(`SELECT work_id, generation, question_id, answer_event_id, phase FROM resume_intents
-          WHERE state = 'ready' AND phase = 'answer'`).all() as Array<{
+        const resumes = db.prepare(`SELECT ri.work_id, ri.generation, ri.question_id, ri.answer_event_id, ri.phase
+          FROM resume_intents ri
+          JOIN answer_intents ai
+            ON ai.work_id = ri.work_id
+           AND ai.generation = ri.generation
+           AND ai.question_id = ri.question_id
+           AND ai.hub_answer_event_id = ri.answer_event_id
+          JOIN channel_permits cp
+            ON cp.connection_id = ai.connection_id
+           AND cp.inbound_id = ai.inbound_event_id
+          WHERE ri.state = 'ready'
+            AND ri.phase = 'answer'
+            AND cp.connection_id = ?
+            AND cp.cutoff IS NOT NULL`).all(connectionId) as Array<{
           work_id: string;
           generation: number;
           question_id: string;

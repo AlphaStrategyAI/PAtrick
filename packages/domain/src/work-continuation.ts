@@ -62,6 +62,7 @@ export function claimContinuation(
       return existing?.state === 'claimed' ? { status: 'duplicate' } : { status: 'waiting' };
     }
     if (!continuationReady(db, principal, domain, key, existing, stamped)) return { status: 'waiting' };
+    if (attemptStillOpen(db, key.work_id, key.generation)) return { status: 'waiting' };
     const claimed = db.prepare(CLAIM_RESUME_SQL).get({
       attempt_id: attemptId,
       work_id: key.work_id,
@@ -326,8 +327,7 @@ function prepareWork(
   next: { phase: WorkRow['phase']; nextAction: string; collectionId: string | null; evidenceReady: number },
 ): void {
   db.prepare(`UPDATE work_generations SET
-    phase = ?, next_action = ?, collection_id = ?, evidence_ready = ?, awaiting_answer = 0,
-    attempt_closed = 1, process_tree_stopped = 1, effects_reconciled = 1, control_state = 'running', updated_at = ?
+    phase = ?, next_action = ?, collection_id = ?, evidence_ready = ?, awaiting_answer = 0, updated_at = ?
     WHERE work_id = ? AND generation = ?`).run(
     next.phase,
     next.nextAction,
@@ -337,6 +337,20 @@ function prepareWork(
     key.work_id,
     key.generation,
   );
+}
+
+function attemptStillOpen(db: SqliteDatabase, workId: string, generation: number): boolean {
+  const grant = db.prepare(`SELECT grant_id FROM execution_grants
+    WHERE subject_kind = 'work' AND work_id = ? AND generation = ? AND revoked_at IS NULL`).get(workId, generation);
+  if (!grant) return false;
+  const work = db.prepare(`SELECT attempt_closed, process_tree_stopped, effects_reconciled
+    FROM work_generations WHERE work_id = ? AND generation = ?`).get(workId, generation) as {
+    attempt_closed: number;
+    process_tree_stopped: number;
+    effects_reconciled: number;
+  } | undefined;
+  if (!work) return true;
+  return !(work.attempt_closed === 1 && work.process_tree_stopped === 1 && work.effects_reconciled === 1);
 }
 
 function continuationReady(

@@ -693,6 +693,58 @@ function writeReceipt(
   };
 }
 
+export type ChannelPermit = {
+  permit_id: string;
+  connection_id: string;
+  inbound_id: string;
+  question_id: string;
+};
+
+export function channelPermit(
+  db: SqliteDatabase,
+  connectionId: string,
+  inboundId: string,
+  questionId: string,
+  stamped: string,
+): ChannelPermit {
+  return withImmediateTransaction(db, () => {
+    const connection = db.prepare(`SELECT account_id, status, transport_mode, channel_incarnation, connection_epoch,
+      config_revision, binding_revision FROM channel_connections WHERE connection_id = ?`).get(connectionId) as {
+      account_id: string;
+      status: string;
+      transport_mode: string;
+      channel_incarnation: number;
+      connection_epoch: number;
+      config_revision: number;
+      binding_revision: number;
+    } | undefined;
+    if (!connection) throw new Error('FORBIDDEN');
+    if (connection.status !== 'ready' || connection.transport_mode !== 'active') throw new Error('CHANNEL_DENIED');
+    const permitId = `permit_${sha256(`${connectionId}\0${inboundId}`).slice(0, 24)}`;
+    db.prepare(`INSERT INTO channel_permits (
+      permit_id, connection_id, inbound_id, question_id, account_id, permit_recorded, dispatch_seq, terminal,
+      incarnation, epoch, config_revision, binding_revision, cutoff, disposition, intent_id, schema_version, created_at
+    ) VALUES (?, ?, ?, ?, ?, 1, NULL, 0, ?, ?, ?, ?, NULL, NULL, NULL, '1.0', ?)
+    ON CONFLICT(connection_id, inbound_id) DO NOTHING`).run(
+      permitId,
+      connectionId,
+      inboundId,
+      questionId,
+      connection.account_id,
+      connection.channel_incarnation,
+      connection.connection_epoch,
+      connection.config_revision,
+      connection.binding_revision,
+      stamped,
+    );
+    const row = db.prepare(`SELECT permit_id, connection_id, inbound_id, question_id FROM channel_permits
+      WHERE connection_id = ? AND inbound_id = ?`).get(connectionId, inboundId) as ChannelPermit | undefined;
+    if (!row) throw new Error('UNPROCESSABLE');
+    if (row.question_id !== questionId) throw new Error('CONFLICT');
+    return row;
+  });
+}
+
 function permitFeishu(
   db: SqliteDatabase,
   principal: Principal,
@@ -702,37 +754,11 @@ function permitFeishu(
   stamped: string,
 ): string {
   if (!command.connection_id || !command.inbound_id) throw new Error('UNPROCESSABLE');
-  const connection = db.prepare(`SELECT account_id, data_domain, status, transport_mode, channel_incarnation, connection_epoch,
-    config_revision, binding_revision FROM channel_connections WHERE connection_id = ?`).get(command.connection_id) as {
-    account_id: string;
-    data_domain: string;
-    status: string;
-    transport_mode: string;
-    channel_incarnation: number;
-    connection_epoch: number;
-    config_revision: number;
-    binding_revision: number;
-  } | undefined;
-  if (!connection || connection.account_id !== principal.account_id || connection.data_domain !== domain) throw new Error('FORBIDDEN');
-  if (connection.status !== 'ready' || connection.transport_mode !== 'active') throw new Error('CHANNEL_DENIED');
-  const permitId = `permit_${sha256(`${command.connection_id}\0${command.inbound_id}`).slice(0, 24)}`;
-  db.prepare(`INSERT INTO channel_permits (
-    permit_id, connection_id, inbound_id, question_id, account_id, permit_recorded, dispatch_seq, terminal,
-    incarnation, epoch, config_revision, binding_revision, cutoff, disposition, intent_id, schema_version, created_at
-  ) VALUES (?, ?, ?, ?, ?, 1, NULL, 0, ?, ?, ?, ?, NULL, NULL, NULL, '1.0', ?)
-  ON CONFLICT(connection_id, inbound_id) DO NOTHING`).run(
-    permitId,
+  const connection = db.prepare('SELECT account_id, data_domain FROM channel_connections WHERE connection_id = ?').get(
     command.connection_id,
-    command.inbound_id,
-    binding.question_id,
-    principal.account_id,
-    connection.channel_incarnation,
-    connection.connection_epoch,
-    connection.config_revision,
-    connection.binding_revision,
-    stamped,
-  );
-  return permitId;
+  ) as { account_id: string; data_domain: string } | undefined;
+  if (!connection || connection.account_id !== principal.account_id || connection.data_domain !== domain) throw new Error('FORBIDDEN');
+  return channelPermit(db, command.connection_id, command.inbound_id, binding.question_id, stamped).permit_id;
 }
 
 function takeSendLock(db: SqliteDatabase, intentId: string, questionId: string, stamped: string): boolean {

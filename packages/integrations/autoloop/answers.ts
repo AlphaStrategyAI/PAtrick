@@ -1,4 +1,4 @@
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { openDatabase, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 
 export type HubAnswerBody = { choice: number } | { text: string };
 
@@ -10,26 +10,47 @@ export type LocalHubPort = {
   ): Promise<{ changed: boolean; state: string; answer_event_id: string }>;
   read(questionId: string): Promise<null | { cardId: number; state: string; answer_event_id: string; body: HubAnswerBody }>;
   list(questionId: string): Promise<Array<{ answer_event_id: string }>>;
+  close(): void;
 };
 
-export function createLocalHubPort(): LocalHubPort {
-  const accepted = new Map<string, { cardId: number; body: HubAnswerBody; answer_event_id: string }>();
+type HubRow = { card_id: number; body_json: string; answer_event_id: string };
+
+export function createLocalHubPort(filePath: string): LocalHubPort {
+  const db = openDatabase(filePath, { manifest: [] });
+  db.exec(`CREATE TABLE IF NOT EXISTS hub_answers (
+    question_id TEXT PRIMARY KEY,
+    card_id INTEGER NOT NULL,
+    body_json TEXT NOT NULL,
+    answer_event_id TEXT NOT NULL
+  ) STRICT`);
+  const insert = db.prepare(`INSERT INTO hub_answers (question_id, card_id, body_json, answer_event_id)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(question_id) DO NOTHING`);
+  const select = db.prepare('SELECT card_id, body_json, answer_event_id FROM hub_answers WHERE question_id = ?');
+
   return {
     async accept(questionId, cardId, body) {
-      const existing = accepted.get(questionId);
-      if (existing) return { changed: false, state: 'answered', answer_event_id: existing.answer_event_id };
-      const answer_event_id = `hub:${questionId}:${cardId}`;
-      accepted.set(questionId, { cardId, body, answer_event_id });
-      return { changed: true, state: 'answered', answer_event_id };
+      const answerEventId = `hub:${questionId}:${cardId}`;
+      const stored = withImmediateTransaction(db, () => {
+        const info = insert.run(questionId, cardId, JSON.stringify(body), answerEventId);
+        const row = select.get(questionId) as HubRow;
+        return { changed: info.changes === 1, answer_event_id: row.answer_event_id };
+      });
+      return { changed: stored.changed, state: 'answered', answer_event_id: stored.answer_event_id };
     },
     async read(questionId) {
-      const row = accepted.get(questionId);
+      const row = select.get(questionId) as HubRow | undefined;
       if (!row) return null;
-      return { cardId: row.cardId, state: 'answered', answer_event_id: row.answer_event_id, body: row.body };
+      return { cardId: row.card_id, state: 'answered', answer_event_id: row.answer_event_id, body: parseBody(row.body_json) };
     },
     async list(questionId) {
-      const row = accepted.get(questionId);
+      const row = select.get(questionId) as HubRow | undefined;
       return row ? [{ answer_event_id: row.answer_event_id }] : [];
+    },
+    close() {
+      if (!db.open) return;
+      db.pragma('wal_checkpoint(TRUNCATE)');
+      db.close();
     },
   };
 }
@@ -54,4 +75,11 @@ export function readRawCustom(db: SqliteDatabase, submissionId: string): string 
     | undefined;
   if (!row) throw new Error('RAW_CUSTOM_NOT_FOUND');
   return row.raw_custom;
+}
+
+function parseBody(value: string): HubAnswerBody {
+  const parsed = JSON.parse(value) as HubAnswerBody;
+  if (parsed && typeof parsed === 'object' && 'choice' in parsed && typeof parsed.choice === 'number') return { choice: parsed.choice };
+  if (parsed && typeof parsed === 'object' && 'text' in parsed && typeof parsed.text === 'string') return { text: parsed.text };
+  throw new Error('HUB_ANSWER_INVALID');
 }

@@ -45,6 +45,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     return { db: state.db, credentials: state.credentials, now };
   }
+  function durableHub(): LocalHubPort {
+    if (state.hub) return state.hub;
+    context();
+    if (!state.databasePath) throw new Error('DATABASE_PATH_MISSING');
+    state.hub = createLocalHubPort(`${state.databasePath}.hub`);
+    return state.hub;
+  }
   function vaultApi(): ReturnType<typeof createVaultApi> {
     const current = context();
     if (!state.vault || !state.databasePath) {
@@ -89,8 +96,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountControlRoutes(app);
   mountAnswerRoutes(app, () => {
     const current = context();
-    const hub = state.hub ?? createLocalHubPort();
-    state.hub = hub;
+    const hub = durableHub();
     return {
       db: current.db,
       now,
@@ -99,9 +105,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
   mountFeishuRoutes(app, () => {
     const current = context();
-    const hub = state.hub ?? createLocalHubPort();
-    state.hub = hub;
-    return { db: current.db, now, credentials: current.credentials, hub };
+    return { db: current.db, now, credentials: current.credentials, hub: durableHub() };
   });
   const resources = () => ({ db: context().db, api: vaultApi(), now });
   mountVaultRoutes(app, resources);
