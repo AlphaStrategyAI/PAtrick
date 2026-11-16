@@ -172,34 +172,82 @@ async function publishBatch(root: string, revision: number, files: Record<string
 async function preserveBatch(root: string, isolationRoot: string, vaultId: string, revision: number): Promise<void> {
   const from = join(root, '系统视图', '批次', String(revision));
   const destination = join(isolationRoot, vaultId, String(revision));
-  let vaultExists = false;
-  try {
-    const info = await stat(from);
-    vaultExists = info.isDirectory();
-  } catch (error) {
-    if (errorCode(error) !== 'ENOENT') throw error;
-  }
-  let isolationExists = false;
-  try {
-    const info = await stat(destination);
-    isolationExists = info.isDirectory();
-  } catch (error) {
-    if (errorCode(error) !== 'ENOENT') throw error;
-  }
+  const vaultExists = await isBatchDirectory(from);
+  const isolationComplete = await isolationBatchComplete(destination);
+
   if (!vaultExists) {
-    if (isolationExists) return;
-    await mkdir(dirname(destination), { recursive: true });
-    await cp(from, destination, { recursive: true });
-    await rm(from, { recursive: true });
+    if (isolationComplete) return;
     return;
   }
-  if (isolationExists) {
-    await rm(from, { recursive: true });
+
+  if (isolationComplete && (await batchBytesMatch(from, destination))) {
+    await rm(from, { recursive: true, force: true });
     return;
+  }
+
+  await copyBatchToIsolation(from, isolationRoot, vaultId, revision);
+
+  if (!(await isolationBatchComplete(destination)) || !(await batchBytesMatch(from, destination))) {
+    throw new Error('PRESERVE_INCOMPLETE');
+  }
+  await rm(from, { recursive: true, force: true });
+}
+
+async function isBatchDirectory(path: string): Promise<boolean> {
+  try {
+    const info = await stat(path);
+    return info.isDirectory();
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function isolationBatchComplete(destination: string): Promise<boolean> {
+  if (!(await isBatchDirectory(destination))) return false;
+  for (const path of PROJECTION_BATCH_FILES) {
+    try {
+      const info = await stat(join(destination, ...path.split('/')));
+      if (!info.isFile()) return false;
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
+async function batchBytesMatch(sourceDir: string, destDir: string): Promise<boolean> {
+  for (const path of PROJECTION_BATCH_FILES) {
+    try {
+      const fromBytes = await readFile(join(sourceDir, ...path.split('/')));
+      const toBytes = await readFile(join(destDir, ...path.split('/')));
+      if (!fromBytes.equals(toBytes)) return false;
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
+async function copyBatchToIsolation(
+  from: string,
+  isolationRoot: string,
+  vaultId: string,
+  revision: number,
+): Promise<void> {
+  const destination = join(isolationRoot, vaultId, String(revision));
+  const staging = join(isolationRoot, vaultId, `.patrick-staging-batch-${revision}`);
+  await rm(staging, { recursive: true, force: true });
+  await rm(destination, { recursive: true, force: true });
+  for (const path of PROJECTION_BATCH_FILES) {
+    const target = join(staging, ...path.split('/'));
+    await mkdir(dirname(target), { recursive: true });
+    await cp(join(from, ...path.split('/')), target);
   }
   await mkdir(dirname(destination), { recursive: true });
-  await cp(from, destination, { recursive: true });
-  await rm(from, { recursive: true });
+  await rename(staging, destination);
 }
 
 async function publishIndex(root: string, revision: number): Promise<void> {
