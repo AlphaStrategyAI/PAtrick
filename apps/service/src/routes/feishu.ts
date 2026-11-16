@@ -96,20 +96,24 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
 }
 
 async function createBinding(c: Context, ready: Ready): Promise<Response> {
-  return command(c, ready, 'createFeishuBinding', bindingRequest, 'channels/feishu/bindings', async (resources, principal) => {
+  return command(c, ready, 'createFeishuBinding', bindingRequest, 'channels/feishu/bindings', (resources, principal) => {
     const channel = feishu(resources, principal);
-    await channel.configure();
-    const pairing = await channel.createPairing();
-    return pairing.pairing_id;
-  });
+    channel.configure();
+    channel.createPairing();
+    const row = resources.db.prepare('SELECT current_pairing_id FROM channel_connections WHERE connection_id = ?').get(
+      connectionIdFor(principal),
+    ) as { current_pairing_id: string | null } | undefined;
+    if (!row?.current_pairing_id) throw new Error('PAIRING_MISSING');
+    return row.current_pairing_id;
+  }, true);
 }
 
 async function confirmBinding(c: Context, ready: Ready): Promise<Response> {
   const pairingId = routeId(c.req.param('id'));
-  return command(c, ready, 'confirmFeishuBinding', confirmRequest, `channels/feishu/bindings/${pairingId}`, async (resources, principal) => {
-    await feishu(resources, principal).confirmPairing(principal, pairingId);
+  return command(c, ready, 'confirmFeishuBinding', confirmRequest, `channels/feishu/bindings/${pairingId}`, (resources, principal) => {
+    feishu(resources, principal).confirmPairing(principal, pairingId);
     return pairingId;
-  });
+  }, true);
 }
 
 async function readBinding(c: Context, ready: Ready): Promise<Response> {
@@ -125,22 +129,26 @@ async function readBinding(c: Context, ready: Ready): Promise<Response> {
 }
 
 async function createTest(c: Context, ready: Ready): Promise<Response> {
-  return command(c, ready, 'createFeishuTest', testRequest, 'channels/feishu/tests', async (resources, principal, body) => {
+  return command(c, ready, 'createFeishuTest', testRequest, 'channels/feishu/tests', (resources, principal, body) => {
     const destination = (body as { destination?: string }).destination;
     if (!destination) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'destination' });
-    const created = await feishu(resources, principal).createTest(destination);
-    return created.test_id;
-  });
+    feishu(resources, principal).createTest(destination);
+    const row = resources.db.prepare('SELECT current_test_id FROM channel_connections WHERE connection_id = ?').get(
+      connectionIdFor(principal),
+    ) as { current_test_id: string | null } | undefined;
+    if (!row?.current_test_id) throw new Error('TEST_MISSING');
+    return row.current_test_id;
+  }, true);
 }
 
 async function sendTest(c: Context, ready: Ready): Promise<Response> {
   const testId = routeId(c.req.param('id'));
-  return command(c, ready, 'sendFeishuTest', sendRequest, `channels/feishu/tests/${testId}`, async (resources, principal, body) => {
+  return command(c, ready, 'sendFeishuTest', sendRequest, `channels/feishu/tests/${testId}`, (resources, principal, body) => {
     const payload = body as { test_id: string; preview_hash: string; destination: string };
     if (payload.test_id !== testId) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'test' });
-    await feishu(resources, principal).sendTest(payload);
+    feishu(resources, principal).sendTest(payload);
     return testId;
-  });
+  }, true);
 }
 
 async function readTest(c: Context, ready: Ready): Promise<Response> {
@@ -333,6 +341,7 @@ async function command(
   schema: { safeParse: (value: unknown) => { success: boolean; data?: unknown } },
   receiptPath: string,
   run: (resources: ReturnType<Ready>, principal: Principal, payload: unknown) => string | Promise<string>,
+  atomic = false,
 ): Promise<Response> {
   assertWriteOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
@@ -346,6 +355,14 @@ async function command(
   if (prior) {
     assertReplay(prior, operation, domain, body.expected_revision, body.payload_hash);
     return c.json(accepted(prior.command_id, receiptPath, prior.resource_id), 202);
+  }
+  if (atomic) {
+    let resourceId = '';
+    const commandId = withImmediateTransaction(resources.db, () => {
+      resourceId = run(resources, principal, body.payload) as string;
+      return storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);
+    });
+    return c.json(accepted(commandId, receiptPath, resourceId), 202);
   }
   const resourceId = await run(resources, principal, body.payload);
   const commandId = storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);

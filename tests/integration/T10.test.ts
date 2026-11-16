@@ -568,6 +568,54 @@ test('a repeated pairing request returns the original pairing', async () => {
   }
 });
 
+test('a failed pairing write rolls back the pairing and command', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-pair-rollback-'));
+  const databasePath = join(dir, 'patrick.sqlite');
+  const credentialDirectory = join(dir, 'credentials');
+  const db = openDatabase(databasePath);
+  try {
+    const now = () => new Date(NOW);
+    const store = createCredentialStore(credentialDirectory, now);
+    issueBootstrapTicket(db, { accountId: 'owner' }, now);
+    const session = issueCallerSession(db, {
+      accountId: 'owner',
+      callerId: 'web',
+      domain: 'personal',
+      permissions: ['owner'],
+    }, now, store);
+    const app = createApp({ databasePath, credentialDirectory, now });
+    const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
+    await app.request('/api/v1/channels/feishu/credentials', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
+    });
+    db.exec(`CREATE TRIGGER abort_pairing_command BEFORE INSERT ON command_records
+      WHEN NEW.operation = 'createFeishuBinding'
+      BEGIN SELECT RAISE(ABORT, 'pairing_command_write_failed'); END`);
+    const payload = {};
+    const body = {
+      client_request_id: 'pair-rollback',
+      expected_revision: null,
+      payload_hash: sha256(canonicalPayload(payload)),
+      payload,
+    };
+    const failed = await app.request('/api/v1/channels/feishu/bindings', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    expect(failed.status).toBe(503);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM channel_pairings').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM command_inbox').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT current_pairing_id FROM channel_connections LIMIT 1').get()).toEqual({ current_pairing_id: null });
+  } finally {
+    clearSettingsOperations();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 type Scene = {
   db: SqliteDatabase;
   web: AnswerGate;
