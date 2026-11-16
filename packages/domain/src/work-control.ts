@@ -82,10 +82,16 @@ export function createWorkControlApi(db: SqliteDatabase, principal: AdmissionPri
         const work = visibleWork(db, caller, command.work_id, command.generation);
         if (work.revision !== command.expected_revision) throw new Error('CONFLICT');
         if (command.type === 'pause') {
+          if (work.control_state !== 'running') {
+            return insertReceipt(db, command, 'denied', work.revision, stamp());
+          }
           const revision = advance(db, command, stamp(), { control_state: 'paused' });
           return insertReceipt(db, command, 'paused', revision, stamp());
         }
         if (command.type === 'resume') {
+          if (work.control_state !== 'paused') {
+            return insertReceipt(db, command, 'denied', work.revision, stamp());
+          }
           if (!workResumeAllowed(db, caller, stamp(), command.work_id, command.generation)) {
             return insertReceipt(db, command, 'denied', work.revision, stamp());
           }
@@ -107,22 +113,24 @@ export function createWorkControlApi(db: SqliteDatabase, principal: AdmissionPri
 
     async syncStop(workId: string, generation: number): Promise<WorkControlReceipt> {
       return withImmediateTransaction(db, () => {
-        visibleWork(db, principal, workId, generation);
+        const work = visibleWork(db, principal, workId, generation);
         const report = stopPort.read(workId, generation);
         const done = report.process_tree_stopped && report.effects_reconciled;
         const state = done ? 'stopped' : 'processing';
-        db.prepare(`UPDATE work_generations SET
-          control_state = ?, process_tree_stopped = ?, effects_reconciled = ?,
-          attempt_closed = CASE WHEN ? = 1 THEN 1 ELSE attempt_closed END, updated_at = ?
-          WHERE work_id = ? AND generation = ?`).run(
-          state,
-          report.process_tree_stopped ? 1 : 0,
-          report.effects_reconciled ? 1 : 0,
-          done ? 1 : 0,
-          stamp(),
-          workId,
-          generation,
-        );
+        if (work.control_state === 'processing') {
+          db.prepare(`UPDATE work_generations SET
+            control_state = ?, process_tree_stopped = ?, effects_reconciled = ?,
+            attempt_closed = CASE WHEN ? = 1 THEN 1 ELSE attempt_closed END, updated_at = ?
+            WHERE work_id = ? AND generation = ?`).run(
+            state,
+            report.process_tree_stopped ? 1 : 0,
+            report.effects_reconciled ? 1 : 0,
+            done ? 1 : 0,
+            stamp(),
+            workId,
+            generation,
+          );
+        }
         const receipt = db.prepare(`SELECT receipt_id, command_type, revision FROM work_control_receipts
           WHERE work_id = ? AND generation = ? AND command_type = 'stop'
           ORDER BY created_at DESC LIMIT 1`).get(workId, generation) as {
@@ -131,13 +139,14 @@ export function createWorkControlApi(db: SqliteDatabase, principal: AdmissionPri
           revision: number;
         } | undefined;
         if (!receipt) throw new Error('NOT_FOUND');
-        db.prepare('UPDATE work_control_receipts SET state = ? WHERE receipt_id = ?').run(state, receipt.receipt_id);
+        const reportState = work.control_state === 'processing' ? state : (work.control_state as WorkControlState);
+        db.prepare('UPDATE work_control_receipts SET state = ? WHERE receipt_id = ?').run(reportState, receipt.receipt_id);
         return {
           receipt_id: receipt.receipt_id,
           work_id: workId,
           generation,
           type: 'stop',
-          state,
+          state: reportState,
           revision: receipt.revision,
         };
       });

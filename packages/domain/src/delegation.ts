@@ -770,7 +770,7 @@ export function workResumeAllowed(
   if (!work || work.account_id !== principal.account_id || !principal.domains.includes(work.data_domain)) return false;
   const grant = activeWorkGrant(db, workId, generation);
   if (!grant) return false;
-  return workStillDispatchable(db, principal, nowIso, grant, { ignoreControl: true });
+  return workStillDispatchable(db, principal, nowIso, grant, { allowPaused: true });
 }
 
 function issueWorkGrant(
@@ -879,12 +879,17 @@ function workStillDispatchable(
   principal: AdmissionPrincipal,
   nowIso: string,
   grant: GrantRow,
-  options: { ignoreControl?: boolean } = {},
+  options: { allowPaused?: boolean } = {},
 ): boolean {
   if (grant.work_id === null || grant.generation === null || grant.mandate_id === null || grant.basis_hash === null || grant.phase === null) return false;
   const work = loadWork(db, grant.work_id, grant.generation);
   if (!work || work.account_id !== principal.account_id) return false;
-  if (!options.ignoreControl && (work.control_state !== 'running' || work.awaiting_answer === 1)) return false;
+  if (work.awaiting_answer === 1) return false;
+  if (options.allowPaused) {
+    if (work.control_state !== 'paused') return false;
+  } else if (work.control_state !== 'running') {
+    return false;
+  }
   if (work.phase !== grant.phase) return false;
   const mandate = db.prepare('SELECT * FROM mandates WHERE mandate_id = ?').get(grant.mandate_id) as MandateRow | undefined;
   if (!mandate || mandate.status !== 'active' || mandate.expires_at <= nowIso || mandate.scope_hash !== grant.scope_hash) return false;

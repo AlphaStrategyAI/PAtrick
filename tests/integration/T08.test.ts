@@ -452,6 +452,61 @@ test('pause blocks dispatch, resume rechecks the delegation, and stop stays proc
   }
 });
 
+test('resume is denied while a stop is in progress or after it completes', async () => {
+  const fx = temporaryDatabase();
+  try {
+    const admitted = await admitRunningWork(fx.db);
+    const { budget, controls, grant, stopPort } = admitted;
+    const reserved = await budget.reserveCall(callFor(grant, 'route-stop-resume', 'call-stop-resume', 1000));
+    const running = await controls.applyWorkControl(principal, {
+      work_id: 'work-1',
+      type: 'resume',
+      generation: 2,
+      expected_revision: 0,
+    });
+    expect(running.state).toBe('denied');
+
+    const stopping = await controls.applyWorkControl(principal, {
+      work_id: 'work-1',
+      type: 'stop',
+      generation: 2,
+      expected_revision: 0,
+    });
+    expect(stopping.state).toBe('processing');
+
+    const deniedWhileStopping = await controls.applyWorkControl(principal, {
+      work_id: 'work-1',
+      type: 'resume',
+      generation: 2,
+      expected_revision: stopping.revision,
+    });
+    expect(deniedWhileStopping.state).toBe('denied');
+    expect(fx.db.prepare('SELECT control_state FROM work_generations WHERE work_id = ? AND generation = ?').get('work-1', 2)).toEqual({
+      control_state: 'processing',
+    });
+    expect(await budget.claimPaidDispatch(reserved.reservation_id, grant.grant_id, grant.attempt_id, 'route-stop-resume')).toBe('denied');
+
+    stopPort.report('work-1', 2, { process_tree_stopped: true, effects_reconciled: true });
+    expect((await controls.syncStop('work-1', 2)).state).toBe('stopped');
+    expect(fx.db.prepare('SELECT control_state FROM work_generations WHERE work_id = ? AND generation = ?').get('work-1', 2)).toEqual({
+      control_state: 'stopped',
+    });
+
+    const deniedAfterStop = await controls.applyWorkControl(principal, {
+      work_id: 'work-1',
+      type: 'resume',
+      generation: 2,
+      expected_revision: stopping.revision,
+    });
+    expect(deniedAfterStop.state).toBe('denied');
+    expect(fx.db.prepare('SELECT control_state FROM work_generations WHERE work_id = ? AND generation = ?').get('work-1', 2)).toEqual({
+      control_state: 'stopped',
+    });
+  } finally {
+    fx.close();
+  }
+});
+
 test('consultation stays inside its grant, and maintenance cannot authorize a business effect', async () => {
   const fx = temporaryDatabase();
   try {
