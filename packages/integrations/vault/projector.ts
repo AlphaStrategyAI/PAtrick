@@ -173,10 +173,19 @@ async function preserveBatch(root: string, isolationRoot: string, vaultId: strin
   const from = join(root, '系统视图', '批次', String(revision));
   const destination = join(isolationRoot, vaultId, String(revision));
   const vaultExists = await isBatchDirectory(from);
-  const isolationComplete = await isolationBatchComplete(destination);
+  const vaultComplete = vaultExists && (await batchDirectoryComplete(from));
+  const isolationComplete = await batchDirectoryComplete(destination);
 
   if (!vaultExists) {
     if (isolationComplete) return;
+    return;
+  }
+
+  if (!vaultComplete) {
+    if (isolationComplete) {
+      await rm(from, { recursive: true, force: true });
+      return;
+    }
     return;
   }
 
@@ -187,7 +196,7 @@ async function preserveBatch(root: string, isolationRoot: string, vaultId: strin
 
   await copyBatchToIsolation(from, isolationRoot, vaultId, revision);
 
-  if (!(await isolationBatchComplete(destination)) || !(await batchBytesMatch(from, destination))) {
+  if (!(await batchDirectoryComplete(destination)) || !(await batchBytesMatch(from, destination))) {
     throw new Error('PRESERVE_INCOMPLETE');
   }
   await rm(from, { recursive: true, force: true });
@@ -203,7 +212,7 @@ async function isBatchDirectory(path: string): Promise<boolean> {
   }
 }
 
-async function isolationBatchComplete(destination: string): Promise<boolean> {
+async function batchDirectoryComplete(destination: string): Promise<boolean> {
   if (!(await isBatchDirectory(destination))) return false;
   for (const path of PROJECTION_BATCH_FILES) {
     try {
@@ -240,12 +249,16 @@ async function copyBatchToIsolation(
   const destination = join(isolationRoot, vaultId, String(revision));
   const staging = join(isolationRoot, vaultId, `.patrick-staging-batch-${revision}`);
   await rm(staging, { recursive: true, force: true });
-  await rm(destination, { recursive: true, force: true });
   for (const path of PROJECTION_BATCH_FILES) {
     const target = join(staging, ...path.split('/'));
     await mkdir(dirname(target), { recursive: true });
     await cp(join(from, ...path.split('/')), target);
   }
+  if (!(await batchDirectoryComplete(staging)) || !(await batchBytesMatch(from, staging))) {
+    await rm(staging, { recursive: true, force: true });
+    throw new Error('PRESERVE_INCOMPLETE');
+  }
+  await rm(destination, { recursive: true, force: true });
   await mkdir(dirname(destination), { recursive: true });
   await rename(staging, destination);
 }

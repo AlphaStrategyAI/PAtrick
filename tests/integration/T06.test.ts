@@ -614,6 +614,38 @@ test('a partial isolation copy is replaced before the vault batch is removed', a
   }
 });
 
+test('a partial vault batch is dropped when the isolation copy is complete', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(join(root, '知识笔记'), { recursive: true });
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, `# ${path}\n`]));
+    const first = await api.project({ vaultId, viewKind: 'knowledge', revision: 1, files });
+    expect(first.applied).toBe(true);
+    expect(first.pointer).toBe(1);
+    const vaultBatch1 = join(root, '系统视图', '批次', '1');
+    const isolationBatch1 = join(fx.dir, 'isolation', vaultId, '1');
+    mkdirSync(dirname(isolationBatch1), { recursive: true });
+    cpSync(vaultBatch1, isolationBatch1, { recursive: true });
+    const removedPath = join(vaultBatch1, '知识', '当前.md');
+    const preservedBytes = readFileSync(removedPath, 'utf8');
+    rmSync(removedPath, { force: true });
+    expect(existsSync(vaultBatch1)).toBe(true);
+    const second = await api.project({ vaultId, viewKind: 'knowledge', revision: 2, files });
+    expect(second.applied).toBe(true);
+    expect(second.pointer).toBe(2);
+    for (const path of PROJECTION_BATCH_FILES) {
+      expect(existsSync(join(isolationBatch1, ...path.split('/')))).toBe(true);
+    }
+    expect(readFileSync(join(isolationBatch1, '知识', '当前.md'), 'utf8')).toBe(preservedBytes);
+    expect(existsSync(vaultBatch1)).toBe(false);
+  } finally {
+    fx.close();
+  }
+});
+
 test('projection retry reconciles an older revision without a new candidate', async () => {
   const fx = temporaryDatabase();
   const root = join(fx.dir, 'vault');
