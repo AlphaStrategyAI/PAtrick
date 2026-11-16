@@ -139,7 +139,7 @@ domain只依赖contracts和端口；集成与storage实现端口；service组装
 
 ### 3.1 共同规则
 
-采用SQLite STRICT表、foreign_keys=ON、WAL、受测busy_timeout和短写事务。网络、模型与文件大读取不在数据库事务内。所有业务记录有schema_version、稳定ID、account_id/data_domain、revision、created_at/updated_at；UTC存时间，呈现时区另存。跨域外键包含domain，查ID也校验调用者范围。
+采用SQLite STRICT表、foreign_keys=ON、WAL、受测busy_timeout和短写事务。每笔会写入的事务以 BEGIN IMMEDIATE 开始；只读快照保持延迟事务。T02 用两个连接证明：一方持有读事务时，写事务在 busy_timeout 内等待，而不是在锁升级时收到 SQLITE_BUSY。网络、模型与文件大读取不在数据库事务内。所有业务记录有schema_version、稳定ID、account_id/data_domain、revision、created_at/updated_at；UTC存时间，呈现时区另存。跨域外键包含domain，查ID也校验调用者范围。
 
 不可变事实追加保存；可变指针用CAS（expected_revision一致才更新）。ID不由显示语言、标题、文件mtime或模型输出决定。每条变更同时写领域事件与outbox，唯一键提供幂等；跨hub、文件和远端均靠意图+核验恢复，不宣称分布式原子提交。
 
@@ -364,12 +364,12 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 
 | 路由/功能 | 组件和状态 | 服务接入与核心验收 |
 |---|---|---|
-| `/decisions` 需要决策 | WorkConversation、DecisionCard、OptionCompare、CustomDecision、Receipt、独立Composer；空态/过期/核验/离线 | 同一work/question版本；A/B行动/依据/利弊及关键风险常显，自定义与自由聊天有不同提交按钮；聊天“同意”不答题 |
-| `/work`、`/work/:id` 正在进行 | WorkList、状态筛选/搜索、进展时间线、阻塞、成果、决定定位 | 未完成任务按 work_id 去重；已答后等待证据时显示缺失条件；交付后进入历史 |
-| 全局咨询 | ConsultationPanel、ContextTags、工作关联、返回锚点 | 每页可达，工作/全局草稿隔离；等答时受限咨询可继续，原业务不派工；取消/终态竞态与重连同结果 |
-| `/standards` | 当前/候选/失效、创建标准/修订入口、三轴EditProgress、版本/案例/评测 | 首次null基线到v1；修订冻结基线；保存不生效、旧版继续可用；过期不采纳，导回重试不重复计数 |
-| `/knowledge` | 搜索/核实筛选、出处、编辑原稿/添加补充、冲突与EditProgress | 本人原稿可定位；外部/生成内容仅补充；收录与核实分开，canonical引用稳定，不按新文件加知识计数 |
-| `/delegations` | 范围/动作/风险/资料域/预算/期限、能力阶段、精确变更差异、可信回执 | 提升不扩权，暂停阻新动作，停止核对执行树，在途先对账；回退旧版先验有效性 |
+| `/decisions` 需要决策 | WorkConversation、DecisionCard、OptionCompare、CustomDecision、Receipt、独立Composer；空态/过期/核验/离线 | 第一眼只显示问题、选项 A/B 的名字和各自的关键风险，以及一个「提交决定」。依据和完整利弊在下一层展开。自定义答案是第三层。自由聊天更靠下，按钮为「发送」，不能提交决定。聊天“同意”不答题。选项尚未生成时标题仍在，文案为「正在整理两个可比较的选项」，提交不可用。提交后、核验完成前，选中项留在屏上，回执为「正在核验」，按钮不可用。没有待答问题时一句说明，主动作去正在进行或咨询。失败保留刚才的选择、失败原因和一个重试。离线显示上次成功快照和时间，提交不可用。只有回执变成已核验才算成功 |
+| `/work`、`/work/:id` 正在进行 | WorkList、状态筛选/搜索、进展时间线、阻塞、成果、决定定位 | 每一行显示工作名和一句阶段：正在研究、等待你的决定、正在核验、已交付或已暂停。不显示进度百分比。同一工作不出现第二行。详情页用同一句，时间线在这句下面。已答后等待证据时显示缺失条件；交付后进入历史 |
+| 全局咨询 | ConsultationPanel、ContextTags、工作关联、返回锚点 | 生成中流式显示回答，状态保持「正在回答」，直到最终答案落盘才算完成。失败保留已流出的文字、原因和重试。取消后停止继续流出。重连拿到同一次结果，不新开一条。每页可达，工作/全局草稿隔离；等答时受限咨询可继续，原业务不派工 |
+| `/standards` | 当前/候选/失效、创建标准/修订入口、三轴EditProgress、版本/案例/评测 | 还没有生效标准时显示「还没有生效标准」，主动作是创建标准。首次null基线到v1；修订冻结基线；保存不生效、旧版继续可用 |
+| `/knowledge` | 搜索/核实筛选、出处、编辑原稿/添加补充、冲突与EditProgress | 还没有任何知识时显示「还没有可引用的知识」，主动作是接通来源或写一条笔记。搜索无结果时保留刚才的词，显示「没有匹配」，主动作是清空搜索。两种都不是故障，也不显示 0 条假成功。本人原稿可定位；外部/生成内容仅补充；收录与核实分开 |
+| `/delegations` | 范围/动作/风险/资料域/预算/期限、能力阶段、精确变更差异、可信回执 | 还没有委托时显示「还没有委托」，主动作是提出一个范围。提升不扩权，暂停阻新动作，停止核对执行树，在途先对账 |
 | `/system` | HealthSummary、最大影响异常、受影响工作、诊断与固定修复、恢复门禁 | heartbeat不等于服务可用；本机先诊断，修复后验证目标与原健康依赖；关联Settings同一change_id |
 | `/stats` | 两组三卡、7d/30d/all、口径折叠、任务快捷筛选、快照时间 | 活动与存量分开；过滤/换语言不写业务；答复只增加一次主人决策，非同时增加完成任务 |
 | `/settings` | 就绪摘要、设备/检查时间、Run checks、六组入口 | detected/suggested/user/inherited可见；只补缺项，未来入口不展示 |
@@ -413,13 +413,15 @@ T03提供可信配置引擎，T10交付配对/测试/启用与ChannelGate后台�
 
 共用ConnectionWizard、ScopePreview、EditProgress、StatusEvidence与可信确认弹窗；业务状态只读服务，焦点/草稿属于呈现。Secret排除在DraftStore、URL、日志和遥测之外，仅留当前表单内存。
 
-AppShell固定侧栏与移动抽屉；页面仅一个标题/摘要/主动作，概览→比较所需细节→技术记录逐层展开。服务器状态交TanStack Query，草稿以account/conversation/question/version分区；登出清理本地私有缓存，服务端对话留存。
+AppShell固定侧栏与移动抽屉；页面仅一个标题/摘要/主动作，概览→比较所需细节→技术记录逐层展开。决策页的主动作是「提交决定」；关键风险留在第一眼，依据和聊天不与它并列成第二个决定按钮。
+
+已接受的主路径：打开需要决策，先看见问题和两个选项的风险。选项未就绪时读到「正在整理两个可比较的选项」。提交后读到「正在核验」，选择还在。核验完成后回执变为已核验。正在进行的每一行用同一套阶段句。没有知识、标准或委托时，各有一句说明和一个下一步。咨询生成中流式显示文字，并保持「正在回答」。服务器状态交TanStack Query，草稿以account/conversation/question/version分区；登出清理本地私有缓存，服务端对话留存。
 
 语言mode持久保存为system/en/zh。系统语言按navigator.languages顺序匹配，zh-*映射简体中文，en-*英文，否则英文；跟随模式监听languagechange，手动覆盖不被设备系统变化写回。切换presentation_epoch，不变business revision；丢弃旧语言的显示片段但继续持久化原结果。AI译文按content_hash/revision/domain/locale缓存，预算不足显示当前语言等待说明，保留原文入口。
 
 所有系统文案使用消息键，包括动态错误、弹窗、Toast、状态、aria-label与日期。原话/草稿/代码/URL/ID不翻改，译文有标记；金额、期限、否定条件、引用与范围做一致性校验。保存失败保留本机选择，标未同步；不自动提交决定或重发咨询/检测。
 
-共享设计令牌固定流光青浅色：背景#F5FAFC、侧栏#EAF5F7、主色#087B96、文字#203D49；当前不开放主题设置，CSS资产中的深色候选不自动启用。标题32/40、正文17/28、留白32/48；Inter/系统字体与Noto Sans CJK SC回退按产品规格，发行包自带获准字体并记录许可证。
+共享设计令牌固定流光青浅色：背景#F5FAFC、侧栏#EAF5F7、主色#087B96、文字#203D49；当前不开放主题设置，CSS资产中的深色候选不自动启用。键盘焦点环为 2px 主色 #087B96。不另写 DESIGN.md，本段和现有 Figma 是颜色与字体的权威。标题32/40、正文17/28、留白32/48；Inter/系统字体与Noto Sans CJK SC回退按产品规格，发行包自带获准字体并记录许可证。
 
 Logo是侧栏居中的80×80方形SVG+CSS，主体68px、消息头像30px静态；4.8秒运行循环。真实服务running且状态新鲜才播放，单任务等待不停止；paused/unknown/断联/减少动效静止并保留状态文字。Page Visibility暂停隐藏页装饰，状态变化aria-live一次播报。对话160–220ms、决定/回执180/220ms、依据320ms、候选280ms；交互反馈不暗示授权。
 
@@ -517,7 +519,7 @@ RecoverySet再交受测加密备份工具（拟用restic）复制到已授权目
 
 RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执、渠道inbox/outbox及业务关联。恢复先隔离旧渠道未决项，不能自动重发；历史已核验答案仍按业务恢复协议去重对账。
 
-**撤回水位证明**。已登记的权威目标保持独立、强一致的 RecoveryWitness，含 `domain`、`writer_epoch`、`open/sealed`、撤回 seq/hash、交接证书和写者身份。撤回立即阻断本机相关域，异地日志确认前为 `protection_pending`。旧写者停止并完成入站、两库及撤回对账后才可封存。恢复须核对当前封存证书及旧写者隔离证明，再应用完整日志。真正启用前，候选以该封存记录的精确修订做一次 CAS，写入 `open`、新 epoch 和唯一激活 ID；只有读回自己的获胜记录才开放权限。响应丢失先按激活 ID 读回。竞争失败、无法确认当前见证、仍为 `open` 或日志缺段时，相关域保持关闭；可找回日志或逐项重新核定资料。见证只保存控制记录。离机备份与保留期限由现有备份工具负责。
+**撤回水位证明**。已登记的权威目标保持独立、强一致的 RecoveryWitness，含 `domain`、`writer_epoch`、`open/sealed`、撤回 seq/hash、交接证书和写者身份。撤回立即阻断本机相关域，异地日志确认前为 `protection_pending`。旧写者停止并完成入站、两库及撤回对账后才可封存。恢复须核对当前封存证书及旧写者隔离证明，再应用完整日志。真正启用前，候选以该封存记录的精确修订做一次 CAS，写入 `open`、新 epoch 和唯一激活 ID；只有读回自己的获胜记录才开放权限。响应丢失先按激活 ID 读回。竞争失败、无法确认当前见证、仍为 `open` 或日志缺段时，相关域保持关闭。日志可找回时先补齐，再走有序交接。见证不可达且所有者完成本人认证后，T22 允许逐域经可信控制导入幸存的 Vault 或备份：导入使用新 epoch，不自动重发飞书或外部效果，该域在导入完成前保持关闭。这条路径单独计时，不算 RTO≤2 小时的有序交接。见证只保存控制记录。离机备份与保留期限由现有备份工具负责。
 
 恢复后的飞书强制进入disabled/requires_reauthorization：生成新的随机channel_incarnation（不能仅把备份中的计数加一），使旧配对挑战、binding可信状态、ready/测试回执及待发队列失效；历史记录留审计。重新校验当前凭据/租户、完成新的本人配对、往返测试及Web可信启用后，才建立带新incarnation的卡片映射；旧回调和旧测试不得恢复业务或就绪状态。此流程是一次新的明确授权，不从旧备份推断最新渠道仍可用；也不替代全局撤回/委托水位校验。T22恢复演练覆盖这一门禁。
 
@@ -535,17 +537,17 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 |---|---|---|---|
 | T00 基线与准入 · 4–6 | 无 | Node/npm与上游版本、产品v2.6/292帧及65张导出索引锁定、设备/三CLI及Obsidian应用/安装器/核心功能探针 | 记录实际平台、生产路径待测项和不兼容组合；design-inputs.lock.json |
 | T01 合同与骨架 · 5–8 | T00 | workspaces、package-lock、contracts、OpenAPI/SDK、统一错误/命令/快照、CI | Mac/Linux锁定依赖构建；Schema/客户端一致；不合法major/超范围payload拒绝 |
-| T02 存储与事务 · 7–12 | T01 | 存储基础migration、repositories、blob、inbox/outbox、投影水位；各领域任务交付所属表组 | 唯一键/CAS并发、崩溃落盘、A→B→A、空库初始化与前向迁移；storage-report |
+| T02 存储与事务 · 7–12 | T01 | 存储基础migration、repositories、blob、inbox/outbox、投影水位；各领域任务交付所属表组 | 唯一键/CAS并发、崩溃落盘、A→B→A、空库初始化与前向迁移；写事务 BEGIN IMMEDIATE，读事务持有时写事务在 busy_timeout 内等待而不是锁升级失败；storage-report |
 | T03 身份与可信控制 · 8–12 | T01,T02 | WebAuthn、session、caller scopes、控制提案/一次挑战/回执、共用SettingsChange引擎/固定操作注册表、Keychain边界 | CSRF/跨域/重放/过期/恢复会话失效；模型与MCP不能答题/扩权；auth-report |
 | T04 Autoloop适配 · 8–14 | T01,T02 | 固定SHA、source/rules、observer快照+分页+seq、公开插件、稳定工作与咨询lane、恢复领取接口 | 原生答复唤醒与无回执等待；custom 只传 text 的读回；断档/重启、hops边界 |
 | T05 GitHub与目录采集 · 8–12 | T02,T03,T04 | 注册表、读取/预览、webhook+补扫、游标、触发白名单、首次回执 | 断网/半写/权限过期、重复来源、自触发排除、暂停在途；collection-report |
 | T06 知识与Vault · 16–26 | T02,T05 | 事实图/检索；VaultConnection Inspector/处理器、四类EditIntent公共框架、Reader/DraftWriter/Projector、三轴回执、模板/附件 | 接通证明失效/只读不越权；原稿/补充、重复点击不覆盖、中文URI、半写/离线；采用后导回重试不重评/重计；vault-report |
 | T07 标准与评测 · 12–18 | T04,T06 | create_standard/revise_standard分型、null/v1与修订CAS、冻结原稿基线、入候选、独立留出/shadow、采纳CAS/复评、导出当前/候选；先fixture后真实评测 | 首次标准base=null/ID稳定、保存不生效、改YAML不扩权、r8评测不批r9、base变化/失败保留旧版、留出不进Vault；evaluation-report |
-| T08 委托、能力与预算 · 8–14 | T02,T03,T07 | 范围准入、类型目录、工作/咨询 grant、阶段限定、reserve/usage、暂停/降级/恢复 | 独立额度、末余额竞争、unknown预留、旧attempt/旧报告、scope提升越界、总预算不重置 |
-| T09 三执行器 · 12–20 | T04,T08 | wrapper、Codex/Grok/DSH各adapter、Harness bundle、生产readiness | 各自真实后台终态/取消树/用量/隔离；final后挂起、exit1、缺插件、无resume；三份backend报告 |
+| T08 委托、能力与预算 · 8–14 | T02,T03,T07 | 范围准入、类型目录、工作/咨询/维护 grant、阶段限定、reserve/usage、暂停/降级/恢复 | 独立额度、末余额竞争、unknown预留、旧attempt/旧报告、scope提升越界、总预算不重置；评测和翻译只从 maintenance grant 预留，不能发业务 effect |
+| T09 三执行器 · 12–20 | T04,T08 | wrapper、Codex/Grok/DSH各adapter、Harness bundle、`deploy/lima/executor.yaml` 与启动命令、生产readiness | 准入先启动这份虚拟机；各自真实后台终态/取消树/用量/隔离；final后挂起、exit1、缺插件、无resume；三份backend报告 |
 | T10 精确问答与续办 · 16–26 | T03,T04,T06,T08,T09 | DecisionCard/Binding、AnswerGate、后继问题、答复与补证两个恢复阶段；飞书配置、双向测试与排空 | 原生事件早到与跨库崩溃、补证完成一次放行、超范围换卡、停用并发撤权、真实双入口 |
 | T11 对话与咨询 · 8–12 | T03,T04,T06,T08,T09,T10 | Conversation、受限Consultation、HTTP/MCP、context link、终态CAS | 待答时咨询可独立完成且不占工作额度；取消/完成竞态、断线、跨caller、草稿隔离 |
-| T12 PR交付与反馈 · 8–12 | T05,T08,T09,T10 | 冻结产物、固定GitHub发布器、首验/历史核对、effect journal、outcome watcher | base在创建窗口漂移、历史base正常前进、丢回执、多匹配、撤权后迟到成功；反馈只回原案例 |
+| T12 PR交付与反馈 · 8–12 | T05,T08,T09,T10 | 冻结产物、固定GitHub发布器、首验/历史核对、effect journal、outcome watcher | base在创建窗口漂移时同一 PR 重新冻结或同分支重做，不第二次创建；历史base正常前进、丢回执、多匹配、撤权后迟到成功；反馈只回原案例 |
 
 ### 7.2 完整产品界面与功能
 
@@ -565,12 +567,13 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 | ID / 预计小时 | 依赖 | 开发交付 | 必测与完成证据 |
 |---|---|---|---|
 | T21 主机网络与固定修复 · 8–14 | T03,T08,T13,T17 | Host Supervisor、锁/epoch、VPN探针、冷却/MFA、双目标复验 | hub正常目标失败、双VPN启动顺序、DNS/代理竞态、不可并用；真实设备报告 |
-| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、加密离机、撤回、隔离恢复/重建 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停 |
+| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、加密离机、撤回、隔离恢复/重建；见证不可达时的所有者逐域导入 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停；见证不可达时只经可信控制导入幸存 Vault 或备份，新 epoch，不自动重发外部效果，耗时不算 2 小时交接 |
 | T27 Obsidian与Vault部署 · 7–12 | T00,T03,T06,T07 | 官方桌面安装配方、共享VaultConnection Inspector、vault-kit、设备映射/范围预览/往返检查、单设备与升级卸载 | 真实Mac打开/编辑/入库/导回；关应用仍处理；缺应用/权限、URI不可用、模板不覆盖；obsidian-install-report |
 | T23 安装与升级 · 8–12 | T00,T03,T09,T21,T22,T27 | 双架构候选包、构建/发布工作流、签名及SBOM、Caddy/TLS、launchd/Lima、整合T27、安装/维护命令 | 空Mac安装/重启、拒绝损坏/错架构包、飞书收发诊断、升级失败时保护新数据 |
 | T24 视觉/动效/无障碍 · 8–14 | T15,T16,T17,T18,T19,T20 | 292帧及38类新增流程状态映射，三轴编辑进度/连接向导/64条关键设计跳转对照、受控浏览器基线、全页动效/响应式/键盘与读屏 | §5.3视觉门槛、logo真实状态/4.8秒、减少动效、200%缩放、无横向溢出 |
 | T25 端到端与故障演练 · 12–20 | T12,T18,T19,T20,T21,T22,T23,T24,T27 | 三条真实工作路线、四类编辑/三轴回执、飞书配对/往返/显式启用/排空、升级恢复与预算故障注入 | 开PR直接/答后/过期；Obsidian知识核实/标准真实评测采纳与双向回执；真实后端/渠道/设备 |
 | T26 试点与维护交付 · 4–8 | T25 | 单范围试点、质量/人工投入基线、维护手册、恢复/升级演练、发布通过验收的安装包 | 发布 asset 摘要与 T25 验收相同；无P0/P1未决；试点按冻结指标和周维护≤1小时验收 |
+| T28 中英文 README · 4–6 | T24,T26 | 默认英文 `README.md`，中文 `README.zh-CN.md`。依据产品设计 v2.6、技术设计 v2.1 和已落地代码撰写；突出产品特点，图文并茂，结构完整 | 两文互链；命令、路径和界面以代码为准；图片路径可打开；设计有而代码未实现的能力标成未入本版，不写成已经可用 |
 
 T01先冻结VaultConnection/EditIntent/EditReceipt/ChannelTest及操作Schema，T02提供版本与唯一键的迁移工具，各领域任务同时交付本域约束和测试。T06先完成接通处理器、文件协议、知识编辑与通用草稿/投影器；T07接标准编辑、候选/评测/采纳。T27交付独立桌面/Vault安装检查模块供T23整合，先验文件到候选往返，T25再验真实模型评测采纳。
 
@@ -578,7 +581,7 @@ T10不依赖成品设置UI：用T03认证/可信控制和T10自身配置/测试�
 
 T07先完成规则/数据合同，T08先完成固定门槛下的委托与预算，T09通过后在T25补真实标准评测与能力晋级；fixture完成不等于模型路径准入，避免隐性依赖环。T17接T06/T10的真实端口；T27本机检查模块独立交付，完成前相关本机能力如实标待验证，T25汇总真实设备联调。T17先注册网络/备份处理器合同，实际T21/T22未通过时UI显示不可用，完整设置联调归T25。
 
-T14可根据稳定合同和带 demo 标识的夹具先行。首次100小时按 §7.4 运行最小纵向切片；完整产品以 T00–T27 全部交付及 §8 门槛为准，执行器逐个验收。
+T14可根据稳定合同和带 demo 标识的夹具先行。首次100小时按 §7.4 运行最小纵向切片；完整产品以 T00–T28 全部交付及 §8 门槛为准，执行器逐个验收。T28 在代码和 T26 发布证据之后撰写，不进入首个 100 小时切片。
 
 ### 7.4 首个 100 小时的可验收切片
 
@@ -609,7 +612,7 @@ T14可根据稳定合同和带 demo 标识的夹具先行。首次100小时按 �
 | 基础、采集和判断 T00–T08 | `packages/contracts`、`packages/storage`、`packages/domain`、`packages/integrations` | 按 §7.1，T03与 T04 在 T02 后可各自开发 |
 | 执行、答复与发布 T09–T13 | `packages/executor`、`packages/integrations`、`apps/service` | T08完成后接 T09/T10；T10后 T11与 T12 可分别开发 |
 | Web 和视觉 T14–T20、T24 | `apps/web`、`apps/service`、`tests/e2e` | T14可从 T01/T03 开始；页面联调等各自的领域任务 |
-| 主机、恢复与发行 T21–T23、T25–T27 | `packages/host`、`deploy`、`.github/workflows` | T27在 T07 后可先做；T21/T22齐备后汇入 T23，随后验收和发布 |
+| 主机、恢复与发行 T21–T23、T25–T28 | `packages/host`、`deploy`、`.github/workflows`、仓库根 README | T27在 T07 后可先做；T21/T22齐备后汇入 T23，随后验收和发布；T28 等 T26 和已落地代码 |
 
 同一目录由工作线协调接入。各线可以独立写本域 SQL，共用 `manifest.json` 的最后一条必须按实际合并次序落位。共享 HTTP 路由注册表和 Schema 变更先合入公共合同，再接消费者；避免两个分支同时定义同一入口。
 
@@ -1080,9 +1083,9 @@ RETURNING standard_id, active_version, revision;
 
 **交接** `authorizeAction(request: ActionRequest): Promise<ExecutionGrant>` 按 §3.3 校验，并在旧执行树停止且效果已对账后原子换 attempt。`reserveCall(input: CallReservation): Promise<BudgetReceipt>` 返回调用对应的唯一预留。`claimPaidDispatch(reservationId: string, grantId: string, attemptId: string, routeId: string): Promise<'acquired' | 'already_dispatched' | 'denied'>` 单次领取发送许可。`settleCall(reservationId: string, usage: Usage | null): Promise<BudgetReceipt>` 以唯一用量证明记账，缺证据保持 uncertain。
 
-`authorizeConsultation(requestId: string, attemptId: string): Promise<ConsultationGrant>` 读取持久咨询的身份、结果版本、范围、时限及获准额度。`RunGrant = ExecutionGrant | ConsultationGrant` 以 `subject_kind: 'work' | 'consultation'` 区分。签首个工作 grant 前调用 `freezeJudgmentBasis`，grant 持 `next_action`、`allowed_effects` 和冻结依据 hash。补证 grant 仅放指定采集，交付 grant 须核对 `evidence_ready`。咨询 grant 绑定 `request_id`、`result_version`、调用者、获准域和只读工具，`allowed_effects=[]`，父工作待答只阻父工作。取消、权限变化或期限到达均停止咨询后续发送。
+`authorizeConsultation(requestId: string, attemptId: string): Promise<ConsultationGrant>` 读取持久咨询的身份、结果版本、范围、时限及获准额度。`authorizeMaintenance(ownerId: string, jobId: string, attemptId: string): Promise<MaintenanceGrant>` 只覆盖标准评测和界面翻译，绑定所有者、独立预算、取消和结果落盘，`allowed_effects=[]`。`RunGrant = ExecutionGrant | ConsultationGrant | MaintenanceGrant` 以 `subject_kind: 'work' | 'consultation' | 'maintenance'` 区分。签首个工作 grant 前调用 `freezeJudgmentBasis`，grant 持 `next_action`、`allowed_effects` 和冻结依据 hash。补证 grant 仅放指定采集，交付 grant 须核对 `evidence_ready`。咨询 grant 绑定 `request_id`、`result_version`、调用者、获准域和只读工具，`allowed_effects=[]`，父工作待答只阻父工作。取消、权限变化或期限到达均停止咨询后续发送。
 
-计费使用 `work:<work_id>` 或 `consultation:<request_id>` 作为 `business_id`。两种 grant 共用预留和发送许可，按主体分别查工作阶段或咨询状态及当前权限。`authorizeBusinessEffect(grant: RunGrant, request: WorkEffectRequest): Promise<boolean>` 供 T12 发布器复验，要求工作主体、代次和允许动作完全匹配，咨询主体直接拒绝。业务阶段事件和其余工作写动作共用相同主体、阶段检查。
+计费使用 `work:<work_id>`、`consultation:<request_id>` 或 `maintenance:<job_id>` 作为 `business_id`。三种 grant 共用预留和发送许可，按主体分别查工作阶段、咨询状态或维护任务及当前权限。维护主体不能签发业务 effect，也不能写成咨询答案。`authorizeBusinessEffect(grant: RunGrant, request: WorkEffectRequest): Promise<boolean>` 供 T12 发布器复验，要求工作主体、代次和允许动作完全匹配，咨询主体和维护主体直接拒绝。业务阶段事件和其余工作写动作共用相同主体、阶段检查。
 
 T08拥有 `POST /work/:id/controls` 和 `applyWorkControl(principal: Principal, command: WorkControlCommand): Promise<WorkControlReceipt>`。暂停先阻新派工，停止提交给受信停止端口并等待进程树/未决效果回执；续办重查当前委托及 grant。T08用端口夹具验证状态，T09绑定真实停止树，T13投影读回，T15走真实路由。
 
@@ -1128,7 +1131,7 @@ RETURNING reservation_id;
 
 ### T09 三执行器与 Harness 生产探针
 
-**文件** `packages/executor/src/wrapper.ts`、`packages/executor/src/backends/codex.ts`、`packages/executor/src/backends/grok.ts`、`packages/executor/src/backends/dsh.ts`、`packages/executor/harness/manifest.json`、`packages/executor/harness/patrick-memory.ts`、`packages/executor/harness/patrick-judgment.ts`、`packages/executor/harness/patrick-bridge.ts`、`tests/contract/T09.test.ts`、`tests/admission/T09.test.ts`。
+**文件** `packages/executor/src/wrapper.ts`、`packages/executor/src/backends/codex.ts`、`packages/executor/src/backends/grok.ts`、`packages/executor/src/backends/dsh.ts`、`packages/executor/harness/manifest.json`、`packages/executor/harness/patrick-memory.ts`、`packages/executor/harness/patrick-judgment.ts`、`packages/executor/harness/patrick-bridge.ts`、`deploy/lima/executor.yaml`、`scripts/start-executor-vm.mjs`、`tests/contract/T09.test.ts`、`tests/admission/T09.test.ts`。
 
 **交接** `runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<RunReceipt>` 返回 `agent_completed/policy_wait/technical_failure`。工作快照绑定 `work_id/generation`、冻结 `judgment_basis`、`next_action` 与恢复阶段；续跑从原快照读取版本，并重验当前授权和撤回。咨询快照绑定自身 `request_id/result_version` 和获准证据。各 adapter 暴露 `probe(): Promise<BackendCapability>`。计费桥按同一主体调用 T08 的 `reserveCall` 与 `claimPaidDispatch`。
 
@@ -1154,7 +1157,7 @@ export function completedRun(input: {
 }
 ~~~
 
-- [ ] 重跑合同，再在真实隔离身份/Host 上执行 `npm exec -- vitest run tests/admission/T09.test.ts`，逐后端生成通过或受阻证据，核对真实 Harness 领域工具调用。计费路径以网络替身统计实际出站，重复扣款许可、协议重试和崩溃恢复均纳入测试，每次发送都须能归到唯一预留。权限、隔离和产物读回齐备后标对应后端可用。提交 `feat: verify isolated executor terminal results and readiness`。
+- [ ] 重跑合同，先用 `scripts/start-executor-vm.mjs` 启动 T09 交付的 `deploy/lima/executor.yaml`，再在该虚拟机内执行 `npm exec -- vitest run tests/admission/T09.test.ts`，逐后端生成通过或受阻证据，核对真实 Harness 领域工具调用。T23 只打包这一份 yaml，不另写第二份。计费路径以网络替身统计实际出站，重复扣款许可、协议重试和崩溃恢复均纳入测试，每次发送都须能归到唯一预留。权限、隔离和产物读回齐备后标对应后端可用。提交 `feat: verify isolated executor terminal results and readiness`。
 
 
 ### T10 精确答复、原任务续办与飞书
@@ -1284,7 +1287,7 @@ expect(github.calls('createPullRequest')).toBe(1);
 expect(await deliveredCount(workId)).toBe(1);
 ~~~
 
-- [ ] 按 §3.3 持久化意图并复验交付阶段，使用 `effect_key` 的固定分支。未知结果按 repo、`head`/`base` 在所有状态分页读回，已有 PR 编号则直接查。空读保持 `uncertain`，待核验阶段的多条匹配或身份不符转冲突。首次核验检查发送前后的 base SHA 并冻结该值、PR 编号及核验的 head/tree。漂移时保留外部事实，等待重新核验。已有核验证明时，用 `matchesVerifiedPr` 核对远端观察，base 尖端移动保留原交付；head/tree 后续编辑作为反馈，远端对象身份异常单列。T22恢复只对待核验项执行首次门禁。[GitHub PR API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#create-a-pull-request) · [Git 引用 API](https://docs.github.com/en/rest/git/refs?apiVersion=2022-11-28#create-a-reference)
+- [ ] 按 §3.3 持久化意图并复验交付阶段，使用 `effect_key` 的固定分支。未知结果按 repo、`head`/`base` 在所有状态分页读回，已有 PR 编号则直接查。空读保持 `uncertain`，待核验阶段的多条匹配或身份不符转冲突。首次核验检查发送前后的 base SHA 并冻结该值、PR 编号及核验的 head/tree。首次核验前若 PR 已存在且 head/tree 仍等于冻结产物，把当前 base SHA 冻进同一次核验，再调用 `canVerifyFirstPublication`。head 或 tree 已变时，在同一分支重做产物并核验新提交。两种情况都不得再次 `createPullRequest`，测试要求最终能写 `work.delivered`。已有核验证明时，用 `matchesVerifiedPr` 核对远端观察，base 尖端移动保留原交付；head/tree 后续编辑作为反馈，远端对象身份异常单列。T22恢复只对待核验项执行首次门禁。[GitHub PR API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#create-a-pull-request) · [Git 引用 API](https://docs.github.com/en/rest/git/refs?apiVersion=2022-11-28#create-a-reference)
 
 ~~~ts
 export type FrozenPrTarget = {
@@ -1643,7 +1646,7 @@ export async function installMissingTemplate(stagedPath, destination) {
 
 ### T23 总安装器和升级
 
-**文件** `.github/workflows/release-darwin.yml`、`scripts/pack-release.mjs`、`deploy/cli/patrick.mjs`、`deploy/lib/release.mjs`、`deploy/Caddyfile`、`deploy/launchd/com.patrick.service.plist`、`deploy/launchd/com.patrick.autoloop-hub.plist`、`deploy/launchd/com.patrick.autoloop-worker.plist`、`deploy/lima/executor.yaml`、`tests/admission/T23.test.ts`。
+**文件** `.github/workflows/release-darwin.yml`、`scripts/pack-release.mjs`、`deploy/cli/patrick.mjs`、`deploy/lib/release.mjs`、`deploy/Caddyfile`、`deploy/launchd/com.patrick.service.plist`、`deploy/launchd/com.patrick.autoloop-hub.plist`、`deploy/launchd/com.patrick.autoloop-worker.plist`、`tests/admission/T23.test.ts`。T23 打包 T09 已交付的 `deploy/lima/executor.yaml`，不另写第二份。
 
 **交接** `patrick init / doctor / install / start / stop / backup / restore / upgrade / uninstall` 组合 T21/T22/T27和 T03安全登记。`canRestoreOldRelease(input): boolean` 供升级失败路径选择停留/回退。doctor 使用同一域、设备身份及连接回执。
 
@@ -1764,3 +1767,594 @@ export function automaticCompletion(finalFacts) {
 ~~~
 
 - [ ] 重跑 T26并校验真实发布证据清单。预期全部任务有对应证据，P0/P1 已处置，P2 有处理责任和期限；unknown 及样本局限可见。完成每周维护与隔离恢复计时后，从 T23工作流发布 T25已验收的双架构候选包。下载已发布 asset 再验摘要和签名。提交 `docs: record pilot evidence and operating procedures`。
+
+### T28 中英文 README
+
+**文件** `README.md`、`README.zh-CN.md`、`tests/unit/T28.test.ts`。图片只用仓库里已有的画面：英文用 `docs/designs/设计资产/v2/` 的 `Figma-en-*.png` 与 `logo-still.svg`，中文用对应的 `Figma-zh-*.png`。T24 若已有与运行界面一致的浏览器基线，优先用基线，并在图注写明来源。
+
+**交接** 输入是 [产品设计 v2.6](../designs/PAtrick产品设计.md)、[技术设计 v2.1](../designs/PAtrick技术设计-v2.md)，以及 T26 时仓库里的真实命令、目录和界面。产品特点以产品设计为准。安装命令、目录和界面名称以代码为准。两边不一致时，README 跟随代码，并写明对应的设计条款尚未进入本版。不把合并、部署和 L3 写成已经可用。
+
+GitHub 默认展示 `README.md`，因此英文是默认入口。两份文档顶部互链。结构相同，各自用自己的语言书写，不把中英段落混在同一文件里。
+
+| 顺序 | 英文标题 | 必须让读者看到的内容 |
+|---|---|---|
+| 1 | PAtrick | 一句话产品承诺，链到中文 README |
+| 2 | What it is for | 只在真正的取舍上提问；A/B 加一个自定义决定；回答后续办同一项工作；开方案 PR 即交付 |
+| 3 | How a piece of work moves | 来源变化、研究、必要时提问、方案 PR、反馈进入案例和标准。配一张决策或进行中的画面 |
+| 4 | The workbench | 需要决策、正在进行、判断标准、知识、委托、系统、统计。每块一句，并配该页画面 |
+| 5 | Knowledge and standards | 在 Obsidian 里编辑原稿，在 PAtrick 里看核实、评测和生效。配知识或标准画面 |
+| 6 | Settings | 六组设置；飞书随时答复；采集来源可增加。配一张设置画面 |
+| 7 | Install and run | 只写代码里存在的命令、版本和目录。没有的命令不写 |
+| 8 | Repository map | 八个代码根与 `docs/designs` 的实际路径 |
+| 9 | This version does not | 合并、部署业务成果、L3，以及设计有而代码没有的能力 |
+| 10 | License | 与仓库许可证一致 |
+
+- [ ] 红测先检查两份 README 的标题、互链和图片路径。运行 `npm exec -- vitest run tests/unit/T28.test.ts`，预期缺标题、图片打不开、或 README 里的命令在仓库中不存在时失败。
+
+~~~ts
+const required = [
+  'What it is for',
+  'How a piece of work moves',
+  'The workbench',
+  'Knowledge and standards',
+  'Settings',
+  'Install and run',
+  'Repository map',
+  'This version does not',
+];
+expect(headingTexts('README.md')).toEqual(expect.arrayContaining(required));
+expect(read('README.md')).toContain('README.zh-CN.md');
+expect(read('README.zh-CN.md')).toContain('README.md');
+expect(missingImages('README.md')).toEqual([]);
+expect(unknownCommands('README.md')).toEqual([]);
+~~~
+
+- [ ] 按上表写英文，再写意义相同的中文。每个产品特点用一句人能复述的话，不改写成通用的“智能助手”介绍。画面放在它所说明的那一节，图注使用该文件的语言。logo 用静止稿，不把动效循环当成安装步骤。
+- [ ] 重跑 T28。通读两份 README：英文文件没有中文正文，中文文件没有英文正文；安装一节的每条命令都能在当前代码中找到；未实现的设计条款出现在“本版不做”。提交 `docs: add English and Chinese product README`。
+
+## Eng review scope
+
+Target: `docs/plans/PAtrick技术实现计划.md`
+
+feature answers: 没有单独的功能删减题。§1.1 的合并、部署、L3，以及 §7.4 的 100 小时切片，都保持原文。
+structure: A（D1，Original arrangement）
+accepted scope: T00–T27 全套功能；八个代码根保持为 `apps/web`、`apps/service`、`packages/contracts`、`packages/domain`、`packages/storage`、`packages/integrations`、`packages/executor`、`packages/host`。
+pending remedies: none
+
+## Decision ledger
+
+### R1: 写事务如何拿锁
+Finding: 1, INFORMATIONAL, confidence 8/10, docs/plans/PAtrick技术实现计划.md:142, eng review
+Plan baseline: §3.1 要求 WAL、受测 busy_timeout 和短写事务。没有写 BEGIN IMMEDIATE。
+Runtime evidence: 仓库没有存储代码。SQLite 文档说明 WAL 下先读后写的延迟事务升级会 SQLITE_BUSY，busy_timeout 等不到这把锁。https://www.sqlite.org/lang_transaction.html https://simonwillison.net/2025/Feb/17/sqlite-busy/
+Comparison grid:
+
+| Choice | Current | A 写事务立即加锁 | B 只保留忙等超时 |
+|---|---|---|---|
+| R1 写事务锁 | 未写明，按原文是 busy_timeout | 每笔写事务 BEGIN IMMEDIATE，纯读仍可延迟 | 保持原文，不增加立即加锁 |
+| 功能范围 T00–T27 | 已批准，D1 | 不变 | 不变 |
+| 八个代码根 | 已批准，D1 | 不变 | 不变 |
+| R2 及以后 | 尚未提出 | 尚未提出 | 尚未提出 |
+
+Question D2:
+D2 — 写事务要不要一开始就拿写锁？
+Project/branch/task: PAtrick 的 main，审查 docs/plans/PAtrick技术实现计划.md。
+ELI10: 计划用 SQLite 的 WAL，并设置 busy_timeout，让别人写库时自己等一等。这个等待只对“一开始就要写”的事务有效。计划里的采集、答复和采纳都是先读出版本再写入。这种事务如果后半段才升级成写，SQLite 会直接报忙，超时也帮不上。用户会看到保存或答复偶发失败，重试还可能撞上同一条路径。
+Stakes if we pick wrong: 并发答复、采集和设置保存会在没有第二个写者真正冲突时失败，测试若只用单连接就看不出来。
+Recommendation: A 因为忙等超时修不了“先读后升级”的失败，而计划里的关键事务正是先读再写。
+Note: options differ in kind, not coverage — no completeness score
+Pending remedies not decided here: none
+Pros / cons:
+A) 写事务立即加锁 (recommended)
+每笔会写入的事务用 BEGIN IMMEDIATE。只读快照保持延迟事务。T02 增加一条测试：一个连接先读，另一个写事务必须在 busy_timeout 内等待，而不是在升级时失败。功能范围和八个代码根不变。工作量：human 约 2 小时 / CC 约 15 分钟。
+  ✅ 采集提交、答复接受和标准采纳这些先读后写的事务会排队，而不是在升级时收到 SQLITE_BUSY。
+  ✅ 纯读的统计和列表仍可以并行，不把只读查询也变成写锁。
+  ❌ 写事务会更早占住写锁，慢读如果被错误标成写事务，会挡住别人的写入。
+B) 只保留忙等超时
+§3.1 维持 WAL、busy_timeout 和短事务，不增加 BEGIN IMMEDIATE，也不为锁升级单独加测试。工作量：human 约 0 / CC 约 0。
+  ✅ 存储合同保持现在这几句，T02 不用改锁的拿法。
+  ✅ 实现者少一个必须记住的事务入口。
+  ❌ 先读再写的事务仍会在升级时失败，busy_timeout 不会等待这把锁。
+Net: 选 A 是让已经写上的忙等真正盖住计划里的写事务。选 B 是保持原文，留下先读后写的失败。
+Header: 写事务加锁
+Options:
+A) 写事务立即加锁
+每笔会写入的事务用 BEGIN IMMEDIATE。只读快照保持延迟事务。T02 增加锁升级测试。功能范围和八个代码根不变。
+B) 只保留忙等超时
+§3.1 维持 WAL、busy_timeout 和短事务，不增加 BEGIN IMMEDIATE，也不为锁升级单独加测试。
+
+State: approved
+Actual answer: A，D2，写事务立即加锁
+Accepted scope: 每笔会写入的事务用 BEGIN IMMEDIATE。只读快照保持延迟事务。T02 增加锁升级测试。功能范围和八个代码根不变。
+History: 原 State pending、Actual answer unanswered、Accepted scope none。D2 选择 A 后被本段取代。
+
+### R2: 见证盘丢失后能否恢复
+Finding: 2, CRITICAL, confidence 8/10, docs/plans/PAtrick技术实现计划.md:520, Codex outside review, confirmed by eng review
+Plan baseline: §6.4 写“可找回日志或逐项重新核定资料”。T22 的 canActivateRecovery 只在见证闭合、撤回完整、旧写者已隔离时开放。没有核定任务、授权或测试。
+Runtime evidence: 没有恢复代码。T22 测试只覆盖有序交接和关闭。
+Comparison grid:
+
+| Choice | Current | A 补上核定入口 | B 保持只关闭 | C 先调查再定 | D 推迟这条修改 |
+|---|---|---|---|---|---|
+| R2 见证丢失 | 句子承诺核定，任务没有入口 | 所有者经可信控制逐项导入幸存资料，新 epoch，不占用 2 小时交接目标 | 维持现状 | 先查备份工具能带回什么，不改合同 | 不改合同，以后再做 |
+| 写事务 BEGIN IMMEDIATE | 已批准，D2 | 不变 | 不变 | 不变 | 不变 |
+| 八个代码根与 T00–T27 功能 | 已批准，D1 | 不变 | 不变 | 不变 | 不变 |
+| R3 后台模型授权、R4 创建窗口 base、R5 Lima 顺序 | 未决 | 未决 | 未决 | 未决 | 未决 |
+
+Question D3:
+D3 — 见证盘没了，还要不要一条人工核定入口？
+Project/branch/task: PAtrick 的 main，审查 docs/plans/PAtrick技术实现计划.md。
+ELI10: 计划说旧机器的恢复见证对不上时，相关资料先关闭，也可以“逐项重新核定”。后面的恢复任务只实现了正常交接：旧机器停干净、日志完整、见证封存，才允许新机器写。如果那块盘直接坏了，这些条件永远凑不齐，句子里的核定又没有步骤和测试。用户会以为灾难后还能把幸存的笔记导回来，实际只能一直看到关闭。
+Stakes if we pick wrong: 要么发布时承诺一条不存在的恢复路，要么为了补路把首版恢复做成第二套产品。
+Recommendation: A 因为这句话已经写进恢复合同，就该有一条受控入口，并且不要把它算进 2 小时的正常交接。
+Note: options differ in kind, not coverage — no completeness score
+Pending remedies not decided here: R3, R4, R5
+Pros / cons:
+A) 补上核定入口 (recommended)
+T22 增加一条路径：见证不可达且所有者完成本人认证后，每个资料域保持关闭，直到该域经可信控制导入幸存的 Vault 或备份。导入使用新 epoch，不自动重发飞书或外部效果。这条路径的耗时单独记录，不算 RTO≤2 小时。工作量：human 约 2 天 / CC 约 40 分钟。
+  ✅ 盘损坏时本人仍能把幸存原稿导入新账本，页面显示的是核定进度，不是永久无说明的关闭。
+  ✅ 正常交接的 2 小时目标不被这条慢路径拖进去，外部动作也不会凭旧见证自动重发。
+  ❌ 首版要多写一套授权和测试，导入哪些对象、哪些保持未知，都要在 T22 里写死。
+B) 保持只关闭
+不改 T22。§6.4 那句核定继续留着，没有任务和测试。工作量：human 约 0 / CC 约 0。
+  ✅ 恢复任务保持现在的失败关闭门禁，不用在首版设计导入协议。
+  ✅ 有序交接的测试不用增加新分支。
+  ❌ 合同承诺了核定，实现和测试都没有这条路，盘损坏后用户看不到下一步。
+C) 先调查再定
+先核对选定备份工具在见证盘丢失时能交回什么，再决定要不要入口。调查期间合同和 T22 不动。工作量：human 约 4 小时 / CC 约 20 分钟。
+  ✅ 不会在备份工具能力还没看清时写死导入范围。
+  ✅ 已批准的恢复门禁保持原样，调查本身不改行为。
+  ❌ 首版恢复合同会继续带着一条没有任务的承诺，直到调查结束。
+D) 推迟这条修改
+这次不改 §6.4 和 T22。工作量：human 约 0 / CC 约 0。
+  ✅ 实现可以按现有失败关闭门禁开工，不被恢复分支挡住。
+  ✅ 其他未决项仍可单独决定。
+  ❌ 发布时仍会把未实现的核定说成恢复能力。
+Net: 选 A 是让已经写上的核定变成一条慢速、人工、不重发外部动作的入口。选 B 或 D 是把缺口留在合同里。
+Header: 见证丢失
+Options:
+A) 补上核定入口
+T22 增加见证不可达时的所有者导入。新 epoch，不自动重发外部效果，耗时不算 2 小时交接。
+B) 保持只关闭
+不改 T22，核定句子保持原样且没有任务。
+C) 先调查再定
+先核对备份工具能交回什么。调查期间不改合同。
+D) 推迟这条修改
+这次不改 §6.4 和 T22。
+
+State: approved
+Actual answer: A，D3，补上核定入口
+Accepted scope: T22 增加见证不可达时的所有者导入。新 epoch，不自动重发外部效果，耗时不算 2 小时交接。
+History: 原 State pending、Actual answer unanswered、Accepted scope none。D3 选择 A 后被本段取代。
+
+### R3: 评测和翻译的模型调用记在谁的账上
+Finding: 3, CRITICAL, confidence 8/10, docs/plans/PAtrick技术实现计划.md:1083, Codex outside review, confirmed by eng review
+Plan baseline: T08 只有 work 与 consultation 两种 grant。§4 的定时评测和 §5.2 的界面翻译都会调用模型。发布反例禁止没有预留的收费调用。
+Runtime evidence: 没有预算代码。知识核实按计划是固定准入或人工采纳，不单列模型调用。
+Comparison grid:
+
+| Choice | Current | A 增加维护主体 | B 保持两种主体 | C 先调查再定 | D 推迟这条修改 |
+|---|---|---|---|---|---|
+| R3 评测/翻译记账 | 无主体 | 所有者名下的 maintenance grant，独立预算，可取消，结果落盘，不能发业务 effect | 维持只有 work 和 consultation | 先列出每一次收费调用再定主体 | 不改 T08 |
+| BEGIN IMMEDIATE 与见证导入 | 已批准，D2、D3 | 不变 | 不变 | 不变 | 不变 |
+| 八个代码根与功能清单 | 已批准，D1 | 不变 | 不变 | 不变 | 不变 |
+| R4 创建窗口 base、R5 Lima 顺序 | 未决 | 未决 | 未决 | 未决 | 未决 |
+
+Question D4:
+D4 — 评测和翻译的模型费用记在哪种授权上？
+Project/branch/task: PAtrick 的 main，审查 docs/plans/PAtrick技术实现计划.md。
+ELI10: 计划只给两种花钱的许可：某件工作，或一次咨询。标准评测和界面翻译也会叫模型，但它们不是某件待办工作，也不是一次聊天。发布条件又写明，没有预留的收费调用不能发版。实现时这三句话对不上，评测或翻译要么偷偷花钱，要么根本发不出去。
+Stakes if we pick wrong: 试点时评测和翻译没有账本，或者为了能跑把它们塞进某件工作的额度，停掉工作就停掉评测。
+Recommendation: A 因为评测和翻译都是计划里的功能，它们需要自己的授权和预算，而且不能发出业务动作。
+Note: options differ in kind, not coverage — no completeness score
+Pending remedies not decided here: R4, R5
+Pros / cons:
+A) 增加维护主体 (recommended)
+T08 增加 subject_kind=maintenance。它属于所有者账户，有独立预算、取消和结果落盘。标准评测与界面翻译只从这里预留。它不能签发业务 effect，也不能当成咨询答案。工作和咨询的规则不变。工作量：human 约 1 天 / CC 约 30 分钟。
+  ✅ 评测和翻译有地方预留费用，取消维护任务不会停掉正在跑的工作。
+  ✅ 发布反例“没有预留的收费调用”可以对照到一个具体主体，而不是靠实现者临场选择。
+  ❌ 预算表和设置页要多一种额度，所有者要能看见并停掉它。
+B) 保持两种主体
+T08 仍只有 work 和 consultation。评测和翻译若要调用模型，必须先挂到某一件工作或某一次咨询上，否则拒绝。工作量：human 约 2 小时 / CC 约 15 分钟。
+  ✅ 不增加第三种授权，现有预留和发送许可可以原样复用。
+  ✅ 没有挂靠对象时调用会被拒绝，不会出现账外费用。
+  ❌ 定时评测必须依附某件工作，停掉或做完那件工作后，评测没有独立的生命周期。
+C) 先调查再定
+先把计划里的每一次收费调用列成表，再决定主体。调查期间 T08 不改。工作量：human 约 3 小时 / CC 约 15 分钟。
+  ✅ 可以确认知识核实和其他后台任务是否也会花钱，避免漏掉一种调用。
+  ✅ 已批准的工作和咨询授权保持不动。
+  ❌ 在列表完成前，评测和翻译仍然没有可实现的记账合同。
+D) 推迟这条修改
+这次不改 T08。工作量：human 约 0 / CC 约 0。
+  ✅ 委托和预算可以按现有两种主体开工。
+  ✅ R4 和 R5 仍可单独决定。
+  ❌ 真实评测和翻译走到模型时仍然没有合法预留，发布门槛会挡住它们。
+Net: 选 A 是给评测和翻译单独的一笔账。选 B 是强迫它们挂靠工作或咨询。选 D 是把这个洞留到实现时。
+Header: 维护授权
+Options:
+A) 增加维护主体
+T08 增加所有者名下的 maintenance grant。评测和翻译从这里预留，不能发业务 effect。
+B) 保持两种主体
+只有 work 和 consultation。评测和翻译必须挂靠其中一种，否则拒绝。
+C) 先调查再定
+先列出每一次收费调用。调查期间不改 T08。
+D) 推迟这条修改
+这次不改 T08。
+
+State: approved
+Actual answer: A，D4，增加维护主体
+Accepted scope: T08 增加所有者名下的 maintenance grant。评测和翻译从这里预留，不能发业务 effect。
+History: 原 State pending、Actual answer unanswered、Accepted scope none。D4 选择 A 后被本段取代。
+
+### R4: 首次核验前 base 漂移如何收口
+Finding: 4, CRITICAL, confidence 8/10, docs/plans/PAtrick技术实现计划.md:1301, Codex outside review, narrowed by eng review
+Plan baseline: canVerifyFirstPublication 要求当前 base SHA 等于冻结值。正文说漂移后等待重新核验，但没有更换冻结值或在同一 PR 上重做产物的步骤。已核验之后的 base 移动已由 matchesVerifiedPr 和测试保留原回执。
+Runtime evidence: 没有发布代码。现有示例只在首次核验成功后推进 base。
+Comparison grid:
+
+| Choice | Current | A 同一 PR 重新核验 | B 保持等待 | C 先调查再定 | D 推迟这条修改 |
+|---|---|---|---|---|---|
+| R4 创建窗口 base | 等待，没有下一状态 | 同一 PR：head/tree 仍匹配则冻结新 base；不匹配则在同分支重做产物再核验。不新建 PR | 维持原文 | 先对照 GitHub PR 更新接口 | 不改 T12 |
+| 维护 grant、写锁、见证导入 | 已批准 | 不变 | 不变 | 不变 | 不变 |
+| 八个代码根与功能清单 | 已批准，D1 | 不变 | 不变 | 不变 | 不变 |
+| R5 Lima 顺序 | 未决 | 未决 | 未决 | 未决 | 未决 |
+
+Question D5:
+D5 — 首次核验前 base 变了，原来的 PR 怎么收口？
+Project/branch/task: PAtrick 的 main，审查 docs/plans/PAtrick技术实现计划.md。
+ELI10: 计划在创建 PR 的窗口里记下当时的 base。核验函数要求远端 base 还是这个值。正文说 base 变了就等待重新核验，却没有把新 base 写回去，也没有说何时在同一条 PR 上重做方案。已经核验过的 PR 不受影响，base 继续前进仍算原来那次交付。卡住的是还没完成第一次核验的那条。用户会看到一个 PR 永远停在待核验，系统又不许再开一个。
+Stakes if we pick wrong: 目标分支正常前进时，方案交付停住，或者实现者为了过关再创建一个 PR。
+Recommendation: A 因为计划已经禁止重复创建，就该写明同一条 PR 如何完成第一次核验。
+Note: options differ in kind, not coverage — no completeness score
+Pending remedies not decided here: R5
+Pros / cons:
+A) 同一 PR 重新核验 (recommended)
+T12 补上首次核验前的转移。PR 已存在且 head/tree 仍等于冻结产物时，把新的 base SHA 冻进同一次核验。head 或 tree 变了，就在同一分支重做产物并核验新提交。测试要求 createPullRequest 仍是 1 次，并且最终能写 work.delivered。已核验后的 base 前进规则不变。工作量：human 约 1 天 / CC 约 25 分钟。
+  ✅ 目标分支前进不会把第一次交付永远停在待核验，也不会再开第二个 PR。
+  ✅ 产物被改过时会重做并留下新的 head/tree，而不是把旧产物说成已核验。
+  ❌ 要分清“只是 base 变了”和“产物变了”两条路，测试得覆盖这两种。
+B) 保持等待
+不改 canVerifyFirstPublication，也不增加重做步骤。漂移后继续等待。工作量：human 约 0 / CC 约 0。
+  ✅ 首次核验的等式保持现在这么严，不会把后来的 base 误当成当时的目标。
+  ✅ T12 的现有示例不用改。
+  ❌ 创建窗口里的正常 base 前进没有完成条件，PR 可以一直停在 uncertain。
+C) 先调查再定
+先核对 GitHub 在 PR 创建后更新 base 的接口，再写转移。调查期间 T12 不改。工作量：human 约 3 小时 / CC 约 15 分钟。
+  ✅ 不会在平台不能改 base 时写一条做不到的冻结步骤。
+  ✅ 已核验后的保留规则保持不动。
+  ❌ 调查结束前，第一次核验仍没有收口。
+D) 推迟这条修改
+这次不改 T12。工作量：human 约 0 / CC 约 0。
+  ✅ 发布任务可以按现有首次核验等式开工。
+  ✅ R5 仍可单独决定。
+  ❌ 目标分支日常前进时，未完成的第一次核验仍可能永远等下去。
+Net: 选 A 是让同一条 PR 走完第一次核验。选 B 或 D 是把“等待重新核验”留成没有下一状态的句子。
+Header: 首次核验
+Options:
+A) 同一 PR 重新核验
+head/tree 仍匹配则冻结新 base；否则在同分支重做产物。不新建 PR。
+B) 保持等待
+不改首次核验等式，漂移后继续等待。
+C) 先调查再定
+先核对 GitHub 能否更新已创建 PR 的 base。调查期间不改 T12。
+D) 推迟这条修改
+这次不改 T12。
+
+State: approved
+Actual answer: A，D5，同一 PR 重新核验
+Accepted scope: head/tree 仍匹配则冻结新 base；否则在同分支重做产物。不新建 PR。
+History: 原 State pending、Actual answer unanswered、Accepted scope none。D5 选择 A 后被本段取代。
+
+### R5: 执行器准入用的隔离环境由谁先交付
+Finding: 5, INFORMATIONAL, confidence 8/10, docs/plans/PAtrick技术实现计划.md:1157, Codex outside review, confirmed by eng review
+Plan baseline: T09 要在真实隔离身份上做准入。`deploy/lima/executor.yaml` 写在 T23 的文件里，而 T23 依赖 T09。
+Runtime evidence: 仓库没有 Lima 配置，也没有执行器代码。
+Comparison grid:
+
+| Choice | Current | A T09 交付隔离环境 | B 保持手工环境 | C 先调查再定 | D 推迟这条修改 |
+|---|---|---|---|---|---|
+| R5 Lima 顺序 | T09 要用，T23 才定义 | T09 交付 yaml 和启动命令；T23 打包同一份，仍依赖 T09 | 文件留在 T23，T09 用手工虚拟机 | 先在目标 Mac 上试 Lima | 不改任务归属 |
+| 已批准的 D1–D5 | 保持 | 不变 | 不变 | 不变 | 不变 |
+| 功能清单 | 三执行器仍要准入 | 不变 | 不变 | 不变 | 不变 |
+
+Question D6:
+D6 — 隔离虚拟机的定义放在 T09 还是留到安装器？
+Project/branch/task: PAtrick 的 main，审查 docs/plans/PAtrick技术实现计划.md。
+ELI10: 执行器准入要求在隔离环境里真的跑起来。描述这台虚拟机的文件却排在安装器任务里，而安装器又要等准入完成。按表执行时，准入要么等一个还不能开始的任务，要么靠别人先在机器上手装一台没有进仓库的虚拟机。后一种跑通了，也不能说明以后安装器装出来的是同一台。
+Stakes if we pick wrong: 准入在开发机上通过，装到 Mac mini 上的虚拟机却是另一份配置。
+Recommendation: A 因为准入和以后的安装包必须使用同一份虚拟机定义，而这份定义不能排在准入后面。
+Note: options differ in kind, not coverage — no completeness score
+Pending remedies not decided here: none
+Pros / cons:
+A) T09 交付隔离环境 (recommended)
+把 `deploy/lima/executor.yaml` 和一条启动命令挪到 T09。准入测试运行这条命令。T23 只打包同一份文件，依赖关系仍是 T23 等待 T09。三台执行器的准入标准不变。工作量：human 约 4 小时 / CC 约 20 分钟。
+  ✅ 准入用的虚拟机和以后安装器装的是同一份文件，不会各写一套。
+  ✅ T09 不再依赖还没开始的 T23，也不需要一份没进仓库的手工环境。
+  ❌ T09 要多承担虚拟机启动，而不只是三个命令行适配器。
+B) 保持手工环境
+yaml 留在 T23。T09 的真实准入可以在手工准备的虚拟机上做，并在证据里注明手工。工作量：human 约 0 / CC 约 0。
+  ✅ T09 的文件清单保持三个适配器和探针，安装器仍集中拥有部署文件。
+  ✅ 现在不用改任务依赖。
+  ❌ 手工虚拟机和 T23 后来写的 yaml 可能不是同一份，准入证明对不上安装结果。
+C) 先调查再定
+先在目标 Mac 上确认 Lima 能否按计划的身份和出站限制启动。调查期间不改任务归属。工作量：human 约 4 小时 / CC 约 15 分钟。
+  ✅ 不会在这台机器根本跑不了 Lima 时把启动命令写进 T09。
+  ✅ 已批准的执行器合同保持不动。
+  ❌ 调查完成前，准入仍没有一份可重复的环境定义。
+D) 推迟这条修改
+这次不改 T09 和 T23 的文件归属。工作量：human 约 0 / CC 约 0。
+  ✅ 执行器和安装器可以按现有清单开工。
+  ✅ 不增加 T09 的范围。
+  ❌ 真实准入仍可能建立在一份没有版本的手工虚拟机上。
+Net: 选 A 是把虚拟机定义放到第一次使用它的任务里。选 B 或 D 是让准入和安装器各讲各的环境。
+Header: 隔离环境
+Options:
+A) T09 交付隔离环境
+yaml 和启动命令归 T09。T23 打包同一份，仍等待 T09。
+B) 保持手工环境
+yaml 留在 T23。T09 可以用注明为手工的虚拟机做准入。
+C) 先调查再定
+先在目标 Mac 上试 Lima。调查期间不改任务归属。
+D) 推迟这条修改
+这次不改 T09 和 T23 的文件归属。
+
+State: approved
+Actual answer: A，D6，T09 交付隔离环境
+Accepted scope: yaml 和启动命令归 T09。T23 打包同一份，仍等待 T09。
+History: 原 State pending、Actual answer unanswered、Accepted scope none。D6 选择 A 后被本段取代。
+
+Approval readiness: PASS. Checked R1 D2 A, R2 D3 A, R3 D4 A, R4 D5 A, R5 D6 A. D1 accepted the original eight code roots and did not cut features.
+
+## Architecture review
+
+当前形状是领域库归 patrick-service，任务和首答归 Autoloop，执行器与主机监督是另两个进程。D1 保持八个代码根。第二形状是把个人标准、grant 和 Vault 规则放进 Autoloop 插件，service 只做只读投影。第二形状把业务规则散进编排器，换执行器时还要搬走标准，所以不采用。深度在领域端口：判断、授权和文件写入藏在少数命令后面，HTTP 路由不直接写库。
+
+八个红旗：领域模块按知识分，不是按时间切。answers.ts 先由 T04 建立、再由 T10 扩展，不是两个写者。T09 允许单个后端受阻，不要求三台都通过才算任务结束。事件目录和示例类型是子集关系，不是第二份权威清单。没有发现必须改布局的红旗。
+
+[INFORMATIONAL] (confidence: 8/10) docs/plans/PAtrick技术实现计划.md:142 — 写事务原来只写了 busy_timeout。SQLite 对先读后升级的事务不会用这个超时等待。D2 已改成 BEGIN IMMEDIATE，纯读仍可延迟。
+
+[INFORMATIONAL] (confidence: 8/10) docs/plans/PAtrick技术实现计划.md:461 — 飞书长连接要求约 3 秒内确认，官方 Node SDK 从 1.24.0 起提供这条通道。计划已要求先落 inbox 再确认，并按 message_id 去重。T00 锁定 SDK 时要记下这个下限。这不是一条新的产品行为。
+
+Dispositions: D1 保持原布局。D2 接受立即加锁。飞书时限留在 T00 的版本锁定里，不另开合同。
+
+## Code quality review
+
+仓库里没有可复用的实现代码。计划已经把设置变更、AnswerGate、Vault 检查和三轴回执收成共享合同。没有第二处需要再抽一层。历史实现已从 main 删除，不把旧文件当模板。
+
+No issues found.
+
+Dispositions: 没有新的抽取决定。
+
+## Test review
+
+磁盘上没有测试。下图里的覆盖都是计划中的用例，不是已通过的测试。框架由计划指定为 Vitest、fast-check、Playwright 和 axe-core。当前没有 package.json，所以这是提案，不是探测到的现成框架。
+
+```text
+CODE PATHS                                            USER FLOWS
+[+] packages/storage                                  [+] 一条工作到 PR
+  ├── 写事务 BEGIN IMMEDIATE                            ├── [GAP] [→E2E] 直接开 PR — T25
+  │   └── [GAP] 读锁持有时等待 — T02                    ├── [GAP] [→E2E] 回答后续办 — T15/T25
+  └── 命令指纹 409 — [GAP] T02/T03                      └── [GAP] [→E2E] 过期或冲突拦截 — T25
+[+] 答复与预算                                          [+] 飞书和 Web
+  ├── [GAP] 双入口只收一次 — T10                        ├── [GAP] [→E2E] 竞答只一次 — T10
+  ├── [GAP] 维护主体预留 — T08                          └── [GAP] 3 秒内确认后去重 — T10
+  └── [GAP] 咨询不发业务 effect — T11                  [+] 恢复
+[+] 发布                                                ├── [GAP] [→E2E] 有序交接只一方可写 — T22
+  ├── [GAP] [→E2E] 首次核验前同一 PR 收口 — T12         └── [GAP] [→E2E] 见证不可达时人工导入 — T22
+  └── [GAP] 已核验后 base 前进保留回执 — T12           [+] 编辑
+[+] 执行器                                              └── [GAP] [→E2E] 关 Obsidian 后仍入库 — T27/T25
+  └── [GAP] 先启动 T09 的 Lima 再准入 — T09
+LLM: [GAP] [→EVAL] 标准评测走 maintenance grant — T07/T25
+
+COVERAGE: 0/12 code paths have a test on disk
+QUALITY: ★★★:0 ★★:0 ★:0  |  GAPS: 12 (6 E2E, 1 eval)
+```
+
+Legend: ★★★ behavior + edge + error  |  ★★ happy path  |  ★ smoke check
+[→E2E] = needs integration test  |  [→EVAL] = needs LLM eval
+
+这次新增、计划原先没有写死的缺口是：锁升级、维护主体、同一 PR 重新核验、见证导入、Lima 启动。它们已写入对应任务。其余缺口是计划原有的用例，仓库里还没有文件。
+
+Dispositions: 五个新缺口随 D2 到 D6 进入任务，不再单独提问。
+
+## Performance review
+
+计划把模型并发写成 1，队列上限写成 1000，附件 20MB，慢客户端缓冲 64 条或 256 KiB。这些是计划里的估计，不是这次测出来的。单写者加 WAL 适合这个规模，不需要分片。D2 让写事务更早拿锁，所以写事务里不能再做网络和文件大读。计划第 3.1 节已经把网络和模型调用放在事务外。
+
+No issues found.
+
+Dispositions: 不改容量数字。
+
+## Outside voice
+
+CODEX SAYS (plan review — outside voice):
+════════════════════════════════════════════════════════════
+Recommendation: revise the execution contracts before implementation because several required workflows have no defined path to completion.
+
+- **High — Disaster recovery stops at permanent refusal.** §6.4/T22 requires a sealed witness produced after the old writer completes reconciliation. Permanent disk loss prevents that. Fail-closed behavior is intentional, but “逐项重新核定资料” has no implementation task, authorization protocol, or acceptance test. Define that recovery path and distinguish its recovery time from an orderly handover.
+
+- **High — Background model operations have no specified authorization path.** T08 permits only work and consultation grants. Independent standard evaluation, knowledge verification, and presentation translation lack a defined mapping to either subject, including budget ownership, cancellation and result persistence. Autoloop maintenance scheduling does not supply those permissions. Specify the mapping before freezing these contracts.
+
+- **High — Base drift can strand an already-created PR indefinitely.** T12 says to wait for revalidation, but its acceptance predicate still requires the original frozen base SHA. Repeating the check after normal base advancement cannot succeed. Define an explicit revalidation transition tied to the existing PR, including when the artifact needs regeneration. Test eventual completion without creating another PR.
+
+- **Medium — Production executor admission depends on infrastructure delivered downstream.** T09 requires actual isolated-host admission, while T23 owns Lima provisioning and itself depends on T09. Assign reproducible isolation provisioning to an earlier task; T23 can package it. Otherwise T09 depends on undocumented manual infrastructure.
+
+VERDICT: FINDINGS
+════════════════════════════════════════════════════════════
+
+Dispositions: D3 接受见证导入。D4 接受 maintenance grant，范围收到评测和翻译，知识核实仍按计划里的固定准入。D5 接受同一 PR 收口，已核验之后的 base 前进本来就能保留回执。D6 接受 T09 拥有 Lima 定义。
+
+## NOT in scope
+
+业务成果的合并和部署、L3、多租户、第二套调度器，仍按计划第 1.1 节留在后面。知识核实不单列成模型调用。飞书 3 秒确认不另开行为，由 T00 锁定 SDK。
+
+## What already exists
+
+main 上只有设计文档、原型和导出图。0819f43 删除了旧实现，当前路径都还没落地。Autoloop、飞书官方 SDK、Obsidian、GitHub 和 SQLite 是要接入的外部产品，不是要在这个仓库里重写的框架。
+
+## Failure modes
+
+写锁升级失败时，T02 要看到等待而不是静默丢写。见证盘丢失时，域保持关闭，直到所有者导入，不自动重发外部动作。评测或翻译没有 maintenance grant 时拒绝调用。创建窗口里 base 变了，仍用原来的 PR 收口。飞书超时重推由 inbox 和 message_id 去重接住。这些路径现在都有处理要求和测试要求。
+
+Failure modes: 0 critical gaps flagged.
+
+## Worktree parallelization strategy
+
+计划第 7.6 节已有四条工作线，但合同包和迁移清单是共享的。
+
+| Step | Modules touched | Depends on |
+|------|-----------------|------------|
+| 合同与存储 | packages/contracts, packages/storage, apps/service | — |
+| 执行器与隔离环境 | packages/executor, deploy/lima | 合同与存储 |
+| 采集、答复、发布 | packages/integrations, packages/domain | 合同与存储 |
+| Web | apps/web | 合同 |
+| 主机与安装 | packages/host, deploy | 执行器、采集与发布 |
+
+Parallel lanes: Web 可以在合同稳定后和执行器并行。迁移清单和共享路由必须串行合入。
+Execution order: 先合同与存储。然后 Web 与执行器并行。采集、答复、发布在存储之后。主机与安装最后。
+Conflict flags: packages/storage/migrations/manifest.json，packages/contracts，apps/service 的路由注册。
+
+## Implementation Tasks
+
+Synthesized from this review's findings. Each task derives from a specific finding above. Run with Claude Code or Codex; checkbox as you ship.
+
+- [ ] **T1 (P1, human: ~2h / CC: ~15min)** — storage — 用两个连接证明 BEGIN IMMEDIATE 在忙等内等待
+  - Surfaced by: Architecture review — docs/plans/PAtrick技术实现计划.md:142
+  - Files: packages/storage/src/database.ts, tests/integration/T02.test.ts
+  - Verify: npm exec -- vitest run tests/integration/T02.test.ts
+- [ ] **T2 (P1, human: ~2d / CC: ~40min)** — recovery — 见证不可达时经可信控制逐域导入
+  - Surfaced by: Outside voice — docs/plans/PAtrick技术实现计划.md:520
+  - Files: packages/host/src/recovery/restore.ts, tests/recovery/T22.test.ts
+  - Verify: npm exec -- vitest run tests/recovery/T22.test.ts
+- [ ] **T3 (P1, human: ~1d / CC: ~30min)** — budget — 评测和翻译只从 maintenance grant 预留
+  - Surfaced by: Outside voice — docs/plans/PAtrick技术实现计划.md:1083
+  - Files: packages/domain/src/budget.ts, packages/domain/src/delegation.ts, tests/integration/T08.test.ts
+  - Verify: npm exec -- vitest run tests/integration/T08.test.ts
+- [ ] **T4 (P1, human: ~1d / CC: ~25min)** — publisher — 首次核验前在同一 PR 上收口
+  - Surfaced by: Outside voice — docs/plans/PAtrick技术实现计划.md:1287
+  - Files: packages/integrations/publisher/github.ts, tests/integration/T12.test.ts
+  - Verify: npm exec -- vitest run tests/integration/T12.test.ts
+- [ ] **T5 (P2, human: ~4h / CC: ~20min)** — executor — T09 交付 Lima 定义和启动命令
+  - Surfaced by: Outside voice — docs/plans/PAtrick技术实现计划.md:1157
+  - Files: deploy/lima/executor.yaml, scripts/start-executor-vm.mjs, tests/admission/T09.test.ts
+  - Verify: 启动命令后运行 npm exec -- vitest run tests/admission/T09.test.ts
+
+## Suppressed findings
+
+[INFORMATIONAL] (confidence: 4/10) docs/plans/PAtrick技术实现计划.md:29 — 计划写 292 帧和 65 张导出索引。这次没有逐张点算导出图，不能把目录里的 png 数量当成反证。
+
+[INFORMATIONAL] (confidence: 3/10) docs/plans/PAtrick技术实现计划.md:454 — Mac mini 和 Mac Pro 的内存与磁盘没有在本仓库里核对。
+
+## Reality rows
+
+前提表：空仓库实施，见计划第 29 行，已核对当前 main 无实现文件。写事务立即加锁，见第 142 行。工时 "236–382小时" 是计划自己标的初估，见第 530 行。Mac 硬件、帧数和飞书真实回调尚未在本机实测。unverified=3。
+
+REALITY: premise-table finding unverified=3 空仓库与写锁已核对，硬件和帧数未实测 docs/plans/PAtrick技术实现计划.md:29
+REALITY: already-done pass 当前 main 没有计划中的实现文件，旧代码已删除 0819f43
+REALITY: surface-check pass npm ci 可用，计划中的测试脚本要等 T01 建立 docs/plans/PAtrick技术实现计划.md:60
+REALITY: binding-decisions pass D1 到 D6 已记入决策账，没有推翻已批准的布局 docs/plans/PAtrick技术实现计划.md:1773
+REALITY: numbers finding 工时是初估，硬件和帧数没有实测收据 docs/plans/PAtrick技术实现计划.md:530
+REALITY: deferred-asks pass 没有关联的外部工单，第 1.1 节已列出不做的事 docs/plans/PAtrick技术实现计划.md:48
+REALITY: pr-count finding 计划选择每个任务一个 PR，默认策略是一轮一个 PR docs/plans/PAtrick技术实现计划.md:530
+REALITY: transaction-semantics pass 写事务 BEGIN IMMEDIATE，网络不放进写事务 docs/plans/PAtrick技术实现计划.md:142
+REALITY: units pass 缓冲和队列单位写在计划里，本次没有改单位 docs/plans/PAtrick技术实现计划.md:508
+REALITY: perf-table finding 负载数字是计划里的目标，不是这次测得的基线 docs/plans/PAtrick技术实现计划.md:510
+REALITY: prior-art pass 旧实现已删除，不作为分叉维护 docs/plans/PAtrick技术实现计划.md:29
+REALITY: contract-assumptions finding Autoloop 的 custom 只传 text 仍要 T00 探针，不能当成已测事实 docs/plans/PAtrick技术实现计划.md:964
+REALITY: dependency-fallback pass 单个执行器可以标受阻，不挡住已准入的那一台 docs/plans/PAtrick技术实现计划.md:1157
+REALITY: obligation-tiers pass D2 到 D6 是对应任务的交付合同，不是额外的发布门槛 docs/plans/PAtrick技术实现计划.md:538
+
+## Completion summary
+
+- Step 0: Scope Challenge — scope accepted as-is
+- Reality rows: 见 PLAN_REALITY 行，unverified premises 3
+- Architecture Review: 2 issues found
+- Code Quality Review: 0 issues found
+- Test Review: diagram produced, 5 new gaps identified
+- Performance Review: 0 issues found
+- NOT in scope: written
+- What already exists: written
+- TODOS.md updates: 0 items proposed
+- Failure modes: 0 critical gaps flagged
+- Unresolved decisions: 0 in this review
+- Outside voice: codex completed, 4 findings, all resolved
+- Parallelization: 4 lanes, Web and executor can run in parallel after contracts, storage manifest stays sequential
+- Lake Score: N/A
+
+## Implementation Tasks
+
+Synthesized from the design review. Each task derives from a decision above.
+
+- [ ] **T1 (P1, human: ~30min / CC: ~10min)** — decisions — 第一眼只留问题、两个选项的风险和「提交决定」
+  - Surfaced by: Pass 1 — 决策页层级
+  - Files: apps/web/src/features/decisions/DecisionsPage.tsx, apps/web/src/features/decisions/DecisionCard.tsx
+  - Verify: 聊天按钮是「发送」，不能提交决定
+- [ ] **T2 (P1, human: ~30min / CC: ~10min)** — decisions — 写上整理中、核验中、空、失败和离线时用户看见的句子
+  - Surfaced by: Pass 2 — 决策页等待
+  - Files: apps/web/src/features/decisions/DecisionsPage.tsx
+  - Verify: 回执变成已核验之前，提交不可用
+- [ ] **T3 (P1, human: ~20min / CC: ~10min)** — work — 每一行显示阶段句，不显示百分比
+  - Surfaced by: Pass 2 — 正在进行
+  - Files: apps/web/src/features/work/WorkPage.tsx
+  - Verify: 同一工作只有一行，详情页用同一句
+- [ ] **T4 (P2, human: ~20min / CC: ~10min)** — lists — 知识、标准和委托的空状态各有一句和一个下一步
+  - Surfaced by: Pass 2 — 空知识页
+  - Files: apps/web/src/features/knowledge/KnowledgePage.tsx, apps/web/src/features/standards/StandardsPage.tsx, apps/web/src/features/delegation/DelegationsPage.tsx
+  - Verify: 没有条目时不是空白表格，也不是故障
+- [ ] **T5 (P1, human: ~20min / CC: ~10min)** — consultation — 生成中流式显示，状态保持「正在回答」
+  - Surfaced by: Pass 2 — 咨询生成
+  - Files: apps/web/src/features/consultation/ConsultationPanel.tsx
+  - Verify: 最终答案落盘前不显示完成；取消后停止继续流出
+- [ ] **T6 (P2, human: ~10min / CC: ~5min)** — shell — 焦点环使用 2px #087B96
+  - Surfaced by: Pass 5 — 沿用计划令牌
+  - Files: apps/web/src/styles/tokens.css
+  - Verify: 键盘焦点可见，颜色是主色
+
+## Design Review Completion Summary
+
+```
+  +====================================================================+
+  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
+  +====================================================================+
+  | System Audit         | 无 DESIGN.md；七个主页面和六组设置           |
+  | Step 0               | 7/10，七个维度都审；画面生成没有密钥         |
+  | Pass 1  (Info Arch)  | 6/10 → 8/10 after fixes                    |
+  | Pass 2  (States)     | 5/10 → 8/10 after fixes                    |
+  | Pass 3  (Journey)    | 6/10 → 8/10 after fixes                    |
+  | Pass 4  (AI Slop)    | 8/10 → 8/10 after fixes                    |
+  | Pass 5  (Design Sys) | 7/10 → 8/10 after fixes                    |
+  | Pass 6  (Responsive) | 8/10 → 8/10 after fixes                    |
+  | Pass 7  (Decisions)  | 6 resolved, 0 deferred                     |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | written (2 items)                           |
+  | What already exists  | written                                     |
+  | TODOS.md updates     | 0 items proposed                            |
+  | Approved Mockups     | 0 generated, 0 approved                     |
+  | Decisions made       | 6 added to plan                             |
+  | Decisions deferred   | 0                                           |
+  | Overall design score | 5/10 → 8/10                                 |
+  +====================================================================+
+```
+
+不另写 DESIGN.md。不生成画面，因为没有图像接口密钥。界面模式是 OPERATE：侧栏、一个主动作、决策卡本身就是交互，不是装饰卡片墙。Inter 与 Noto Sans CJK SC 是计划已经选定的字体。
+
+NOT in scope: 单独的 DESIGN.md，避免和计划、Figma 形成第三份颜色名单。图像变体，因为设计器没有密钥。
+
+What already exists: 计划第 5.2 节的色值和字号，Figma 导出，以及七个页面的路由。没有现成的前端组件。
+
+Unresolved decisions: none.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Outside Review | Codex plan-review | Independent 2nd opinion | 1 | ISSUES OPEN | 4 findings, resolved by D3-D6 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN | 7 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | score: 5/10 → 8/10, 6 decisions |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+OUTSIDE COVERAGE: codex, plan-review, completed, 4 findings. This design pass did not run a second outside voice.
+CROSS-MODEL: Codex gpt-6-astra and the engineering review agreed on the witness gap, the missing paid-call subject, the first-verification stall, and the Lima order. The design pass was native only.
+VERDICT: DESIGN CLEARED. eng review required
+NO UNRESOLVED DECISIONS
