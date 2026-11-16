@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['24.9']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: T00 native contract
+        run: node --test tests/contract/T00.test.mjs
+      - name: Unit tests
+        if: hashFiles('tests/unit/**/*.ts') != ''
+        run: npm run test:unit
+      - name: Contract tests
+        run: npm run test:contract
+      - name: Integration tests
+        if: hashFiles('tests/integration/**/*.ts') != ''
+        run: npm run test:integration
+      - name: Recovery tests
+        if: hashFiles('tests/recovery/**/*.ts') != ''
+        run: npm run test:recovery
