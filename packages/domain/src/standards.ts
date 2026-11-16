@@ -308,7 +308,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
       });
     },
 
-    async openCandidate(input: IngestedHead & { baseVersion?: number | null }): Promise<Candidate> {
+    async openCandidate(input: IngestedHead & { baseVersion?: number | null; editId?: string | null }): Promise<Candidate> {
       assertDomain();
       const baseVersion = input.baseVersion === undefined ? null : input.baseVersion;
       const stamped = stamp();
@@ -359,11 +359,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
         const permission = permissionSnapshot(db, principal, domain);
         const watermark = evidenceWatermark(db, domain);
         if (!current) {
-          const edit = db.prepare(`SELECT edit_id FROM edit_intents
-            WHERE account_id = ? AND data_domain = ? AND target_id = ? AND draft_key = ? AND closed_at IS NULL
-            ORDER BY created_at DESC LIMIT 1`).get(principal.account_id, domain, input.standard_id, input.draft_key) as {
-            edit_id: string;
-          } | undefined;
+          const editId = linkedEditId(db, principal, domain, input);
           db.prepare(`INSERT INTO standard_candidates (
             candidate_id, standard_id, account_id, data_domain, draft_key, base_version, document_id, source_revision,
             content_hash, pointer_revision, rules_json, evidence_watermark, permission_hash, edit_id, status,
@@ -382,7 +378,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
             JSON.stringify(rules),
             watermark,
             permission,
-            edit?.edit_id ?? null,
+            editId,
             stamped,
             stamped,
           );
@@ -503,18 +499,23 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
         const candidate = requireCandidate(db, candidateId);
         if (candidate.account_id !== principal.account_id) throw new Error('FORBIDDEN');
         const report = requireReport(db, reportId);
-        if (report.candidate_id !== candidate.candidate_id || report.account_id !== candidate.account_id) return 'stale';
-        if (report.pointer_revision !== candidate.pointer_revision || report.base_version !== candidate.base_version) return 'stale';
-        if (expectedRevision !== candidate.pointer_revision) return 'stale';
+        const reject = (result: 'stale' | 'not_adopted'): 'stale' | 'not_adopted' => {
+          db.prepare(`UPDATE standard_candidates SET status = ?, updated_at = ? WHERE candidate_id = ?`).run(result, stamped, candidate.candidate_id);
+          if (candidate.edit_id) appendEditReceipt(db, candidate.edit_id, result, candidate.candidate_id, report.report_id, null, stamped);
+          return result;
+        };
+        if (report.candidate_id !== candidate.candidate_id || report.account_id !== candidate.account_id) return reject('stale');
+        if (report.pointer_revision !== candidate.pointer_revision || report.base_version !== candidate.base_version) return reject('stale');
+        if (expectedRevision !== candidate.pointer_revision) return reject('stale');
         const head = documentHead(db, candidate.document_id);
-        if (head.observed_seq !== report.source_revision || head.content_hash !== report.content_hash) return 'stale';
-        if (evidenceWatermark(db, candidate.data_domain) !== report.evidence_watermark) return 'stale';
-        if (report.decision !== 'pass') return 'not_adopted';
+        if (head.observed_seq !== report.source_revision || head.content_hash !== report.content_hash) return reject('stale');
+        if (evidenceWatermark(db, candidate.data_domain) !== report.evidence_watermark) return reject('stale');
+        if (report.decision !== 'pass') return reject('not_adopted');
         if (!principal.domains.includes(candidate.data_domain)) {
           stageProposal(db, principal, candidate, report, stamped, now);
-          return 'not_adopted';
+          return reject('not_adopted');
         }
-        if (permissionSnapshot(db, principal, candidate.data_domain) !== report.permission_hash) return 'stale';
+        if (permissionSnapshot(db, principal, candidate.data_domain) !== report.permission_hash) return reject('stale');
         const nextVersion = candidate.base_version === null ? 1 : candidate.base_version + 1;
         const updated = db.prepare(ADOPT_STANDARD_SQL).get({
           next_version: nextVersion,
@@ -523,7 +524,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           expected_revision: expectedRevision,
           base_version: candidate.base_version,
         }) as { standard_id: string; active_version: number; revision: number } | undefined;
-        if (!updated) return 'stale';
+        if (!updated) return reject('stale');
         if (updated.active_version !== nextVersion || updated.revision !== expectedRevision + 1) throw new Error('CONFLICT');
         db.prepare('UPDATE standards SET updated_at = ? WHERE standard_id = ?').run(stamped, candidate.standard_id);
         db.prepare(`UPDATE standard_versions SET status = 'retained' WHERE standard_id = ? AND status = 'active'`).run(candidate.standard_id);
@@ -969,6 +970,32 @@ function stageProposal(
     expiresAt,
     stamped,
   );
+}
+
+function linkedEditId(
+  db: SqliteDatabase,
+  principal: StandardsPrincipal,
+  domain: string,
+  input: IngestedHead & { editId?: string | null },
+): string | null {
+  if (input.editId) {
+    const chosen = db.prepare(`SELECT edit_id FROM edit_intents
+      WHERE edit_id = ? AND account_id = ? AND data_domain = ? AND target_id = ? AND draft_key = ? AND closed_at IS NULL`).get(
+      input.editId,
+      principal.account_id,
+      domain,
+      input.standard_id,
+      input.draft_key,
+    ) as { edit_id: string } | undefined;
+    if (!chosen) throw new Error('CONFLICT');
+    return chosen.edit_id;
+  }
+  const edit = db.prepare(`SELECT edit_id FROM edit_intents
+    WHERE account_id = ? AND data_domain = ? AND target_id = ? AND draft_key = ? AND closed_at IS NULL
+    ORDER BY created_at DESC LIMIT 1`).get(principal.account_id, domain, input.standard_id, input.draft_key) as {
+    edit_id: string;
+  } | undefined;
+  return edit?.edit_id ?? null;
 }
 
 function appendEditReceipt(

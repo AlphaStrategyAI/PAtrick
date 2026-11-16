@@ -53,31 +53,34 @@ async function createCandidate(c: Context, ready: Ready): Promise<Response> {
   if (body.expected_revision !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'expected_revision' });
   assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
   const { db, now } = ready();
-  const document = draftDocument(db, principal, body.payload.draft_key);
-  const standardId = body.payload.standard_id ?? document.patrick_id;
-  if (!standardId) throw new ApiError(409, 'CONFLICT', { reason: 'standard' });
+  const opened = openStandardDraft(db, principal, body.payload.draft_key);
+  if (body.payload.standard_id !== null && body.payload.standard_id !== opened.intent.target_id) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'standard' });
+  }
   const fingerprint = commandFingerprint({
     operation: 'createStandardCandidate',
-    resource_id: standardId,
-    data_domain: document.data_domain,
+    resource_id: opened.intent.target_id,
+    data_domain: opened.document.data_domain,
     expected_revision: null,
     payload_hash: body.payload_hash,
   });
   const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
   if (existing) return c.json(accepted(existing, 'createStandardCandidate', commandResource(db, existing)), 202);
-  const api = standardsApi(db, principal, now, document.data_domain);
+  const api = standardsApi(db, principal, now, opened.intent.data_domain);
   const candidate = await api.openCandidate({
-    vault_id: document.vault_id,
-    standard_id: standardId,
+    vault_id: opened.document.vault_id,
+    standard_id: opened.intent.target_id,
     draft_key: body.payload.draft_key,
-    document_id: document.document_id,
-    source_revision: document.observed_seq,
-    content_hash: document.content_hash,
+    document_id: opened.document.document_id,
+    source_revision: opened.document.observed_seq,
+    content_hash: opened.document.content_hash,
+    baseVersion: opened.intent.base_version,
+    editId: opened.intent.edit_id,
   });
   const commandId = storeCommand(db, principal, {
     operation: 'createStandardCandidate',
     resourceId: candidate.standard_id,
-    dataDomain: document.data_domain,
+    dataDomain: opened.document.data_domain,
     clientRequestId: body.client_request_id,
     expectedRevision: null,
     payloadHash: body.payload_hash,
@@ -174,25 +177,37 @@ function standardsApi(db: SqliteDatabase, principal: Principal, now: () => Date,
   return createStandardsApi(db, caller, { now, domain });
 }
 
-function draftDocument(db: SqliteDatabase, principal: Principal, draftKey: string) {
+function openStandardDraft(db: SqliteDatabase, principal: Principal, draftKey: string) {
   if (!draftKey || draftKey.includes('/') || draftKey.includes('\\') || draftKey.includes('..')) {
     throw new ApiError(422, 'UNPROCESSABLE', { reason: 'draft_key' });
   }
-  const rows = db.prepare(`SELECT document_id, vault_id, observed_seq, content_hash, patrick_id, data_domain, account_id
+  const rows = db.prepare(`SELECT edit_id, target_id, base_version, document_id, data_domain
+    FROM edit_intents
+    WHERE account_id = ? AND draft_key = ? AND operation IN ('create_standard', 'revise_standard')
+      AND closed_at IS NULL AND target_id IS NOT NULL AND document_id IS NOT NULL`).all(principal.account_id, draftKey) as Array<{
+    edit_id: string;
+    target_id: string;
+    base_version: number | null;
+    document_id: string;
+    data_domain: string;
+  }>;
+  const visible = rows.filter((row) => principal.domains.includes(row.data_domain));
+  const intent = visible[0];
+  if (!intent || visible.length !== 1) throw new ApiError(409, 'CONFLICT', { reason: 'draft' });
+  const document = db.prepare(`SELECT document_id, vault_id, observed_seq, content_hash, data_domain, account_id
     FROM vault_documents
-    WHERE account_id = ? AND relative_path = ? AND tombstone = 0`).all(principal.account_id, `标准修订/${draftKey}.md`) as Array<{
+    WHERE document_id = ? AND tombstone = 0`).get(intent.document_id) as {
     document_id: string;
     vault_id: string;
     observed_seq: number;
-    content_hash: string;
-    patrick_id: string | null;
+    content_hash: string | null;
     data_domain: string;
     account_id: string;
-  }>;
-  const visible = rows.filter((row) => principal.domains.includes(row.data_domain));
-  const document = visible[0];
-  if (!document || !document.content_hash || visible.length !== 1) throw new ApiError(409, 'CONFLICT', { reason: 'draft' });
-  return document;
+  } | undefined;
+  if (!document || document.account_id !== principal.account_id || document.data_domain !== intent.data_domain || !document.content_hash) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'draft' });
+  }
+  return { intent, document: { ...document, content_hash: document.content_hash } };
 }
 
 function visibleCandidate(db: SqliteDatabase, principal: Principal, candidateId: string) {

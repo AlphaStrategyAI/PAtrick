@@ -69,7 +69,7 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
   const bodyText = parsed?.ok ? parsed.body : null;
   const knowledgeId = stillTemplate || !parsed?.ok ? null : knowledgeIdFor(vault, file, parsed.data);
   const patrickId = parsed?.ok ? scalarString(parsed.data.patrick_id) : null;
-  const documentId = existing?.document_id ?? `doc_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 24)}`;
+  const documentId = existing?.document_id ?? draft?.documentId ?? `doc_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 24)}`;
   const observedSeq = (existing?.observed_seq ?? 0) + 1;
   const revisionId = `rev_${sha256(`${documentId}\0${observedSeq}`).slice(0, 24)}`;
   const identity = `${file.dev}:${file.ino}`;
@@ -153,19 +153,20 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
   return true;
 }
 
-function openDraft(db: SqliteDatabase, vaultId: string, relativePath: string): { editId: string; proof: string } | undefined {
-  const row = db.prepare(`SELECT d.edit_id, d.template_hash, d.proof_hash
+function openDraft(db: SqliteDatabase, vaultId: string, relativePath: string): { editId: string; proof: string; documentId: string } | undefined {
+  const row = db.prepare(`SELECT d.edit_id, d.template_hash, d.proof_hash, d.document_id
     FROM draft_intents d
     JOIN edit_intents i ON i.edit_id = d.edit_id
     WHERE d.vault_id = ? AND d.relative_path = ? AND i.closed_at IS NULL`).get(vaultId, relativePath) as {
     edit_id: string;
     template_hash: string | null;
     proof_hash: string | null;
+    document_id: string;
   } | undefined;
   if (!row) return undefined;
   const proof = row.template_hash ?? row.proof_hash;
   if (!proof) return undefined;
-  return { editId: row.edit_id, proof };
+  return { editId: row.edit_id, proof, documentId: row.document_id };
 }
 
 function observeOwnerDraft(db: SqliteDatabase, editId: string, hash: string, parsed: ParsedFrontMatter | undefined, now: string): void {

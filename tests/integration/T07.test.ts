@@ -34,6 +34,15 @@ const owner: StandardsPrincipal = {
   operations: ['owner', 'standards.write', 'standards.read'],
 };
 
+const editor = {
+  account_id: 'owner',
+  caller_id: 'web',
+  auth_epoch: 1,
+  authenticated_at: NOW,
+  domains: [DOMAIN],
+  operations: ['owner', 'edits.write'],
+};
+
 type Api = ReturnType<typeof createStandardsApi>;
 type Candidate = Awaited<ReturnType<Api['openCandidate']>>;
 
@@ -430,8 +439,16 @@ test('revise_standard follows the adopted version and routes use command and sna
     await vault.confirmVault('mac-mini', vaultId);
     const api = apiFor(fx.db);
     await api.seedProductDataset();
-    const body = standardDocument('std-http', passingRules());
-    writeFileSync(join(root, '标准修订', 'http.md'), body, 'utf8');
+    const editor = {
+      account_id: 'owner',
+      caller_id: 'web',
+      auth_epoch: 1,
+      authenticated_at: NOW,
+      domains: [DOMAIN],
+      operations: ['owner', 'edits.write'],
+    };
+    await vault.createEdit(editor, { operation: 'create_standard', draft_key: 'http', expected_active_version: null });
+    writeFileSync(join(root, '标准修订', 'http.md'), standardDocument('http-file', passingRules()), 'utf8');
     await vault.readVault(vaultId);
     const app = createApp({ databasePath, credentialDirectory, now: () => new Date(NOW) });
     issueBootstrapTicket(fx.db, { accountId: 'owner' }, () => new Date(NOW));
@@ -490,28 +507,206 @@ test('revise_standard follows the adopted version and routes use command and sna
     const versionBody = await versions.json() as { data: { items: { version: number; status: string }[] } };
     expect(versionBody.data.items.map((item) => item.version)).toEqual([1]);
 
-    const principal = {
-      account_id: 'owner',
-      caller_id: 'web',
-      auth_epoch: 1,
-      authenticated_at: NOW,
-      domains: [DOMAIN],
-      operations: ['owner', 'edits.write'],
-    };
-    const revise = await vault.createEdit(principal, {
+    const revise = await vault.createEdit(editor, {
       operation: 'revise_standard',
       standard_id: candidate.standard_id,
       base_version: 1,
       draft_key: 'revise-http',
     });
     expect(revise.business.state).toBe('pending');
-    const staleRevise = await vault.createEdit(principal, {
+    const staleRevise = await vault.createEdit(editor, {
       operation: 'revise_standard',
       standard_id: candidate.standard_id,
       base_version: 2,
       draft_key: 'revise-stale',
     });
     expect(staleRevise.business.state).toBe('stale');
+  } finally {
+    fx.close();
+  }
+});
+
+test('a T06 revise draft posts the standard id and revise base', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(root, { recursive: true });
+  const databasePath = join(fx.dir, 'patrick.sqlite');
+  const credentialDirectory = join(fx.dir, 'credentials');
+  try {
+    const vault = createVaultApi(fx.db, {
+      blobs: createBlobStore(join(fx.dir, 'blobs')),
+      now: () => new Date(NOW),
+      captureHost: 'mac-mini',
+    });
+    const vaultId = 'vault-product';
+    await vault.connectVault({ accountId: 'owner', deviceId: 'mac-mini', vaultId, root, domain: DOMAIN });
+    await vault.confirmVault('mac-mini', vaultId);
+    const api = apiFor(fx.db);
+    await api.seedProductDataset();
+    const first = await api.openCandidate(await api.ingestStandardDraft({
+      vaultId,
+      standardId: 'std-revise-source',
+      draftKey: 'revise-source',
+      rules: passingRules(),
+    }));
+    const report = await api.evaluate(first, { version: 1 });
+    expect(await api.adoptStandard(first.id, report.id, first.revision)).toBe('adopted');
+    const draftKey = 'revise-linked';
+    const revise = await vault.createEdit(editor, {
+      operation: 'revise_standard',
+      standard_id: first.standard_id,
+      base_version: 1,
+      draft_key: draftKey,
+    });
+    const intent = fx.db.prepare(`SELECT edit_id, target_id, base_version, document_id, relative_path
+      FROM edit_intents WHERE edit_id = ?`).get(revise.edit_id) as {
+      edit_id: string;
+      target_id: string;
+      base_version: number;
+      document_id: string;
+      relative_path: string;
+    };
+    expect(intent.relative_path).not.toBe(`标准修订/${draftKey}.md`);
+    writeFileSync(
+      join(root, ...intent.relative_path.split('/')),
+      ruledDraft(intent.document_id, 'not-the-standard', intent.base_version, passingRules()),
+      'utf8',
+    );
+    await vault.readVault(vaultId);
+    const app = createApp({ databasePath, credentialDirectory, now: () => new Date(NOW) });
+    issueBootstrapTicket(fx.db, { accountId: 'owner' }, () => new Date(NOW));
+    const store = createCredentialStore(credentialDirectory, () => new Date(NOW));
+    const session = issueCallerSession(fx.db, {
+      accountId: 'owner',
+      callerId: 'web',
+      domain: DOMAIN,
+      permissions: ['owner', 'standards.write', 'standards.read'],
+    }, () => new Date(NOW), store);
+    const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
+    const wrong = envelope('createStandardCandidate', vaultId, null, { standard_id: 'other-standard', draft_key: draftKey });
+    const rejected = await app.request('/api/v1/standard-candidates', { method: 'POST', headers, body: JSON.stringify(wrong) });
+    expect(rejected.status).toBe(409);
+    const created = await app.request('/api/v1/standard-candidates', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(envelope('createStandardCandidate', vaultId, null, { standard_id: null, draft_key: draftKey })),
+    });
+    expect(created.status).toBe(202);
+    const candidate = fx.db.prepare(`SELECT standard_id, base_version, edit_id, document_id
+      FROM standard_candidates WHERE draft_key = ?`).get(draftKey) as {
+      standard_id: string;
+      base_version: number | null;
+      edit_id: string | null;
+      document_id: string;
+    };
+    expect(candidate).toEqual({
+      standard_id: first.standard_id,
+      base_version: intent.base_version,
+      edit_id: intent.edit_id,
+      document_id: intent.document_id,
+    });
+    const stored = fx.db.prepare(`SELECT relative_path, patrick_id FROM vault_documents WHERE document_id = ?`).get(candidate.document_id) as {
+      relative_path: string;
+      patrick_id: string | null;
+    };
+    expect(stored.relative_path).toBe(intent.relative_path);
+    expect(stored.relative_path).not.toBe(`标准修订/${draftKey}.md`);
+    expect(stored.patrick_id).toBe(intent.document_id);
+    expect(stored.patrick_id).not.toBe(candidate.standard_id);
+  } finally {
+    fx.close();
+  }
+});
+
+test('a stale adopt after r9 and a rejected adopt record that business state', async () => {
+  const { fx, api, vaultId, seeded } = await ready();
+  try {
+    const vault = createVaultApi(fx.db, {
+      blobs: createBlobStore(join(fx.dir, 'blobs')),
+      now: () => new Date(NOW),
+      captureHost: 'mac-mini',
+    });
+    const first = await api.openCandidate(await api.ingestStandardDraft({
+      vaultId,
+      standardId: 'std-linked',
+      draftKey: 'linked-v1',
+      rules: passingRules(),
+    }));
+    const firstReport = await api.evaluate(first, { version: 1 });
+    expect(await api.adoptStandard(first.id, firstReport.id, first.revision)).toBe('adopted');
+    const revise = await vault.createEdit(editor, {
+      operation: 'revise_standard',
+      standard_id: first.standard_id,
+      base_version: 1,
+      draft_key: 'linked-r8',
+    });
+    const before = latestReceipt(fx.db, revise.edit_id);
+    let candidateR8: Candidate | undefined;
+    for (let revision = 1; revision <= 8; revision += 1) {
+      const ingested = await api.ingestStandardDraft({
+        vaultId,
+        standardId: first.standard_id,
+        draftKey: 'linked-r8',
+        rules: passingRules(),
+        note: `修订 ${revision}`,
+      });
+      if (revision === 8) candidateR8 = await api.openCandidate({ ...ingested, baseVersion: 1 });
+    }
+    if (!candidateR8) throw new Error('missing r8 candidate');
+    const report = await api.evaluate(candidateR8, { version: 1 });
+    const revisionR9 = await api.ingestStandardDraft({
+      vaultId,
+      standardId: first.standard_id,
+      draftKey: 'linked-r8',
+      rules: passingRules(),
+      note: '修订 9',
+    });
+    expect(revisionR9.source_revision).toBe(9);
+    expect(await api.adoptStandard(candidateR8.id, report.id, candidateR8.revision)).toBe('stale');
+    expect(fx.db.prepare(`SELECT status, edit_id FROM standard_candidates WHERE candidate_id = ?`).get(candidateR8.id)).toEqual({
+      status: 'stale',
+      edit_id: revise.edit_id,
+    });
+    const staleReceipt = latestReceipt(fx.db, revise.edit_id);
+    expect(staleReceipt.business_state).toBe('stale');
+    expect(staleReceipt.file_state).toBe(before.file_state);
+    expect(staleReceipt.file_proof_ref).toBe(before.file_proof_ref);
+    expect(staleReceipt.receipt_revision).toBe(before.receipt_revision + 1);
+
+    const current = await api.openCandidate({ ...revisionR9, baseVersion: 1 });
+    const currentReport = await api.evaluate(current, { version: 1 });
+    expect(await api.adoptStandard(current.id, currentReport.id, current.revision)).toBe('adopted');
+    expect(fx.db.prepare(`SELECT status FROM standard_candidates WHERE candidate_id = ?`).get(candidateR8.id)).toEqual({ status: 'stale' });
+    expect(fx.db.prepare(`SELECT status FROM standard_candidates WHERE candidate_id = ?`).get(current.id)).toEqual({ status: 'adopted' });
+    expect(await api.adoptStandard(current.id, currentReport.id, current.revision)).toBe('adopted');
+
+    const rejectedEdit = await vault.createEdit(editor, {
+      operation: 'create_standard',
+      draft_key: 'rejected-standard',
+      expected_active_version: null,
+    });
+    const target = fx.db.prepare(`SELECT target_id FROM edit_intents WHERE edit_id = ?`).get(rejectedEdit.edit_id) as { target_id: string };
+    const rejectedBefore = latestReceipt(fx.db, rejectedEdit.edit_id);
+    const rejected = await api.openCandidate(await api.ingestStandardDraft({
+      vaultId,
+      standardId: target.target_id,
+      draftKey: 'rejected-standard',
+      rules: passingRules(),
+    }));
+    const holdoutId = seeded.holdout_ids[0];
+    if (!holdoutId) throw new Error('missing holdout');
+    fx.db.prepare(`UPDATE cases SET role = 'training' WHERE case_id = ? AND dataset_id = ?`).run(holdoutId, seeded.dataset_id);
+    const leaked = await api.evaluate(rejected, { version: 1 });
+    expect(leaked.decision).toBe('leak');
+    expect(await api.adoptStandard(rejected.id, leaked.id, rejected.revision)).toBe('not_adopted');
+    expect(fx.db.prepare(`SELECT status, edit_id FROM standard_candidates WHERE candidate_id = ?`).get(rejected.id)).toEqual({
+      status: 'not_adopted',
+      edit_id: rejectedEdit.edit_id,
+    });
+    const rejectedReceipt = latestReceipt(fx.db, rejectedEdit.edit_id);
+    expect(rejectedReceipt.business_state).toBe('not_adopted');
+    expect(rejectedReceipt.file_state).toBe(rejectedBefore.file_state);
+    expect(rejectedReceipt.file_proof_ref).toBe(rejectedBefore.file_proof_ref);
   } finally {
     fx.close();
   }
@@ -555,6 +750,48 @@ function envelope(operation: string, resourceId: string, expectedRevision: numbe
     payload_hash: payloadHash,
     payload,
   };
+}
+
+function latestReceipt(db: SqliteDatabase, editId: string) {
+  const row = db.prepare(`SELECT receipt_revision, file_state, file_proof_ref, business_state
+    FROM edit_receipts WHERE edit_id = ? ORDER BY receipt_revision DESC LIMIT 1`).get(editId) as {
+    receipt_revision: number;
+    file_state: string;
+    file_proof_ref: string | null;
+    business_state: string;
+  } | undefined;
+  if (!row) throw new Error('missing receipt');
+  return row;
+}
+
+function ruledDraft(patrickId: string, standardId: string, baseVersion: number, rules: StandardRule[]): string {
+  return `---
+patrick_id: ${patrickId}
+kind: standard
+standard_id: ${standardId}
+base_version: ${baseVersion}
+---
+
+# 适用范围
+
+产品需求判断
+
+# 判断规则
+
+\`\`\`json
+{
+  "rules": ${JSON.stringify(rules)}
+}
+\`\`\`
+
+# 例外
+
+普通功能冒充故障时仍先访谈
+
+# 正反案例
+
+# 依据
+`;
 }
 
 function standardDocument(standardId: string, rules: StandardRule[], thresholdClaim?: number): string {
