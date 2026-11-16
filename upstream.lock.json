@@ -1,0 +1,105 @@
+{
+  "task": "T00",
+  "lockedAt": "2026-11-16",
+  "platform": {
+    "node": {
+      "required": ">=24.9.0",
+      "probed": "v26.13.0",
+      "architectures": {
+        "darwin-arm64": {
+          "status": "verified",
+          "command": "node -v",
+          "observation": "v26.13.0",
+          "evidenceSha256": "39a422c5c70f84e48f4efa1407aafde02d58684f07cfe839cd7e221c691aaec0"
+        },
+        "linux-x64": {
+          "status": "pending",
+          "command": null,
+          "observation": "Linux CI architecture not probed in T00; T01/T27 will verify in workflow.",
+          "evidenceSha256": null
+        }
+      }
+    },
+    "npm": {
+      "probed": "11.20.0",
+      "status": "verified",
+      "command": "npm -v",
+      "observation": "11.20.0",
+      "evidenceSha256": "7fb340317cdd376adcc5879b441c639c5e6dc156b7de1572cac8328de1aba5e0"
+    },
+    "host": {
+      "os": "darwin",
+      "productVersion": "27.2.1",
+      "arch": "arm64"
+    }
+  },
+  "repos": {
+    "agent-autoloop": {
+      "remote": "https://github.com/KKKKhazix/agent-autoloop.git",
+      "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b",
+      "status": "verified",
+      "command": "curl -sf -o /dev/null -w \"%{http_code}\" https://api.github.com/repos/KKKKhazix/agent-autoloop/commits/45aecbf578289cda72d1fc773dcad069bfe7778b",
+      "observation": "HTTP 200 from GitHub API for commit 45aecbf578289cda72d1fc773dcad069bfe7778b",
+      "evidenceSha256": "b392e2c1350e02707b7c590708bbd02cc9b034a9a5f0a20084a384eebb874581"
+    },
+    "deepseek-harness": {
+      "remote": "https://github.com/deepseek-ai/deepseek-harness.git",
+      "commit": "e8f7b93a344964de3dca1ace9e72b6e4d6de87cb",
+      "packageVersion": "0.2.2-rc.2",
+      "status": "verified",
+      "command": "curl -sf -o /dev/null -w \"%{http_code}\" https://api.github.com/repos/deepseek-ai/deepseek-harness/commits/e8f7b93a344964de3dca1ace9e72b6e4d6de87cb",
+      "observation": "HTTP 200 from GitHub API for commit e8f7b93a344964de3dca1ace9e72b6e4d6de87cb",
+      "evidenceSha256": "bd38d2133d1ecd9947d74c50d6442d7ce739c09dcd6edf2372bee0e5d3d4256f"
+    }
+  },
+  "probes": {
+    "codex-cli": {
+      "status": "verified",
+      "command": "codex --version",
+      "observation": "codex-cli 0.163.0",
+      "evidenceSha256": "627d7554180ce5ba3c14a3334c7075524a38e86184f22ed5eac64bf4e4abcc26"
+    },
+    "grok-build": {
+      "status": "verified",
+      "command": "grok --version",
+      "observation": "grok 1.0.30 (04b7ffed98c6)",
+      "evidenceSha256": "3d261f559a1a1c9a99e4ba41e52c46ae9b31948669a21ad5cb6c3ff585147b01"
+    },
+    "dsh-cli": {
+      "status": "blocked",
+      "command": "command -v dsh && dsh --version",
+      "observation": "command not found: dsh",
+      "evidenceSha256": "51c2b3f37ccc4d8444d81cfdce379357a3d81facbae772775c11185b735e680c"
+    },
+    "feishu-sdk": {
+      "status": "pending",
+      "command": "npm view @larksuiteoapi/node-sdk version",
+      "observation": "@larksuiteoapi/node-sdk@1.76.0 (npm view only; message/card long-connection and deferred-card behavior require T10 test app)",
+      "evidenceSha256": "4bede9b23f53b1b02d43b6e760d48c047f94a21a5c9caea106a02f68b883e684"
+    },
+    "obsidian-desktop": {
+      "status": "blocked",
+      "command": "defaults read \"/Applications/Obsidian.app/Contents/Info.plist\" CFBundleShortVersionString",
+      "observation": "Obsidian.app not found under /Applications or ~/Applications",
+      "evidenceSha256": "c569b5981d1cbe4a9ee952526e9daf264988f9355d9c92d7d205a5f7776e0705"
+    },
+    "obsidian-installer-arch": {
+      "status": "pending",
+      "command": null,
+      "observation": "Installer architecture probe deferred to T17/T25 with real Obsidian install path.",
+      "evidenceSha256": null
+    },
+    "signing-chain": {
+      "status": "pending",
+      "command": "spctl --status",
+      "observation": "assessments enabled; /usr/bin/codesign present; release package signature and SBOM generation assigned to T23",
+      "evidenceSha256": "55db6201ee61f46d5bce2f3ba3b650bc88b340a14a819ca2e3d343ee758eb84f"
+    },
+    "offline-backup-target": {
+      "status": "pending",
+      "command": null,
+      "observation": "Backup destination and offline restore witness paths require configured host settings (T17/T22).",
+      "evidenceSha256": null
+    }
+  }
+}

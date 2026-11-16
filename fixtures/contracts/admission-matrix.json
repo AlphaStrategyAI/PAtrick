@@ -1,0 +1,34 @@
+{
+  "autoloop_native_answer_resume": {
+    "upstream": {
+      "repo": "KKKKhazix/agent-autoloop",
+      "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b"
+    },
+    "status": "pending",
+    "command": "native-answer-before-receipt (isolated hub; T04)",
+    "observation": "Hub worker not running in T00; probe requires pinned Autoloop hub plus domain receipt wiring from T04.",
+    "evidenceSha256": null
+  },
+  "autoloop_custom_text": {
+    "upstream": {
+      "repo": "KKKKhazix/agent-autoloop",
+      "commit": "45aecbf578289cda72d1fc773dcad069bfe7778b"
+    },
+    "status": "pending",
+    "command": "custom-text-only (isolated hub; T04)",
+    "observation": "Payload contract is { text } without choice; fixture raw input reserved as \"  先补证，再比较。  \" until hub read-back is executed.",
+    "rawCustomInput": "  先补证，再比较。  ",
+    "expectedChosen": null,
+    "evidenceSha256": null
+  },
+  "feishu_deferred_card": {
+    "upstream": {
+      "sdk": "@larksuiteoapi/node-sdk",
+      "version": "1.76.0"
+    },
+    "status": "pending",
+    "command": "feishu_deferred_card (enterprise test app; T10)",
+    "observation": "No Feishu test application credentials or long-connection session on this host; npm registry version only recorded in upstream.lock.json.",
+    "evidenceSha256": null
+  }
+}

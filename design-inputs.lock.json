@@ -1,0 +1,1800 @@
+{
+  "files": {
+    "docs/designs/PAtrick产品设计.md": "1f833b83eef95505f2cebe76843022d8706b851232266e00995a80a9b092bc9d",
+    "docs/designs/PAtrick技术设计-v2.md": "b9ec92da7698d90c05346615b26a7a265f1f3a5004fe8fa98a6bd05a6a0c1199",
+    "docs/designs/设计资产/v2/交互原型.html": "34a1b0d8d12b640b5f1664ecc94ae3c6237e1114e4d7a286b2beaa8ac39d4f87",
+    "docs/designs/设计资产/v2/设计令牌.css": "09972d965361a62953c4234a7334510e77861f5bc3ae47b06cf91145b280fb49",
+    "docs/designs/设计资产/v2/Figma交付记录.json": "3f152368c74a48c0eb5b35343924448a55dd79da02fbdd1db6cbc71e019bf743",
+    "docs/designs/设计资产/v2/Figma-界面核对.json": "fe6321ce906593b4eaf3913fc90c2c3ed054189f57c50e91fcd0e0f6a0a5513e",
+    "docs/designs/设计资产/v2/原型验证.json": "430a6b7440be729455c11c4224de4b47b8b4c6393d79ac823e5bd0f05f48eb72",
+    "docs/designs/设计资产/v2/icons/manifest.json": "7c55fe2e76b5fc324e0e1f1ab8691cf678e97b7946f40a0f416e1239497b4ade"
+  },
+  "frames": [
+    {
+      "key": "en-candidate",
+      "id": "114:11738"
+    },
+    {
+      "key": "en-candidate-rejected",
+      "id": "117:4030"
+    },
+    {
+      "key": "en-candidate-shadow",
+      "id": "117:3421"
+    },
+    {
+      "key": "en-collect-options-expanded",
+      "id": "115:30506"
+    },
+    {
+      "key": "en-collection-confirm-dialog",
+      "id": "115:21309"
+    },
+    {
+      "key": "en-collection-disconnect-dialog",
+      "id": "115:22657"
+    },
+    {
+      "key": "en-collection-disconnect-github-dialog",
+      "id": "117:8988"
+    },
+    {
+      "key": "en-collection-pause-dialog",
+      "id": "115:21892"
+    },
+    {
+      "key": "en-collection-pause-github-dialog",
+      "id": "117:8303"
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421"
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721"
+    },
+    {
+      "key": "en-delegation-expanded",
+      "id": "115:28643"
+    },
+    {
+      "key": "en-delegation-paused",
+      "id": "117:4635"
+    },
+    {
+      "key": "en-delegation-stopped",
+      "id": "117:5272"
+    },
+    {
+      "key": "en-details",
+      "id": "26:138"
+    },
+    {
+      "key": "en-edit-knowledge",
+      "id": "188:13374"
+    },
+    {
+      "key": "en-edit-knowledge-adopted",
+      "id": "188:28742"
+    },
+    {
+      "key": "en-edit-knowledge-evaluating",
+      "id": "188:27907"
+    },
+    {
+      "key": "en-edit-knowledge-ingested",
+      "id": "188:14209"
+    },
+    {
+      "key": "en-edit-knowledge-open",
+      "id": "188:26947"
+    },
+    {
+      "key": "en-edit-standard",
+      "id": "188:15799"
+    },
+    {
+      "key": "en-edit-standard-adopted",
+      "id": "172:5844"
+    },
+    {
+      "key": "en-edit-standard-adopted-expanded",
+      "id": "188:24039"
+    },
+    {
+      "key": "en-edit-standard-conflict",
+      "id": "188:19178"
+    },
+    {
+      "key": "en-edit-standard-evaluating",
+      "id": "188:17434"
+    },
+    {
+      "key": "en-edit-standard-ingested",
+      "id": "188:31071"
+    },
+    {
+      "key": "en-edit-standard-new",
+      "id": "188:15044"
+    },
+    {
+      "key": "en-edit-standard-new-adopted",
+      "id": "188:30324"
+    },
+    {
+      "key": "en-edit-standard-new-evaluating",
+      "id": "188:29569"
+    },
+    {
+      "key": "en-edit-standard-new-ingested",
+      "id": "188:31826"
+    },
+    {
+      "key": "en-edit-standard-open",
+      "id": "188:16554"
+    },
+    {
+      "key": "en-edit-standard-pending",
+      "id": "188:18517"
+    },
+    {
+      "key": "en-error",
+      "id": "27:1310"
+    },
+    {
+      "key": "en-expired",
+      "id": "27:1126"
+    },
+    {
+      "key": "en-expired-dialog",
+      "id": "115:5009"
+    },
+    {
+      "key": "en-feishu-connect",
+      "id": "187:18986"
+    },
+    {
+      "key": "en-feishu-disable",
+      "id": "188:9889"
+    },
+    {
+      "key": "en-feishu-disabled",
+      "id": "188:26290"
+    },
+    {
+      "key": "en-feishu-draining",
+      "id": "188:10648"
+    },
+    {
+      "key": "en-feishu-enable",
+      "id": "188:8349"
+    },
+    {
+      "key": "en-feishu-error",
+      "id": "188:11305"
+    },
+    {
+      "key": "en-feishu-guide",
+      "id": "188:24746"
+    },
+    {
+      "key": "en-feishu-home",
+      "id": "172:5101"
+    },
+    {
+      "key": "en-feishu-owner",
+      "id": "187:20378"
+    },
+    {
+      "key": "en-feishu-pair",
+      "id": "187:19703"
+    },
+    {
+      "key": "en-feishu-preview",
+      "id": "188:6715"
+    },
+    {
+      "key": "en-feishu-ready",
+      "id": "188:9208"
+    },
+    {
+      "key": "en-feishu-ready-expanded",
+      "id": "188:22451"
+    },
+    {
+      "key": "en-feishu-recovery",
+      "id": "188:12717"
+    },
+    {
+      "key": "en-feishu-return",
+      "id": "188:7606"
+    },
+    {
+      "key": "en-feishu-sent",
+      "id": "188:25547"
+    },
+    {
+      "key": "en-feishu-test",
+      "id": "188:5972"
+    },
+    {
+      "key": "en-feishu-timeout",
+      "id": "188:11968"
+    },
+    {
+      "key": "en-freechat",
+      "id": "26:1065"
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513"
+    },
+    {
+      "key": "en-knowledge-expanded",
+      "id": "115:27926"
+    },
+    {
+      "key": "en-mobile-edit-standard-adopted",
+      "id": "188:22131"
+    },
+    {
+      "key": "en-mobile-feishu-connect",
+      "id": "188:20232"
+    },
+    {
+      "key": "en-mobile-feishu-enable",
+      "id": "188:20915"
+    },
+    {
+      "key": "en-mobile-feishu-home",
+      "id": "188:19925"
+    },
+    {
+      "key": "en-mobile-feishu-pair",
+      "id": "188:20589"
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422"
+    },
+    {
+      "key": "en-mobile-obs-ready",
+      "id": "188:21419"
+    },
+    {
+      "key": "en-mobile-obs-review",
+      "id": "188:21751"
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778"
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343"
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764"
+    },
+    {
+      "key": "en-mobilestats-all",
+      "id": "122:4444"
+    },
+    {
+      "key": "en-mobilestats-counting",
+      "id": "122:4932"
+    },
+    {
+      "key": "en-mobilestats-menu",
+      "id": "122:5420"
+    },
+    {
+      "key": "en-mobilestats-month",
+      "id": "122:3956"
+    },
+    {
+      "key": "en-obs-draft",
+      "id": "187:15484"
+    },
+    {
+      "key": "en-obs-guide",
+      "id": "187:17897"
+    },
+    {
+      "key": "en-obs-install",
+      "id": "187:17222"
+    },
+    {
+      "key": "en-obs-ready",
+      "id": "187:16531"
+    },
+    {
+      "key": "en-obs-ready-expanded",
+      "id": "188:23222"
+    },
+    {
+      "key": "en-obs-review",
+      "id": "187:16167"
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586"
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523"
+    },
+    {
+      "key": "en-ongoing-blocked",
+      "id": "114:15182"
+    },
+    {
+      "key": "en-ongoing-decision",
+      "id": "114:13936"
+    },
+    {
+      "key": "en-ongoing-running",
+      "id": "114:14523"
+    },
+    {
+      "key": "en-ongoing-search-empty",
+      "id": "114:15769"
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688"
+    },
+    {
+      "key": "en-pause-dialog",
+      "id": "115:6157"
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593"
+    },
+    {
+      "key": "en-result-dialog",
+      "id": "115:4260"
+    },
+    {
+      "key": "en-resumed",
+      "id": "26:867"
+    },
+    {
+      "key": "en-resumedB",
+      "id": "28:1582"
+    },
+    {
+      "key": "en-rollback-dialog",
+      "id": "115:8323"
+    },
+    {
+      "key": "en-selected-a",
+      "id": "115:24200"
+    },
+    {
+      "key": "en-selected-b",
+      "id": "115:25231"
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361"
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857"
+    },
+    {
+      "key": "en-settings-addsource-populated",
+      "id": "115:29939"
+    },
+    {
+      "key": "en-settings-backup-dialog",
+      "id": "115:17891"
+    },
+    {
+      "key": "en-settings-bundle-dialog",
+      "id": "115:18930"
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753"
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678"
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171"
+    },
+    {
+      "key": "en-settings-execution-expanded",
+      "id": "115:10017"
+    },
+    {
+      "key": "en-settings-execution-signedin",
+      "id": "117:5901"
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167"
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635"
+    },
+    {
+      "key": "en-settings-materials-expanded",
+      "id": "115:9036"
+    },
+    {
+      "key": "en-settings-notification-dialog",
+      "id": "115:20159"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745"
+    },
+    {
+      "key": "en-settings-operation-expanded",
+      "id": "115:11134"
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719"
+    },
+    {
+      "key": "en-settings-preferences-expanded",
+      "id": "115:12087"
+    },
+    {
+      "key": "en-settings-preferences-saved",
+      "id": "117:7124"
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583"
+    },
+    {
+      "key": "en-settings-review-dialog",
+      "id": "115:14213"
+    },
+    {
+      "key": "en-settings-signin-dialog",
+      "id": "115:16648"
+    },
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294"
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653"
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574"
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836"
+    },
+    {
+      "key": "en-settings-trusted-dialog",
+      "id": "115:15409"
+    },
+    {
+      "key": "en-settings-validate",
+      "id": "115:13152"
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155"
+    },
+    {
+      "key": "en-setup-preview",
+      "id": "114:13392"
+    },
+    {
+      "key": "en-setup-scope",
+      "id": "114:12858"
+    },
+    {
+      "key": "en-source-dialog",
+      "id": "115:3431"
+    },
+    {
+      "key": "en-standard-history",
+      "id": "114:12335"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257"
+    },
+    {
+      "key": "en-standards-expanded",
+      "id": "115:27311"
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664"
+    },
+    {
+      "key": "en-stats-after-decision",
+      "id": "119:9944"
+    },
+    {
+      "key": "en-stats-all",
+      "id": "119:8304"
+    },
+    {
+      "key": "en-stats-counting",
+      "id": "119:9124"
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484"
+    },
+    {
+      "key": "en-stop-dialog",
+      "id": "115:6879"
+    },
+    {
+      "key": "en-submitted",
+      "id": "26:677"
+    },
+    {
+      "key": "en-submittedB",
+      "id": "28:1400"
+    },
+    {
+      "key": "en-submittedCustom",
+      "id": "28:1762"
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937"
+    },
+    {
+      "key": "en-system-expanded",
+      "id": "115:29260"
+    },
+    {
+      "key": "en-task-blocked",
+      "id": "115:2918"
+    },
+    {
+      "key": "en-task-citations",
+      "id": "115:2405"
+    },
+    {
+      "key": "en-task-decision",
+      "id": "115:1892"
+    },
+    {
+      "key": "en-translated",
+      "id": "115:26262"
+    },
+    {
+      "key": "en-trusted-dialog",
+      "id": "115:7601"
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995"
+    },
+    {
+      "key": "zh-candidate",
+      "id": "114:12033"
+    },
+    {
+      "key": "zh-candidate-rejected",
+      "id": "117:4329"
+    },
+    {
+      "key": "zh-candidate-shadow",
+      "id": "117:3722"
+    },
+    {
+      "key": "zh-collect-options-expanded",
+      "id": "115:30788"
+    },
+    {
+      "key": "zh-collection-confirm-dialog",
+      "id": "115:21599"
+    },
+    {
+      "key": "zh-collection-disconnect-dialog",
+      "id": "115:23038"
+    },
+    {
+      "key": "zh-collection-disconnect-github-dialog",
+      "id": "117:9329"
+    },
+    {
+      "key": "zh-collection-pause-dialog",
+      "id": "115:22273"
+    },
+    {
+      "key": "zh-collection-pause-github-dialog",
+      "id": "117:8644"
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204"
+    },
+    {
+      "key": "zh-custom",
+      "id": "26:549"
+    },
+    {
+      "key": "zh-decisions-empty",
+      "id": "95:4245"
+    },
+    {
+      "key": "zh-delegation",
+      "id": "26:1829"
+    },
+    {
+      "key": "zh-delegation-expanded",
+      "id": "115:28950"
+    },
+    {
+      "key": "zh-delegation-paused",
+      "id": "117:4952"
+    },
+    {
+      "key": "zh-delegation-stopped",
+      "id": "117:5585"
+    },
+    {
+      "key": "zh-details",
+      "id": "26:280"
+    },
+    {
+      "key": "zh-edit-knowledge",
+      "id": "188:13790"
+    },
+    {
+      "key": "zh-edit-knowledge-adopted",
+      "id": "188:29154"
+    },
+    {
+      "key": "zh-edit-knowledge-evaluating",
+      "id": "188:28323"
+    },
+    {
+      "key": "zh-edit-knowledge-ingested",
+      "id": "188:14625"
+    },
+    {
+      "key": "zh-edit-knowledge-open",
+      "id": "188:27425"
+    },
+    {
+      "key": "zh-edit-standard",
+      "id": "188:16174"
+    },
+    {
+      "key": "zh-edit-standard-adopted",
+      "id": "188:18189"
+    },
+    {
+      "key": "zh-edit-standard-adopted-expanded",
+      "id": "188:24391"
+    },
+    {
+      "key": "zh-edit-standard-conflict",
+      "id": "188:19549"
+    },
+    {
+      "key": "zh-edit-standard-evaluating",
+      "id": "188:17809"
+    },
+    {
+      "key": "zh-edit-standard-ingested",
+      "id": "188:31446"
+    },
+    {
+      "key": "zh-edit-standard-new",
+      "id": "188:15419"
+    },
+    {
+      "key": "zh-edit-standard-new-adopted",
+      "id": "188:30695"
+    },
+    {
+      "key": "zh-edit-standard-new-evaluating",
+      "id": "188:29944"
+    },
+    {
+      "key": "zh-edit-standard-new-ingested",
+      "id": "188:32201"
+    },
+    {
+      "key": "zh-edit-standard-open",
+      "id": "188:16991"
+    },
+    {
+      "key": "zh-edit-standard-pending",
+      "id": "188:18846"
+    },
+    {
+      "key": "zh-error",
+      "id": "27:1448"
+    },
+    {
+      "key": "zh-expired",
+      "id": "27:1218"
+    },
+    {
+      "key": "zh-expired-dialog",
+      "id": "115:5580"
+    },
+    {
+      "key": "zh-feishu-connect",
+      "id": "187:19343"
+    },
+    {
+      "key": "zh-feishu-disable",
+      "id": "188:10267"
+    },
+    {
+      "key": "zh-feishu-disabled",
+      "id": "188:26617"
+    },
+    {
+      "key": "zh-feishu-draining",
+      "id": "188:10975"
+    },
+    {
+      "key": "zh-feishu-enable",
+      "id": "188:8777"
+    },
+    {
+      "key": "zh-feishu-error",
+      "id": "188:11635"
+    },
+    {
+      "key": "zh-feishu-guide",
+      "id": "188:25145"
+    },
+    {
+      "key": "zh-feishu-home",
+      "id": "187:18656"
+    },
+    {
+      "key": "zh-feishu-owner",
+      "id": "188:5623"
+    },
+    {
+      "key": "zh-feishu-pair",
+      "id": "187:20039"
+    },
+    {
+      "key": "zh-feishu-preview",
+      "id": "188:7158"
+    },
+    {
+      "key": "zh-feishu-ready",
+      "id": "188:9547"
+    },
+    {
+      "key": "zh-feishu-ready-expanded",
+      "id": "188:22835"
+    },
+    {
+      "key": "zh-feishu-recovery",
+      "id": "188:13044"
+    },
+    {
+      "key": "zh-feishu-return",
+      "id": "188:7976"
+    },
+    {
+      "key": "zh-feishu-sent",
+      "id": "188:25917"
+    },
+    {
+      "key": "zh-feishu-test",
+      "id": "188:6342"
+    },
+    {
+      "key": "zh-feishu-timeout",
+      "id": "188:12341"
+    },
+    {
+      "key": "zh-freechat",
+      "id": "26:1161"
+    },
+    {
+      "key": "zh-knowledge",
+      "id": "26:1617"
+    },
+    {
+      "key": "zh-knowledge-expanded",
+      "id": "115:28283"
+    },
+    {
+      "key": "zh-mobile-edit-standard-adopted",
+      "id": "188:22287"
+    },
+    {
+      "key": "zh-mobile-feishu-connect",
+      "id": "188:20408"
+    },
+    {
+      "key": "zh-mobile-feishu-enable",
+      "id": "188:21165"
+    },
+    {
+      "key": "zh-mobile-feishu-home",
+      "id": "188:20077"
+    },
+    {
+      "key": "zh-mobile-feishu-pair",
+      "id": "188:20751"
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803"
+    },
+    {
+      "key": "zh-mobile-obs-ready",
+      "id": "188:21584"
+    },
+    {
+      "key": "zh-mobile-obs-review",
+      "id": "188:21938"
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875"
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458"
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003"
+    },
+    {
+      "key": "zh-mobilestats-all",
+      "id": "122:4683"
+    },
+    {
+      "key": "zh-mobilestats-counting",
+      "id": "122:5171"
+    },
+    {
+      "key": "zh-mobilestats-menu",
+      "id": "122:5816"
+    },
+    {
+      "key": "zh-mobilestats-month",
+      "id": "122:4195"
+    },
+    {
+      "key": "zh-obs-draft",
+      "id": "187:15824"
+    },
+    {
+      "key": "zh-obs-guide",
+      "id": "187:18275"
+    },
+    {
+      "key": "zh-obs-install",
+      "id": "187:17558"
+    },
+    {
+      "key": "zh-obs-ready",
+      "id": "187:16875"
+    },
+    {
+      "key": "zh-obs-ready-expanded",
+      "id": "188:23629"
+    },
+    {
+      "key": "zh-obs-review",
+      "id": "172:5457"
+    },
+    {
+      "key": "zh-offline",
+      "id": "27:1682"
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535"
+    },
+    {
+      "key": "zh-ongoing-blocked",
+      "id": "114:15474"
+    },
+    {
+      "key": "zh-ongoing-decision",
+      "id": "114:14228"
+    },
+    {
+      "key": "zh-ongoing-running",
+      "id": "114:14851"
+    },
+    {
+      "key": "zh-ongoing-search-empty",
+      "id": "114:16029"
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842"
+    },
+    {
+      "key": "zh-pause-dialog",
+      "id": "115:6516"
+    },
+    {
+      "key": "zh-result",
+      "id": "27:1028"
+    },
+    {
+      "key": "zh-result-dialog",
+      "id": "115:4632"
+    },
+    {
+      "key": "zh-resumed",
+      "id": "26:966"
+    },
+    {
+      "key": "zh-resumedB",
+      "id": "28:1672"
+    },
+    {
+      "key": "zh-rollback-dialog",
+      "id": "115:8676"
+    },
+    {
+      "key": "zh-selected-a",
+      "id": "115:24713"
+    },
+    {
+      "key": "zh-selected-b",
+      "id": "115:25744"
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477"
+    },
+    {
+      "key": "zh-settings-addsource",
+      "id": "95:5002"
+    },
+    {
+      "key": "zh-settings-addsource-populated",
+      "id": "115:30221"
+    },
+    {
+      "key": "zh-settings-backup-dialog",
+      "id": "115:18407"
+    },
+    {
+      "key": "zh-settings-bundle-dialog",
+      "id": "115:19540"
+    },
+    {
+      "key": "zh-settings-checking",
+      "id": "63:4960"
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936"
+    },
+    {
+      "key": "zh-settings-execution",
+      "id": "62:8117"
+    },
+    {
+      "key": "zh-settings-execution-expanded",
+      "id": "115:10574"
+    },
+    {
+      "key": "zh-settings-execution-signedin",
+      "id": "117:6511"
+    },
+    {
+      "key": "zh-settings-issues",
+      "id": "63:5375"
+    },
+    {
+      "key": "zh-settings-materials",
+      "id": "62:6880"
+    },
+    {
+      "key": "zh-settings-materials-expanded",
+      "id": "115:9523"
+    },
+    {
+      "key": "zh-settings-notification-dialog",
+      "id": "115:20731"
+    },
+    {
+      "key": "zh-settings-operation",
+      "id": "63:3997"
+    },
+    {
+      "key": "zh-settings-operation-expanded",
+      "id": "115:11607"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981"
+    },
+    {
+      "key": "zh-settings-preferences-expanded",
+      "id": "115:12617"
+    },
+    {
+      "key": "zh-settings-preferences-saved",
+      "id": "117:7711"
+    },
+    {
+      "key": "zh-settings-rechecked",
+      "id": "63:5790"
+    },
+    {
+      "key": "zh-settings-review-dialog",
+      "id": "115:14809"
+    },
+    {
+      "key": "zh-settings-signin-dialog",
+      "id": "115:17267"
+    },
+    {
+      "key": "zh-settings-source-enabled",
+      "id": "95:5474"
+    },
+    {
+      "key": "zh-settings-source-error",
+      "id": "95:5795"
+    },
+    {
+      "key": "zh-settings-source-paused",
+      "id": "95:4715"
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148"
+    },
+    {
+      "key": "zh-settings-trusted-dialog",
+      "id": "115:16026"
+    },
+    {
+      "key": "zh-settings-validate",
+      "id": "115:13679"
+    },
+    {
+      "key": "zh-setup",
+      "id": "26:2258"
+    },
+    {
+      "key": "zh-setup-preview",
+      "id": "114:13661"
+    },
+    {
+      "key": "zh-setup-scope",
+      "id": "114:13123"
+    },
+    {
+      "key": "zh-source-dialog",
+      "id": "115:3844"
+    },
+    {
+      "key": "zh-standard-history",
+      "id": "114:12595"
+    },
+    {
+      "key": "zh-standards",
+      "id": "26:1385"
+    },
+    {
+      "key": "zh-standards-expanded",
+      "id": "115:27615"
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070"
+    },
+    {
+      "key": "zh-stats-after-decision",
+      "id": "119:10350"
+    },
+    {
+      "key": "zh-stats-all",
+      "id": "119:8710"
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530"
+    },
+    {
+      "key": "zh-stats-month",
+      "id": "119:7890"
+    },
+    {
+      "key": "zh-stop-dialog",
+      "id": "115:7238"
+    },
+    {
+      "key": "zh-submitted",
+      "id": "26:772"
+    },
+    {
+      "key": "zh-submittedB",
+      "id": "28:1492"
+    },
+    {
+      "key": "zh-submittedCustom",
+      "id": "28:1857"
+    },
+    {
+      "key": "zh-system",
+      "id": "26:2046"
+    },
+    {
+      "key": "zh-system-expanded",
+      "id": "115:29597"
+    },
+    {
+      "key": "zh-task-blocked",
+      "id": "115:3173"
+    },
+    {
+      "key": "zh-task-citations",
+      "id": "115:2660"
+    },
+    {
+      "key": "zh-task-decision",
+      "id": "115:2147"
+    },
+    {
+      "key": "zh-translated",
+      "id": "115:26784"
+    },
+    {
+      "key": "zh-trusted-dialog",
+      "id": "115:7960"
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028"
+    }
+  ],
+  "exports": [
+    {
+      "key": "en-settings-source-enabled",
+      "id": "95:5294",
+      "asset": "Figma-en-settings-source-enabled.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "711565e9515401e640c0dbbf3ee54ddbf251f56d127fe9e9d84397cb0381a48e",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-details",
+      "id": "26:138",
+      "asset": "Figma-en-details.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "bed92577d20f99ab900dce4ffbaba04ac4b1872a8b11b04dba3476fd4c167578"
+    },
+    {
+      "key": "zh-settings-collection",
+      "id": "95:5936",
+      "asset": "Figma-zh-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "f8019384bab1739424b8e8f3af046e584e99b35f423b77f6cc65f7affa528860",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-settings",
+      "id": "26:2477",
+      "asset": "Figma-zh-settings.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "52e5d0c9b18232b812bbdac938d777a8d47a70cbe209b6a562edfd53a71e44bd",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings",
+      "id": "26:2361",
+      "asset": "Figma-en-settings.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "1fb62f5232273b0ecd84a107b5f99cc53672c0b7b3402ad061708e50502c7be3",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-ongoing",
+      "id": "94:3523",
+      "asset": "Figma-en-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d4c0245f31f539472757588a76a2f9c7336144c24d9ffdd6d68a502651f38c15"
+    },
+    {
+      "key": "en-ongoing-updated",
+      "id": "94:4688",
+      "asset": "Figma-en-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d9767a7b86f627895e7e6cf70dff846b6de535c3227bab0533535c3e40fcfe03"
+    },
+    {
+      "key": "zh-settings-preferences",
+      "id": "63:2981",
+      "asset": "Figma-zh-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "30cb3084519fbd553e08f5c107e8de9b9985fbf0a69f1f5b668976703325f2ae",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-mobileongoing",
+      "id": "95:4458",
+      "asset": "Figma-zh-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "3d58bf1dcf0987faa4f385e689a32586eae06a6624391143717c45862987cae9",
+      "reused": true
+    },
+    {
+      "key": "en-mobileconversation",
+      "id": "27:1778",
+      "asset": "Figma-en-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "c7dc2031d2bfd2075adaaaa954b6369298b1c861172c12808442a689b152129f",
+      "reused": true
+    },
+    {
+      "key": "en-decisions-empty",
+      "id": "95:4148",
+      "asset": "Figma-en-decisions-empty.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "9abd94c4ec764cd07413d777d47cd6e8f2999d9db883aa4fb5671f9622fcd3a3"
+    },
+    {
+      "key": "en-delegation",
+      "id": "26:1721",
+      "asset": "Figma-en-delegation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "0032cae64f7489c13fe7451143bb118906cf5ab72d1b24622895cb09e928d5ad"
+    },
+    {
+      "key": "zh-work-detail",
+      "id": "95:4028",
+      "asset": "Figma-zh-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "4894f3b045aa20282666c3e0c2c8e6a604f437014c6c481d0a4afc41d1a5f0ac",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-work-detail",
+      "id": "94:4995",
+      "asset": "Figma-en-work-detail.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "ce866e4ab1ef425625b4cfc5af0ff266b4d99e69492b0634ecb099693ecdcaa8"
+    },
+    {
+      "key": "en-settings-operation",
+      "id": "63:3745",
+      "asset": "Figma-en-settings-operation.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "ecf9688e831646c9f2d0e9cd62644364ba7a2d4d207ba5722b6a5540e176bba9",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-result",
+      "id": "26:2593",
+      "asset": "Figma-en-result.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "39b74f4f88a032109d8a0912c6452fd9620569e8d05d11244dde4113da10d84f"
+    },
+    {
+      "key": "en-settings-issues",
+      "id": "63:5167",
+      "asset": "Figma-en-settings-issues.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "35584f5bccf5b5fd2f805ab6b84ea4dad66dd44f723e82795fa191d972f78093",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-conversation",
+      "id": "24:204",
+      "asset": "Figma-zh-conversation.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "1b3c98fac292ff5931ac2501abf089af88393d1ac62f95665f58a686dcf57b0b",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-materials",
+      "id": "62:6635",
+      "asset": "Figma-en-settings-materials.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "cbe9100e573a423e103a8432629dd8353cda813091d8913bf95043ef769e8bde",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-execution",
+      "id": "59:2171",
+      "asset": "Figma-en-settings-execution.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "edbb78622d44666a64f5db5f47bd116f27a63d856829c1f23b4fd992b7b6826a",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-setup",
+      "id": "26:2155",
+      "asset": "Figma-en-setup.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "53e4e750f7a1856ca6a8eaccf0058ab4818b6b4d9e43edf4e5756577c7a5016f",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-mobileconversation",
+      "id": "27:1875",
+      "asset": "Figma-zh-mobileconversation.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "542522b0d3586ad051fcaf6b19574141e5bcb03a76301997402a214259e92e56",
+      "reused": true
+    },
+    {
+      "key": "en-mobileongoing",
+      "id": "95:4343",
+      "asset": "Figma-en-mobileongoing.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "5ab0622c26ac67ccfb105b4d31cd21b25645ab8fa18f56e94809328af18aa811",
+      "reused": true
+    },
+    {
+      "key": "en-settings-preferences",
+      "id": "63:2719",
+      "asset": "Figma-en-settings-preferences.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "e5514a015e8e70c8e35d864ab484e54f1d8749837fc14778d03ef30eda1f42d1",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-checking",
+      "id": "63:4753",
+      "asset": "Figma-en-settings-checking.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "fea40230b5960963ca0dd7563dd42952570eefc2e01cf4bba26792012ecaed0e",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-settings-source-preview",
+      "id": "95:5148",
+      "asset": "Figma-zh-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "ac407e87d9a8313f919cd292d11ab69b97843f571d31fbe211dff5cac098bdff",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-ongoing-updated",
+      "id": "94:4842",
+      "asset": "Figma-zh-ongoing-updated.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "a7087a0ad7ebce8752dca67c03e48342926c88099375e6a694b73a4104fdf0e5",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-system",
+      "id": "26:1937",
+      "asset": "Figma-en-system.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "2bf5beb1f1ee41136ba306230edb04acdf4ac7935551389e216e0236b7d2c145",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-addsource",
+      "id": "95:4857",
+      "asset": "Figma-en-settings-addsource.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "a452d26bed87ba6eb2f00076870f88127831dce9edb2b40b84d881dc9ea3a7c2",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-collection",
+      "id": "94:3678",
+      "asset": "Figma-en-settings-collection.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "7abe3e1ddb1356f42dad0cd2fb51286f83d9be7930bf0ae5130608fa955d038c",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-source-paused",
+      "id": "95:4574",
+      "asset": "Figma-en-settings-source-paused.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "51ef0d007ea53180b102d47a1b4203e0a36462b419944218ab62d8f708620e44",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-source-error",
+      "id": "95:5653",
+      "asset": "Figma-en-settings-source-error.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "4cd5976996b5fcb46a9534bb1ca8dc952aaafbbe168890692230ce5fa06a89f9",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-knowledge",
+      "id": "26:1513",
+      "asset": "Figma-en-knowledge.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "5065f1896144481f79575af51fa8f13365e6b33cf1925e45a594b3e158a913e7",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-rechecked",
+      "id": "63:5583",
+      "asset": "Figma-en-settings-rechecked.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "f1bb2a802eb27f48167aeb2c6839bb04116eb98a4a1063be21691d5f04650ab6",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-settings-source-preview",
+      "id": "94:3836",
+      "asset": "Figma-en-settings-source-preview.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "e47586a224768b581d2314ac64d86806a13e1f3756ad2aaf929a9f23021a2589",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-ongoing",
+      "id": "94:4535",
+      "asset": "Figma-zh-ongoing.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "3d33daaa30c818199f748c248952ecd6b0e80c321fce1391efd468371b1479ae",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-offline",
+      "id": "27:1586",
+      "asset": "Figma-en-offline.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "59d80b2361cbd32fae25ca0c4f7fe7362bbef96742c988cb0843d52559390db2"
+    },
+    {
+      "key": "en-custom",
+      "id": "26:421",
+      "asset": "Figma-en-custom.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "7130eaf44d9efb2c5b266b56a4110580bf0005fd71d7cbc947f103da639f6feb"
+    },
+    {
+      "key": "en-standards",
+      "id": "26:1257",
+      "asset": "Figma-en-standards.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "3a9526572bf62263640deac77988595578fe11272823188281ba5835e862f24d",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-conversation",
+      "id": "24:67",
+      "asset": "Figma-en-conversation.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "9d856960ab3b2f651d8a29e530925d52c756e5a7332dc5d2341887de483043bb"
+    },
+    {
+      "key": "en-stats",
+      "id": "119:6664",
+      "asset": "Figma-en-stats.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "2a4dadaf81260474e6e3b223dbbd88f95b47786967a131ff5782f73ec65f9dab"
+    },
+    {
+      "key": "zh-stats",
+      "id": "119:7070",
+      "asset": "Figma-zh-stats.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "a8e4f899bc36fa44ff2848b63859779f595ac66ccd27c0f93a297ff244fd2b54",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-mobilestats",
+      "id": "119:10764",
+      "asset": "Figma-en-mobilestats.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "f8b99d6d9140cfb0e940392a44156c64ac772e4865f983911a549d923ac0ee5e",
+      "reused": true
+    },
+    {
+      "key": "zh-mobilestats",
+      "id": "119:11003",
+      "asset": "Figma-zh-mobilestats.png",
+      "exported": true,
+      "exportVersion": "2.5",
+      "sha256": "d675151ff0a4d50cdab28727d059091ba7d83d88044f07d7e88431a79d90210f",
+      "reused": true
+    },
+    {
+      "key": "en-stats-month",
+      "id": "119:7484",
+      "asset": "Figma-en-stats-month.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "d1141879f4878de34979d9544f0c447da1e079285b425eb849fc65d1667a80cf"
+    },
+    {
+      "key": "zh-stats-counting",
+      "id": "119:9530",
+      "asset": "Figma-zh-stats-counting.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "e85b08712c65020435385807d48267b21916aa3aa72d2c792ff2302510ed1deb",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-mobile-menu",
+      "id": "115:23422",
+      "asset": "Figma-en-mobile-menu.png",
+      "exported": true,
+      "exportVersion": "2.5.1",
+      "sha256": "1db8c2b15983e877de4be516f6a84552500684615ba879506d6222b17cb1b9af"
+    },
+    {
+      "key": "zh-mobile-menu",
+      "id": "115:23803",
+      "asset": "Figma-zh-mobile-menu.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "fde82499955c6eb637749eaf165d9ad2797439f0375124c43a68f3f66a5e45cd",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "key": "logo-motion",
+      "asset": "Figma-logo-motion.png",
+      "exported": true,
+      "exportVersion": "2.3",
+      "reused": true,
+      "sha256": "c4ae632acb716d9281a5bcf0659f0fb0538594efc4d7e61492d97255c0fe4aa1"
+    },
+    {
+      "key": "en-feishu-home",
+      "id": "172:5101",
+      "asset": "Figma-en-feishu-home.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "bba332558402b9828260e29ec53b0e369cd6584042e875067ee6527cbd68e606",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-feishu-home",
+      "id": "187:18656",
+      "asset": "Figma-zh-feishu-home.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "c145900fdf9d26a30df850c8b54be2704690c45191563e697ea5470befb33231",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-feishu-pair",
+      "id": "187:19703",
+      "asset": "Figma-en-feishu-pair.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "8e4c123ddaed9878f2c14123deebb0961f97b668ed521742e372115615c01ec8",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-feishu-pair",
+      "id": "187:20039",
+      "asset": "Figma-zh-feishu-pair.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "4dcb0168356a93d7254f4c4ec76961f66e9bf6cf2938cd80f0854c42e232c6d4",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-feishu-enable",
+      "id": "188:8349",
+      "asset": "Figma-en-feishu-enable.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "a4d06eeb3178b38191cb715eab1dcefccde8d84c51854d517dbcbbca7de87d43",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-feishu-enable",
+      "id": "188:8777",
+      "asset": "Figma-zh-feishu-enable.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "ce987b8e323ced7ff341f2da00a62ed521e9aaec4aef9dd9905b80324165474a",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-obs-ready",
+      "id": "187:16531",
+      "asset": "Figma-en-obs-ready.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "ef0ae0e0facb6231e3885ec623162455ca2c9fdc6d11a5a97b526424ccd4ff5a",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-obs-ready",
+      "id": "187:16875",
+      "asset": "Figma-zh-obs-ready.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "747ddcfd9c067442df4b11dfebb0a731d739f37998fed514c961c39c2cdbaa43",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-obs-review",
+      "id": "187:16167",
+      "asset": "Figma-en-obs-review.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "bbf6722405048c03e6f838fe8bdc3e6baf6d06b6ecdc01d8b971ffc698f26e6d",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-obs-review",
+      "id": "172:5457",
+      "asset": "Figma-zh-obs-review.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "7cdda038e44befe6765d3477d67de72288805684ecf2283722c0afeaf9ea56b5",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-edit-standard-adopted",
+      "id": "172:5844",
+      "asset": "Figma-en-edit-standard-adopted.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "2eecf5f36774e8e0c2003f106d6162d32e10c0be573404f8961345ee77792f3c",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "zh-edit-standard-adopted",
+      "id": "188:18189",
+      "asset": "Figma-zh-edit-standard-adopted.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "6ccf5a7ae195c16e1cdd15956a23e380a288018ac71e71677ac3a3422afbda97",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "key": "en-mobile-feishu-home",
+      "id": "188:19925",
+      "asset": "Figma-en-mobile-feishu-home.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "8231b64b2fd6acfa1d6bf680849ec00e2251aec37d3a7b476cad70e15bbc88f3",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "key": "zh-mobile-feishu-home",
+      "id": "188:20077",
+      "asset": "Figma-zh-mobile-feishu-home.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "d79b6dca144fd9329cb6b703ef71ca43fcab970759fd1d0eed26f6040a459636",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "key": "en-mobile-feishu-pair",
+      "id": "188:20589",
+      "asset": "Figma-en-mobile-feishu-pair.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "81e17c57c8aad02b9e347244d213218ee511508627a8df66c9ae8296cd13412a",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "key": "zh-mobile-feishu-pair",
+      "id": "188:20751",
+      "asset": "Figma-zh-mobile-feishu-pair.png",
+      "exported": true,
+      "exportVersion": "2.6",
+      "sha256": "1210b9196f73de7e11cc8bb0dc768adf8298e96510f06259084d54160755a7bc",
+      "width": 390,
+      "height": 844
+    }
+  ]
+}
