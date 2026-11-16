@@ -68,16 +68,25 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
 ) STRICT;`);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[];
     expect(tables.map((row) => row.name)).toEqual([
+      'accounts',
+      'auth_challenges',
       'blobs',
+      'bootstrap_tickets',
+      'caller_scopes',
       'command_inbox',
+      'command_records',
+      'control_proposals',
+      'control_receipts',
       'domain_events',
       'object_revisions',
       'outbox',
+      'passkey_credentials',
       'projection_cursors',
       'schema_migrations',
+      'sessions',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

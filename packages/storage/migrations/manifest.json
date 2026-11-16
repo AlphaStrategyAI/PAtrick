@@ -2,5 +2,9 @@
   {
     "file": "0002_core.sql",
     "sha256": "6e82bac75d455f28dc498874b61d0d778e1552b4bc5a8d1b5d7f5dfddfc06233"
+  },
+  {
+    "file": "0003_auth_control.sql",
+    "sha256": "3767d19a3f6c65f5ddae4f5f7d65a057082bfc978fec2d7e7a7a347f4cf2487f"
   }
 ]
