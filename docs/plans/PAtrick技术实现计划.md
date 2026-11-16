@@ -22,7 +22,7 @@
 
 ---
 
-版本 1.5 · 2026-11-16 · [产品设计 v2.6](../designs/PAtrick产品设计.md) · [技术设计 v2.1](../designs/PAtrick技术设计-v2.md) · [交互原型](../designs/设计资产/v2/交互原型.html) · [TJ 团队 Figma](https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67)
+版本 1.6 · 2026-11-16 · [产品设计 v2.6](../designs/PAtrick产品设计.md) · [技术设计 v2.1](../designs/PAtrick技术设计-v2.md) · [交互原型](../designs/设计资产/v2/交互原型.html) · [TJ 团队 Figma](https://www.figma.com/design/kPSkB5zeZSKaK7Yrz3PslQ?node-id=24-67)
 
 开发依赖见 [§7](#7-可执行任务清单)，设计验收追踪见 [§8.4](#84-从设计条款到验收用例)，逐任务步骤见 [§10](#10-逐任务实施步骤)。
 
@@ -165,11 +165,12 @@ domain只依赖contracts和端口；集成与storage实现端口；service组装
 | standards / standard_versions / candidates | stable standard_id、active_version、domain、范围、规则/例外/反例、来源、草稿base、状态/有效期 | 采纳CAS核对草稿/基线/评测/证据；版本不增加标准数量 |
 | evaluation_policies / datasets / reports | 冻结门槛/预算/划分、case/result版本、基线/候选/外部方法、失败/不确定性 | 留出访问独立；生成样本不作留出；候选不能改评分门槛 |
 | mandate_types / mandates / capability_profiles | type_id、领域/动作/资源/风险/域、预算/期限、L0–L3、报告/配置版本 | 类型不按实例计数；能力提升不扩权；撤回依赖可立即降级 |
-| work_refs / work_generations | work_id、root/cause、source_revision、generation、hub_lane、完成条件、delivery_ref | root业务键唯一；一个工作多个run/问题；run.done不是交付 |
-| decisions / question_bindings | decision_id/event_id、版本/证据、A/B行动利弊、option_disposition/允许后续动作（计入options_hash）、custom合同；hub_card_id、question_version、options_hash、索引映射 | 问题生成后冻结；语义变化新版本；翻译不改option_id |
-| decision_submissions | submission_id、raw_custom、disposition、question_version、reason、answer_intent_id? | proceed/deferred/clarification_required分开；暂缓和待澄清不产生有效hub答案 |
+| work_refs / work_generations | work_id、root/cause、source_revision、generation、hub_lane、完成条件、delivery_ref、冻结的 judgment_basis | 同一工作首次判断前固定标准或外部方法修订；后续 attempt、问题和续办沿用；run.done不是交付 |
+| decisions / question_bindings | decision_id/event_id、版本/证据、judgment_basis_hash、A/B行动利弊、option_disposition/允许后续动作（计入options_hash）、custom合同；hub_card_id、question_version、options_hash、索引映射 | 问题生成后冻结；语义变动用后继问题；翻译不改option_id |
+| decision_submissions | submission_id、raw_custom、disposition、question_version、reason_code、answer_intent_id?、replacement_ref? | proceed/deferred/clarification_required分开；需要重新决定时保存新旧绑定和差异；暂缓与澄清不产生有效hub答案 |
 | command_inbox / answer_intents / answer_receipts | account/caller/request、command_fingerprint、精确绑定、raw_custom、发送状态；飞书另绑connection_id/incarnation/epoch、config/binding_revision、inbound_event_id、channel_permit/cutoff；hub_answer_event_id、validity、result_revision | 命令指纹含操作、对象、资料域、预期版本和正文hash；同键异指纹409；首答由hub仲裁；有效回执按hub答案ID唯一 |
-| resume_intents / execution_grants | 恢复键、generation、question/answer事件、upstream_event_id、attempt；输入/策略/证据版本、expiry、revoked_at | 恢复键唯一；每业务代次至多一个active grant；同键重试不重置预算 |
+| resume_intents / execution_grants | work/generation/question/answer、phase、state、next_action、evidence_ref、attempt_id；grant 的 work 或 consultation 主体、冻结依据、允许动作、版本、expiry、revoked_at | 每个恢复阶段唯一；工作与咨询按各自主体限制 active grant；补证时限定动作，咨询不授予业务 effect |
+| question_replacements | work_id、generation、原 question_id/version、后继 question_id、原因、差异与关旧卡回执 | 对原版本唯一；换卡期间拒新旧卡并发接受；后继就绪后读回固定关联 |
 | conversations / messages / consultations | kind、origin、work/context refs、raw_text、final_result、caller_request_id、result_version、cancelled_at | 工作与自由咨询分开；最终答案落盘才answered；取消/终态CAS |
 | budget_reservations / usage_receipts | business/grant/session/attempt、route、逻辑调用ID、预留金额/时长、held/spent/uncertain、dispatched_at、actual_usage | 唯一调用键；预留与发送许可分别原子更新，同一预留仅一次发送许可；未知用量保留预留 |
 | effect_intents / effect_receipts | effect_key/resource/action/hash、expected_remote_version、服务生成的origin、authorization_ref、dispatch_seq及远端阶段；业务另绑work/grant/generation，其他绑owner命令/test_id/采用事实 | origin=business/owner_operation/channel_test/vault_projection；不同来源授权由CHECK约束排他；同资源串行，未决写入先对账 |
@@ -178,13 +179,13 @@ domain只依赖contracts和端口；集成与storage实现端口；service组装
 | domain_events / outbox / projection_cursors | seq、event_id、aggregate/version、causation、scope、payload；destination/ack；hub/domain水位和投影通知的本地seq | event_id唯一；通知、投影、游标同事务；outbox成功或duplicate才ack |
 | work_views / stats_views / health_views | 只读状态、范围、as_of、freshness、definition_version、水位向量 | 可全量重建；不作为执行授权或业务事实来源 |
 
-SQLite部分唯一索引落实关键排他：active grant按(work_id,generation)，答案按hub_answer_event_id，恢复按(work_id,generation,question_id,answer_event_id)，外部动作按effect_key；未关闭编辑按(account_id,domain,active_key)。active_key由操作/目标/精确基线规范化计算，null用固定值编码；新建标准再包含draft_key，避免null放过重复或合并两个独立新稿。索引条件与关闭规则写入migration测试，不能仅靠应用内“先查再插”。
+SQLite部分唯一索引落实关键排他。工作 active grant 按 `(work_id,generation)`，咨询按 `request_id`；答案按 `hub_answer_event_id`，恢复按 `(work_id,generation,question_id,answer_event_id,phase)`，外部动作按 `effect_key`，未关闭编辑按 `(account_id,domain,active_key)`。工作和咨询 grant 的主体字段以 CHECK 排他。`active_key` 规范化操作、目标和精确基线，null 用固定值表示；新建标准还绑定 `draft_key`。迁移测试覆盖索引、主体互斥和关闭后重开。
 
 ### 3.3 必须写成确定性事务的流程
 
 1. **采集提交**：稳定读取→blob临时文件/fsync/原子重命名→事务提交修订、cursor、domain_event/outbox。崩溃遗留blob可GC，已提交修订不可缺blob。
-2. **答复接受**：认证→保存AnswerIntent→每问题串行验证→hub首答→读回→事务写AnswerReceipt与answer.verified outbox。原生card.answered可能先到，wrapper未核验不能启模型；两个事件用同一恢复键归并，技术重试沿用该键。
-3. **准入与派工**：检查身份∩委托∩策略∩能力∩grant及证据/预算；CAS替换旧attempt，未决effect先对账。resume只关联原工作，不能创建新业务根。
+2. **答复接受**。认证并保存 AnswerIntent，按问题串行送 hub 首答仲裁，读回后在同一事务写 AnswerReceipt、`phase=answer` 恢复意图和 `answer.verified`。原生 `card.answered` 与该通知共用同一个领取入口；恢复记录尚未可用时，worker 返回控制器的 `policy_wait → done/no-op`，退出且不启动模型或技术重试。
+3. **准入与派工**。检查身份、委托、策略、能力、grant、证据及预算。首次判断前写入 `judgment_basis`，续办和换 attempt 从同一工作读冻结版本，每次派发仍检查撤回水位。恢复阶段在 grant 事务中领取，技术重试在旧尝试终结且未决效果对账后沿用同键。咨询使用 `request_id` 的独立 grant 和额度，`parent_work_id` 只承载获准上下文。
 4. **外部效果**。事务落 EffectIntent。调度者在短事务中按当前授权、撤回水位、资源和版本领取该阶段的唯一发送许可，随后在事务外调用并读回。许可与撤销按提交顺序裁决。撤销先提交时分派失败，已知尚未发送的许可关闭，已发送或发送状态未知的动作进入对账。只有证明未执行或下游明确保证同键重试幂等时才重发。读回证明与业务事实同事务记录。
 5. **配置应用**：草稿验证→可信差异授权（需要时）→固定处理器→逐项applied_revision→复查。保存、应用、复查三个状态独立；取消不撤销已发生效果。
 6. **标准采纳**：冻结评测和依赖→事务核对candidate/base/source/report/policy/epoch→CAS更新active_version并追加事件；首次null→v1，修订n→n+1，任一不匹配只留历史。
@@ -311,7 +312,16 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 }
 ```
 
-响应先为 `{command_id, state:"received", receipt_url}`。A/B和custom都先产生DecisionSubmission；A/B的处置语义随option_id冻结，不能把“等待补证”仅作为标题。明确暂缓为deferred，关键条件不明为clarification_required；原文可重取，保持问题open，不写hub答案/answer.verified，不签业务grant、不计主人决策。模型只辅助解释，固定合同校验缺项/范围；无法确定是否可执行时澄清，不猜测放行。明确选择“执行获准的补证步骤”可为proceed，但冻结next_action=collect_evidence；原业务进入waiting_evidence，仅可触发已有许可的补证，证据满足前不得发布或启动原交付阶段。仅选择“以后再定/等待”仍为deferred，不等同补证授权。只对proceed建立AnswerIntent，读回后给 `verified / stale / rejected / conflict`；续办另给work进展。暂缓/澄清回执只能更新仍open且版本匹配的问题，不能覆盖已经接受的答案。服务端把option_id映射冻结的上游0起索引；custom提交上游时省略choice、传text，原文独立保留；不能把choice=null发送给上游。
+响应先为 `{command_id, state:"received", receipt_url}`。A/B 与 custom 均先产生 `DecisionSubmission`，处置语义随 `option_id` 与 `options_hash` 冻结。以下处置均保存原话，模型可建议解释，固定处理器核对范围与关键条件。
+
+| 处置 | 回执与后续 |
+|---|---|
+| `deferred` | 保留原问题待答，回执可重取。 |
+| `clarification_required` | `MISSING_INPUT` 表示现有选项和范围仍适用，保留原卡并列出缺项。`OUT_OF_SCOPE` 或实质改案、关键歧义改变选项含义时，说明差异并在同一工作准备版本化后继问题。授权扩大还须可信控制回执。后继创建按原问题版本去重。 |
+| `proceed` + `next_action=collect_evidence` | 接受精确答复后进入 `waiting_evidence`，只授予指定补证动作。固定核验器提交匹配的证据修订与 `evidence.ready` 后，才可领取交付阶段许可。 |
+| `proceed` + 原提案动作 | 经 AnswerIntent 与 hub 权威核验返回 `verified / stale / rejected / conflict`，进展从原工作重取。 |
+
+暂缓与待澄清不写 hub 答案、`answer.verified` 或主人决策事实。准备后继问题时先持久化换卡意图，在 AnswerGate 问题锁内封住旧版的新提交，核对在途首答后用控制器关旧卡，读回才开放后继卡。若旧版已获有效首答，保留其权威轨迹并按新事实重判。A/B 映射冻结的上游零起索引，custom 的上游请求只传 `text` 并省略 `choice`。
 
 `POST /edits`使用共同命令信封。创建意图时expected_revision=null，服务按vault_id推导资料域并核验配置版本；新稿路径和document_id由服务分配，不接受任意文件位置。
 
@@ -333,8 +343,10 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 | 事件 | 产生者 | 消费者与不变量 |
 |---|---|---|
 | source.revision.committed | 采集事务 | 事实核实；仅获准trigger产生工作，不由任意资料正文派工 |
-| work.requested / draft.requested / draft.ready | 可信入口/验收后的阶段结果 | Autoloop；带root/cause/generation/hops，未答关键卡不得emit下一阶段 |
-| question.bound / answer.verified | QuestionBinding/AnswerGate | 投影与幂等恢复；不发新业务根，不能重复启模型 |
+| work.requested / draft.requested / draft.ready | 可信入口/验收后的阶段结果 | Autoloop；带root/cause/generation/hops。首次判断冻结依据；待答与补证状态均检查允许的阶段。 |
+| question.bound / answer.verified | QuestionBinding/AnswerGate | 投影与恢复阶段 `answer`。原生答复事件和补唤醒按同键领取。 |
+| evidence.ready | 固定补证核验事务 | 绑定原 answer_event_id、核验证据修订和当前撤回水位；登记一次 `evidence_ready` 阶段，再签交付 grant。沿用 root/cause/generation/hops。 |
+| consultation.requested | 持久咨询入口 | 独立 Autoloop lane，subject=request_id。按咨询额度领 grant 和发送许可，禁止业务阶段及 effect。 |
 | decision.committed / work.delivered | 判断准入/交付核验事务 | 案例与统计；建议/模型调用/子步骤不计成有效决定或完成任务 |
 | evidence.invalidated / capability.changed | 撤回/评测控制 | 同步门禁先阻断，后台重建依赖；无关域继续 |
 | standard.candidate / standard.activated | 领域采纳事务 | Standards视图、后续维护评测；运行中任务固定旧标准，撤回约束仍即时生效 |
@@ -353,7 +365,7 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 | 路由/功能 | 组件和状态 | 服务接入与核心验收 |
 |---|---|---|
 | `/decisions` 需要决策 | WorkConversation、DecisionCard、OptionCompare、CustomDecision、Receipt、独立Composer；空态/过期/核验/离线 | 同一work/question版本；A/B行动/依据/利弊及关键风险常显，自定义与自由聊天有不同提交按钮；聊天“同意”不答题 |
-| `/work`、`/work/:id` 正在进行 | WorkList、状态筛选/搜索、进展时间线、阻塞、成果、决定定位 | 全部未完成任务按work_id去重；已答仍在原任务运行，已交付进入历史；无证据不显示百分比 |
+| `/work`、`/work/:id` 正在进行 | WorkList、状态筛选/搜索、进展时间线、阻塞、成果、决定定位 | 未完成任务按 work_id 去重；已答后等待证据时显示缺失条件；交付后进入历史 |
 | 全局咨询 | ConsultationPanel、ContextTags、工作关联、返回锚点 | 每页可达，工作/全局草稿隔离；等答时受限咨询可继续，原业务不派工；取消/终态竞态与重连同结果 |
 | `/standards` | 当前/候选/失效、创建标准/修订入口、三轴EditProgress、版本/案例/评测 | 首次null基线到v1；修订冻结基线；保存不生效、旧版继续可用；过期不采纳，导回重试不重复计数 |
 | `/knowledge` | 搜索/核实筛选、出处、编辑原稿/添加补充、冲突与EditProgress | 本人原稿可定位；外部/生成内容仅补充；收录与核实分开，canonical引用稳定，不按新文件加知识计数 |
@@ -389,7 +401,7 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 - **检测分层**：凭据有效→机器人可用/发布可见→出站长连接→接收消息im.message.receive_v1→卡片card.action.trigger→本人目的地/资料域→发送及回传。只连上WebSocket或成功发消息均不等于“可以接收决定”。Run checks默认无消息外发；入站能力待真实测试，不用权限列表替代往返。
 - **测试隔离**：点击“发送测试消息”前显示机器人、目的地和不含业务资料的样例；test_id带独立namespace，测试卡只验证回传，绝不调用业务AnswerGate/模型或产生决定/任务统计。持久化发送意图、平台message_id与回传证据，超时标unknown，核对后再重试，不自动连续发消息。
 - **状态与启用**：外部状态严格采用§3.5；完整回传后显示needs_enable，带有效绑定/test_id的可信启用完成才ready/active。权限、凭据、断连是独立reason_code；过期码重建、非本人拒绝、unknown先对账，不复用旧证明。
-- **停用**：停用走ChannelGate（同应用内先锁渠道、再锁问题）：先原子置draining、提高connection_epoch并关新入出站；尚未开始发送hub的旧epoch意图作废，已送hub/结果未知者列入cutoff清单，逐个读回收口。cutoff前已获提交许可的答复仍须通过现行身份/策略/问题门禁；确已被hub接受且仍有效的记录原决定，已经核验的工作继续。撤权后失效的答复不签grant，保留审计并刷新Web问题。未知意图未收口时显示“停用中，答复核对中”，不宣称disabled；确认终态后才取消待发、关闭长连接并完成停用。cutoff后新到及无提交许可的旧事件只审计。保留业务问题供Web处理，不取消工作或删除共享凭据；重新启用重验身份与权限。未配置飞书不阻断Web工作。
+- **停用**。ChannelGate 按应用先锁渠道、再锁问题。进入 `draining` 时提高当前 `connection_epoch` 并关新入出站。已送 hub 或送达未明的 cutoff 项使用发送许可记录中的 incarnation、epoch、配置与绑定修订核对当时的通道身份，再按现行身份、委托、问题版本、证据水位和撤权核验能否续办。许可未领、尚未发送和 cutoff 后到达的旧事件只留审计。未决项显示“停用中，答复核对中”，终态明确后关闭连接并显示已停用。有效的权威答案仍继续原工作，其他待答问题可从 Web 处理。
 
 配置/配对/测试使用probe模式：只接配对码、探针和隔离test_id，不接业务对话/决定；只有当前配置的身份绑定、双向检查和可信启用均完成才转active。同app/tenant只有一个受监督长连接，检测不得另起消费者抢走业务事件；密钥轮换先验证候选凭据，再按ChannelGate排空切换，失败恢复仍有效旧版并如实显示连接间隙。所有探针/测试回执绑定配置版本、credential_version、binding_revision和connection_epoch，旧回执不能将新配置置ready。
 
@@ -525,15 +537,15 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 | T01 合同与骨架 · 5–8 | T00 | workspaces、package-lock、contracts、OpenAPI/SDK、统一错误/命令/快照、CI | Mac/Linux锁定依赖构建；Schema/客户端一致；不合法major/超范围payload拒绝 |
 | T02 存储与事务 · 7–12 | T01 | 存储基础migration、repositories、blob、inbox/outbox、投影水位；各领域任务交付所属表组 | 唯一键/CAS并发、崩溃落盘、A→B→A、空库初始化与前向迁移；storage-report |
 | T03 身份与可信控制 · 8–12 | T01,T02 | WebAuthn、session、caller scopes、控制提案/一次挑战/回执、共用SettingsChange引擎/固定操作注册表、Keychain边界 | CSRF/跨域/重放/过期/恢复会话失效；模型与MCP不能答题/扩权；auth-report |
-| T04 Autoloop适配 · 8–14 | T01,T02 | 固定SHA、source/rules、observer快照+分页+seq、公开插件、稳定lane与事件谱系 | 重复/乱序/断档/重启；done+ask不当完成；hops边界；hub-contract-report |
+| T04 Autoloop适配 · 8–14 | T01,T02 | 固定SHA、source/rules、observer快照+分页+seq、公开插件、稳定工作与咨询lane、恢复领取接口 | 原生答复唤醒与无回执等待；custom 只传 text 的读回；断档/重启、hops边界 |
 | T05 GitHub与目录采集 · 8–12 | T02,T03,T04 | 注册表、读取/预览、webhook+补扫、游标、触发白名单、首次回执 | 断网/半写/权限过期、重复来源、自触发排除、暂停在途；collection-report |
 | T06 知识与Vault · 16–26 | T02,T05 | 事实图/检索；VaultConnection Inspector/处理器、四类EditIntent公共框架、Reader/DraftWriter/Projector、三轴回执、模板/附件 | 接通证明失效/只读不越权；原稿/补充、重复点击不覆盖、中文URI、半写/离线；采用后导回重试不重评/重计；vault-report |
 | T07 标准与评测 · 12–18 | T04,T06 | create_standard/revise_standard分型、null/v1与修订CAS、冻结原稿基线、入候选、独立留出/shadow、采纳CAS/复评、导出当前/候选；先fixture后真实评测 | 首次标准base=null/ID稳定、保存不生效、改YAML不扩权、r8评测不批r9、base变化/失败保留旧版、留出不进Vault；evaluation-report |
-| T08 委托、能力与预算 · 8–14 | T02,T03,T07 | 范围准入、类型目录、grant、reserve/usage、暂停/降级/恢复 | 末余额竞争、unknown预留、旧attempt/旧报告、scope提升越界、总预算不重置 |
+| T08 委托、能力与预算 · 8–14 | T02,T03,T07 | 范围准入、类型目录、工作/咨询 grant、阶段限定、reserve/usage、暂停/降级/恢复 | 独立额度、末余额竞争、unknown预留、旧attempt/旧报告、scope提升越界、总预算不重置 |
 | T09 三执行器 · 12–20 | T04,T08 | wrapper、Codex/Grok/DSH各adapter、Harness bundle、生产readiness | 各自真实后台终态/取消树/用量/隔离；final后挂起、exit1、缺插件、无resume；三份backend报告 |
-| T10 精确问答与续办 · 16–26 | T03,T04,T08,T09 | DecisionCard/Binding、AnswerGate、恢复键/outbox；飞书配置/凭据、配对确认、测试预览/发送/读回、needs_enable到active、切换/排空 | Web/飞书首答、原生事件早于回执、跨库崩溃、超时未知、A/B及custom暂缓/澄清不续办、补证只执行补证；飞书probe/active、停用cutoff/未知意图、真实双入口；一次续办证明 |
-| T11 对话与咨询 · 8–12 | T03,T04,T06,T09,T10 | Conversation、受限Consultation、HTTP/MCP、context link、终态CAS | 等答仍可咨询且不派业务轮；取消/完成竞态、断线、跨caller、草稿隔离 |
-| T12 PR交付与反馈 · 8–12 | T05,T08,T09,T10 | 冻结产物、固定GitHub发布器、effect journal、outcome watcher | base改变、成功丢回执、多个匹配PR、撤权后迟到成功；反馈只回原案例 |
+| T10 精确问答与续办 · 16–26 | T03,T04,T06,T08,T09 | DecisionCard/Binding、AnswerGate、后继问题、答复与补证两个恢复阶段；飞书配置、双向测试与排空 | 原生事件早到与跨库崩溃、补证完成一次放行、超范围换卡、停用并发撤权、真实双入口 |
+| T11 对话与咨询 · 8–12 | T03,T04,T06,T08,T09,T10 | Conversation、受限Consultation、HTTP/MCP、context link、终态CAS | 待答时咨询可独立完成且不占工作额度；取消/完成竞态、断线、跨caller、草稿隔离 |
+| T12 PR交付与反馈 · 8–12 | T05,T08,T09,T10 | 冻结产物、固定GitHub发布器、首验/历史核对、effect journal、outcome watcher | base在创建窗口漂移、历史base正常前进、丢回执、多匹配、撤权后迟到成功；反馈只回原案例 |
 
 ### 7.2 完整产品界面与功能
 
@@ -665,11 +677,12 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 入口与边界                                     故障场景与可见结果
 认证命令 -> 目标指纹 -> 版本校验 -> 回执        T01/T02/T03  同键换目标 409，撤权后 403
 安装/升级 -> manifest -> SQLite ledger         T02/T23      乱序合入可升级，旧迁移变更后停止
-双入口答复 -> hub -> 收件 -> 续办              T10/T15      重连/竞答只续办一次 [E2E]
+双入口答复 -> hub -> 核验 -> 领取阶段          T04/T10/T15  原生先到等核验，补证/交付各领一次 [E2E]
+咨询 -> 独立 lane/授权 -> 结果                 T08/T11      待答仍可咨询，父工作额度与副作用不变
 快照 -> 同事务游标 -> 续接                    T13/T25      快照间提交不遗漏，旧订阅可重取 [E2E]
 预算 -> 预留 -> 单次发送许可 -> 用量          T08/T09      重复调用零额外发送，崩溃待核对
-证据/基线 -> 候选 -> 回放与评测 -> 采用        T07/T25      撤回或过期基线挡住采用 [EVAL]
-工作计划 -> 远端创建 -> PR 核验               T12/T25      空读保持未知，base 漂移时暂停交付 [E2E]
+证据/基线 -> 候选 -> 回放与评测 -> 采用        T07/T09/T25  在途工作冻结旧版，撤回后拦截 [EVAL]
+工作计划 -> 远端创建 -> PR 首验 -> 历史核对    T12/T25      空读待核验，base 正常前进保留回执 [E2E]
 人工稿/模板 -> 暂存 -> 发布目标名              T06/T27      中断无半成品，现有文件保留
 恢复 -> 核对撤回 -> 领取新 epoch -> 启用       T22/T25      两个候选仅一方获得写权限 [E2E]
 构建版本 -> 候选签名 -> 现场验收 -> Release    T23/T26      发行摘要匹配验收，错架构可诊断
@@ -679,7 +692,10 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 |---|---|
 | `tests/integration/T02.test.ts`、`tests/integration/T03.test.ts` | 旧安装已应用 0012，再合入 0011；升级只应用新 manifest 尾部。交换目标或预期版本时返回409，同目标重试返回原回执；撤权后拒绝读回。 |
 | `tests/integration/T08.test.ts`、`tests/admission/T09.test.ts` | 同一预留的两个并发领取只产生一次实际出站；在派发前后分别停机验证禁止重复收费，未知用量展示待核对。 |
-| `tests/integration/T12.test.ts`、`tests/e2e/T25.spec.ts` | 丢创建响应并暂时隐藏远端结果，发布者保持未知，随后认回相同 PR；发送时更改 base，使工作保持待核验。 |
+| `tests/contract/T04.test.ts`、`tests/integration/T10.test.ts` | custom 只传 text；原生事件先到时让出 worker，读回同一答案后只允许一次续办。补证证明重放只激活一次交付。超范围 custom 生成一个后继问题，旧卡回调和扩权被拒。 |
+| `tests/integration/T08.test.ts`、`tests/integration/T11.test.ts` | 等待决策期间的咨询独立计费，咨询 grant 拒绝业务 effect，确认父工作无新增 grant、轮次和费用。 |
+| `tests/admission/T10.test.ts`、`tests/integration/T10.test.ts` | 已提交飞书答复在停用时按历史许可+现行工作授权核验，撤权反例只留审计；实测暂缓后仍能回答。 |
+| `tests/integration/T12.test.ts`、`tests/e2e/T25.spec.ts` | 丢创建响应并暂时隐藏结果，保持未知；创建窗口内 base 变化暂停交付，核验后推进 base 保留原证据且零重发。 |
 | `tests/integration/T13.test.ts`、`tests/e2e/T15.spec.ts` | 在快照与订阅之间提交状态，读回一次；断线后撤权，在两个标签页重连均拒绝旧游标和迟到响应。页面显示权限变化或重新认证入口。 |
 | `tests/integration/T07.test.ts`、`tests/admission/T25.test.ts` | 固定模型/提示/工具版本，按相同的输入、样本和预算对比当前与候选。加入撤回引用、缺证据和反例，报告接受、拒绝及无法判定的原因。 |
 | `tests/admission/T27.test.ts`、`tests/recovery/T22.test.ts` | 中断模板安装后原稿和既有模板 hash 不变；同时启用两恢复机并丢获胜响应，通过读回认出唯一写者，另一方保持关闭。 |
@@ -688,6 +704,20 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 在 `answer-gate.ts`、`github.ts` 和 `restore.ts` 的跨系统处理器旁保留简短顺序图，随发送、读回或激活次序变更一同更新。
 
 ## 9. 本计划的审核与交付记录
+
+v1.6以 `26aca12` 同一提交下的 v1.5、产品 v2.6 和技术 v2.1 送交 Grok Build `1.0.77`。独立只读会话由 `grok-4.6-build` 以 `end_turn` 完成，返回七条发现，报告正文 SHA-256 为 `5a951ec10c53ac0ada59a53082dc63f42b96a00df3a00ff44416b1011a5cca82`。
+
+| 发现 | 落入计划的合同 |
+|---|---|
+| 答复与补证接续 | T04/T08/T10共用阶段领取入口。原生通知与领域通知共享答复键，补证核验登记同一答案下的交付阶段。Autoloop 保持调度与首答权威。 |
+| 待答时的咨询 | T08/T09/T11按 request_id 签发只读许可、派独立 lane 和记账，子请求无需继承父工作 grant。 |
+| 飞书停用 | T10以历史发送许可核对 cutoff，以现行工作权限裁定续办；暂缓后的卡片交互由 T00/T10实测。 |
+| PR 历史对账 | T12/T22把创建窗口的 base 证据与后续远端观察分开。 |
+| 在途判断标准 | T07–T10冻结依据及其 hash，继续按当前撤回水位控制新动作。 |
+| 超范围 custom | T10沿用三种处置状态，以原因和后继引用表达换卡；可信控制继续负责扩权。 |
+| 上游 custom 载荷 | T00/T04把仅传 text、读回 choice 和原文保全列为可失败合同。 |
+
+审核对象是设计与实现计划。Autoloop 的实际派发、custom 读回和飞书卡片表现由锁定版本探针确认，整条业务链由实施测试验收。
 
 v1.5对当前范围完成三轮复核。第一轮校正锁文件、迁移顺序和候选包发行的交接；第二轮实查命令重试、一次性发送、外部未知结果及恢复切换；第三轮补齐从故障注入到用户可见状态的覆盖和固定负载基线。原任务估算仍供 T00 分段复估，§8 的应用及设备证据在对应任务中产生。
 
@@ -709,6 +739,8 @@ v1.0三轮subagent与独立Codex会话的原始意见、v1.1 Obsidian增补及�
 **文件** `scripts/lock-design-inputs.mjs`、`tests/contract/T00.test.mjs`、`design-inputs.lock.json`、`upstream.lock.json`、`fixtures/contracts/admission-matrix.json`。
 
 **交接** T01读取锁定的 Node/npm、平台和初始依赖选择，建立 workspace 锁文件。T09/T10/T23/T27读取探针版本、身份及状态，T24读取 `frames` 和 `exports`。Autoloop 固定 `45aecbf578289cda72d1fc773dcad069bfe7778b`，DSH 为 `e8f7b93a344964de3dca1ace9e72b6e4d6de87cb`。逐项记录 CLI、飞书消息/卡片、Obsidian 应用/安装器/架构，以及签名链与离机目标的版本、命令、证据 hash 和 `verified/blocked/pending`。应用路径相关能力留给各任务以真实路径验收。
+
+`fixtures/contracts/admission-matrix.json` 单列 `autoloop_native_answer_resume`、`autoloop_custom_text` 和 `feishu_deferred_card`。在隔离 hub 测答复后的派发/让出行为及仅含 `text` 的答案读回，在测试应用实测暂缓后仍可提交决定卡。各项记录固定 SHA 或 SDK 版本、命令、观察结果和证据 hash；仅 text 探针记录可核验的 `expectedChosen`。T04/T10复测前保留真实状态；拒绝 `text` 时标受阻，保留原始输入和待答问题。
 
 - [ ] 将下面用例写入 `tests/contract/T00.test.mjs`，运行 `node --test tests/contract/T00.test.mjs`，预期缺少设计锁时报 `ENOENT`。
 
@@ -900,9 +932,9 @@ RETURNING proposal_id;
 
 ### T04 Autoloop 适配与谱系
 
-**文件** `packages/integrations/autoloop/client.ts`、`packages/integrations/autoloop/observer.ts`、`packages/integrations/autoloop/agent.ts`、`packages/storage/migrations/0004_hub_work.sql`、`tests/contract/T04.test.ts`。
+**文件** `packages/integrations/autoloop/client.ts`、`packages/integrations/autoloop/observer.ts`、`packages/integrations/autoloop/agent.ts`、`packages/integrations/autoloop/answers.ts`、`packages/storage/migrations/0004_hub_work.sql`、`tests/contract/T04.test.ts`。
 
-**交接** `publishHubEvent(event: HubEvent): Promise<'accepted' | 'duplicate'>` 传固定 event_id。`rebuildHubView(): Promise<{hub_seq: number}>` 先读完整分页快照再跟 seq。`deriveStageEvent(parent: HubEvent, eventId: string, kind: StageKind): HubEvent`，供 T09/T12 保留代次和深度。Autoloop 负责 claim、retry、later、ask/answer；PAtrick 从公开接口读回。
+**交接** `publishHubEvent(event: HubEvent): Promise<'accepted' | 'duplicate'>` 传固定 event_id。`rebuildHubView(): Promise<{hub_seq: number}>` 先读完整分页快照再跟 seq。`deriveStageEvent(parent: HubEvent, eventId: string, kind: StageKind): HubEvent` 为 T09/T12 保留代次和深度。业务继续执行统一调用 `claimContinuation`，T04先接端口并用夹具验证，T08/T10接真实授予和账本。Autoloop 继续负责 claim、retry、later、ask/answer。
 
 - [ ] 红测向锁定 hub 交同一事件两次，观察者从断档重取；再验证下面谱系断言。运行 `npm exec -- vitest run tests/contract/T04.test.ts`，预期重复投递、断档或深度断言失败。
 
@@ -914,13 +946,13 @@ expect(deriveStageEvent({ ...parent, hops: 7 }, 'e8-ready', 'draft.ready')).toMa
 });
 ~~~
 
-- [ ] 固定使用公开 `command/read/check`。发布桥把已准入 `work.requested` 送到 hub 的来源变化规则。只有 `draft.requested`、`draft.ready` 增加模型阶段深度。定时唤醒、答复和网络恢复沿用同一根/代次。快照导入与游标一事务保存，断档重建。实现阶段事件的固定函数。
+- [ ] 固定使用公开 `command/read/check`。发布桥把 `work.requested` 送到来源变化规则，`consultation.requested` 使用固定咨询组、显式 parallel 和 `subject=request_id`。业务恢复信号带原根/代次和阶段键；进入模型前调用同一领取端口。收到原生答复但阶段尚未可领时产生 `policy_wait → done/no-op` 并释放本次 worker，回执出站后再次唤醒。只有 `draft.requested`、`draft.ready` 增加业务阶段深度。快照导入与游标同事务保存。
 
 ~~~ts
 export type StageKind = 'draft.requested' | 'draft.ready';
 export type HubEvent = {
   event_id: string; root: string; cause: string; generation: number; hops: number;
-  kind: StageKind | 'work.requested';
+  kind: StageKind | 'work.requested' | 'consultation.requested' | 'answer.verified' | 'evidence.ready';
 };
 export function deriveStageEvent(parent: HubEvent, eventId: string, kind: StageKind): HubEvent {
   const hops = parent.hops + 1;
@@ -929,7 +961,26 @@ export function deriveStageEvent(parent: HubEvent, eventId: string, kind: StageK
 }
 ~~~
 
-- [ ] 重跑 T04。预期重复事件只有一个 hub seq，分页/重启获同一关联，`done+ask`仍待答，控制唤醒不新建 lane。提交 `feat: integrate Autoloop event and observer contracts`。
+- [ ] 在 `tests/contract/T04.test.ts` 执行真实 hub 的 `custom-text-only`。发出恰含 `text` 的 custom 请求，核对读回的 `answers.card`、`answers.choice=null` 与实际 `chosen`。领域保存未修剪的 `raw_custom`；上游裁剪规则按探针记录。再跑 `native-answer-before-receipt`，预期先到的 worker 以等待结束，模型与技术重试均为零；迟到的领域唤醒可认领。
+
+~~~ts
+const raw = '  先补证，再比较。  ';
+const payload = encodeHubAnswer({ kind: 'custom', raw_text: raw });
+expect(payload).toEqual({ text: raw });
+expect(Object.hasOwn(payload, 'choice')).toBe(false);
+const answer = await submitAndReadThroughPinnedHub(cardId, payload);
+expect(answer.card).toBe(cardId);
+expect(answer.choice).toBeNull();
+expect(answer.chosen).toBe(admissionMatrix.autoloop_custom_text.expectedChosen);
+~~~
+
+在 `answers.ts` 实现下面的编码函数。T10复用，领域另断言 `raw_custom` 字节完整。重跑 T04，预期重复事件只留一条权威记录，分页/重启获同一关联，`done+ask`保持待答；固定上游不能兑现合同则记录受阻。提交 `feat: integrate Autoloop event and observer contracts`。
+
+~~~ts
+export function encodeHubAnswer(answer: { kind: 'choice'; index: number } | { kind: 'custom'; raw_text: string }): { choice: number } | { text: string } {
+  return answer.kind === 'choice' ? { choice: answer.index } : { text: answer.raw_text };
+}
+~~~
 
 ### T05 GitHub 和目录采集
 
@@ -1000,7 +1051,7 @@ export function obsidianFileUri(vault: string, relativeFile: string): string {
 
 **文件** `packages/domain/src/standards.ts`、`packages/domain/src/evaluation.ts`、`packages/storage/migrations/0007_standards.sql`、`apps/service/src/routes/standards.ts`、`assets/vault-kit/判断案例.md`、`assets/vault-kit/标准修订.md`、`fixtures/evaluation/product/manifest.json`、`tests/integration/T07.test.ts`。
 
-**交接** `prepareEvaluation(candidateId: string, policyVersion: number): Promise<EvaluationInput>` 固定训练/留出划分、当时资料、预算和门槛。`adoptStandard(candidateId: string, reportId: string, expectedRevision: number): Promise<'adopted' | 'stale' | 'not_adopted'>` 返回 T06 编辑状态并写采用事实。`recordOutcome(caseId: string, outcome: CaseOutcome): Promise<void>` 供 T12；可信现场结果由 T25 补证。
+**交接** `prepareEvaluation(candidateId: string, policyVersion: number): Promise<EvaluationInput>` 固定训练/留出划分、当时资料、预算和门槛。`adoptStandard(candidateId: string, reportId: string, expectedRevision: number): Promise<'adopted' | 'stale' | 'not_adopted'>` 返回 T06 编辑状态并写采用事实。`recordOutcome(caseId: string, outcome: CaseOutcome): Promise<void>` 供 T12。`freezeJudgmentBasis(workId: string, generation: number): Promise<JudgmentBasis>` 在首个判断授权前持久化依据，已有依据直接返回。`JudgmentBasis` 保存获准的 `(standard_id, standard_version)` 列表；缺相应生效标准时保存可追溯的外部方法 ID 和修订。T08、T09、T10共用依据及其 hash。
 
 - [ ] 红测创建10条种子与5条独立留出案例，冻结 r8/base 1 的报告，登记 r9 后尝试采纳。运行 `npm exec -- vitest run tests/integration/T07.test.ts`，预期陈旧报告被错误采用或缺采纳实现。
 
@@ -1021,13 +1072,17 @@ WHERE standard_id = @standard_id AND data_domain = @data_domain
 RETURNING standard_id, active_version, revision;
 ~~~
 
-- [ ] 重跑 T07，预期 r8→r9 和基线变更只保留旧报告，首次采纳仅新增一条存量。构造未来结果和留出泄漏、低样本/关键失败、退出当前版本的反例。模型真实评测在 T09路径准入后进入 T25。提交 `feat: evaluate and adopt exact standard revisions`。
+- [ ] 重跑 T07，预期 r8→r9 和基线变更只保留旧报告，首次采纳仅新增一条存量。先固定在途工作的 v1，再激活 v2，核对续办沿用旧依据、新工作使用新版；撤回 v1 依赖后阻断在途工作的新动作。另测未来结果、留出泄漏与低样本。真实模型评测在 T09准入后由 T25执行。提交 `feat: evaluate and adopt exact standard revisions`。
 
 ### T08 委托、能力、grant 与预算
 
 **文件** `packages/domain/src/delegation.ts`、`packages/domain/src/budget.ts`、`packages/domain/src/work-control.ts`、`packages/storage/migrations/0008_admission_budget.sql`、`apps/service/src/routes/delegations.ts`、`apps/service/src/routes/work-controls.ts`、`tests/integration/T08.test.ts`。
 
 **交接** `authorizeAction(request: ActionRequest): Promise<ExecutionGrant>` 按 §3.3 校验，并在旧执行树停止且效果已对账后原子换 attempt。`reserveCall(input: CallReservation): Promise<BudgetReceipt>` 返回调用对应的唯一预留。`claimPaidDispatch(reservationId: string, grantId: string, attemptId: string, routeId: string): Promise<'acquired' | 'already_dispatched' | 'denied'>` 单次领取发送许可。`settleCall(reservationId: string, usage: Usage | null): Promise<BudgetReceipt>` 以唯一用量证明记账，缺证据保持 uncertain。
+
+`authorizeConsultation(requestId: string, attemptId: string): Promise<ConsultationGrant>` 读取持久咨询的身份、结果版本、范围、时限及获准额度。`RunGrant = ExecutionGrant | ConsultationGrant` 以 `subject_kind: 'work' | 'consultation'` 区分。签首个工作 grant 前调用 `freezeJudgmentBasis`，grant 持 `next_action`、`allowed_effects` 和冻结依据 hash。补证 grant 仅放指定采集，交付 grant 须核对 `evidence_ready`。咨询 grant 绑定 `request_id`、`result_version`、调用者、获准域和只读工具，`allowed_effects=[]`，父工作待答只阻父工作。取消、权限变化或期限到达均停止咨询后续发送。
+
+计费使用 `work:<work_id>` 或 `consultation:<request_id>` 作为 `business_id`。两种 grant 共用预留和发送许可，按主体分别查工作阶段或咨询状态及当前权限。`authorizeBusinessEffect(grant: RunGrant, request: WorkEffectRequest): Promise<boolean>` 供 T12 发布器复验，要求工作主体、代次和允许动作完全匹配，咨询主体直接拒绝。业务阶段事件和其余工作写动作共用相同主体、阶段检查。
 
 T08拥有 `POST /work/:id/controls` 和 `applyWorkControl(principal: Principal, command: WorkControlCommand): Promise<WorkControlReceipt>`。暂停先阻新派工，停止提交给受信停止端口并等待进程树/未决效果回执；续办重查当前委托及 grant。T08用端口夹具验证状态，T09绑定真实停止树，T13投影读回，T15走真实路由。
 
@@ -1036,7 +1091,7 @@ T08拥有 `POST /work/:id/controls` 和 `applyWorkControl(principal: Principal, 
 ~~~ts
 const results = await Promise.allSettled([reserveCall(callA), reserveCall(callB)]);
 expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-expect(await heldAmount('work-1')).toBe(5000);
+expect(await heldAmount('work:work-1')).toBe(5000);
 expect(await activeGrantCount('work-1', 2)).toBe(1);
 const held = await reserveCall(winningCall);
 const claims = await Promise.all([
@@ -1046,11 +1101,13 @@ const claims = await Promise.all([
 expect(claims.sort()).toEqual(['acquired', 'already_dispatched']);
 ~~~
 
-- [ ] 使用 `WHERE` 原子约束及唯一调用键。重复调用在扣额度前返回原预留；领取发送许可还须在同事务重新检查 grant、有效期、待答、能力和撤回。只有 `acquired` 能发本次计费请求。许可提交后崩溃且无法确认是否已发送时，保留预留并记录 uncertain；新尝试使用新的授权与额度，沿用业务累计上限。失效先暂停相关范围并撤销未执行 grant。
+- [ ] 使用 `WHERE` 原子约束及唯一调用键。重复调用先返回原预留；领取发送许可在同事务重查主体状态、grant、有效期和撤回，工作另核对待答、能力及允许阶段。领取失败时不发请求。许可提交后崩溃且结果不明时保留原预留；新尝试沿用相同主体的累计上限。撤销许可只影响对应范围。
 
 ~~~sql
-CREATE UNIQUE INDEX one_active_grant
-ON execution_grants(work_id, generation) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX one_active_work_grant
+ON execution_grants(work_id, generation) WHERE subject_kind = 'work' AND revoked_at IS NULL;
+CREATE UNIQUE INDEX one_active_consultation_grant
+ON execution_grants(request_id) WHERE subject_kind = 'consultation' AND revoked_at IS NULL;
 
 UPDATE business_budgets
 SET held_micros = held_micros + @amount
@@ -1073,7 +1130,7 @@ RETURNING reservation_id;
 
 **文件** `packages/executor/src/wrapper.ts`、`packages/executor/src/backends/codex.ts`、`packages/executor/src/backends/grok.ts`、`packages/executor/src/backends/dsh.ts`、`packages/executor/harness/manifest.json`、`packages/executor/harness/patrick-memory.ts`、`packages/executor/harness/patrick-judgment.ts`、`packages/executor/harness/patrick-bridge.ts`、`tests/contract/T09.test.ts`、`tests/admission/T09.test.ts`。
 
-**交接** `runAttempt(snapshot: FrozenRun, grant: ExecutionGrant): Promise<RunReceipt>` 返回 `agent_completed/policy_wait/technical_failure`，通过冻结文件交付产物。各 adapter 暴露 `probe(): Promise<BackendCapability>` 及取消/用量/认证/工具/资料域能力。计费桥先调用 T08 的 `reserveCall`，领到单次 `claimPaidDispatch` 许可后才发请求。
+**交接** `runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<RunReceipt>` 返回 `agent_completed/policy_wait/technical_failure`。工作快照绑定 `work_id/generation`、冻结 `judgment_basis`、`next_action` 与恢复阶段；续跑从原快照读取版本，并重验当前授权和撤回。咨询快照绑定自身 `request_id/result_version` 和获准证据。各 adapter 暴露 `probe(): Promise<BackendCapability>`。计费桥按同一主体调用 T08 的 `reserveCall` 与 `claimPaidDispatch`。
 
 - [ ] 红测先发送 final 后 exit1、发送 final 后不退出、缺 bundle、空用量及不支持 resume。运行 `npm exec -- vitest run tests/contract/T09.test.ts`，预期出现误收成功或缺终态选择函数。
 
@@ -1102,9 +1159,11 @@ export function completedRun(input: {
 
 ### T10 精确答复、原任务续办与飞书
 
-**文件** `packages/domain/src/answer-gate.ts`、`packages/storage/migrations/0010_answers_channels.sql`、`packages/integrations/autoloop/answers.ts`、`packages/integrations/feishu/connection.ts`、`packages/integrations/feishu/channel-gate.ts`、`apps/service/src/routes/answers.ts`、`apps/service/src/routes/feishu.ts`、`tests/integration/T10.test.ts`、`tests/admission/T10.test.ts`。
+**文件** `packages/domain/src/answer-gate.ts`、`packages/domain/src/work-continuation.ts`、`packages/storage/migrations/0010_answers_channels.sql`、`packages/integrations/autoloop/answers.ts`、`packages/integrations/feishu/connection.ts`、`packages/integrations/feishu/channel-gate.ts`、`apps/service/src/routes/answers.ts`、`apps/service/src/routes/feishu.ts`、`tests/integration/T10.test.ts`、`tests/admission/T10.test.ts`。
 
 **交接** `submitAnswer(principal: Principal, command: AnswerCommand): Promise<AnswerReceipt>` 供两入口共用。`recoverAnswer(intentId: string): Promise<AnswerReceipt>` 读回冻结 hub card 与答案。`channelPermit(connectionId: string, inboundId: string): Promise<ChannelPermit>` 由固定飞书入口发放。公开路由和字段见 §4.2–4.3，绑定条件见技术设计附录 A2。
+
+`ResumeKey` 包含 `work_id/generation/question_id/answer_event_id/phase`，`phase` 为 `answer` 或 `evidence_ready`。`claimContinuation(key: ResumeKey, attemptId: string)` 返回 `claimed` 及匹配的 `ExecutionGrant`，或 `waiting`、`duplicate`。`confirmCollectedEvidence(answerStage: ResumeKey, evidenceRef: string)` 仅接固定采集/核验回执，按问题、预期材料和当前撤回水位匹配后登记 `evidence_ready`。T04、T08、T09共用，T12复验交付权限。
 
 #### 精确问题和一次续办
 
@@ -1114,22 +1173,32 @@ export function completedRun(input: {
 const contenders = await Promise.allSettled([webAnswer.submit(optionA), feishuAnswer.submit(optionB)]);
 expect(contenders).toHaveLength(2);
 expect(await hubAnswersFor('Q-017')).toHaveLength(1);
+await consumeNativeAnswerBeforeReceipt('Q-017');
+expect(await modelCallsFor('W-017')).toBe(0);
+expect(await retryCallsFor('W-017')).toBe(0);
 await restartServiceAndReconcile();
 await drainResumeQueue();
 expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
-expect(await attemptsForResumeKey('W-017', 2, 'Q-017')).toBe(1);
+expect(await attemptsForResumeKey('W-017', 2, 'Q-017', 'answer')).toBe(1);
 ~~~
 
-- [ ] 先写 AnswerIntent；每 question 串行核验代次、对象、选项/提案/策略和证据水位。处置 `deferred`/`clarification_required` 只记录原文。明确有界补证的 proceed 只开放获准补证。上游 A/B 用冻结的零起索引；custom 省略 choice，只传 text，原文另存。首答由 hub 原子裁决，读回真实权威答案后重验当前门禁。期间撤权或换代则保留失效答案轨迹，需要回答时另开当前版本。有效时同事务写唯一核验回执、恢复意图和 `answer.verified`。重复事件走同一恢复键，以 UPSERT 是否新增决定是否追加唤醒 outbox。
+- [ ] 按 §4.3 在问题锁下裁定处置，只有 proceed 通过 T04 的 `encodeHubAnswer` 送 hub。核验读回、原判断依据及当前权限后，事务写 AnswerReceipt 和 `phase=answer`，追加 `answer.verified`。两个唤醒来源竞争同一行，`ready → claimed` 与签 grant 同事务；未可领或重复按 T04 让出，技术重试由原键另领 attempt。`collect_evidence` 仅发固定采集，采集轮已收口且材料核验通过后，同事务结束补证许可、写证据证明和 `phase=evidence_ready`，追加 `evidence.ready`。交付 grant 领取时复验这组证据。在 `waiting_evidence` 阶段拒绝交付派工、emit 和 PR 写入。
 
 ~~~sql
-INSERT INTO resume_intents (work_id, generation, question_id, answer_event_id)
-VALUES (@work_id, @generation, @question_id, @answer_event_id)
-ON CONFLICT(work_id, generation, question_id, answer_event_id) DO NOTHING
-RETURNING work_id;
+INSERT INTO resume_intents (work_id, generation, question_id, answer_event_id, phase, state, next_action, evidence_ref)
+VALUES (@work_id, @generation, @question_id, @answer_event_id, @phase, 'ready', @next_action, @evidence_ref)
+ON CONFLICT(work_id, generation, question_id, answer_event_id, phase) DO NOTHING
+RETURNING phase;
 ~~~
 
-- [ ] 重跑 T10 的 `answer-once`，同时运行 `stale-or-deferred`。预期 Web/飞书只有首个有效答案，迟到/旧卡保留原输入，无额外模型轮次；明确暂缓保持待答，有界补证不能发布。提交问答与恢复子步骤 `feat: verify exact answers and resume one work item`。
+~~~sql
+UPDATE resume_intents SET state = 'claimed', attempt_id = @attempt_id
+WHERE work_id = @work_id AND generation = @generation AND question_id = @question_id
+  AND answer_event_id = @answer_event_id AND phase = @phase AND state = 'ready'
+RETURNING next_action, evidence_ref;
+~~~
+
+- [ ] 在 `tests/integration/T10.test.ts` 加 `bounded-evidence-resume` 和 `custom-replacement`。前者通过阶段日志和发布端口替身验证证据就绪前 `draft.requested`、PR 发送、`work.delivered` 均为零；重放核验证据且重启后，交付阶段只领取一次。后者重放 `OUT_OF_SCOPE` 回复，核对唯一后继卡及差异、旧卡迟到提交被拒和授权保持原范围；`MISSING_INPUT` 仍可在原卡补问。原工作保留同一 ID 与冻结依据。提交 `feat: verify exact answers and resume one work item`。
 
 #### 飞书配对、测试与排空
 
@@ -1143,10 +1212,13 @@ expect(await businessAnswerCount()).toBe(0);
 await channel.applyTrustedEnable(currentProof);
 expect((await channel.disableWhileHubIsUncertain()).status).toBe('draining');
 expect((await channel.receive(oldCallback)).disposition).toBe('audit_only');
+await channel.releaseAcceptedHubAnswerReadback();
 expect((await channel.finishAfterReconciliation()).status).toBe('disabled');
+expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
+expect(await attemptsForResumeKey('W-017', 2, 'Q-017', 'answer')).toBe(1);
 ~~~
 
-- [ ] SDK 以单个受监督出站连接接收消息与卡片事件。配对码随机、只存 hash、默认 5 分钟、本人 Web 确认后消费。确认、测试发送、回传及启用各自重验证版本/目的地、incarnation、epoch、当前指针与 TTL。启用固定注册项绑定真实双向证明。停用先停止新许可，在锁内归档已发送 cutoff；未发送旧意图无效，已发送且未知的保持 draining。以下谓词只用于列出仍需对账的条目；已挂起的旧回答仍核验当前权限才签新 grant。
+- [ ] SDK 以单个受监督出站连接接收消息与卡片事件。配对码随机、只存 hash、默认 5 分钟、本人 Web 确认后消费。确认、测试发送、回传及启用各自重验绑定。停用分派与排空遵循 §5.1。以下谓词仅列 cutoff 对账项；读回时按已存发送许可核对当时的渠道绑定，再重查现行工作权限与问题。按 `feishu_deferred_card` 探针选用保留控件或重发同版本卡并失效旧映射；缺该能力时标明渠道受阻及 Web 入口。
 
 ~~~ts
 export function requiresChannelReconciliation(intent: {
@@ -1157,7 +1229,7 @@ export function requiresChannelReconciliation(intent: {
 }
 ~~~
 
-- [ ] 重跑整份 T10 集成测试。另用 `npm exec -- vitest run tests/admission/T10.test.ts` 在已授权飞书应用走真实 `连接→配对→收信/卡片回传→可信启用→双入口竞答→停用`。预期真实消息 ID 和回调证明可读回；错租户、抢配、过期、断连、未核对结果和退订均有明确状态，测试样例无业务事实。提交 `feat: verify and drain Feishu decision delivery`。
+- [ ] 重跑 T10 集成。另测停用同时撤销委托，hub 已接收的旧答复只审计，工作 grant 数为零；Web 仍能提交其他打开的问题。用 `npm exec -- vitest run tests/admission/T10.test.ts` 从实际飞书应用检查配对、启用、暂缓后再次答题、双入口竞答与排空。预期真实消息 ID、回调和答复可读回，测试样例无业务事实。提交 `feat: verify and drain Feishu decision delivery`。
 
 ### T11 工作对话与受限咨询
 
@@ -1178,7 +1250,7 @@ expect(await businessAttempts('W-017')).toBe(0);
 expect((await otherCallerApi.get('/api/v1/consultations/' + c.request_id)).status).toBe(403);
 ~~~
 
-- [ ] 按调用者+client_request_id幂等，subject=request_id，组和并行策略固定。先判资料域与咨询预算，关联现有工作须独立命令。持久消息及最终答案与 result_version 同事务提交，迟到结果留审计。MCP仅注册 §4.2 三个工具。
+- [ ] 按调用者+client_request_id幂等，关联现有工作走独立命令。可直接答则持久化；需模型时同事务写咨询和 `consultation.requested`，由 T04 派到独立 lane。worker 从 T08 领取 `authorizeConsultation` 许可，通过 T09 执行并按 `consultation:<request_id>` 记账。持久消息与最终答案同事务提交，取消与迟到结果按 result_version 竞争。MCP 仅注册 §4.2 三个工具。
 
 ~~~sql
 UPDATE consultations
@@ -1188,13 +1260,13 @@ WHERE request_id = @request_id AND result_version = @expected_revision
 RETURNING result_version;
 ~~~
 
-- [ ] 重跑 T11，预期同请求可重取、异内容 409、一个终态、普通聊天无决定回执，咨询无业务 grant、阶段 emit 或远端动作。提交 `feat: persist isolated consultations and work conversations`。
+- [ ] 重跑 T11，在 `consult-while-work-waits` 用计费替身完成一次咨询并重复请求，核对同一咨询只有一次实际发送，父工作 held/spent、业务轮次和业务 effect 均无变化；持咨询 grant 调用 T08 的 `authorizeBusinessEffect` 返回 false。另测取消竞态、跨调用者访问和原请求可重取。提交 `feat: persist isolated consultations and work conversations`。
 
 ### T12 固定 PR 发布与反馈
 
 **文件** `packages/domain/src/effects.ts`、`packages/integrations/publisher/github.ts`、`packages/integrations/publisher/outcomes.ts`、`packages/storage/migrations/0012_effects_outcomes.sql`、`tests/integration/T12.test.ts`。
 
-**交接** `publishPr(intentId: string): Promise<EffectReceipt>` 只消费已冻结产物。`reconcilePr(intentId: string): Promise<EffectReceipt>` 先查授权目标和固定分支，供 T22。`observeOutcome(caseId: string, remoteRef: string): Promise<CaseOutcome>` 调 T07 的 recordOutcome 供学习与试点评估。
+**交接** `publishPr(intentId: string): Promise<EffectReceipt>` 复验 T08 的业务 effect 权限及冻结产物。`reconcilePr(intentId: string): Promise<EffectReceipt>` 读取持久验证证明，待核验时从授权目标和固定分支对账，供 T22。`observeOutcome(caseId: string, remoteRef: string): Promise<CaseOutcome>` 调 T07 的 recordOutcome 保存核验后的变化。
 
 - [ ] 红测用 GitHub 协议夹具在创建 PR 后丢响应，重启后先让列表为空，再返回迟到成功；补 base/source 变化及冲突读回。运行 `npm exec -- vitest run tests/integration/T12.test.ts`，预期重复写、将空读判为未执行或缺读回核验。
 
@@ -1206,25 +1278,35 @@ expect((await reconcilePr(intentId)).status).toBe('uncertain');
 expect(github.calls('createPullRequest')).toBe(1);
 expect((await reconcilePr(intentId)).status).toBe('verified');
 expect(github.calls('createPullRequest')).toBe(1);
+await github.advanceBase('main', 'new-base');
+expect((await reconcilePr(intentId)).status).toBe('verified');
+expect(github.calls('createPullRequest')).toBe(1);
 expect(await deliveredCount(workId)).toBe(1);
 ~~~
 
-- [ ] 事务写 EffectIntent。以 `effect_key` 固定远端分支；创建 ref 遇同名时只在现有 SHA 匹配时复用。PR 创建单独领取一次发送许可。响应未知时按目标仓库与 `head`/`base` 在所有状态中分页查找，已知编号则直接读回。空结果仍待对账；唯一匹配继续核验，多条或身份不符转冲突。GitHub 创建 PR 的 `base` 参数绑定分支名，发送前后分别读取当前 base SHA；漂移时保存外部事实并暂停交付待重新验证。通过核验后才事务写交付和事件。outcome watcher按原 case_id 保存采纳、PR事件及实际效果。[GitHub PR API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#create-a-pull-request) · [Git 引用 API](https://docs.github.com/en/rest/git/refs?apiVersion=2022-11-28#create-a-reference)
+- [ ] 按 §3.3 持久化意图并复验交付阶段，使用 `effect_key` 的固定分支。未知结果按 repo、`head`/`base` 在所有状态分页读回，已有 PR 编号则直接查。空读保持 `uncertain`，待核验阶段的多条匹配或身份不符转冲突。首次核验检查发送前后的 base SHA 并冻结该值、PR 编号及核验的 head/tree。漂移时保留外部事实，等待重新核验。已有核验证明时，用 `matchesVerifiedPr` 核对远端观察，base 尖端移动保留原交付；head/tree 后续编辑作为反馈，远端对象身份异常单列。T22恢复只对待核验项执行首次门禁。[GitHub PR API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#create-a-pull-request) · [Git 引用 API](https://docs.github.com/en/rest/git/refs?apiVersion=2022-11-28#create-a-reference)
 
 ~~~ts
-export type PrIdentity = {
+export type FrozenPrTarget = {
   repoId: string; headRepoId: string; branch: string; headSha: string; treeSha: string;
-  baseRef: string; baseSha: string;
+  baseRef: string;
 };
-export function matchesFrozenPr(actual: PrIdentity, expected: PrIdentity): boolean {
+export type ObservedPr = FrozenPrTarget & { number: number; currentBaseSha: string };
+export type VerifiedPr = FrozenPrTarget & { number: number; verifiedBaseSha: string };
+export function matchesBuiltArtifact(actual: FrozenPrTarget, expected: FrozenPrTarget): boolean {
   return actual.repoId === expected.repoId && actual.headRepoId === expected.headRepoId
     && actual.branch === expected.branch && actual.headSha === expected.headSha
-    && actual.treeSha === expected.treeSha && actual.baseRef === expected.baseRef
-    && actual.baseSha === expected.baseSha;
+    && actual.treeSha === expected.treeSha && actual.baseRef === expected.baseRef;
+}
+export function canVerifyFirstPublication(actual: ObservedPr, expected: FrozenPrTarget, frozenBaseSha: string): boolean {
+  return matchesBuiltArtifact(actual, expected) && actual.currentBaseSha === frozenBaseSha;
+}
+export function matchesVerifiedPr(actual: ObservedPr, verified: VerifiedPr): boolean {
+  return actual.number === verified.number && matchesBuiltArtifact(actual, verified);
 }
 ~~~
 
-- [ ] 重跑 T12，预期零次重复 PR，base 在 POST 期间移动时工作显示待核验且无 `work.delivered`，撤销先于分派许可时零次外发。保留已发送动作的迟到结果。反馈只归原案例；真实回执由 T25 在授权演练仓核对。提交 `feat: publish verified PR artifacts and reconcile outcomes`。
+- [ ] 重跑 T12。base 在 POST 期间移动时不写 `work.delivered`；已核验后推进 base 时仍保留原回执且零次外发。补证未就绪、咨询 grant 和撤销先于分派许可的场景均拦截发布。反馈只归原案例；真实回执与恢复由 T25 在授权演练仓核对。提交 `feat: publish verified PR artifacts and reconcile outcomes`。
 
 ### T13 工作与健康快照、SSE
 
@@ -1625,7 +1707,7 @@ expect(traces[1].observedWorkIds).toEqual([traces[1].workId]);
 expect(traces[2].unauthorizedEffects).toBe(0);
 ~~~
 
-- [ ] 验证真实三执行器、Harness 领域工具、双入口答复、飞书启用后排空、知识四编辑路径、独立标准采纳/拒绝和业务反馈回案例。另做预算竞争、退出恢复、远端不确定效果、较新原稿和恢复后飞书重新授权。每条线路保留真实 HTTP/设备回执及版本；用如下结构记录门禁项，诸如 `verified` 必须有真实 evidenceRefs。
+- [ ] 验证真实三执行器、Harness 领域工具、双入口答复、飞书排空、知识四编辑路径、独立标准采纳/拒绝和业务反馈回案例。用 T10的补证路线验证就绪后一次交付，同阶段重放不重发；咨询、标准换版和停用撤权按 §8.5 注入故障。另测预算竞争、退出恢复、历史 PR 的 base 前进、较新原稿和恢复后飞书重新授权。真实回执和版本填入下列结构，`verified` 绑定 `evidenceRefs`。
 
 ~~~ts
 export type PilotTrace = {
