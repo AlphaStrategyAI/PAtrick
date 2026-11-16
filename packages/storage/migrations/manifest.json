@@ -14,5 +14,9 @@
   {
     "file": "0005_sources.sql",
     "sha256": "8bd6d4ee8e06b94247d314030acaf0b312b635a8fccdc457267afdfdc3c22f29"
+  },
+  {
+    "file": "0006_vault_evidence.sql",
+    "sha256": "320c91d5935e2586a28aee0ba9a5e5a94eb0ee2036931244b9674ad09782f2f1"
   }
 ]

@@ -306,8 +306,15 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
   }
 
   function overlaps(physicalRoot: string): boolean {
-    const rows = db.prepare('SELECT physical_root FROM source_configs').all() as { physical_root: string }[];
-    return rows.some((row) => row.physical_root !== physicalRoot && pathsOverlap(row.physical_root, physicalRoot));
+    if (rootsConflict('SELECT physical_root FROM source_configs', physicalRoot)) return true;
+    const vaults = db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'vaults'").get();
+    if (!vaults) return false;
+    return rootsConflict('SELECT physical_root FROM vaults', physicalRoot);
+  }
+
+  function rootsConflict(sql: string, physicalRoot: string): boolean {
+    const rows = db.prepare(sql).all() as { physical_root: string }[];
+    return rows.some((row) => row.physical_root === physicalRoot || pathsOverlap(row.physical_root, physicalRoot));
   }
 
   async function samplesFor(draft: NormalizedDraft): Promise<Array<{ locator: string; byteLength: number }>> {

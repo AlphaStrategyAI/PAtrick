@@ -1,0 +1,12 @@
+{
+  "name": "@patrick/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/evidence.ts"
+  },
+  "dependencies": {
+    "@patrick/storage": "*"
+  }
+}

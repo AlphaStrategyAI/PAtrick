@@ -70,6 +70,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
     expect(tables.map((row) => row.name)).toEqual([
       'accounts',
       'auth_challenges',
+      'authority_facts',
       'blobs',
       'bootstrap_tickets',
       'caller_scopes',
@@ -81,12 +82,29 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'delete_sweeps',
       'dependency_checks',
       'domain_events',
+      'draft_intents',
+      'edit_intents',
+      'edit_receipts',
+      'evidence_dependencies',
+      'evidence_refs',
       'hub_events',
       'hub_snapshots',
+      'knowledge_aliases',
+      'knowledge_fts',
+      'knowledge_fts_config',
+      'knowledge_fts_content',
+      'knowledge_fts_data',
+      'knowledge_fts_docsize',
+      'knowledge_fts_idx',
+      'knowledge_members',
+      'knowledge_records',
       'object_revisions',
       'outbox',
       'passkey_credentials',
+      'projection_batches',
       'projection_cursors',
+      'projection_locks',
+      'projection_pointers',
       'raw_custom_answers',
       'schema_migrations',
       'sessions',
@@ -95,10 +113,15 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'source_objects',
       'source_revisions',
       'source_versions',
+      'vault_clients',
+      'vault_documents',
+      'vault_revisions',
+      'vaults',
       'webhook_deliveries',
+      'withdrawal_events',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

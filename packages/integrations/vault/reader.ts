@@ -1,0 +1,329 @@
+import { createHash } from 'node:crypto';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { extname, relative, resolve, sep } from 'node:path';
+import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
+import { recordKnowledge } from '../../domain/src/evidence.js';
+import { requireVault, type VaultRecord } from './connection.js';
+
+const NOTE_DIRS = new Set(['知识笔记', '判断案例', '标准修订']);
+const ATTACHMENT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']);
+const OFFLINE_CODES = new Set(['ENOENT', 'EIO', 'ENOTCONN', 'ENETDOWN', 'ENETUNREACH', 'EHOSTDOWN', 'EHOSTUNREACH', 'ESTALE', 'ETIMEDOUT', 'ENXIO', 'ENOTDIR']);
+
+type Scalar = string | number | boolean | null;
+type ParsedFrontMatter =
+  | { ok: true; data: Record<string, Scalar>; body: string }
+  | { ok: false; line: number };
+
+type ScannedFile = {
+  relativePath: string;
+  kind: 'note' | 'attachment';
+  bytes: Uint8Array;
+  hash: string;
+  dev: number;
+  ino: number;
+};
+
+export type VaultReadResult = {
+  state: 'ready' | 'offline' | 'placeholder';
+  collected: number;
+  attachments: number;
+};
+
+export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: string, now: string): Promise<VaultReadResult> {
+  const vault = requireVault(db, vaultId);
+  const scan = await scanVault(vault.root_path);
+  if (scan.state !== 'ready') return { state: scan.state, collected: 0, attachments: 0 };
+  for (const file of scan.files) await blobs.putBlob(file.bytes);
+  return withImmediateTransaction(db, () => {
+    const current = requireVault(db, vault.vault_id);
+    let collected = 0;
+    let attachments = 0;
+    for (const file of scan.files) {
+      const wrote = applyFile(db, current, file, now);
+      if (!wrote) continue;
+      if (file.kind === 'attachment') attachments += 1;
+      else collected += 1;
+    }
+    return { state: 'ready' as const, collected, attachments };
+  });
+}
+
+function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, now: string): boolean {
+  db.prepare('INSERT INTO blobs (sha256, byte_length, created_at) VALUES (?, ?, ?) ON CONFLICT(sha256) DO NOTHING').run(
+    file.hash,
+    file.bytes.byteLength,
+    now,
+  );
+  const existing = db.prepare(`SELECT document_id, content_hash, observed_seq, tombstone FROM vault_documents
+    WHERE vault_id = ? AND relative_path = ?`).get(vault.vault_id, file.relativePath) as {
+    document_id: string;
+    content_hash: string | null;
+    observed_seq: number;
+    tombstone: number;
+  } | undefined;
+  if (existing && existing.tombstone === 0 && existing.content_hash === file.hash) return false;
+  const parsed = file.kind === 'note' ? parseFrontMatter(file.bytes) : undefined;
+  const parseError = parsed && !parsed.ok ? String(parsed.line) : null;
+  const bodyText = parsed?.ok ? parsed.body : null;
+  const knowledgeId = parsed?.ok ? knowledgeIdFor(vault, file, parsed.data) : null;
+  const patrickId = parsed?.ok ? scalarString(parsed.data.patrick_id) : null;
+  const documentId = existing?.document_id ?? `doc_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 24)}`;
+  const observedSeq = (existing?.observed_seq ?? 0) + 1;
+  const revisionId = `rev_${sha256(`${documentId}\0${observedSeq}`).slice(0, 24)}`;
+  const identity = `${file.dev}:${file.ino}`;
+  if (!existing) {
+    db.prepare(`INSERT INTO vault_documents (
+      document_id, vault_id, relative_path, identity_key, kind, knowledge_id, patrick_id, body_text, content_hash,
+      byte_length, observed_seq, tombstone, parse_error, account_id, data_domain, schema_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, '1.0', ?, ?)`).run(
+      documentId,
+      vault.vault_id,
+      file.relativePath,
+      identity,
+      file.kind,
+      knowledgeId,
+      patrickId,
+      bodyText,
+      file.hash,
+      file.bytes.byteLength,
+      observedSeq,
+      parseError,
+      vault.account_id,
+      vault.data_domain,
+      now,
+      now,
+    );
+  } else {
+    db.prepare(`UPDATE vault_documents
+      SET identity_key = ?, knowledge_id = ?, patrick_id = ?, body_text = ?, content_hash = ?, byte_length = ?,
+        observed_seq = ?, tombstone = 0, parse_error = ?, updated_at = ?
+      WHERE document_id = ?`).run(
+      identity,
+      knowledgeId,
+      patrickId,
+      bodyText,
+      file.hash,
+      file.bytes.byteLength,
+      observedSeq,
+      parseError,
+      now,
+      documentId,
+    );
+  }
+  db.prepare(`INSERT INTO vault_revisions (
+    vault_id, document_id, observed_seq, revision_id, content_hash, identity_key, relative_path, tombstone,
+    account_id, data_domain, schema_version, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, '1.0', ?)`).run(
+    vault.vault_id,
+    documentId,
+    observedSeq,
+    revisionId,
+    file.hash,
+    identity,
+    file.relativePath,
+    vault.account_id,
+    vault.data_domain,
+    now,
+  );
+  appendDomainEvent(db, {
+    eventId: `vault.revision:${revisionId}`,
+    aggregateId: documentId,
+    aggregateVersion: observedSeq,
+    accountId: vault.account_id,
+    dataDomain: vault.data_domain,
+    payload: { type: 'source.revision.committed', document_id: documentId, revision_id: revisionId, content_hash: file.hash },
+    destination: 'vault',
+  });
+  if (parsed?.ok && knowledgeId && parsed.data.kind !== 'standard') {
+    recordKnowledge(db, {
+      accountId: vault.account_id,
+      domain: vault.data_domain,
+      knowledgeId,
+      body: parsed.body,
+      alias: scalarString(parsed.data.alias),
+      documentId,
+      revisionId,
+      observedSeq,
+      now,
+    });
+  }
+  return true;
+}
+
+function knowledgeIdFor(vault: VaultRecord, file: ScannedFile, data: Record<string, Scalar>): string | null {
+  if (data.kind === 'standard') return null;
+  return scalarString(data.knowledge_id) ?? `k_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 16)}`;
+}
+
+async function scanVault(root: string): Promise<{ state: 'ready'; files: ScannedFile[] } | { state: 'offline' | 'placeholder' }> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (OFFLINE_CODES.has(errorCode(error) ?? '')) return { state: 'offline' };
+    throw error;
+  }
+  const files: ScannedFile[] = [];
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    if (NOTE_DIRS.has(entry.name)) {
+      const nested = await walk(root, resolve(root, entry.name), 'note');
+      if (nested === 'offline') return { state: 'offline' };
+      if (nested === 'placeholder') return { state: 'placeholder' };
+      files.push(...nested);
+      continue;
+    }
+    if (entry.name === '附件') {
+      const nested = await walk(root, resolve(root, entry.name), 'attachment');
+      if (nested === 'offline') return { state: 'offline' };
+      if (nested === 'placeholder') return { state: 'placeholder' };
+      files.push(...nested);
+    }
+  }
+  files.sort((left, right) => (left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0));
+  return { state: 'ready', files };
+}
+
+async function walk(
+  root: string,
+  dir: string,
+  kind: 'note' | 'attachment',
+): Promise<ScannedFile[] | 'offline' | 'placeholder'> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (OFFLINE_CODES.has(errorCode(error) ?? '')) return 'offline';
+    throw error;
+  }
+  const files: ScannedFile[] = [];
+  for (const entry of entries) {
+    if (entry.name === '.' || entry.name === '..' || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === '模板' || entry.name === '系统视图' || entry.name === '.obsidian') continue;
+      const nested = await walk(root, full, kind);
+      if (nested === 'offline' || nested === 'placeholder') return nested;
+      files.push(...nested);
+      continue;
+    }
+    if (!entry.isFile() || skippedFile(entry.name)) continue;
+    if (kind === 'note' && extname(entry.name).toLowerCase() !== '.md') continue;
+    if (kind === 'attachment' && !ATTACHMENT_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
+    const sample = await stableFile(full);
+    if (sample === 'offline') return 'offline';
+    if (sample === 'placeholder') return 'placeholder';
+    if (!sample) continue;
+    const real = await realInside(root, full);
+    if (!real) continue;
+    const relativePath = relative(root, full).split(sep).join('/');
+    if (!relativePath || relativePath.startsWith('..')) continue;
+    const bytes = new Uint8Array(await readFile(real));
+    files.push({
+      relativePath,
+      kind,
+      bytes,
+      hash: sha256(bytes),
+      dev: sample.dev,
+      ino: sample.ino,
+    });
+  }
+  return files;
+}
+
+function skippedFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.tmp') || lower.endsWith('.temp') || name.endsWith('~')) return true;
+  if (lower.includes('sync-conflict') || name.includes('(conflicted copy)')) return true;
+  if (lower.endsWith('.base') || lower.endsWith('.canvas')) return true;
+  if (lower.endsWith('.crdownload') || lower.endsWith('.download')) return true;
+  return false;
+}
+
+async function stableFile(path: string): Promise<{ dev: number; ino: number } | 'offline' | 'placeholder' | undefined> {
+  const first = await sample(path);
+  if (first === 'offline' || first === 'placeholder' || !first) return first;
+  const second = await sample(path);
+  if (second === 'offline' || second === 'placeholder' || !second) return second;
+  if (first.size !== second.size || first.mtimeMs !== second.mtimeMs) return undefined;
+  return { dev: second.dev, ino: second.ino };
+}
+
+async function sample(path: string): Promise<{ dev: number; ino: number; size: number; mtimeMs: number } | 'offline' | 'placeholder' | undefined> {
+  try {
+    const info = await stat(path);
+    if (!info.isFile()) return undefined;
+    if (info.size > 0 && info.blocks === 0) return 'placeholder';
+    return { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'ENOENT') return undefined;
+    if (code && OFFLINE_CODES.has(code)) return 'offline';
+    throw error;
+  }
+}
+
+async function realInside(root: string, path: string): Promise<string | undefined> {
+  try {
+    const real = await realpath(path);
+    const realRoot = await realpath(root);
+    const prefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    if (real !== realRoot && !real.startsWith(prefix)) return undefined;
+    return real;
+  } catch (error) {
+    if (OFFLINE_CODES.has(errorCode(error) ?? '')) return undefined;
+    throw error;
+  }
+}
+
+export function parseFrontMatter(bytes: Uint8Array): ParsedFrontMatter {
+  const text = new TextDecoder().decode(bytes);
+  if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) return { ok: true, data: {}, body: text };
+  const lines = text.split(/\r?\n/);
+  let end = -1;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (lines[index] === '---') {
+      end = index;
+      break;
+    }
+  }
+  if (end < 0) return { ok: false, line: 1 };
+  const data: Record<string, Scalar> = {};
+  for (let index = 1; index < end; index += 1) {
+    const line = lines[index] ?? '';
+    if (line.trim() === '' || line.trim().startsWith('#')) continue;
+    if (/^\s/.test(line) || /!!|&|\*|<<|\[|\{/.test(line)) return { ok: false, line: index + 1 };
+    const match = /^([A-Za-z0-9_]+):\s*(.*)$/.exec(line);
+    if (!match || !match[1] || match[1] in data) return { ok: false, line: index + 1 };
+    const parsed = parseScalar(match[2] ?? '');
+    if (!parsed.ok) return { ok: false, line: index + 1 };
+    data[match[1]] = parsed.value;
+  }
+  return { ok: true, data, body: lines.slice(end + 1).join('\n') };
+}
+
+function parseScalar(raw: string): { ok: true; value: Scalar } | { ok: false } {
+  const value = raw.trim();
+  if (value === '' || value === 'null' || value === '~') return { ok: true, value: null };
+  if (value === 'true') return { ok: true, value: true };
+  if (value === 'false') return { ok: true, value: false };
+  if (/^-?\d+$/.test(value)) return { ok: true, value: Number(value) };
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return { ok: true, value: value.slice(1, -1) };
+  }
+  if (value.includes(':')) return { ok: false };
+  return { ok: true, value };
+}
+
+function scalarString(value: Scalar | undefined): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function sha256(bytes: Uint8Array | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) return String((error as { code: unknown }).code);
+  return undefined;
+}

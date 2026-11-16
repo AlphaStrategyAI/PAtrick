@@ -10,9 +10,16 @@
     "./autoloop/observer": "./autoloop/observer.ts",
     "./sources/registry": "./sources/registry.ts",
     "./sources/github": "./sources/github.ts",
-    "./sources/directory": "./sources/directory.ts"
+    "./sources/directory": "./sources/directory.ts",
+    "./vault/connection": "./vault/connection.ts",
+    "./vault/reader": "./vault/reader.ts",
+    "./vault/drafts": "./vault/drafts.ts",
+    "./vault/create-file": "./vault/create-file.ts",
+    "./vault/projector": "./vault/projector.ts",
+    "./vault/uri": "./vault/uri.ts"
   },
   "dependencies": {
+    "@patrick/contracts": "*",
     "@patrick/storage": "*"
   }
 }

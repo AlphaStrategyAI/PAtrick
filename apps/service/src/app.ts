@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Hono } from 'hono';
 import { generateOpenApi } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
-import { openDatabase, type SqliteDatabase } from '@patrick/storage';
+import { createVaultApi } from '@patrick/integrations/vault/drafts';
+import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
+import { mountEditRoutes } from './routes/edits.js';
+import { mountKnowledgeRoutes } from './routes/knowledge.js';
+import { mountVaultRoutes } from './routes/vaults.js';
 
 export type CreateAppOptions = {
   databasePath?: string;
@@ -17,15 +21,26 @@ export type CreateAppOptions = {
 
 export function createApp(options: CreateAppOptions = {}): Hono {
   const now = options.now ?? (() => new Date());
-  const state: { db?: SqliteDatabase; credentials?: CredentialStore } = {};
+  const state: { db?: SqliteDatabase; credentials?: CredentialStore; databasePath?: string; vault?: ReturnType<typeof createVaultApi> } = {};
   function context(): AuthContext {
-    if (!state.db || !state.credentials) {
+    if (!state.db || !state.credentials || !state.databasePath) {
       const databasePath = options.databasePath ?? join(tmpdir(), `patrick-${randomUUID()}.sqlite`);
       const credentialDirectory = options.credentialDirectory ?? join(tmpdir(), `patrick-credentials-${randomUUID()}`);
+      state.databasePath = databasePath;
       state.db = openDatabase(databasePath);
       state.credentials = createCredentialStore(credentialDirectory, now);
     }
     return { db: state.db, credentials: state.credentials, now };
+  }
+  function vaultApi(): ReturnType<typeof createVaultApi> {
+    const current = context();
+    if (!state.vault || !state.databasePath) {
+      state.vault = createVaultApi(current.db, {
+        blobs: createBlobStore(join(dirname(state.databasePath ?? options.databasePath ?? ''), 'blobs')),
+        now,
+      });
+    }
+    return state.vault;
   }
   if (options.databasePath) context();
 
@@ -59,6 +74,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
   mountAuthRoutes(app);
   mountControlRoutes(app);
+  const resources = () => ({ db: context().db, api: vaultApi(), now });
+  mountVaultRoutes(app, resources);
+  mountKnowledgeRoutes(app, resources);
+  mountEditRoutes(app, resources);
   return app;
 }
 

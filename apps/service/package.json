@@ -9,6 +9,7 @@
   "dependencies": {
     "@patrick/contracts": "*",
     "@patrick/host": "*",
+    "@patrick/integrations": "*",
     "@patrick/storage": "*",
     "@simplewebauthn/server": "14.1.0",
     "hono": "4.13.18"
