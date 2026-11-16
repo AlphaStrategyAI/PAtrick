@@ -31,6 +31,7 @@ export type VaultApiOptions = {
   blobs: BlobStore;
   now?: () => Date;
   captureHost?: string;
+  beforeDraftWrite?: (editId: string) => void;
   afterDraftWrite?: (editId: string) => void;
   failProjection?: (revision: number) => boolean;
   onProjectionLock?: (domain: string, viewKind: string) => void;
@@ -157,11 +158,12 @@ async function createEdit(
     if (plan.writes) {
       db.prepare(`INSERT INTO draft_intents (
         edit_id, vault_id, relative_path, document_id, template_hash, proof_hash, proof_identity, write_state, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, 'pending', ?, ?)`).run(
+      ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?)`).run(
         editId,
         vault.vault_id,
         plan.relativePath,
         plan.documentId,
+        plan.bytes ? sha256(plan.bytes) : null,
         stamped,
         stamped,
       );
@@ -189,6 +191,7 @@ async function createEdit(
     });
   });
   if (!plan.writes || !plan.bytes) return receipt(db, editId);
+  options.beforeDraftWrite?.(editId);
   const outcome = await placeDraft(vault.root_path, plan.relativePath, plan.bytes);
   if (outcome === 'created') options.afterDraftWrite?.(editId);
   const observed = now();
@@ -229,6 +232,38 @@ async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow,
   const current = receipt(db, intent.edit_id);
   if (!intent.relative_path || intent.operation === 'edit_original' || current.file.state !== 'preparing') return current;
   const destination = resolveInside(vault.root_path, intent.relative_path);
+  if (!(await fileExists(destination))) {
+    const draft = db.prepare('SELECT write_state FROM draft_intents WHERE edit_id = ?').get(intent.edit_id) as { write_state: string } | undefined;
+    if (draft && draft.write_state !== 'pending') return current;
+    const bytes = plannedBytes(intent);
+    if (!bytes) return current;
+    const outcome = await placeDraft(vault.root_path, intent.relative_path, bytes);
+    if (outcome === 'created') {
+      const proof = sha256(bytes);
+      const stamped = now();
+      withImmediateTransaction(db, () => {
+        insertReceipt(db, {
+          editId: intent.edit_id,
+          revision: current.receipt_revision + 1,
+          fileState: 'awaiting_save',
+          proof,
+          business: current.business.state,
+          projection: current.projection.state,
+          intentId: current.projection.intent_id,
+          projectionRevision: current.projection.projection_revision,
+          supersededBy: current.projection.superseded_by,
+          now: stamped,
+        });
+        db.prepare(`UPDATE draft_intents SET write_state = 'written', proof_hash = ?, template_hash = COALESCE(template_hash, ?), updated_at = ? WHERE edit_id = ?`).run(
+          proof,
+          proof,
+          stamped,
+          intent.edit_id,
+        );
+      });
+      return receipt(db, intent.edit_id);
+    }
+  }
   if (!(await fileExists(destination))) return current;
   const observed = sha256(await readFile(destination));
   const stamped = now();
@@ -287,14 +322,13 @@ function planEdit(db: SqliteDatabase, vault: VaultRecord, input: EditIntentReque
     if (!knowledge || knowledge.revision !== input.expected_knowledge_revision) throw new Error('CONFLICT');
     const documentId = `doc_${sha256(`${vault.vault_id}\0supplement\0${input.knowledge_id}`).slice(0, 24)}`;
     const relativePath = `知识笔记/补充/${safeSegment(input.knowledge_id)}.md`;
-    const template = readTemplate();
     return {
       targetId: input.knowledge_id,
       baseVersion: input.expected_knowledge_revision,
       documentId,
       relativePath,
       writes: true,
-      bytes: Buffer.from(template.replace('patrick_id:', `patrick_id: ${documentId}`).replace('knowledge_id:', `knowledge_id: ${input.knowledge_id}`), 'utf8'),
+      bytes: supplementBytes(documentId, input.knowledge_id),
       business: 'not_started',
     };
   }
@@ -481,6 +515,27 @@ function resolveInside(root: string, relativePath: string): string {
 function safeSegment(value: string): string {
   if (!value || value.includes('/') || value.includes('\\') || value.includes('..') || value.includes('\0')) throw new Error('UNPROCESSABLE');
   return value;
+}
+
+function plannedBytes(intent: IntentRow): Buffer | undefined {
+  if (!intent.document_id || !intent.target_id) return undefined;
+  if (intent.operation === 'supplement_knowledge') return supplementBytes(intent.document_id, intent.target_id);
+  if (intent.operation === 'create_standard') {
+    return Buffer.from(standardDraft({ patrickId: intent.document_id, standardId: intent.target_id, baseVersion: null }), 'utf8');
+  }
+  if (intent.operation === 'revise_standard') {
+    return Buffer.from(standardDraft({
+      patrickId: intent.document_id,
+      standardId: intent.target_id,
+      baseVersion: intent.base_version,
+    }), 'utf8');
+  }
+  return undefined;
+}
+
+function supplementBytes(documentId: string, knowledgeId: string): Buffer {
+  const template = readTemplate();
+  return Buffer.from(template.replace('patrick_id:', `patrick_id: ${documentId}`).replace('knowledge_id:', `knowledge_id: ${knowledgeId}`), 'utf8');
 }
 
 function standardDraft(input: { patrickId: string; standardId: string; baseVersion: number | null }): string {

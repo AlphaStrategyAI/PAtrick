@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { canonicalPayload, type Json } from '@patrick/contracts';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
@@ -30,6 +30,7 @@ export type ProjectionResult = {
 };
 
 const tails = new Map<string, Promise<void>>();
+const liveLocks = new Map<string, string>();
 
 export async function projectVault(
   db: SqliteDatabase,
@@ -41,58 +42,106 @@ export async function projectVault(
   },
 ): Promise<ProjectionResult> {
   const vault = requireVault(db, input.vaultId);
-  return withViewLock(`${vault.data_domain}\0${input.viewKind}`, async () => {
+  const key = `${vault.data_domain}\0${input.viewKind}`;
+  return withViewLock(key, async () => {
     const holder = randomUUID();
-    withImmediateTransaction(db, () => {
-      db.prepare('INSERT INTO projection_locks (data_domain, view_kind, holder, acquired_at) VALUES (?, ?, ?, ?)').run(
-        vault.data_domain,
-        input.viewKind,
-        holder,
-        options.now,
-      );
-    });
+    if (liveLocks.has(key)) throw new Error('PROJECTION_LOCKED');
+    liveLocks.set(key, holder);
     try {
-      options.onProjectionLock?.(vault.data_domain, input.viewKind);
-      const pointer = currentPointer(db, vault.data_domain, input.viewKind);
-      if (pointer !== null && input.revision <= pointer) {
-        withImmediateTransaction(db, () => remember(db, vault, input, 'superseded', 0, options.now));
-        return { applied: false, pointer, state: 'superseded' as const };
-      }
-      if (!manifestComplete(input.files)) {
-        withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
-        return { applied: false, pointer, state: 'failed' as const };
-      }
-      if (options.failProjection?.(input.revision)) {
-        withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
-        return { applied: false, pointer, state: 'failed' as const };
-      }
-      await publishBatch(vault.root_path, input.revision, input.files);
-      if (pointer !== null) await preserveBatch(vault.root_path, vault.isolation_root, vault.vault_id, pointer);
-      await publishIndex(vault.root_path, input.revision);
-      const moved = withImmediateTransaction(db, () => {
-        remember(db, vault, input, 'current', 1, options.now);
-        movePointer(db, vault.data_domain, input.viewKind, input.revision, `projection:${vault.data_domain}:${input.viewKind}:${input.revision}`, options.now);
-        if (input.editId) syncEditProjection(db, input.editId, input.revision, input.viewKind, options.now);
-        return currentPointer(db, vault.data_domain, input.viewKind);
-      });
-      return {
-        applied: moved === input.revision,
-        pointer: moved,
-        state: moved === input.revision ? 'current' : 'failed',
-      };
-    } finally {
       withImmediateTransaction(db, () => {
-        db.prepare('DELETE FROM projection_locks WHERE data_domain = ? AND view_kind = ? AND holder = ?').run(
-          vault.data_domain,
-          input.viewKind,
-          holder,
-        );
+        acquireProjectionLock(db, vault.data_domain, input.viewKind, holder, options.now);
       });
+      try {
+        options.onProjectionLock?.(vault.data_domain, input.viewKind);
+        const pointer = currentPointer(db, vault.data_domain, input.viewKind);
+        if (pointer !== null && input.revision <= pointer) {
+          withImmediateTransaction(db, () => remember(db, vault, input, 'superseded', 0, options.now));
+          return { applied: false, pointer, state: 'superseded' as const };
+        }
+        if (!manifestComplete(input.files)) {
+          withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
+          return { applied: false, pointer, state: 'failed' as const };
+        }
+        if (options.failProjection?.(input.revision)) {
+          withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
+          return { applied: false, pointer, state: 'failed' as const };
+        }
+        await publishBatch(vault.root_path, input.revision, input.files);
+        if (pointer !== null) await preserveBatch(vault.root_path, vault.isolation_root, vault.vault_id, pointer);
+        await publishIndex(vault.root_path, input.revision);
+        const moved = withImmediateTransaction(db, () => {
+          remember(db, vault, input, 'current', 1, options.now);
+          movePointer(db, vault.data_domain, input.viewKind, input.revision, `projection:${vault.data_domain}:${input.viewKind}:${input.revision}`, options.now);
+          if (input.editId) syncEditProjection(db, input.editId, input.revision, input.viewKind, options.now);
+          return currentPointer(db, vault.data_domain, input.viewKind);
+        });
+        return {
+          applied: moved === input.revision,
+          pointer: moved,
+          state: moved === input.revision ? 'current' : 'failed',
+        };
+      } finally {
+        withImmediateTransaction(db, () => {
+          db.prepare('DELETE FROM projection_locks WHERE data_domain = ? AND view_kind = ? AND holder = ?').run(
+            vault.data_domain,
+            input.viewKind,
+            holder,
+          );
+        });
+      }
+    } finally {
+      if (liveLocks.get(key) === holder) liveLocks.delete(key);
     }
   });
 }
 
+function acquireProjectionLock(db: SqliteDatabase, domain: string, viewKind: string, holder: string, now: string): void {
+  const key = `${domain}\0${viewKind}`;
+  const existing = lockHolder(db, domain, viewKind);
+  if (existing === holder) return;
+  if (existing && liveLocks.get(key) === existing) throw new Error('PROJECTION_LOCKED');
+  if (!existing) {
+    try {
+      db.prepare('INSERT INTO projection_locks (data_domain, view_kind, holder, acquired_at) VALUES (?, ?, ?, ?)').run(
+        domain,
+        viewKind,
+        holder,
+        now,
+      );
+      return;
+    } catch (error) {
+      if (!isUniqueConstraint(error)) throw error;
+    }
+  }
+  const current = lockHolder(db, domain, viewKind);
+  if (!current) {
+    db.prepare('INSERT INTO projection_locks (data_domain, view_kind, holder, acquired_at) VALUES (?, ?, ?, ?)').run(
+      domain,
+      viewKind,
+      holder,
+      now,
+    );
+    return;
+  }
+  if (current === holder) return;
+  if (liveLocks.get(key) === current) throw new Error('PROJECTION_LOCKED');
+  const updated = db.prepare(`UPDATE projection_locks SET holder = ?, acquired_at = ?
+    WHERE data_domain = ? AND view_kind = ? AND holder = ?`).run(holder, now, domain, viewKind, current);
+  if (updated.changes !== 1) throw new Error('PROJECTION_LOCKED');
+}
+
+function lockHolder(db: SqliteDatabase, domain: string, viewKind: string): string | undefined {
+  const row = db.prepare('SELECT holder FROM projection_locks WHERE data_domain = ? AND view_kind = ?').get(domain, viewKind) as {
+    holder: string;
+  } | undefined;
+  return row?.holder;
+}
+
 async function publishBatch(root: string, revision: number, files: Record<string, string>): Promise<void> {
+  const destination = join(root, '系统视图', '批次', String(revision));
+  const status = await batchStatus(destination, files);
+  if (status === 'complete') return;
+  if (status === 'incomplete') await rm(destination, { recursive: true, force: true });
   const staging = join(root, '.patrick-staging', `batch-${revision}`);
   await rm(staging, { recursive: true, force: true });
   const hashes = new Map<string, string>();
@@ -112,7 +161,6 @@ async function publishBatch(root: string, revision: number, files: Record<string
     if (!readBack.equals(bytes)) throw new Error('PROJECTION_READBACK');
     hashes.set(path, createHash('sha256').update(bytes).digest('hex'));
   }
-  const destination = join(root, '系统视图', '批次', String(revision));
   await mkdir(dirname(destination), { recursive: true });
   await rename(staging, destination);
   for (const path of PROJECTION_BATCH_FILES) {
@@ -143,6 +191,28 @@ async function publishIndex(root: string, revision: number): Promise<void> {
   const destination = join(root, '系统视图', '索引.md');
   await mkdir(dirname(destination), { recursive: true });
   await rename(staging, destination);
+}
+
+async function batchStatus(destination: string, files: Record<string, string>): Promise<'missing' | 'complete' | 'incomplete'> {
+  try {
+    const info = await stat(destination);
+    if (!info.isDirectory()) return 'incomplete';
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return 'missing';
+    throw error;
+  }
+  for (const path of PROJECTION_BATCH_FILES) {
+    const expected = createHash('sha256').update(Buffer.from(files[path] ?? '', 'utf8')).digest('hex');
+    try {
+      const readBack = await readFile(join(destination, ...path.split('/')));
+      if (createHash('sha256').update(readBack).digest('hex') !== expected) return 'incomplete';
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'ENOENT' || code === 'EISDIR' || code === 'ENOTDIR') return 'incomplete';
+      throw error;
+    }
+  }
+  return 'complete';
 }
 
 function manifestComplete(files: Record<string, string>): boolean {
@@ -237,6 +307,19 @@ function syncEditProjection(db: SqliteDatabase, editId: string, revision: number
     revision,
     now,
   );
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = 'code' in error ? String((error as { code: unknown }).code) : '';
+  if (code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  const message = 'message' in error ? String((error as { message: unknown }).message) : '';
+  return message.includes('UNIQUE');
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) return String((error as { code: unknown }).code);
+  return undefined;
 }
 
 function withViewLock<T>(key: string, run: () => Promise<T>): Promise<T> {

@@ -63,9 +63,11 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
   } | undefined;
   if (existing && existing.tombstone === 0 && existing.content_hash === file.hash) return false;
   const parsed = file.kind === 'note' ? parseFrontMatter(file.bytes) : undefined;
+  const draft = openDraft(db, vault.vault_id, file.relativePath);
+  const stillTemplate = draft !== undefined && file.hash === draft.proof;
   const parseError = parsed && !parsed.ok ? String(parsed.line) : null;
   const bodyText = parsed?.ok ? parsed.body : null;
-  const knowledgeId = parsed?.ok ? knowledgeIdFor(vault, file, parsed.data) : null;
+  const knowledgeId = stillTemplate || !parsed?.ok ? null : knowledgeIdFor(vault, file, parsed.data);
   const patrickId = parsed?.ok ? scalarString(parsed.data.patrick_id) : null;
   const documentId = existing?.document_id ?? `doc_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 24)}`;
   const observedSeq = (existing?.observed_seq ?? 0) + 1;
@@ -134,7 +136,7 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
     payload: { type: 'source.revision.committed', document_id: documentId, revision_id: revisionId, content_hash: file.hash },
     destination: 'vault',
   });
-  if (parsed?.ok && knowledgeId && parsed.data.kind !== 'standard') {
+  if (!stillTemplate && parsed?.ok && knowledgeId && parsed.data.kind !== 'standard') {
     recordKnowledge(db, {
       accountId: vault.account_id,
       domain: vault.data_domain,
@@ -147,7 +149,59 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
       now,
     });
   }
+  if (draft && !stillTemplate) observeOwnerDraft(db, draft.editId, file.hash, parsed, now);
   return true;
+}
+
+function openDraft(db: SqliteDatabase, vaultId: string, relativePath: string): { editId: string; proof: string } | undefined {
+  const row = db.prepare(`SELECT d.edit_id, d.template_hash, d.proof_hash
+    FROM draft_intents d
+    JOIN edit_intents i ON i.edit_id = d.edit_id
+    WHERE d.vault_id = ? AND d.relative_path = ? AND i.closed_at IS NULL`).get(vaultId, relativePath) as {
+    edit_id: string;
+    template_hash: string | null;
+    proof_hash: string | null;
+  } | undefined;
+  if (!row) return undefined;
+  const proof = row.template_hash ?? row.proof_hash;
+  if (!proof) return undefined;
+  return { editId: row.edit_id, proof };
+}
+
+function observeOwnerDraft(db: SqliteDatabase, editId: string, hash: string, parsed: ParsedFrontMatter | undefined, now: string): void {
+  const latest = db.prepare(`SELECT receipt_revision, file_state, business_state, candidate_id, result_ref,
+      projection_state, projection_intent_id, projection_revision, superseded_by
+    FROM edit_receipts WHERE edit_id = ? ORDER BY receipt_revision DESC LIMIT 1`).get(editId) as {
+    receipt_revision: number;
+    file_state: string;
+    business_state: string;
+    candidate_id: string | null;
+    result_ref: string | null;
+    projection_state: string;
+    projection_intent_id: string | null;
+    projection_revision: number | null;
+    superseded_by: string | null;
+  } | undefined;
+  if (!latest) return;
+  if (latest.file_state !== 'awaiting_save' && latest.file_state !== 'collected' && latest.file_state !== 'invalid') return;
+  const fileState = parsed?.ok ? 'collected' : 'invalid';
+  db.prepare(`INSERT INTO edit_receipts (
+    edit_id, receipt_revision, file_state, file_proof_ref, business_state, candidate_id, result_ref,
+    projection_state, projection_intent_id, projection_revision, superseded_by, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    editId,
+    latest.receipt_revision + 1,
+    fileState,
+    hash,
+    latest.business_state,
+    latest.candidate_id,
+    latest.result_ref,
+    latest.projection_state,
+    latest.projection_intent_id,
+    latest.projection_revision,
+    latest.superseded_by,
+    now,
+  );
 }
 
 function knowledgeIdFor(vault: VaultRecord, file: ScannedFile, data: Record<string, Scalar>): string | null {

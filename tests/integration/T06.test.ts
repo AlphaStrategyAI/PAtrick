@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +138,48 @@ test('a crash after the draft is linked keeps the owner text on the same edit', 
       file_state: string;
     };
     expect(preparing.file_state).toBe('preparing');
+  } finally {
+    fx.close();
+  }
+});
+
+test('a crash after the intent row and before the draft file resumes the planned template', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(join(root, '知识笔记'), { recursive: true });
+  let crashed = false;
+  try {
+    const api = apiFor(fx, {
+      beforeDraftWrite() {
+        if (crashed) return;
+        crashed = true;
+        throw new Error('CRASH_BEFORE_FILE');
+      },
+    });
+    const vaultId = await connect(api, root);
+    writeFileSync(join(root, '知识笔记', '原文.md'), note('k-resume', '事实'), 'utf8');
+    await api.readVault(vaultId);
+    const request = {
+      operation: 'supplement_knowledge' as const,
+      knowledge_id: 'k-resume',
+      expected_knowledge_revision: 1,
+      draft_key: 'resume',
+    };
+    await expect(api.createEdit(principal, request)).rejects.toThrow('CRASH_BEFORE_FILE');
+    const draft = join(root, '知识笔记', '补充', 'k-resume.md');
+    expect(existsSync(draft)).toBe(false);
+    const row = fx.db.prepare(`SELECT edit_id FROM edit_intents WHERE operation = 'supplement_knowledge'`).get() as { edit_id: string };
+    const retry = await api.createEdit(principal, request);
+    const stored = fx.db.prepare('SELECT document_id FROM draft_intents WHERE edit_id = ?').get(row.edit_id) as { document_id: string };
+    const template = readFileSync(fileURLToPath(new URL('../../assets/vault-kit/知识笔记.md', import.meta.url)), 'utf8');
+    const planned = template.replace('patrick_id:', `patrick_id: ${stored.document_id}`).replace('knowledge_id:', 'knowledge_id: k-resume');
+    expect(retry.edit_id).toBe(row.edit_id);
+    expect(readFileSync(draft, 'utf8')).toBe(planned);
+    expect(retry.file.state).toBe('awaiting_save');
+    expect(retry.file.proof_ref).toBe(sha256(Buffer.from(planned, 'utf8')));
+    expect(fx.db.prepare(`SELECT COUNT(*) AS n FROM edit_intents WHERE active_key IS NOT NULL`).get()).toEqual({
+      n: 1,
+    });
   } finally {
     fx.close();
   }
@@ -484,6 +526,31 @@ test('a failed or older projection does not move the current pointer', async () 
   }
 });
 
+test('a leftover lock and a partial batch still project that revision', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(join(root, '知识笔记'), { recursive: true });
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    const revision = 6;
+    mkdirSync(join(root, '系统视图', '批次', String(revision), '知识'), { recursive: true });
+    writeFileSync(join(root, '系统视图', '批次', String(revision), '知识', '当前.md'), '# 半截批次\n', 'utf8');
+    fx.db.prepare(`INSERT INTO projection_locks (data_domain, view_kind, holder, acquired_at) VALUES ('personal', 'knowledge', 'abandoned-holder', ?)`).run(NOW);
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, `# ${path}\n`]));
+    const result = await api.project({ vaultId, viewKind: 'knowledge', revision, files });
+    expect(result.applied).toBe(true);
+    expect(result.pointer).toBe(revision);
+    expect(fx.db.prepare(`SELECT projection_revision FROM projection_pointers WHERE data_domain = 'personal' AND view_kind = 'knowledge'`).get()).toEqual({
+      projection_revision: revision,
+    });
+    expect(readFileSync(join(root, '系统视图', '批次', String(revision), '知识', '当前.md'), 'utf8')).toBe('# 知识/当前.md\n');
+    expect(fx.db.prepare(`SELECT holder FROM projection_locks WHERE data_domain = 'personal' AND view_kind = 'knowledge'`).get()).toBeUndefined();
+  } finally {
+    fx.close();
+  }
+});
+
 test('projection retry reconciles an older revision without a new candidate', async () => {
   const fx = temporaryDatabase();
   const root = join(fx.dir, 'vault');
@@ -515,6 +582,52 @@ test('projection retry reconciles an older revision without a new candidate', as
     expect(retry.business.state).not.toBe('adopted');
     expect(fx.db.prepare(`SELECT COUNT(*) AS n FROM knowledge_records`).get()).toEqual(candidates);
     expect(fx.db.prepare(`SELECT projection_revision FROM projection_pointers WHERE view_kind = 'knowledge'`).get()).toEqual({ projection_revision: 2 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a supplement scan leaves the template unread and collects the owner text', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(join(root, '知识笔记'), { recursive: true });
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    writeFileSync(join(root, '知识笔记', '原文.md'), note('k-owner', '原始事实'), 'utf8');
+    await api.readVault(vaultId);
+    const before = fx.db.prepare(`SELECT body, revision FROM knowledge_records WHERE knowledge_id = 'k-owner'`).get() as {
+      body: string;
+      revision: number;
+    };
+    const edit = await api.createEdit(principal, {
+      operation: 'supplement_knowledge',
+      knowledge_id: 'k-owner',
+      expected_knowledge_revision: 1,
+      draft_key: 'owner-save',
+    });
+    const draft = join(root, '知识笔记', '补充', 'k-owner.md');
+    await api.readVault(vaultId);
+    expect(fx.db.prepare(`SELECT body, revision FROM knowledge_records WHERE knowledge_id = 'k-owner'`).get()).toEqual(before);
+    expect(before.body).not.toContain('# 待核实');
+    expect(fx.db.prepare(`SELECT file_state FROM edit_receipts WHERE edit_id = ? ORDER BY receipt_revision DESC LIMIT 1`).get(edit.edit_id)).toEqual({
+      file_state: 'awaiting_save',
+    });
+    const owner = note('k-owner', '主人写下的补充');
+    writeFileSync(draft, owner, 'utf8');
+    await api.readVault(vaultId);
+    expect(fx.db.prepare(`SELECT file_state FROM edit_receipts WHERE edit_id = ? ORDER BY receipt_revision DESC LIMIT 1`).get(edit.edit_id)).toEqual({
+      file_state: 'collected',
+    });
+    expect(readFileSync(draft, 'utf8')).toBe(owner);
+    const broken = Buffer.from('---\nkind: knowledge\n!!python/object: nope\n---\n原文保留\n', 'utf8');
+    writeFileSync(draft, broken);
+    await api.readVault(vaultId);
+    expect(fx.db.prepare(`SELECT file_state FROM edit_receipts WHERE edit_id = ? ORDER BY receipt_revision DESC LIMIT 1`).get(edit.edit_id)).toEqual({
+      file_state: 'invalid',
+    });
+    expect(readFileSync(draft).equals(broken)).toBe(true);
+    expect(Buffer.from(await fx.blobs.readBlob(sha256(broken))).equals(broken)).toBe(true);
   } finally {
     fx.close();
   }
