@@ -11,7 +11,9 @@ import {
   canonicalPayload,
   commandEnvelope,
 } from '../../packages/contracts/src/envelope.js';
-import { acceptEventVersion } from '../../packages/contracts/src/events.js';
+import { acceptEventVersion, domainEventSchema } from '../../packages/contracts/src/events.js';
+import { snapshotEnvelope } from '../../packages/contracts/src/envelope.js';
+import { createApp } from '../../apps/service/src/app.js';
 import {
   apiPath,
   channelTestStatusSchema,
@@ -22,10 +24,23 @@ import {
   feishuConnectionStatusSchema,
   generateOpenApi,
   generateSdk,
+  healthSnapshotSchema,
   MCP_TOOLS,
   routes,
   vaultConnectionStatusSchema,
 } from '../../packages/contracts/src/resources.js';
+
+function openApiOperation(operationId: string): Record<string, unknown> {
+  const openapi = generateOpenApi();
+  for (const item of Object.values(openapi.paths)) {
+    for (const operation of Object.values(item)) {
+      if ((operation as { operationId?: string }).operationId === operationId) {
+        return operation as Record<string, unknown>;
+      }
+    }
+  }
+  throw new Error(`missing operation ${operationId}`);
+}
 
 test('canonical-command', () => {
   expect(canonicalPayload({ z: 1, a: ['否', null] })).toBe('{"a":["否",null],"z":1}');
@@ -268,4 +283,92 @@ test('release-evidence-rejects-pass-without-proof', () => {
   expect(
     execFileSync(process.execPath, ['scripts/check-release-evidence.mjs', root], { encoding: 'utf8' }),
   ).toMatch(/checked 1 scenario/);
+});
+
+test('quality-fix-command-openapi-query-and-versions', () => {
+  const control = openApiOperation('controlWork');
+  expect(control.responses).toHaveProperty('202');
+  const controlResponses = control.responses as Record<string, unknown>;
+  expect(controlResponses).toHaveProperty('429');
+  expect(controlResponses).toHaveProperty('503');
+
+  const patchPrefs = openApiOperation('patchPreferences');
+  expect(patchPrefs.responses).toHaveProperty('200');
+  expect(patchPrefs.responses).not.toHaveProperty('202');
+
+  const queryParams = (operationId: string) =>
+    ((openApiOperation(operationId).parameters ?? []) as { name: string; in: string; required?: boolean; schema?: unknown }[])
+      .filter((parameter) => parameter.in === 'query');
+
+  const listWorkQueries = queryParams('listWork');
+  expect(listWorkQueries.map((parameter) => parameter.name).sort()).toEqual(['cursor', 'limit']);
+  expect(listWorkQueries.find((parameter) => parameter.name === 'cursor')?.required).toBe(false);
+  expect(listWorkQueries.find((parameter) => parameter.name === 'limit')?.required).toBe(false);
+
+  expect(queryParams('getWork').map((parameter) => parameter.name)).not.toContain('id');
+
+  const getStatsQueries = queryParams('getStats');
+  expect(getStatsQueries.find((parameter) => parameter.name === 'period')?.required).toBe(true);
+  expect(getStatsQueries.find((parameter) => parameter.name === 'timezone')?.required).toBe(true);
+  const periodSchema = getStatsQueries.find((parameter) => parameter.name === 'period')?.schema as { enum?: string[] };
+  expect(periodSchema.enum).toEqual(['7d', '30d', 'all']);
+
+  const listEventsQueries = queryParams('listEvents');
+  expect(listEventsQueries).toEqual([
+    expect.objectContaining({ name: 'after', required: false }),
+  ]);
+
+  const send = routes.find((route) => route.operationId === 'sendFeishuTest');
+  const envelopeBase = {
+    client_request_id: 'req-feishu',
+    expected_revision: null,
+    payload_hash: 'a'.repeat(64),
+  };
+  expect(send?.request.safeParse({ ...envelopeBase, payload: { preview_hash: 'preview' } }).success).toBe(false);
+  expect(
+    send?.request.safeParse({
+      ...envelopeBase,
+      payload: { test_id: 'test-1', preview_hash: 'preview', destination: 'chat-1' },
+    }).success,
+  ).toBe(true);
+
+  const snapshotSchema = snapshotEnvelope(healthSnapshotSchema);
+  const snapshotBase = {
+    scope: { account_id: 'bootstrap', data_domain: 'system', permission_epoch: 0 },
+    as_of: '2026-01-01T00:00:00.000Z',
+    watermark: { hub_seq: 0, domain_seq: 0 },
+    freshness: 'unknown' as const,
+    data: {
+      service: 'unknown' as const,
+      freshness: 'unknown' as const,
+      impact: 'bootstrapping',
+      next_step: null,
+      as_of: '2026-01-01T00:00:00.000Z',
+    },
+  };
+  expect(snapshotSchema.safeParse({ ...snapshotBase, schema_version: '1.0' }).success).toBe(true);
+  expect(snapshotSchema.safeParse({ ...snapshotBase, schema_version: '2.0' }).success).toBe(false);
+
+  const eventBase = {
+    event_id: 'evt-1',
+    type: 'work.delivered',
+    resource_id: null,
+    resource_revision: null,
+    scope: { account_id: 'bootstrap', data_domain: 'personal', permission_epoch: 0 },
+    as_of: '2026-01-01T00:00:00.000Z',
+    watermark: { hub_seq: 0, domain_seq: 0 },
+    payload: {},
+  };
+  expect(domainEventSchema.safeParse({ ...eventBase, schema_version: '1.0' }).success).toBe(true);
+  expect(domainEventSchema.safeParse({ ...eventBase, schema_version: '2.0' }).success).toBe(false);
+});
+
+test('quality-fix-system-health-snapshot', async () => {
+  const healthRoute = routes.find((route) => route.operationId === 'getSystemHealth');
+  const response = await createApp().request('/api/v1/system/health');
+  const body: unknown = await response.json();
+  expect(healthRoute?.response.safeParse(body).success).toBe(true);
+  const snapshot = healthRoute?.response.parse(body) as { data: { service: string; impact: string } };
+  expect(snapshot.data.service).toBe('unknown');
+  expect(snapshot.data.impact).toBe('bootstrapping');
 });

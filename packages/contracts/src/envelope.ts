@@ -47,6 +47,17 @@ export function assertAllowedSchemaMajor(schemaVersion: string): void {
   }
 }
 
+export const allowedSchemaVersionSchema = z
+  .string()
+  .regex(/^[0-9]+\.[0-9]+$/)
+  .superRefine((schemaVersion, ctx) => {
+    try {
+      assertAllowedSchemaMajor(schemaVersion);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'SCHEMA_MAJOR_UNSUPPORTED' });
+    }
+  });
+
 export const errorBodySchema = z.strictObject({
   code: z.string().min(1),
   params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
@@ -78,7 +89,7 @@ export type Snapshot<T> = {
 
 export function snapshotEnvelope<T>(data: z.ZodType<T>) {
   return z.strictObject({
-    schema_version: z.string().regex(/^[0-9]+\.[0-9]+$/),
+    schema_version: allowedSchemaVersionSchema,
     scope: scopeSchema,
     as_of: z.string().min(1),
     watermark: watermarkSchema,

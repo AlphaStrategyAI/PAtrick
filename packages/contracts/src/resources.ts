@@ -50,7 +50,14 @@ export type OpenApiDocument = {
 };
 
 const readErrors = ['UNAUTHENTICATED', 'FORBIDDEN'] as const;
-const writeErrors = ['UNAUTHENTICATED', 'FORBIDDEN', 'CONFLICT', 'UNPROCESSABLE'] as const;
+const writeErrors = [
+  'UNAUTHENTICATED',
+  'FORBIDDEN',
+  'CONFLICT',
+  'UNPROCESSABLE',
+  'RATE_LIMITED',
+  'UNAVAILABLE',
+] as const;
 const emptySchema = z.strictObject({});
 const idSchema = z.strictObject({ id: z.string().min(1) });
 const listDataSchema = z.strictObject({ items: z.array(z.unknown()) });
@@ -364,7 +371,16 @@ export const routes: RouteDefinition[] = [
   command('confirmFeishuBinding', '/channels/feishu/bindings/:id/confirm', 'owner', emptySchema),
   read('getFeishuBinding', '/channels/feishu/bindings/:id', 'channels.read', idSchema, z.unknown()),
   command('createFeishuTest', '/channels/feishu/tests', 'owner', z.strictObject({ destination: z.string().min(1) })),
-  command('sendFeishuTest', '/channels/feishu/tests/:id/send', 'owner', z.strictObject({ preview_hash: z.string().min(1) })),
+  command(
+    'sendFeishuTest',
+    '/channels/feishu/tests/:id/send',
+    'owner',
+    z.strictObject({
+      test_id: z.string().min(1),
+      preview_hash: z.string().min(1),
+      destination: z.string().min(1),
+    }),
+  ),
   read('getFeishuTest', '/channels/feishu/tests/:id', 'channels.read', idSchema, channelTestSchema),
   read('getPreferences', '/preferences', 'session', emptySchema, preferencePayload),
   command('patchPreferences', '/preferences', 'session', preferencePayload, 'PATCH'),
@@ -396,6 +412,35 @@ function pathParams(path: string): string[] {
   return [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]);
 }
 
+function queryParameters(route: RouteDefinition): Record<string, unknown>[] {
+  if (route.method !== 'GET') return [];
+  const pathParamSet = new Set(pathParams(route.path));
+  const jsonSchema = z.toJSONSchema(route.request) as {
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  const properties = jsonSchema.properties ?? {};
+  const required = new Set(jsonSchema.required ?? []);
+  return Object.entries(properties)
+    .filter(([name]) => !pathParamSet.has(name))
+    .map(([name, schema]) => {
+      const fieldSchema = schema as { default?: unknown };
+      const isRequired = required.has(name) && fieldSchema.default === undefined;
+      return {
+        name,
+        in: 'query',
+        required: isRequired,
+        schema,
+      };
+    });
+}
+
+function openApiSuccessStatus(route: RouteDefinition): '200' | '202' {
+  if (route.operationId === 'patchPreferences') return '200';
+  if (route.response === commandAcceptedSchema) return '202';
+  return '200';
+}
+
 export function generateOpenApi(): OpenApiDocument {
   const paths: OpenApiDocument['paths'] = {};
   const schemas: Record<string, unknown> = {
@@ -409,17 +454,21 @@ export function generateOpenApi(): OpenApiDocument {
     const responseName = `${route.operationId}Response`;
     schemas[requestName] = z.toJSONSchema(route.request);
     schemas[responseName] = z.toJSONSchema(route.response);
+    const successStatus = openApiSuccessStatus(route);
     const operation: Record<string, unknown> = {
       operationId: route.operationId,
       'x-permission': route.permission,
-      parameters: pathParams(route.path).map((name) => ({
-        name,
-        in: 'path',
-        required: true,
-        schema: { type: 'string' },
-      })),
+      parameters: [
+        ...pathParams(route.path).map((name) => ({
+          name,
+          in: 'path',
+          required: true,
+          schema: { type: 'string' },
+        })),
+        ...queryParameters(route),
+      ],
       responses: {
-        '200': {
+        [successStatus]: {
           description: 'success',
           content: { 'application/json': { schema: { $ref: `#/components/schemas/${responseName}` } } },
         },

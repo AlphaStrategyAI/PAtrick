@@ -1,4 +1,4 @@
-import { scopeSchema, sseEventSchema, watermarkSchema } from './envelope.js';
+import { allowedSchemaVersionSchema, scopeSchema, sseEventSchema, watermarkSchema } from './envelope.js';
 import { z } from 'zod';
 
 export const DOMAIN_EVENTS = [
@@ -29,7 +29,7 @@ export const DOMAIN_EVENTS = [
 export type DomainEventType = (typeof DOMAIN_EVENTS)[number]['type'];
 
 export const domainEventSchema = sseEventSchema.extend({
-  schema_version: z.string().regex(/^[0-9]+\.[0-9]+$/),
+  schema_version: allowedSchemaVersionSchema,
   payload: z.unknown(),
 });
 
