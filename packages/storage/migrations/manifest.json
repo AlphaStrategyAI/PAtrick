@@ -30,5 +30,9 @@
   {
     "file": "0010_answers_channels.sql",
     "sha256": "2d70545abe54c8ba81402f77db6de09c9153ae50ba0bfec844f38626957b752b"
+  },
+  {
+    "file": "0011_conversations.sql",
+    "sha256": "d256e5b3de0f1ac3c75ce683ee3d7a8ef961e0da2d93896164546282dba6018d"
   }
 ]

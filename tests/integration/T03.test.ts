@@ -839,6 +839,8 @@ test('the auth migration appends after the untouched core schema', () => {
   const admissionHash = createHash('sha256').update(admissionBytes).digest('hex');
   const answersBytes = readFileSync(join(root, 'packages/storage/migrations/0010_answers_channels.sql'));
   const answersHash = createHash('sha256').update(answersBytes).digest('hex');
+  const conversationBytes = readFileSync(join(root, 'packages/storage/migrations/0011_conversations.sql'));
+  const conversationHash = createHash('sha256').update(conversationBytes).digest('hex');
   const manifest = JSON.parse(readFileSync(join(root, 'packages/storage/migrations/manifest.json'), 'utf8')) as {
     file: string;
     sha256: string;
@@ -852,6 +854,7 @@ test('the auth migration appends after the untouched core schema', () => {
     { file: '0007_standards.sql', sha256: standardsHash },
     { file: '0008_admission_budget.sql', sha256: admissionHash },
     { file: '0010_answers_channels.sql', sha256: answersHash },
+    { file: '0011_conversations.sql', sha256: conversationHash },
   ]);
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);

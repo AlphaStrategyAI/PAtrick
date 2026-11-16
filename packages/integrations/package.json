@@ -18,7 +18,8 @@
     "./vault/projector": "./vault/projector.ts",
     "./vault/uri": "./vault/uri.ts",
     "./feishu/connection": "./feishu/connection.ts",
-    "./feishu/channel-gate": "./feishu/channel-gate.ts"
+    "./feishu/channel-gate": "./feishu/channel-gate.ts",
+    "./mcp/consultation": "./mcp/consultation.ts"
   },
   "dependencies": {
     "@patrick/contracts": "*",

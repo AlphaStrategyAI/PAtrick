@@ -12,6 +12,8 @@ import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
 import { mountAnswerRoutes } from './routes/answers.js';
+import { mountConsultationRoutes } from './routes/consultations.js';
+import { mountConversationRoutes } from './routes/conversations.js';
 import { mountFeishuRoutes } from './routes/feishu.js';
 import { mountDelegationRoutes } from './routes/delegations.js';
 import { mountEditRoutes } from './routes/edits.js';
@@ -114,6 +116,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountStandardRoutes(app, resources);
   mountDelegationRoutes(app, resources);
   mountWorkControlRoutes(app, resources);
+  mountConversationRoutes(app, () => ({ db: context().db, now }));
+  mountConsultationRoutes(app, () => ({ db: context().db, now }));
   return app;
 }
 
