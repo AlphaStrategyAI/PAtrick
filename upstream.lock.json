@@ -3,14 +3,16 @@
   "lockedAt": "2026-11-16",
   "platform": {
     "node": {
+      "declaredLine": "Node 24 LTS >=24.9",
       "required": ">=24.9.0",
-      "probed": "v26.13.0",
+      "probeHostVersion": "v26.13.0",
+      "probeHostRelease": "Current",
       "architectures": {
         "darwin-arm64": {
-          "status": "verified",
+          "status": "pending",
           "command": "node -v",
-          "observation": "v26.13.0",
-          "evidenceSha256": "39a422c5c70f84e48f4efa1407aafde02d58684f07cfe839cd7e221c691aaec0"
+          "observation": "v26.13.0 (probe host measured; not the pinned Node 24 LTS line)",
+          "evidenceSha256": "055143812d2c08af7d8557b0495157116f85988daedabec43f455536deb1aec9"
         },
         "linux-x64": {
           "status": "pending",
@@ -30,7 +32,66 @@
     "host": {
       "os": "darwin",
       "productVersion": "27.2.1",
-      "arch": "arm64"
+      "arch": "arm64",
+      "role": "T00 probe host (development machine; not Mac mini / Mac Pro production targets)"
+    },
+    "incompatibleCombinations": [
+      {
+        "id": "node-24-lts-vs-probe-host-26",
+        "status": "pending",
+        "declared": "Node 24 LTS >=24.9",
+        "command": "node -v",
+        "observation": "Node v26.13.0 (Current) on probe host via node -v",
+        "evidenceSha256": "5ae93fc30a544af82d0d6c4957e6f91c65a47d1f2938b7ba91714f4db025ba69"
+      },
+      {
+        "id": "darwin-arm64-without-dsh",
+        "status": "pending",
+        "declared": "DSH CLI available for harness admission",
+        "command": "command -v dsh",
+        "observation": "darwin-arm64 probe host: command not found: dsh",
+        "evidenceSha256": "c77772e82a81090a996f97acd3cdbaf893e9f78f16cd055c6d5b6b64553893cf"
+      },
+      {
+        "id": "darwin-arm64-without-obsidian",
+        "status": "blocked",
+        "declared": "Obsidian Desktop installed for vault-kit and core-function probes",
+        "command": "test -d /Applications/Obsidian.app",
+        "observation": "Obsidian.app not found under /Applications or ~/Applications",
+        "evidenceSha256": "c569b5981d1cbe4a9ee952526e9daf264988f9355d9c92d7d205a5f7776e0705"
+      }
+    ]
+  },
+  "productionPath": {
+    "targets": [
+      {
+        "id": "mac-mini-primary",
+        "spec": "Mac mini 24GB RAM / 200GB disk (primary service + local Vault)",
+        "status": "pending",
+        "command": null,
+        "observation": "Production host not measured in T00; topology locked as deployment target for T27/T25.",
+        "evidenceSha256": null
+      },
+      {
+        "id": "mac-pro-dev-recovery",
+        "spec": "Mac Pro 16GB RAM / 100GB disk (development / isolated recovery)",
+        "status": "pending",
+        "command": null,
+        "observation": "Recovery/dev host not measured in T00; topology locked as deployment target for T27.",
+        "evidenceSha256": null
+      }
+    ],
+    "loadBaseline": {
+      "status": "pending",
+      "command": null,
+      "observation": "T25 perf baseline (fixtures/perf/baseline.json): 1000 queued updates, 10000 stats facts, two domains, one slow subscriber — specification recorded; no probe run in T00.",
+      "spec": {
+        "queuedUpdates": 1000,
+        "statsFacts": 10000,
+        "domains": 2,
+        "slowSubscribers": 1
+      },
+      "evidenceSha256": null
     }
   },
   "repos": {
@@ -75,7 +136,7 @@
       "status": "pending",
       "command": "npm view @larksuiteoapi/node-sdk version",
       "observation": "@larksuiteoapi/node-sdk@1.76.0 (npm view only; message/card long-connection and deferred-card behavior require T10 test app)",
-      "evidenceSha256": "4bede9b23f53b1b02d43b6e760d48c047f94a21a5c9caea106a02f68b883e684"
+      "evidenceSha256": "057e49cb9550f668ad4828debd92fd3e729b514f631ceb91cf39de9de403cd2e"
     },
     "obsidian-desktop": {
       "status": "blocked",
@@ -83,17 +144,51 @@
       "observation": "Obsidian.app not found under /Applications or ~/Applications",
       "evidenceSha256": "c569b5981d1cbe4a9ee952526e9daf264988f9355d9c92d7d205a5f7776e0705"
     },
+    "obsidian-core-properties": {
+      "status": "blocked",
+      "command": null,
+      "observation": "Obsidian.app not installed; Properties core-function probe requires installed desktop app (T27).",
+      "evidenceSha256": "9914a2be602ddca18a4d5aea8137327016d4b6c118312b38b731b30fdc35b082"
+    },
+    "obsidian-core-templates": {
+      "status": "blocked",
+      "command": null,
+      "observation": "Obsidian.app not installed; Templates core-function probe requires installed desktop app (T27).",
+      "evidenceSha256": "f51207299c78781c355ec94fe10cbdea07fbf9a7dc603d35d59b4ae6ea0ec6f0"
+    },
+    "obsidian-core-bases": {
+      "status": "blocked",
+      "command": null,
+      "observation": "Obsidian.app not installed; Bases core-function probe requires installed desktop app (T27).",
+      "evidenceSha256": "ac6401491d3d55cd9035b8d446ec9cc04d79944259d839df0c7feec68052ce87"
+    },
+    "obsidian-core-backlinks-graph": {
+      "status": "blocked",
+      "command": null,
+      "observation": "Obsidian.app not installed; Backlinks/Graph core-function probe requires installed desktop app (T27).",
+      "evidenceSha256": "1cb8e5c6c587d495e785bda93ee2e1d3d884dad0e92d97e185ed091a61e8b068"
+    },
+    "obsidian-core-canvas": {
+      "status": "blocked",
+      "command": null,
+      "observation": "Obsidian.app not installed; Canvas core-function probe requires installed desktop app (T27).",
+      "evidenceSha256": "21717a3395e7453f849f3cdee16a5a5b0ac19abca5c548c7d30be87cc29eaaea"
+    },
     "obsidian-installer-arch": {
       "status": "pending",
       "command": null,
-      "observation": "Installer architecture probe deferred to T17/T25 with real Obsidian install path.",
+      "target": "Official macOS Universal installer (https://obsidian.md/help/install)",
+      "installerVersion": null,
+      "architecture": "universal",
+      "packageHashSha256": null,
+      "observation": "Pending target: official macOS Universal package; installer version unknown; package hash unknown; download/hash command not run because Obsidian.app is absent on probe host.",
       "evidenceSha256": null
     },
     "signing-chain": {
       "status": "pending",
       "command": "spctl --status",
       "observation": "assessments enabled; /usr/bin/codesign present; release package signature and SBOM generation assigned to T23",
-      "evidenceSha256": "55db6201ee61f46d5bce2f3ba3b650bc88b340a14a819ca2e3d343ee758eb84f"
+      "evidenceSha256": "e46c65b337ff761c4e1dfe0c770f27298cd409902886a0bda336424ff553e1cc"
     },
     "offline-backup-target": {
       "status": "pending",
