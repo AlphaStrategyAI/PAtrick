@@ -26,6 +26,8 @@ import {
 } from '../../packages/domain/src/work-continuation.js';
 import { settleNativeAnswer, type ContinuationPort } from '../../packages/integrations/autoloop/agent.js';
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '../../packages/integrations/autoloop/answers.js';
+import { requiresChannelReconciliation } from '../../packages/integrations/feishu/channel-gate.js';
+import { createFeishuChannel, openSupervisedSocket, PAIRING_TTL_MS } from '../../packages/integrations/feishu/connection.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
 
 const NOW = '2026-11-17T02:00:00.000Z';
@@ -143,6 +145,181 @@ test('bounded-evidence-resume', async () => {
     expect(scene.stageCount('draft.requested')).toBe(0);
     expect(scene.prSends).toBe(0);
     expect(scene.stageCount('work.delivered')).toBe(0);
+  } finally {
+    scene.close();
+  }
+});
+
+test('channel-lifecycle', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const channel = createFeishuChannel(scene.db, {
+      now: scene.now,
+      hub: scene.hub,
+      encode: encodeHubAnswer,
+      domain: DOMAIN,
+    });
+    const currentTest = await channel.prepareSentTest();
+    const oldCallback = { inbound_id: 'old-card', epoch: 0, question_id: 'Q-017' };
+    const businessAnswerCount = async () => {
+      const row = scene.db.prepare(`SELECT COUNT(*) AS n FROM answer_receipts WHERE validity = 'verified'`).get() as { n: number };
+      return row.n;
+    };
+    const verifiedReceiptsFor = (questionId: string) => scene.verified(questionId);
+    const attemptsForResumeKey = (workId: string, generation: number, questionId: string, phase: ResumeKey['phase']) =>
+      scene.attempts(workId, generation, questionId, phase);
+
+    await channel.recordTestCallback(currentTest);
+    expect((await channel.readTest(currentTest.test_id)).status).toBe('verified');
+    expect((await channel.readConnection()).status).toBe('needs_enable');
+    expect(await businessAnswerCount()).toBe(0);
+    const currentProof = channel.currentProof();
+    await channel.applyTrustedEnable(currentProof);
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    await channel.submitHeld(feishuPrincipal, scene.command(feishuPrincipal, 'feishu-held', binding, { kind: 'option', option_id: 'A' }));
+    expect((await channel.disableWhileHubIsUncertain()).status).toBe('draining');
+    expect((await channel.receive(oldCallback)).disposition).toBe('audit_only');
+    await channel.releaseAcceptedHubAnswerReadback();
+    expect((await channel.finishAfterReconciliation()).status).toBe('disabled');
+    expect(await verifiedReceiptsFor('Q-017')).toHaveLength(1);
+    expect(await attemptsForResumeKey('W-017', 2, 'Q-017', 'answer')).toBe(1);
+    expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: 1, terminal: false }, 1)).toBe(true);
+    expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: 2, terminal: false }, 1)).toBe(false);
+    expect(requiresChannelReconciliation({ permitRecorded: false, dispatchSeq: 1, terminal: false }, 1)).toBe(false);
+    expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: null, terminal: false }, 1)).toBe(false);
+    expect(requiresChannelReconciliation({ permitRecorded: true, dispatchSeq: 1, terminal: true }, 1)).toBe(false);
+  } finally {
+    scene.close();
+  }
+});
+
+test('pairing codes stay hashed and every channel step rechecks the binding', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    let current = new Date(NOW);
+    const channel = createFeishuChannel(scene.db, {
+      now: () => current,
+      hub: scene.hub,
+      encode: encodeHubAnswer,
+      domain: DOMAIN,
+    });
+    await channel.configure();
+    const first = await channel.createPairing();
+    const second = await channel.createPairing();
+    expect(first.code).not.toBe(second.code);
+    expect(first.code.length).toBeGreaterThan(16);
+    const stored = scene.db.prepare('SELECT code_hash, expires_at, status FROM channel_pairings WHERE pairing_id = ?').get(second.pairing_id) as {
+      code_hash: string;
+      expires_at: string;
+      status: string;
+    };
+    expect(stored.code_hash).toBe(sha256(second.code));
+    expect(JSON.stringify(scene.db.prepare('SELECT * FROM channel_pairings').all())).not.toContain(second.code);
+    expect(new Date(stored.expires_at).getTime() - current.getTime()).toBe(PAIRING_TTL_MS);
+    await channel.receivePairingMessage({ code: second.code, open_id: 'ou-owner', chat_id: 'oc-owner' });
+    await expect(channel.confirmPairing({ ...webPrincipal, account_id: 'other' }, second.pairing_id)).rejects.toThrow(/FORBIDDEN/);
+    await channel.confirmPairing(webPrincipal, second.pairing_id);
+    expect((scene.db.prepare('SELECT status FROM channel_pairings WHERE pairing_id = ?').get(second.pairing_id) as { status: string }).status).toBe('consumed');
+    await expect(channel.confirmPairing(webPrincipal, second.pairing_id)).rejects.toThrow(/PAIRING_CONSUMED/);
+
+    const expired = await channel.createPairing();
+    current = new Date(current.getTime() + PAIRING_TTL_MS + 1);
+    await expect(channel.receivePairingMessage({ code: expired.code, open_id: 'ou-owner', chat_id: 'oc-owner' })).rejects.toThrow(/PAIRING_EXPIRED/);
+
+    current = new Date(NOW);
+    const fresh = await channel.createPairing();
+    await channel.receivePairingMessage({ code: fresh.code, open_id: 'ou-owner', chat_id: 'oc-owner' });
+    await channel.confirmPairing(webPrincipal, fresh.pairing_id);
+    const preview = await channel.createTest('ou-owner');
+    channel.setConfigRevision(9);
+    await expect(channel.sendTest(preview)).rejects.toThrow(/BINDING_STALE/);
+    channel.setConfigRevision(1);
+    await channel.sendTest(preview);
+    channel.setConfigRevision(9);
+    await expect(channel.recordTestCallback({
+      test_id: preview.test_id,
+      message_id: 'local-recheck',
+      inbound_evidence: 'local-recheck',
+    })).rejects.toThrow(/BINDING_STALE/);
+    channel.setConfigRevision(1);
+    await channel.recordTestCallback({
+      test_id: preview.test_id,
+      message_id: 'local-recheck',
+      inbound_evidence: 'local-recheck',
+    });
+    const proof = channel.currentProof();
+    channel.setConfigRevision(9);
+    await expect(channel.applyTrustedEnable(proof)).rejects.toThrow(/BINDING_STALE/);
+    channel.setConfigRevision(1);
+    await channel.applyTrustedEnable(proof);
+    expect((await channel.readConnection()).status).toBe('ready');
+    const socketA = openSupervisedSocket('app-017', 'tenant-socket');
+    const socketB = openSupervisedSocket('app-017', 'tenant-socket');
+    expect(socketA).toBe(socketB);
+  } finally {
+    scene.close();
+  }
+});
+
+test('revoking the mandate audits the accepted hub answer and web can answer another question', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const delegation = createDelegationApi(scene.db, webPrincipal, { now: scene.now, domain: DOMAIN });
+    await delegation.openMandate({
+      mandate_id: 'mandate-W-018',
+      type_id: 'type-judge',
+      actions: ['judge', 'collect', 'publish_pr'],
+      resources: ['work'],
+      effects: ['publish_pr'],
+      domains: [DOMAIN],
+      risk: 'low',
+      level: 'L1',
+      budget_micros: 5000,
+      expires_at: '2027-01-01T00:00:00.000Z',
+    });
+    await delegation.openWork({
+      work_id: 'W-018',
+      generation: GENERATION,
+      mandate_id: 'mandate-W-018',
+      phase: 'judgment',
+      next_action: 'judge',
+      budget_micros: 5000,
+    });
+    await delegation.authorizeAction({
+      work_id: 'W-018',
+      generation: GENERATION,
+      attempt_id: 'attempt-w018',
+      phase: 'judgment',
+      next_action: 'judge',
+      allowed_effects: [],
+      expires_at: '2026-11-18T00:00:00.000Z',
+    });
+    const channel = createFeishuChannel(scene.db, {
+      now: scene.now,
+      hub: scene.hub,
+      encode: encodeHubAnswer,
+      domain: DOMAIN,
+    });
+    const currentTest = await channel.prepareSentTest();
+    await channel.recordTestCallback(currentTest);
+    await channel.applyTrustedEnable(channel.currentProof());
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    await channel.submitHeld(feishuPrincipal, scene.command(feishuPrincipal, 'feishu-revoked', binding, { kind: 'option', option_id: 'A' }));
+    await delegation.stopMandate('mandate-W-017');
+    expect((await channel.disableWhileHubIsUncertain()).status).toBe('draining');
+    expect((await channel.receive({ inbound_id: 'old-card', epoch: 0, question_id: 'Q-017' })).disposition).toBe('audit_only');
+    await channel.releaseAcceptedHubAnswerReadback();
+    expect(await delegation.activeGrantCount(WORK_ID, GENERATION)).toBe(0);
+    const rows = scene.db.prepare(`SELECT validity FROM answer_receipts WHERE question_id = 'Q-017'`).all() as { validity: string }[];
+    expect(rows.some((row) => row.validity === 'verified')).toBe(false);
+    expect(rows.some((row) => row.validity === 'audit_only')).toBe(true);
+    const other = await scene.bind(questionInput('Q-018', 18, proceedOptions(), [], 'W-018'));
+    const webReceipt = await scene.web.submitAnswer(
+      webPrincipal,
+      scene.command(webPrincipal, 'web-other', other, { kind: 'option', option_id: 'A' }),
+    );
+    expect(webReceipt.validity).toBe('verified');
+    expect(webReceipt.question_id).toBe('Q-018');
   } finally {
     scene.close();
   }
@@ -466,11 +643,12 @@ function questionInput(
   hubCardId: number,
   options: BindQuestionInput['options'],
   customRules: BindQuestionInput['custom_rules'],
+  workId = WORK_ID,
 ): BindQuestionInput {
   return {
     question_id: questionId,
     question_version: 3,
-    work_id: WORK_ID,
+    work_id: workId,
     generation: GENERATION,
     proposal_revision: 8,
     hub_card_id: hubCardId,

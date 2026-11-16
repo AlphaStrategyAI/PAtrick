@@ -26,9 +26,9 @@
       "sdk": "@larksuiteoapi/node-sdk",
       "version": "1.76.0"
     },
-    "status": "pending",
-    "command": "feishu_deferred_card (enterprise test app; T10)",
-    "observation": "No Feishu test application credentials or long-connection session on this host; npm registry version only recorded in upstream.lock.json.",
-    "evidenceSha256": null
+    "status": "blocked",
+    "command": "/opt/homebrew/Cellar/node/26.13.0_2/bin/node --input-type=module -e \"const id = process.env.FEISHU_APP_ID || process.env.LARK_APP_ID || \\\"\\\"; const secret = process.env.FEISHU_APP_SECRET || process.env.LARK_APP_SECRET || \\\"\\\"; if (!id || !secret) throw new Error(\\\"missing Feishu app credential\\\");\"",
+    "observation": "feishu_deferred_card\ncommand: /opt/homebrew/Cellar/node/26.13.0_2/bin/node --input-type=module -e \"const id = process.env.FEISHU_APP_ID || process.env.LARK_APP_ID || \\\"\\\"; const secret = process.env.FEISHU_APP_SECRET || process.env.LARK_APP_SECRET || \\\"\\\"; if (!id || !secret) throw new Error(\\\"missing Feishu app credential\\\");\"\nexit: 1\nfile:///Users/fengpengcheng/%E5%90%8C%E6%AD%A5%E7%A9%BA%E9%97%B4/%E4%BA%8B%E4%B8%9A%E8%81%8C%E4%B8%9A/PAtrick/.worktrees/impl-patrick-plan/[eval1]:1\nconst id = process.env.FEISHU_APP_ID || process.env.LARK_APP_ID || \"\"; const secret = process.env.FEISHU_APP_SECRET || process.env.LARK_APP_SECRET || \"\"; if (!id || !secret) throw new Error(\"missing Feishu app credential\");\n                                                                                                                                                                                    ^\n\nError: missing Feishu app credential\n    at file:///Users/fengpengcheng/%E5%90%8C%E6%AD%A5%E7%A9%BA%E9%97%B4/%E4%BA%8B%E4%B8%9A%E8%81%8C%E4%B8%9A/PAtrick/.worktrees/impl-patrick-plan/[eval1]:1:181\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:226:26\n    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:223:20)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)\n\nNode.js v26.13.0\nsdk-exit: 1\nERR_MODULE_NOT_FOUND\nchannel blocked\nweb entry remains\nmessage_id: none",
+    "evidenceSha256": "b8a3e56a363bf32d112fa85049f6b680f783d0381fa4098a01365c8b8b782499"
   }
 }

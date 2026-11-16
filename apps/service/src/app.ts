@@ -12,6 +12,7 @@ import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
 import { mountAnswerRoutes } from './routes/answers.js';
+import { mountFeishuRoutes } from './routes/feishu.js';
 import { mountDelegationRoutes } from './routes/delegations.js';
 import { mountEditRoutes } from './routes/edits.js';
 import { mountKnowledgeRoutes } from './routes/knowledge.js';
@@ -95,6 +96,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       now,
       gate: (domain: string) => createAnswerGate(current.db, { domain, now, hub, encode: encodeHubAnswer }),
     };
+  });
+  mountFeishuRoutes(app, () => {
+    const current = context();
+    const hub = state.hub ?? createLocalHubPort();
+    state.hub = hub;
+    return { db: current.db, now, credentials: current.credentials, hub };
   });
   const resources = () => ({ db: context().db, api: vaultApi(), now });
   mountVaultRoutes(app, resources);

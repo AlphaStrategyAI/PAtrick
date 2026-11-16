@@ -495,7 +495,10 @@ function commitVerified(
   stamped: string,
 ): AnswerReceipt {
   const existing = receiptForIntent(db, intent.intent_id);
-  if (existing?.validity === 'verified') return existing;
+  if (existing?.validity === 'verified' || existing?.validity === 'audit_only') return existing;
+  if (!recoveryAllowed(db, intent, stamped)) {
+    return writeReceipt(db, intent, 'audit_only', decisionOf(intent), null, stamped);
+  }
   const other = db.prepare(`SELECT receipt_id FROM answer_receipts WHERE question_id = ? AND validity = 'verified'`).get(intent.question_id);
   if (other) return writeReceipt(db, intent, 'conflict', decisionOf(intent), null, stamped);
   const decision = decisionOf(intent);

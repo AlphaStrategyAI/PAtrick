@@ -16,7 +16,9 @@
     "./vault/drafts": "./vault/drafts.ts",
     "./vault/create-file": "./vault/create-file.ts",
     "./vault/projector": "./vault/projector.ts",
-    "./vault/uri": "./vault/uri.ts"
+    "./vault/uri": "./vault/uri.ts",
+    "./feishu/connection": "./feishu/connection.ts",
+    "./feishu/channel-gate": "./feishu/channel-gate.ts"
   },
   "dependencies": {
     "@patrick/contracts": "*",
