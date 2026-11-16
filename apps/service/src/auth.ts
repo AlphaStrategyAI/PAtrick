@@ -319,28 +319,42 @@ function openSessionStream(c: Context): Promise<Response> {
 async function beginRegistration(ticket: string): Promise<{ challenge_id: string; challenge: unknown }> {
   const { db, now } = authContext();
   const nowIso = now().toISOString();
-  const account = withImmediateTransaction(db, () => {
-    const consumed = db.prepare(`UPDATE bootstrap_tickets
-      SET consumed_at = ?
-      WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?
-      RETURNING account_id`).get(nowIso, sha256(ticket), nowIso) as { account_id: string } | undefined;
-    if (!consumed) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
-    return consumed.account_id;
-  });
+  const ticketHash = sha256(ticket);
+  const pending = db.prepare(`SELECT account_id FROM bootstrap_tickets
+    WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?`).get(ticketHash, nowIso) as { account_id: string } | undefined;
+  if (!pending) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
   const options = await generateRegistrationOptions({
     rpName: 'PAtrick',
     rpID: RP_ID,
-    userName: account,
+    userName: pending.account_id,
     userID: crypto.getRandomValues(new Uint8Array(16)),
     attestationType: 'none',
     supportedAlgorithmIDs: [COSEALG.ES256],
     timeout: CHALLENGE_TTL_MS,
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
   });
-  const challengeId = insertChallenge(db, now, {
-    accountId: account,
-    purpose: 'registration',
-    challenge: options.challenge,
+  const challengeId = `ch_${randomUUID()}`;
+  const createdAt = nowIso;
+  const expiresAt = new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString();
+  withImmediateTransaction(db, () => {
+    const consumed = db.prepare(`UPDATE bootstrap_tickets
+      SET consumed_at = ?
+      WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?
+      RETURNING account_id`).get(nowIso, ticketHash, nowIso) as { account_id: string } | undefined;
+    if (!consumed) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
+    db.prepare(`INSERT INTO auth_challenges (
+      challenge_id, account_id, purpose, challenge, challenge_hash, origin, rp_id, expires_at, consumed_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`).run(
+      challengeId,
+      consumed.account_id,
+      'registration',
+      options.challenge,
+      sha256(options.challenge),
+      ORIGIN,
+      RP_ID,
+      expiresAt,
+      createdAt,
+    );
   });
   return { challenge_id: challengeId, challenge: options };
 }

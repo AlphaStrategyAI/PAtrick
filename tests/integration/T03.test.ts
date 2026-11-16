@@ -316,6 +316,36 @@ test('registration starts from a one-time short-lived bootstrap ticket bound to 
   }
 });
 
+test('a failed registration challenge insert leaves the bootstrap ticket unconsumed', async () => {
+  const fx = createFixture();
+  try {
+    const ticket = issueBootstrapTicket(fx.db, { accountId: 'owner' }, fx.now);
+    const ticketHash = sha256(ticket.ticket);
+    fx.db.exec(`CREATE TRIGGER t03_abort_auth_challenge_insert
+      BEFORE INSERT ON auth_challenges
+      BEGIN
+        SELECT RAISE(ABORT, 't03_abort_auth_challenge_insert');
+      END;`);
+    const anon = http(fx.app);
+    const blocked = await anon.post('/api/v1/auth/challenge', { rp_id: RP_ID }, {
+      headers: { 'x-patrick-bootstrap': ticket.ticket },
+    });
+    expect(blocked.status).not.toBe(200);
+    fx.db.exec('DROP TRIGGER t03_abort_auth_challenge_insert;');
+    const row = fx.db.prepare('SELECT consumed_at FROM bootstrap_tickets WHERE ticket_hash = ?').get(ticketHash) as {
+      consumed_at: string | null;
+    };
+    expect(row.consumed_at).toBeNull();
+    const retry = await anon.post('/api/v1/auth/challenge', { rp_id: RP_ID }, {
+      headers: { 'x-patrick-bootstrap': ticket.ticket },
+    });
+    expect(retry.status).toBe(200);
+    expect(fx.db.prepare(`SELECT COUNT(*) AS n FROM auth_challenges WHERE account_id = 'owner' AND purpose = 'registration'`).get()).toEqual({ n: 1 });
+  } finally {
+    fx.close();
+  }
+});
+
 test('verify accepts a signed assertion and rejects a tampered or replayed one', async () => {
   const fx = createFixture();
   try {
