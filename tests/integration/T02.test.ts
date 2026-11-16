@@ -314,6 +314,52 @@ test('the same command key returns the original receipt after the object revisio
   }
 });
 
+test('null expected revision creates a new object; zero matches an empty object', async () => {
+  const dir = temporaryDirectory();
+  const db = openDatabase(join(dir, 'patrick.sqlite'));
+  try {
+    const app = createCommandTestApp(db);
+    const payload = { text: 'create' };
+    const payloadHash = createHash('sha256').update(canonicalPayload(payload)).digest('hex');
+    const createBody = {
+      client_request_id: 'req-create-null',
+      expected_revision: null,
+      payload_hash: payloadHash,
+      payload,
+    };
+    const first = await postCommand(app, 'obj-null', createBody);
+    expect(first.status).toBe(202);
+    const receipt = await first.json() as { command_id: string; state: string; receipt_url: string };
+    expect(receipt.state).toBe('received');
+    expect(db.prepare('SELECT MAX(revision) AS revision FROM object_revisions WHERE object_id = ?').get('obj-null')).toEqual({ revision: 1 });
+
+    const repeat = await postCommand(app, 'obj-null', createBody);
+    expect(repeat.status).toBe(202);
+    expect(await repeat.json()).toEqual(receipt);
+    expect(db.prepare('SELECT MAX(revision) AS revision FROM object_revisions WHERE object_id = ?').get('obj-null')).toEqual({ revision: 1 });
+
+    const secondKey = await postCommand(app, 'obj-null', { ...createBody, client_request_id: 'req-create-null-2' });
+    expect(secondKey.status).toBe(409);
+    expect(await secondKey.json()).toMatchObject({ code: 'REVISION_CONFLICT', retryable: false });
+
+    const zeroBody = {
+      client_request_id: 'req-create-zero',
+      expected_revision: 0,
+      payload_hash: payloadHash,
+      payload,
+    };
+    const zeroCreate = await postCommand(app, 'obj-zero', zeroBody);
+    expect(zeroCreate.status).toBe(202);
+    expect(db.prepare('SELECT MAX(revision) AS revision FROM object_revisions WHERE object_id = ?').get('obj-zero')).toEqual({ revision: 1 });
+
+    const zeroConflict = await postCommand(app, 'obj-zero', { ...zeroBody, client_request_id: 'req-create-zero-2' });
+    expect(zeroConflict.status).toBe(409);
+    expect(await zeroConflict.json()).toMatchObject({ code: 'REVISION_CONFLICT', retryable: false });
+  } finally {
+    closeQuietly(db);
+  }
+});
+
 test('ackOutbox updates only an existing outbox row and only for accepted or duplicate', () => {
   const db = openDatabase(join(temporaryDirectory(), 'patrick.sqlite'));
   try {

@@ -86,11 +86,26 @@ function insertCommand(db: SqliteDatabase, command: InboxCommand): CommandReceip
 }
 
 function advanceObject(db: SqliteDatabase, input: AcceptedCommand, commandId: string): number {
-  if (input.expectedRevision === null) throw new Error('REVISION_CONFLICT');
   const current = db.prepare('SELECT MAX(revision) AS revision FROM object_revisions WHERE object_id = ?').get(input.resourceId) as {
     revision: number | null;
   };
-  if (current.revision !== input.expectedRevision) throw new Error('REVISION_CONFLICT');
+  if (input.expectedRevision === null) {
+    if (current.revision !== null) throw new Error('REVISION_CONFLICT');
+    const nextRevision = 1;
+    db.prepare(`INSERT INTO object_revisions (
+    object_id, revision, account_id, data_domain, schema_version, blob_ref, command_id, created_at
+  ) VALUES (?, ?, ?, ?, '1.0', NULL, ?, ?)`).run(
+      input.resourceId,
+      nextRevision,
+      input.accountId,
+      input.dataDomain,
+      commandId,
+      new Date().toISOString(),
+    );
+    return nextRevision;
+  }
+  const currentRevision = current.revision ?? 0;
+  if (currentRevision !== input.expectedRevision) throw new Error('REVISION_CONFLICT');
   const nextRevision = input.expectedRevision + 1;
   db.prepare(`INSERT INTO object_revisions (
     object_id, revision, account_id, data_domain, schema_version, blob_ref, command_id, created_at
