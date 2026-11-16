@@ -172,6 +172,31 @@ async function publishBatch(root: string, revision: number, files: Record<string
 async function preserveBatch(root: string, isolationRoot: string, vaultId: string, revision: number): Promise<void> {
   const from = join(root, '系统视图', '批次', String(revision));
   const destination = join(isolationRoot, vaultId, String(revision));
+  let vaultExists = false;
+  try {
+    const info = await stat(from);
+    vaultExists = info.isDirectory();
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error;
+  }
+  let isolationExists = false;
+  try {
+    const info = await stat(destination);
+    isolationExists = info.isDirectory();
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error;
+  }
+  if (!vaultExists) {
+    if (isolationExists) return;
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(from, destination, { recursive: true });
+    await rm(from, { recursive: true });
+    return;
+  }
+  if (isolationExists) {
+    await rm(from, { recursive: true });
+    return;
+  }
   await mkdir(dirname(destination), { recursive: true });
   await cp(from, destination, { recursive: true });
   await rm(from, { recursive: true });

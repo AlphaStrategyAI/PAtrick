@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
@@ -546,6 +546,42 @@ test('a leftover lock and a partial batch still project that revision', async ()
     });
     expect(readFileSync(join(root, '系统视图', '批次', String(revision), '知识', '当前.md'), 'utf8')).toBe('# 知识/当前.md\n');
     expect(fx.db.prepare(`SELECT holder FROM projection_locks WHERE data_domain = 'personal' AND view_kind = 'knowledge'`).get()).toBeUndefined();
+  } finally {
+    fx.close();
+  }
+});
+
+test('projection finishes when the prior batch was already preserved', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(join(root, '知识笔记'), { recursive: true });
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, `# ${path}\n`]));
+    const first = await api.project({ vaultId, viewKind: 'knowledge', revision: 1, files });
+    expect(first.applied).toBe(true);
+    expect(first.pointer).toBe(1);
+    const batch2 = join(root, '系统视图', '批次', '2');
+    for (const path of PROJECTION_BATCH_FILES) {
+      const target = join(batch2, ...path.split('/'));
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, files[path], 'utf8');
+    }
+    const vaultBatch1 = join(root, '系统视图', '批次', '1');
+    const isolationBatch1 = join(fx.dir, 'isolation', vaultId, '1');
+    mkdirSync(dirname(isolationBatch1), { recursive: true });
+    cpSync(vaultBatch1, isolationBatch1, { recursive: true });
+    rmSync(vaultBatch1, { recursive: true, force: true });
+    expect(fx.db.prepare(`SELECT projection_revision FROM projection_pointers WHERE data_domain = 'personal' AND view_kind = 'knowledge'`).get()).toEqual({
+      projection_revision: 1,
+    });
+    const second = await api.project({ vaultId, viewKind: 'knowledge', revision: 2, files });
+    expect(second.applied).toBe(true);
+    expect(second.pointer).toBe(2);
+    expect(existsSync(isolationBatch1)).toBe(true);
+    expect(existsSync(join(isolationBatch1, '知识', '当前.md'))).toBe(true);
+    expect(existsSync(vaultBatch1)).toBe(false);
   } finally {
     fx.close();
   }
