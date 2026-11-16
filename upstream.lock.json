@@ -46,11 +46,11 @@
       },
       {
         "id": "darwin-arm64-without-dsh",
-        "status": "blocked",
+        "status": "pending",
         "declared": "DSH CLI available for harness admission",
-        "command": "command -v dsh",
-        "observation": "2026-11-16 recheck: command not found: dsh. ~/.dsh exists (profile data from 2026-11-05) but no dsh executable is on PATH.",
-        "evidenceSha256": "8909cb7ec24c2c443309970322c3690524eea2c361c9c630ebd3b58b51d57f0a"
+        "command": "dsh --version",
+        "observation": "2026-11-16 recheck: dsh --version prints 0.2.2-rc.1 from /opt/homebrew/bin/dsh. The without-dsh block is cleared. Locked package line remains 0.2.2-rc.2.",
+        "evidenceSha256": "a7b7bf65c89bb0f3d031a6976ed509bd549e9daad3255a167cdd96155a16a29c"
       },
       {
         "id": "darwin-arm64-without-obsidian",
@@ -127,10 +127,13 @@
       "evidenceSha256": "3d261f559a1a1c9a99e4ba41e52c46ae9b31948669a21ad5cb6c3ff585147b01"
     },
     "dsh-cli": {
-      "status": "blocked",
-      "command": "command -v dsh && dsh --version",
-      "observation": "2026-11-16 recheck: command not found: dsh. ~/.dsh data directory exists; CLI binary is not on PATH.",
-      "evidenceSha256": "7c1625a6d5af6b04ef0e2d8ddf83ed43adfd0552021323b18d521c7402ef85eb"
+      "status": "pending",
+      "command": "dsh --version",
+      "observation": "0.2.2-rc.1 at /opt/homebrew/bin/dsh (@deepseek-ai/dsh). Locked package line remains 0.2.2-rc.2; this install does not match that line.",
+      "evidenceSha256": "b4295c993063e0f1638d6ff31b7c88c401d0e24621c18c98570af3a484a32a1c",
+      "installedVersion": "0.2.2-rc.1",
+      "lockedPackageVersion": "0.2.2-rc.2",
+      "matchesLockedPackage": false
     },
     "feishu-sdk": {
       "status": "pending",
