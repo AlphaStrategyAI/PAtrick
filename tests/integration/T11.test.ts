@@ -11,7 +11,9 @@ import { createConsultationApi } from '../../packages/domain/src/consultations.j
 import { createDelegationApi, type AdmissionPrincipal } from '../../packages/domain/src/delegation.js';
 import { dispatchPaidNext } from '../../packages/executor/harness/patrick-bridge.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
+import { createConsultationHubPort } from '../../packages/integrations/autoloop/consultation-port.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { ackOutbox, appendDomainEvent } from '../../packages/storage/src/outbox.js';
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 
@@ -85,20 +87,20 @@ test('consult-while-work-waits', async () => {
     expect(fx.db.prepare(`SELECT COUNT(*) AS n FROM domain_events WHERE aggregate_id = ?`).get(WORK_ID)).toEqual({ n: 0 });
 
     const posted: Array<{ type: string; subject: string; hops: number }> = [];
-    expect(await api.dispatchConsultation(replayed.request_id, {
+    expect(await api.dispatchConsultation(replayed.request_id, createConsultationHubPort(fx.db, {
       async postEvent(body: { type: string; subject: string; hops: number }) {
         posted.push(body);
         return { event: posted.length, duplicate: false, routed: ['咨询'] };
       },
-    })).toBe('accepted');
+    }))).toBe('accepted');
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({ type: 'consultation.requested', subject: replayed.request_id, hops: 0 });
-    expect(await api.dispatchConsultation(replayed.request_id, {
+    expect(await api.dispatchConsultation(replayed.request_id, createConsultationHubPort(fx.db, {
       async postEvent(body: { type: string; subject: string; hops: number }) {
         posted.push(body);
         return { event: posted.length, duplicate: true, routed: ['咨询'] };
       },
-    })).toBe('duplicate');
+    }))).toBe('duplicate');
 
     const billing = billingDouble(fx.db, owner, now);
     const run = await api.runConsultation(owner, replayed.request_id, billing);
@@ -261,6 +263,7 @@ WHERE request_id = @request_id AND result_version = @expected_revision
   AND status IN ('pending', 'waiting_user')
 RETURNING result_version;`);
     expect(source).toContain('withImmediateTransaction');
+    expect(source).not.toContain('integrations/autoloop');
     const migration = readFileSync(fileURLToPath(new URL('../../packages/storage/migrations/0011_conversations.sql', import.meta.url)), 'utf8');
     expect(migration).toContain('ALTER TABLE consultations');
     expect(migration).not.toContain('CREATE TABLE consultations');
@@ -279,10 +282,54 @@ RETURNING result_version;`);
   }
 });
 
-function billingDouble(db: SqliteDatabase, principal: AdmissionPrincipal, now: () => Date) {
+test('paid-send-completes-after-crash', async () => {
+  const fx = temporaryDatabase();
+  const now = () => new Date(NOW);
+  try {
+    const delegation = createDelegationApi(fx.db, owner, { now, domain: DOMAIN });
+    await openWaitingWork(delegation);
+    const before = parentLedger(fx.db, WORK_ID);
+    const api = createConsultationApi(fx.db, { now });
+    const crashed = billingDouble(fx.db, owner, now, { crashBeforeComplete: true });
+    const created = await api.createConsultation(owner, {
+      client_request_id: 'crash-send',
+      text: '发送后崩溃',
+      data_domain: DOMAIN,
+      parent_work_id: WORK_ID,
+    });
+    await expect(api.runConsultation(owner, created.request_id, crashed)).rejects.toThrow('crash before complete');
+    const pending = fx.db.prepare('SELECT status, final_result FROM consultations WHERE request_id = ?').get(created.request_id) as {
+      status: string;
+      final_result: string | null;
+    };
+    expect(pending.status).toBe('pending');
+    expect(pending.final_result).toBeNull();
+    expect(crashed.sends).toBe(1);
+    expect(readDispatch(fx.db, `consultation:${created.request_id}`)).toBe('隔离咨询的回答');
+    const recoveredBilling = billingDouble(fx.db, owner, now);
+    const recovered = await api.runConsultation(owner, created.request_id, recoveredBilling);
+    expect(recovered.sent).toBe(false);
+    expect(recovered.completed).toBe(true);
+    expect(recoveredBilling.sends).toBe(0);
+    expect(crashed.sends).toBe(1);
+    const answered = fx.db.prepare('SELECT status, final_result FROM consultations WHERE request_id = ?').get(created.request_id) as {
+      status: string;
+      final_result: string | null;
+    };
+    expect(answered.status).toBe('answered');
+    expect(JSON.parse(answered.final_result ?? 'null')).toEqual({ text: '隔离咨询的回答' });
+    expect(parentLedger(fx.db, WORK_ID)).toEqual(before);
+  } finally {
+    fx.close();
+  }
+});
+
+function billingDouble(db: SqliteDatabase, principal: AdmissionPrincipal, now: () => Date, options?: { crashBeforeComplete?: boolean }) {
   const budget = createBudgetApi(db, principal, { now });
   let sends = 0;
   const businessIds: string[] = [];
+  let crashBeforeComplete = options?.crashBeforeComplete === true;
+  const text = '隔离咨询的回答';
   return {
     get sends() {
       return sends;
@@ -304,15 +351,63 @@ function billingDouble(db: SqliteDatabase, principal: AdmissionPrincipal, now: (
         network: {
           async send() {
             sends += 1;
+            rememberDispatch(db, input.callId, text);
             return {
               usage: { usage_id: `use:${input.callId}`, amount_micros: input.amountMicros, proof: 'billing-double' },
             };
           },
         },
       });
-      return { sent: paid.sent, text: '隔离咨询的回答' };
+      if (paid.sent && crashBeforeComplete) {
+        crashBeforeComplete = false;
+        throw new Error('crash before complete');
+      }
+      if (paid.sent) return { sent: true, text, alreadyDispatched: false };
+      const stored = readDispatch(db, input.callId);
+      if (stored && dispatchRecorded(db, input.callId)) {
+        return { sent: false, text: stored, alreadyDispatched: true };
+      }
+      return { sent: false, text: '', alreadyDispatched: false };
     },
   };
+}
+
+function rememberDispatch(db: SqliteDatabase, callId: string, text: string): void {
+  const eventId = `consultation.dispatch:${callId}`;
+  const existing = db.prepare('SELECT event_id FROM domain_events WHERE event_id = ?').get(eventId);
+  if (existing) return;
+  const budget = db.prepare('SELECT account_id, data_domain FROM business_budgets WHERE business_id = ?').get(callId) as {
+    account_id: string;
+    data_domain: string;
+  } | undefined;
+  if (!budget) throw new Error('NOT_FOUND');
+  appendDomainEvent(db, {
+    eventId,
+    aggregateId: callId.slice('consultation:'.length),
+    aggregateVersion: 1,
+    accountId: budget.account_id,
+    dataDomain: budget.data_domain,
+    payload: { type: 'consultation.dispatch', text },
+    destination: 'consultation-dispatch',
+  });
+  ackOutbox(db, eventId, 'consultation-dispatch', 'accepted');
+}
+
+function readDispatch(db: SqliteDatabase, callId: string): string | null {
+  const row = db.prepare('SELECT payload FROM domain_events WHERE event_id = ?').get(`consultation.dispatch:${callId}`) as {
+    payload: string;
+  } | undefined;
+  if (!row) return null;
+  const parsed: unknown = JSON.parse(row.payload);
+  if (!parsed || typeof parsed !== 'object' || !('text' in parsed) || typeof parsed.text !== 'string' || parsed.text.length === 0) return null;
+  return parsed.text;
+}
+
+function dispatchRecorded(db: SqliteDatabase, callId: string): boolean {
+  const row = db.prepare('SELECT dispatched_at FROM budget_reservations WHERE call_id = ?').get(callId) as {
+    dispatched_at: string | null;
+  } | undefined;
+  return row?.dispatched_at != null;
 }
 
 async function openWaitingWork(delegation: ReturnType<typeof createDelegationApi>): Promise<void> {

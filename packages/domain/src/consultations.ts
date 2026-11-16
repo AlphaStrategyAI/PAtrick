@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { publishHubEvent, type HubPublisher } from '../../integrations/autoloop/client.js';
 import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createDelegationApi, type AdmissionPrincipal, type ConsultationGrant } from './delegation.js';
 
@@ -71,8 +70,28 @@ export type ConsultationDispatch = {
   amountMicros: number;
 };
 
+export type ConsultationDispatchResult = {
+  sent: boolean;
+  text: string;
+  alreadyDispatched: boolean;
+};
+
 export type ConsultationBilling = {
-  dispatch(input: ConsultationDispatch): Promise<{ sent: boolean; text: string }>;
+  dispatch(input: ConsultationDispatch): Promise<ConsultationDispatchResult>;
+};
+
+export type ConsultationHubEvent = {
+  event_id: string;
+  root: string;
+  cause: string;
+  generation: number;
+  hops: number;
+  kind: 'consultation.requested';
+  request_id: string;
+};
+
+export type ConsultationHubPort = {
+  publish(event: ConsultationHubEvent, now: string): Promise<'accepted' | 'duplicate'>;
 };
 
 export type ConsultationRun = {
@@ -199,7 +218,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       return viewOf(row);
     },
 
-    async dispatchConsultation(requestId: string, hub: HubPublisher): Promise<'accepted' | 'duplicate' | 'missing'> {
+    async dispatchConsultation(requestId: string, hub: ConsultationHubPort): Promise<'accepted' | 'duplicate' | 'missing'> {
       const stored = db.prepare('SELECT payload FROM domain_events WHERE event_id = ?').get(`consultation.requested:${requestId}`) as {
         payload: string;
       } | undefined;
@@ -212,7 +231,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         generation: number;
         hops: number;
       };
-      return publishHubEvent(db, hub, {
+      return hub.publish({
         event_id: payload.event_id,
         root: payload.root,
         cause: payload.cause,
@@ -246,9 +265,10 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         callId: businessId,
         amountMicros: CONSULTATION_SEND_MICROS,
       });
-      if (!dispatched.sent) return { sent: false, completed: false, grant };
+      const recoverable = dispatched.alreadyDispatched && dispatched.text.length > 0;
+      if (!dispatched.sent && !recoverable) return { sent: false, completed: false, grant };
       const completed = await this.completeConsultation(requestId, grant.result_version, { text: dispatched.text });
-      return { sent: true, completed, grant };
+      return { sent: dispatched.sent, completed, grant };
     },
 
     async createConversation(principal: AdmissionPrincipal, request: {
