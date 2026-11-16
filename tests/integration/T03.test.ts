@@ -484,6 +484,47 @@ test('a legitimate confirm writes one receipt and a same-key replay does not wri
     expect(replay.status).toBe(202);
     expect(commandAcceptedSchema.parse(await replay.json()).command_id).toBe(receipt.command_id);
     expect(countControlReceipts(fx.db, 'p-1')).toBe(1);
+    const stored = fx.db.prepare(`SELECT receipt_id, proposal_hash, auth_epoch, authenticated_at, credential_ref
+      FROM control_receipts WHERE proposal_id = ?`).get('p-1') as {
+      receipt_id: string;
+      proposal_hash: string;
+      auth_epoch: number;
+      authenticated_at: string;
+      credential_ref: string;
+    };
+    const controlReceipt = await owner.api.get(`/api/v1/control-receipts/${stored.receipt_id}`);
+    expect(controlReceipt.status).toBe(200);
+    const receiptSnapshot = await controlReceipt.json() as {
+      schema_version: string;
+      scope: unknown;
+      as_of: string;
+      watermark: unknown;
+      freshness: string;
+      data: {
+        proposal_hash: string;
+        auth_epoch: number;
+        authenticated_at: string;
+        credential_ref: string;
+      };
+    };
+    expect(receiptSnapshot.schema_version).toBe('1.0');
+    expect(receiptSnapshot.scope).toBeTruthy();
+    expect(receiptSnapshot.as_of).toBeTruthy();
+    expect(receiptSnapshot.watermark).toBeTruthy();
+    expect(receiptSnapshot.freshness).toBe('fresh');
+    expect(receiptSnapshot.data.proposal_hash).toBe(stored.proposal_hash);
+    expect(receiptSnapshot.data.auth_epoch).toBe(stored.auth_epoch);
+    expect(receiptSnapshot.data.authenticated_at).toBe(stored.authenticated_at);
+    expect(receiptSnapshot.data.credential_ref).toBe(stored.credential_ref);
+    expect(receipt.receipt_url).toBe(`/api/v1/commands/${receipt.command_id}`);
+    const consult = issueCallerSession(fx.db, {
+      accountId: 'owner',
+      callerId: 'consult',
+      domain: 'personal',
+      permissions: ['consultations.write'],
+    }, fx.now, createCredentialStore(fx.credentialDirectory, fx.now));
+    expect((await http(fx.app, { authorization: consult.authorization }).get(`/api/v1/control-receipts/${stored.receipt_id}`)).status).toBe(403);
+    expect((await owner.api.get('/api/v1/control-receipts/rcpt_missing')).status).toBe(404);
     const command = await owner.api.get(`/api/v1/commands/${receipt.command_id}`);
     expect(command.status).toBe(200);
     const snapshot = await command.json() as { schema_version: string; data: { command_id: string }; scope: { account_id: string } };

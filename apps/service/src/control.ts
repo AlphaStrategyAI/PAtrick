@@ -206,6 +206,7 @@ export async function confirmControl(principal: Principal, input: ConfirmControl
 
 export function mountControlRoutes(app: Hono): void {
   app.post('/api/v1/control-proposals/:id/confirm', (c) => handle(c, () => confirmProposal(c)));
+  app.get('/api/v1/control-receipts/:id', (c) => handle(c, () => readControlReceipt(c)));
   app.get('/api/v1/commands/:id', (c) => handle(c, () => readCommand(c)));
 }
 
@@ -243,6 +244,36 @@ async function confirmProposal(c: Context): Promise<Response> {
     state: 'received' as const,
     receipt_url: `/api/v1/commands/${receipt.command_id}`,
   }, 202);
+}
+
+async function readControlReceipt(c: Context): Promise<Response> {
+  const principal = await requireSession(c.req.raw);
+  if (!canConfirm(principal)) throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
+  const { db, now } = authContext();
+  const row = db.prepare(`SELECT receipt_id, proposal_id, command_id, proposal_hash, auth_epoch,
+      authenticated_at, credential_ref, base_revision
+    FROM control_receipts
+    WHERE receipt_id = ? AND account_id = ?`).get(c.req.param('id'), principal.account_id) as {
+    receipt_id: string;
+    proposal_id: string;
+    command_id: string;
+    proposal_hash: string;
+    auth_epoch: number;
+    authenticated_at: string;
+    credential_ref: string;
+    base_revision: number;
+  } | undefined;
+  if (!row) throw new ApiError(404, 'NOT_FOUND', { reason: 'receipt' });
+  return c.json(snapshot(principal, {
+    receipt_id: row.receipt_id,
+    proposal_id: row.proposal_id,
+    command_id: row.command_id,
+    proposal_hash: row.proposal_hash,
+    auth_epoch: row.auth_epoch,
+    authenticated_at: row.authenticated_at,
+    credential_ref: row.credential_ref,
+    base_revision: row.base_revision,
+  }, now(), db));
 }
 
 async function readCommand(c: Context): Promise<Response> {
