@@ -359,7 +359,9 @@ async function command(
   if (atomic) {
     let resourceId = '';
     const commandId = withImmediateTransaction(resources.db, () => {
-      resourceId = run(resources, principal, body.payload) as string;
+      const outcome = run(resources, principal, body.payload);
+      if (typeof outcome !== 'string') throw new Error('ASYNC_COMMAND_HANDLER');
+      resourceId = outcome;
       return storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);
     });
     return c.json(accepted(commandId, receiptPath, resourceId), 202);

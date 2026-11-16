@@ -277,10 +277,10 @@ test('pairing codes stay hashed and every channel step rechecks the binding', as
     expect(JSON.stringify(scene.db.prepare('SELECT * FROM channel_pairings').all())).not.toContain(second.code);
     expect(new Date(stored.expires_at).getTime() - current.getTime()).toBe(PAIRING_TTL_MS);
     await channel.receivePairingMessage({ code: second.code, open_id: 'ou-owner', chat_id: 'oc-owner' });
-    await expect(channel.confirmPairing({ ...webPrincipal, account_id: 'other' }, second.pairing_id)).rejects.toThrow(/FORBIDDEN/);
-    await channel.confirmPairing(webPrincipal, second.pairing_id);
+    expect(() => channel.confirmPairing({ ...webPrincipal, account_id: 'other' }, second.pairing_id)).toThrow(/FORBIDDEN/);
+    channel.confirmPairing(webPrincipal, second.pairing_id);
     expect((scene.db.prepare('SELECT status FROM channel_pairings WHERE pairing_id = ?').get(second.pairing_id) as { status: string }).status).toBe('consumed');
-    await expect(channel.confirmPairing(webPrincipal, second.pairing_id)).rejects.toThrow(/PAIRING_CONSUMED/);
+    expect(() => channel.confirmPairing(webPrincipal, second.pairing_id)).toThrow(/PAIRING_CONSUMED/);
 
     const expired = await channel.createPairing();
     current = new Date(current.getTime() + PAIRING_TTL_MS + 1);
@@ -289,12 +289,12 @@ test('pairing codes stay hashed and every channel step rechecks the binding', as
     current = new Date(NOW);
     const fresh = await channel.createPairing();
     await channel.receivePairingMessage({ code: fresh.code, open_id: 'ou-owner', chat_id: 'oc-owner' });
-    await channel.confirmPairing(webPrincipal, fresh.pairing_id);
-    const preview = await channel.createTest('ou-owner');
+    channel.confirmPairing(webPrincipal, fresh.pairing_id);
+    const preview = channel.createTest('ou-owner');
     channel.setConfigRevision(9);
-    await expect(channel.sendTest(preview)).rejects.toThrow(/BINDING_STALE/);
+    expect(() => channel.sendTest(preview)).toThrow(/BINDING_STALE/);
     channel.setConfigRevision(1);
-    await channel.sendTest(preview);
+    channel.sendTest(preview);
     channel.setConfigRevision(9);
     await expect(channel.recordTestCallback({
       test_id: preview.test_id,
@@ -609,6 +609,103 @@ test('a failed pairing write rolls back the pairing and command', async () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM channel_pairings').get()).toEqual({ n: 0 });
     expect(db.prepare('SELECT COUNT(*) AS n FROM command_inbox').get()).toEqual({ n: 0 });
     expect(db.prepare('SELECT current_pairing_id FROM channel_connections LIMIT 1').get()).toEqual({ current_pairing_id: null });
+  } finally {
+    clearSettingsOperations();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a stale send does not record the command', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-send-stale-'));
+  const databasePath = join(dir, 'patrick.sqlite');
+  const credentialDirectory = join(dir, 'credentials');
+  const db = openDatabase(databasePath);
+  try {
+    const now = () => new Date(NOW);
+    const store = createCredentialStore(credentialDirectory, now);
+    issueBootstrapTicket(db, { accountId: 'owner' }, now);
+    const session = issueCallerSession(db, {
+      accountId: 'owner',
+      callerId: 'web',
+      domain: 'personal',
+      permissions: ['owner'],
+    }, now, store);
+    const app = createApp({ databasePath, credentialDirectory, now });
+    const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
+    await app.request('/api/v1/channels/feishu/credentials', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
+    });
+    const bindPayload = {};
+    await app.request('/api/v1/channels/feishu/bindings', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        client_request_id: 'bind-send-stale',
+        expected_revision: null,
+        payload_hash: sha256(canonicalPayload(bindPayload)),
+        payload: bindPayload,
+      }),
+    });
+    const pairing = db.prepare('SELECT current_pairing_id AS pairing_id FROM channel_connections LIMIT 1').get() as { pairing_id: string };
+    db.prepare(`UPDATE channel_pairings SET status = 'candidate', candidate_open_id = ?, candidate_chat_id = ? WHERE pairing_id = ?`).run(
+      'ou-owner',
+      'oc-owner',
+      pairing.pairing_id,
+    );
+    const confirmPayload = {};
+    await app.request(`/api/v1/channels/feishu/bindings/${pairing.pairing_id}/confirm`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        client_request_id: 'confirm-send-stale',
+        expected_revision: null,
+        payload_hash: sha256(canonicalPayload(confirmPayload)),
+        payload: confirmPayload,
+      }),
+    });
+    const testPayload = { destination: 'ou-owner' };
+    await app.request('/api/v1/channels/feishu/tests', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        client_request_id: 'test-send-stale',
+        expected_revision: null,
+        payload_hash: sha256(canonicalPayload(testPayload)),
+        payload: testPayload,
+      }),
+    });
+    const test = db.prepare('SELECT current_test_id AS test_id FROM channel_connections LIMIT 1').get() as { test_id: string };
+    const row = db.prepare('SELECT preview_hash, destination FROM channel_tests WHERE test_id = ?').get(test.test_id) as {
+      preview_hash: string;
+      destination: string;
+    };
+    db.prepare('UPDATE channel_connections SET config_revision = 9 WHERE account_id = ?').run('owner');
+    const sendPayload = { test_id: test.test_id, preview_hash: row.preview_hash, destination: row.destination };
+    const sendBody = {
+      client_request_id: 'send-stale-once',
+      expected_revision: null,
+      payload_hash: sha256(canonicalPayload(sendPayload)),
+      payload: sendPayload,
+    };
+    const failed = await app.request(`/api/v1/channels/feishu/tests/${test.test_id}/send`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(sendBody),
+    });
+    expect(failed.status).not.toBe(202);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM command_inbox WHERE client_request_id = ?').get('send-stale-once')).toEqual({ n: 0 });
+    expect(db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(test.test_id)).toEqual({ status: 'previewed' });
+    db.prepare('UPDATE channel_connections SET config_revision = 1 WHERE account_id = ?').run('owner');
+    const accepted = await app.request(`/api/v1/channels/feishu/tests/${test.test_id}/send`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(sendBody),
+    });
+    expect(accepted.status).toBe(202);
+    expect(db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(test.test_id)).toEqual({ status: 'sent' });
   } finally {
     clearSettingsOperations();
     db.close();

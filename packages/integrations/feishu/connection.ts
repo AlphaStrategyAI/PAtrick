@@ -380,7 +380,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       });
     },
 
-    async configure() {
+    configure() {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
         db.prepare(`UPDATE channel_connections SET status = 'needs_binding', transport_mode = 'probe',
@@ -389,7 +389,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       });
     },
 
-    async createPairing() {
+    createPairing() {
       const stamped = stamp();
       const code = randomBytes(18).toString('base64url');
       const pairingId = `pair_${randomBytes(8).toString('hex')}`;
@@ -444,7 +444,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       });
     },
 
-    async confirmPairing(principal: Principal, pairingId: string) {
+    confirmPairing(principal: Principal, pairingId: string) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
         const connection = requireConnection(db, connectionId);
@@ -489,7 +489,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       });
     },
 
-    async createTest(destination: string) {
+    createTest(destination: string) {
       const stamped = stamp();
       const preview = 'PAtrick 连接测试，不含业务资料。';
       const previewHash = sha256(preview);
@@ -525,7 +525,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       return { test_id: testId, preview_hash: previewHash, destination };
     },
 
-    async sendTest(input: { test_id: string; preview_hash: string; destination: string }) {
+    sendTest(input: { test_id: string; preview_hash: string; destination: string }) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
         const connection = requireConnection(db, connectionId);
