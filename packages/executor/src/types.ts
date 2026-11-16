@@ -68,6 +68,7 @@ export type BackendCapability = {
   version: string | null;
   resumeSupported: boolean;
   liveTerminal: boolean;
+  liveToolCall: boolean;
 };
 
 export type ProbeGates = {

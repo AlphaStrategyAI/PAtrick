@@ -13,6 +13,7 @@ import {
   type ConsultationGrant,
   type ExecutionGrant,
 } from '../../packages/domain/src/delegation.js';
+import { sameProcessToolCall } from '../../packages/executor/src/backends/capability.js';
 import { codexInvocation } from '../../packages/executor/src/backends/codex.js';
 import { HARNESS_TOOLS, LOCKED_DSH_VERSION, dshInvocation, writeDshOverlay } from '../../packages/executor/src/backends/dsh.js';
 import { grokInvocation } from '../../packages/executor/src/backends/grok.js';
@@ -340,6 +341,62 @@ test('a probe is verified only for the locked pin plus isolation, terminal readb
   expect(ready.status).toBe('verified');
   expect(ready.available).toBe(true);
   expect(ready.evidenceSha256).toBe(createHash('sha256').update(ready.observation, 'utf8').digest('hex'));
+});
+
+test('a harness tool call is a JSON tool name from the same profiled process', () => {
+  const sessionId = 'thread-1';
+  const codexCall = [
+    '{"type":"thread.started","thread_id":"thread-1"}',
+    '{"type":"item.completed","item":{"type":"mcp_tool_call","tool":"patrick-memory"}}',
+  ].join('\n');
+  expect(sameProcessToolCall({
+    error: 'spawn codex ENOENT',
+    stdout: codexCall,
+    stderr: '',
+    sessionId,
+  })).toBe(false);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: 'call patrick-memory before answering',
+    stderr: 'patrick-judgment is not installed',
+    sessionId,
+  })).toBe(false);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: '{"text":"use patrick-memory, patrick-judgment, and patrick-bridge"}',
+    stderr: '',
+    sessionId,
+  })).toBe(false);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: codexCall,
+    stderr: '',
+    sessionId: null,
+  })).toBe(false);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: codexCall,
+    stderr: '',
+    sessionId,
+  })).toBe(true);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: '{"type":"session","sessionId":"session-1"}',
+    stderr: '{"name":"patrick-bridge"}',
+    sessionId: 'session-1',
+  })).toBe(true);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: '{\n  "tool_calls": [{"function": {"name": "patrick-judgment", "arguments": "{}"}}]\n}',
+    stderr: '',
+    sessionId,
+  })).toBe(true);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: '{"tool":"patrick-memory-extra"}',
+    stderr: '{"name":"not-patrick-bridge"}',
+    sessionId,
+  })).toBe(false);
 });
 
 test('paid next sends once per acquired claim, including retry and crash recovery', async () => {
