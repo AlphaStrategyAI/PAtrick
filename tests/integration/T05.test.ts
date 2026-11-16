@@ -327,6 +327,101 @@ test('the directory watcher reads only after the file is stable', async () => {
   }
 });
 
+async function wakeUntilStable(
+  registry: ReturnType<typeof createSourceRegistry>,
+  sourceId: string,
+  locator: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const result = await registry.wakeDirectory(sourceId, locator);
+    if (result.read) return;
+  }
+  throw new Error(`wake did not stabilize ${locator}`);
+}
+
+test('a directory wake does not confirm sibling deletes', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'notes');
+  mkdirSync(root);
+  const fileA = join(root, 'a.txt');
+  const fileB = join(root, 'b.txt');
+  writeFileSync(fileA, 'alpha-0');
+  writeFileSync(fileB, 'beta');
+  try {
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const enabled = await registry.enableSource(PRINCIPAL, directoryDraft(root));
+    const afterBaseline = cursorRow(fx.db, enabled.sourceId);
+    await registry.collectSource(enabled.sourceId, 1);
+    expect(cursorRow(fx.db, enabled.sourceId).sweep_count).toBe(afterBaseline.sweep_count + 1);
+
+    writeFileSync(fileA, 'alpha-1');
+    await wakeUntilStable(registry, enabled.sourceId, 'a.txt');
+    writeFileSync(fileA, 'alpha-2');
+    await wakeUntilStable(registry, enabled.sourceId, 'a.txt');
+
+    const objectB = fx.db.prepare('SELECT object_id, tombstone FROM source_objects WHERE source_id = ? AND locator = ?').get(
+      enabled.sourceId,
+      'b.txt',
+    ) as { object_id: string; tombstone: number };
+    expect(objectB.tombstone).toBe(0);
+    expect(
+      fx.db.prepare('SELECT missing_streak FROM delete_sweeps WHERE source_id = ? AND object_id = ?').get(
+        enabled.sourceId,
+        objectB.object_id,
+      ),
+    ).toBeUndefined();
+    expect(cursorRow(fx.db, enabled.sourceId).sweep_count).toBe(afterBaseline.sweep_count + 1);
+
+    rmSync(fileB);
+    const missing = await registry.collectSource(enabled.sourceId, 1);
+    expect(missing.kind).toBe('success');
+    expect(
+      fx.db.prepare('SELECT missing_streak FROM delete_sweeps WHERE source_id = ? AND object_id = ?').get(
+        enabled.sourceId,
+        objectB.object_id,
+      ),
+    ).toEqual({ missing_streak: 1 });
+    const confirmed = await registry.collectSource(enabled.sourceId, 1);
+    expect(confirmed.kind).toBe('withdraw');
+    expect(
+      fx.db.prepare('SELECT tombstone FROM source_objects WHERE source_id = ? AND object_id = ?').get(
+        enabled.sourceId,
+        objectB.object_id,
+      ),
+    ).toEqual({ tombstone: 1 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('restoring withdrawn bytes stages a live revision again', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'notes');
+  mkdirSync(root);
+  const bytes = Buffer.from('gone-later');
+  writeFileSync(join(root, 'note.txt'), bytes);
+  try {
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const enabled = await registry.enableSource(PRINCIPAL, directoryDraft(root));
+    await registry.collectSource(enabled.sourceId, 1);
+    rmSync(join(root, 'note.txt'));
+    await registry.collectSource(enabled.sourceId, 1);
+    await registry.collectSource(enabled.sourceId, 1);
+    expect(fx.db.prepare('SELECT tombstone FROM source_objects WHERE source_id = ?').get(enabled.sourceId)).toEqual({ tombstone: 1 });
+
+    writeFileSync(join(root, 'note.txt'), bytes);
+    const restored = await registry.collectSource(enabled.sourceId, 1);
+    expect(restored.accepted).toBe(true);
+    expect(fx.db.prepare('SELECT tombstone FROM source_objects WHERE source_id = ?').get(enabled.sourceId)).toEqual({ tombstone: 0 });
+    const live = contentRevisions(fx.db, enabled.sourceId);
+    expect(live).toHaveLength(2);
+    expect(live[1]?.content_hash).toBe(sha256(bytes));
+    expect(live[1]?.observed_seq).toBeGreaterThan(live[0]!.observed_seq);
+  } finally {
+    fx.close();
+  }
+});
+
 test('offline and placeholder sweeps pause collection and do not confirm a delete', async () => {
   const offline = temporaryDatabase();
   const offlineRoot = join(offline.dir, 'notes');

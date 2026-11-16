@@ -390,7 +390,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       }
       onDisk.add(file.locator);
       const hash = sha256(file.bytes);
-      if (latestHash(sourceId, file.locator) === hash) continue;
+      const existing = db.prepare('SELECT tombstone FROM source_objects WHERE source_id = ? AND locator = ?').get(
+        sourceId,
+        file.locator,
+      ) as { tombstone: number } | undefined;
+      if ((!existing || existing.tombstone === 0) && latestHash(sourceId, file.locator) === hash) continue;
       await options.blobs.putBlob(file.bytes);
       changed.push({ locator: file.locator, bytes: file.bytes, hash });
     }
@@ -432,12 +436,23 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         WHERE source_id = ? AND accepted = 1 AND kind IN ('first_collection', 'success')`).get(current.source_id) as { n: number };
       const kind: CollectionKind = withdrew ? 'withdraw' : prior.n === 0 ? 'first_collection' : 'success';
       const phase = prior.n === 0 ? 'first_collected' : 'advanced';
-      const sweepCount = input.deliveryId ? cursor.sweep_count : cursor.sweep_count + 1;
-      const cursorText = input.deliveryId ? `delivery:${input.deliveryId}` : `sweep:${sweepCount}`;
+      const advancesSweep = input.confirmDeletes && !input.deliveryId;
+      const sweepCount = advancesSweep ? cursor.sweep_count + 1 : cursor.sweep_count;
+      const cursorText = input.deliveryId
+        ? `delivery:${input.deliveryId}`
+        : advancesSweep
+          ? `sweep:${sweepCount}`
+          : cursor.cursor;
       db.prepare(`UPDATE source_cursors
         SET config_revision = ?, cursor = ?, phase = ?, sweep_count = ?, updated_at = ?
         WHERE source_id = ?`).run(current.config_revision, cursorText, phase, sweepCount, observedAt, current.source_id);
-      const eventId = input.deliveryId ?? `collect:${current.source_id}:${current.config_revision}:sweep:${sweepCount}`;
+      const partialSeq = db.prepare('SELECT COUNT(*) AS n FROM collection_receipts WHERE source_id = ?').get(current.source_id) as {
+        n: number;
+      };
+      const eventId = input.deliveryId
+        ?? (advancesSweep
+          ? `collect:${current.source_id}:${current.config_revision}:sweep:${sweepCount}`
+          : `collect:${current.source_id}:${current.config_revision}:partial:${partialSeq.n + 1}`);
       const evidenceRef = input.evidenceRef ?? (input.changed[0] ? input.changed[0].hash : null);
       insertReceipt(db, {
         eventId,
@@ -821,7 +836,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         source,
         configRevision: source.config_revision,
         ...staged,
-        confirmDeletes: true,
+        confirmDeletes: false,
         evidenceRef: staged.changed[0]?.hash ?? null,
       });
       return { read: receipt.accepted && receipt.count > 0, receipt };
