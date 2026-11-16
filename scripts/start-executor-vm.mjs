@@ -13,21 +13,35 @@ const limaHome = process.env.PATRICK_LIMA_HOME ?? join(homedir(), '.patrick-lima
 mkdirSync(limaHome, { recursive: true });
 const env = { ...process.env, LIMA_HOME: limaHome };
 
-function fail(error) {
+function run(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('limactl', args, { env, stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve(code ?? 1));
+  });
+}
+
+console.log(`lima home ${limaHome}`);
+console.log(`template ${yaml}`);
+
+try {
+  if (existsSync(join(limaHome, name))) {
+    // limactl start of an existing instance does not re-run provision.
+    console.log(`recreate ${name} from ${yaml}`);
+    const deleted = await run(['--tty=false', 'delete', '--force', name]);
+    if (deleted !== 0) process.exit(deleted);
+  }
+  const started = await run([
+    '--tty=false',
+    'start',
+    `--name=${name}`,
+    '--timeout=10m',
+    `--mount-only=${root}`,
+    yaml,
+  ]);
+  process.exit(started);
+} catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(message);
   process.exit(1);
 }
-
-const exists = existsSync(join(limaHome, name, 'lima.yaml'));
-const args = exists
-  ? ['--tty=false', 'start', name]
-  : ['--tty=false', 'start', `--name=${name}`, '--timeout=10m', `--mount-only=${root}`, yaml];
-
-console.log(`lima home ${limaHome}`);
-console.log(`template ${yaml}`);
-const child = spawn('limactl', args, { env, stdio: 'inherit' });
-child.on('error', fail);
-child.on('exit', (code) => {
-  process.exit(code ?? 1);
-});

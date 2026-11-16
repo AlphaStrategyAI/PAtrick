@@ -40,3 +40,33 @@ provision:
       /var/lib/patrick-executor/snapshot
     printf '%s\n' patrick-executor > /etc/patrick-executor-vm
     chmod 644 /etc/patrick-executor-vm
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils python3 make g++
+    node_version=24.22.3
+    machine="$(uname -m)"
+    if [ "$machine" = "aarch64" ]; then
+      node_arch=arm64
+      node_sha=6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c
+    elif [ "$machine" = "x86_64" ]; then
+      node_arch=x64
+      node_sha=4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
+    else
+      echo "unsupported architecture ${machine}" >&2
+      exit 1
+    fi
+    node_dist="node-v${node_version}-linux-${node_arch}"
+    tmp="$(mktemp)"
+    curl -fsSL "https://nodejs.org/dist/v${node_version}/${node_dist}.tar.xz" -o "$tmp"
+    printf '%s  %s\n' "$node_sha" "$tmp" | sha256sum -c -
+    tar -xJf "$tmp" -C /usr/local --strip-components=1
+    rm -f "$tmp"
+    ln -sfn /usr/local/bin/node /usr/bin/node
+    ln -sfn /usr/local/bin/npm /usr/bin/npm
+    ln -sfn /usr/local/bin/npx /usr/bin/npx
+    install -d /etc/profile.d
+    printf '%s\n' 'export PATH="/usr/local/bin:${PATH}"' > /etc/profile.d/patrick-node.sh
+    chmod 644 /etc/profile.d/patrick-node.sh
+    hash -r
+    /usr/local/bin/node --version
+    /usr/local/bin/npm --version

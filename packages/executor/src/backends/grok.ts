@@ -1,4 +1,6 @@
-import { EMPTY_TERMINAL, type TerminalParse, type TokenUsage } from '../types.js';
+import { EMPTY_TERMINAL, type BackendCapability, type TerminalParse } from '../types.js';
+import { readCapability } from './capability.js';
+import { isRecord, jsonLines, tokenUsage } from './parse.js';
 
 export type Invocation = {
   command: string;
@@ -6,6 +8,8 @@ export type Invocation = {
   env: { GROK_HOME: string };
   stdin: false;
 };
+
+const GROK_TOKENS = { input: 'input_tokens', output: 'output_tokens', cached: ['cache_read_input_tokens', 'cached_input_tokens'] } as const;
 
 export function grokInvocation(input: { home: string; resumeSession: string | null; promptFile: string }): Invocation {
   const args = ['--output-format', 'json', '--no-subagents'];
@@ -26,19 +30,13 @@ export function parseGrokTerminal(stdout: string): TerminalParse {
   let finals = 0;
   let endTurn = false;
   let sessionId: string | null = null;
-  let usage: TokenUsage | null = null;
-  for (const line of trimmed.split('\n')) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(parsed) || parsed.type !== 'end') continue;
+  let usage: TerminalParse['usage'] = null;
+  for (const parsed of jsonLines(trimmed)) {
+    if (parsed.type !== 'end') continue;
     finals += 1;
     if (parsed.stopReason === 'end_turn') endTurn = true;
     if (typeof parsed.sessionId === 'string') sessionId = parsed.sessionId;
-    usage = tokenUsage(parsed.usage) ?? usage;
+    usage = tokenUsage(parsed.usage, GROK_TOKENS) ?? usage;
   }
   const completed = finals === 1 && endTurn;
   return {
@@ -60,23 +58,16 @@ function oneGrok(event: Record<string, unknown>): TerminalParse {
     completed,
     outputsValid: completed && sessionId !== null,
     sessionId,
-    usage: tokenUsage(event.usage),
+    usage: tokenUsage(event.usage, GROK_TOKENS),
   };
 }
 
-function tokenUsage(value: unknown): TokenUsage | null {
-  if (!isRecord(value)) return null;
-  const input = token(value.input_tokens);
-  const output = token(value.output_tokens);
-  const cached = token(value.cache_read_input_tokens ?? value.cached_input_tokens);
-  if (input + output + cached <= 0) return null;
-  return { input, output, cached };
-}
-
-function token(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+export function probe(): Promise<BackendCapability> {
+  return readCapability({
+    backend: 'grok',
+    resumeArgs: ['--help'],
+    resumeMark: '--resume',
+    invocation: (home) => grokInvocation({ home, resumeSession: null, promptFile: `${home}/prompt.txt` }),
+    parse: parseGrokTerminal,
+  });
 }

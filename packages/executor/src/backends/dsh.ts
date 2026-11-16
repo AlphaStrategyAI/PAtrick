@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalJson, evidenceSha256 } from '../hash.js';
-import type { TerminalParse, TokenUsage } from '../types.js';
+import type { BackendCapability, TerminalParse, TokenUsage } from '../types.js';
+import { readCapability } from './capability.js';
+import { isRecord, jsonLines, positiveToken } from './parse.js';
 
 export const LOCKED_DSH_VERSION = '0.2.2-rc.2';
 export const LOCKED_DSH_COMMIT = 'e8f7b93a344964de3dca1ace9e72b6e4d6de87cb';
@@ -69,37 +71,25 @@ export function parseDshTerminal(stdout: string): TerminalParse {
   };
 }
 
+export function probe(): Promise<BackendCapability> {
+  return readCapability({
+    backend: 'dsh',
+    resumeArgs: ['--profile', 'headless', '--help'],
+    resumeMark: 'resume',
+    invocation: (home) => dshInvocation(home),
+    parse: parseDshTerminal,
+  });
+}
+
 function addUsage(current: TokenUsage | null, value: unknown): TokenUsage | null {
   if (!isRecord(value)) return current;
-  const input = token(value.inputTokens);
-  const output = token(value.outputTokens);
-  const cached = token(value.cacheReadTokens);
+  const input = positiveToken(value.inputTokens);
+  const output = positiveToken(value.outputTokens);
+  const cached = positiveToken(value.cacheReadTokens);
   if (input + output + cached <= 0) return current;
   return {
     input: (current?.input ?? 0) + input,
     output: (current?.output ?? 0) + output,
     cached: (current?.cached ?? 0) + cached,
   };
-}
-
-function jsonLines(stdout: string): Record<string, unknown>[] {
-  const events: Record<string, unknown>[] = [];
-  for (const line of stdout.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (isRecord(parsed)) events.push(parsed);
-    } catch {
-      // Diagnostics outside the JSON stream are ignored.
-    }
-  }
-  return events;
-}
-
-function token(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

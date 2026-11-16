@@ -1,20 +1,23 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { versionCommand } from './backends/capability.js';
 import { LOCKED_DSH_COMMIT, LOCKED_DSH_VERSION } from './backends/dsh.js';
+import { runCommand } from './command.js';
 import { evidenceSha256 } from './hash.js';
 import type { BackendId, CommandResult, ProbeGates, ProbeRecord } from './types.js';
 
-export function versionCommand(backend: BackendId): { command: string; args: string[] } {
-  if (backend === 'codex') return { command: 'codex', args: ['--version'] };
-  if (backend === 'grok') return { command: 'grok', args: ['--version'] };
-  return { command: 'dsh', args: ['--version'] };
-}
+export { runCommand } from './command.js';
+export { versionCommand } from './backends/capability.js';
 
 export function limaGuestMarkerPresent(marker = '/etc/patrick-executor-vm'): boolean {
   return existsSync(marker);
 }
 
-export function assessProbe(backend: BackendId, result: CommandResult, gates: ProbeGates): ProbeRecord {
+export function assessProbe(
+  backend: BackendId,
+  result: CommandResult,
+  gates: ProbeGates,
+  notes: readonly string[] = [],
+): ProbeRecord {
   const spec = versionCommand(backend);
   const stdout = result.stdout.trim();
   const stderr = result.stderr.trim();
@@ -30,6 +33,10 @@ export function assessProbe(backend: BackendId, result: CommandResult, gates: Pr
   if (!gates.isolated) lines.push('blocked: executor is not inside the lima guest');
   if (!gates.liveTerminal) lines.push('blocked: no isolated terminal readback');
   if (!gates.liveToolCall) lines.push('blocked: no live harness tool call');
+  for (const note of notes) {
+    const text = note.trim();
+    if (text) lines.push(text);
+  }
   const observation = lines.join('\n');
   const available = commandMatched && pinOk && gates.isolated && gates.liveTerminal && gates.liveToolCall;
   return {
@@ -40,40 +47,6 @@ export function assessProbe(backend: BackendId, result: CommandResult, gates: Pr
     observation,
     evidenceSha256: evidenceSha256(observation),
   };
-}
-
-export function runCommand(command: string, args: string[], timeoutMs = 20000): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result: CommandResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
-    });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish({ exitCode: null, stdout, stderr, error: `timeout ${timeoutMs}ms` });
-    }, timeoutMs);
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      finish({ exitCode: null, stdout, stderr, error: error.message });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      finish({ exitCode: code, stdout, stderr, error: null });
-    });
-  });
 }
 
 export async function probeBackend(

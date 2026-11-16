@@ -62,6 +62,14 @@ export type CommandResult = {
   error: string | null;
 };
 
+export type BackendCapability = {
+  backend: BackendId;
+  command: string;
+  version: string | null;
+  resumeSupported: boolean;
+  liveTerminal: boolean;
+};
+
 export type ProbeGates = {
   isolated: boolean;
   liveTerminal: boolean;

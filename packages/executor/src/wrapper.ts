@@ -1,8 +1,10 @@
+import { join } from 'node:path';
 import type { RunGrant } from '../../domain/src/delegation.js';
-import { parseCodexTerminal } from './backends/codex.js';
-import { parseDshTerminal } from './backends/dsh.js';
-import { parseGrokTerminal } from './backends/grok.js';
+import { codexInvocation, parseCodexTerminal } from './backends/codex.js';
+import { dshInvocation, parseDshTerminal } from './backends/dsh.js';
+import { grokInvocation, parseGrokTerminal } from './backends/grok.js';
 import { dispatchPaidNext, type PaidDispatch } from '../harness/patrick-bridge.js';
+import { findExecutable, runClosed } from './command.js';
 import { persistRecord } from './ledger.js';
 import type {
   BackendId,
@@ -73,8 +75,12 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
   if (!sameSubject(snapshot, grant) || (snapshot.resume?.requested && !resumeAllowed(snapshot, grant, snapshot.resume))) {
     return storeTerminal(snapshot, grant, 'technical_failure', null, null, null);
   }
-  if (!snapshot.bundle_present || !snapshot.terminal) {
+  if (!snapshot.bundle_present) {
     return storeTerminal(snapshot, grant, 'technical_failure', snapshot.terminal?.exitCode ?? null, null, null);
+  }
+  const terminal = await observeTerminal(snapshot);
+  if (!terminal) {
+    return storeTerminal(snapshot, grant, 'technical_failure', null, null, null);
   }
   let reservationId: string | null = null;
   if (snapshot.paid) {
@@ -82,24 +88,51 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
       const paid = await dispatchPaidNext(snapshot.paid);
       reservationId = paid.reservationId;
       if (!paid.sent || paid.settled !== 'settled') {
-        return storeTerminal(snapshot, grant, 'technical_failure', snapshot.terminal.exitCode, null, reservationId);
+        return storeTerminal(snapshot, grant, 'technical_failure', terminal.exitCode, null, reservationId);
       }
     } catch {
-      return storeTerminal(snapshot, grant, 'technical_failure', snapshot.terminal.exitCode, null, reservationId);
+      return storeTerminal(snapshot, grant, 'technical_failure', terminal.exitCode, null, reservationId);
     }
   }
-  const parsed = parseTerminal(snapshot.backend, snapshot.terminal.stdout);
+  const parsed = parseTerminal(snapshot.backend, terminal.stdout);
   const outputsValid = snapshot.bundle_present && parsed.outputsValid;
   const finished = completedRun({
-    closed: snapshot.terminal.closed,
-    drained: snapshot.terminal.drained,
-    exitCode: snapshot.terminal.exitCode,
+    closed: terminal.closed,
+    drained: terminal.drained,
+    exitCode: terminal.exitCode,
     finalCount: parsed.finalCount,
     completed: parsed.completed,
     outputsValid,
   });
   const classification = finished && parsed.usage !== null ? 'agent_completed' : 'technical_failure';
-  return storeTerminal(snapshot, grant, classification, snapshot.terminal.exitCode, parsed, reservationId);
+  return storeTerminal(snapshot, grant, classification, terminal.exitCode, parsed, reservationId);
+}
+
+async function observeTerminal(snapshot: FrozenRun): Promise<ObservedProcess | null> {
+  const invocation = backendInvocation(snapshot);
+  const binary = findExecutable(invocation.command);
+  if (!binary) return snapshot.terminal;
+  return runClosed(binary, invocation.args, {
+    env: { ...process.env, ...invocation.env },
+    pipeStdin: invocation.stdin,
+  });
+}
+
+function backendInvocation(snapshot: FrozenRun): {
+  command: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string>>;
+  stdin: boolean;
+} {
+  if (snapshot.backend === 'dsh') return dshInvocation(snapshot.home);
+  if (snapshot.backend === 'codex') {
+    return codexInvocation({ home: snapshot.home, resumeSession: snapshot.session_id });
+  }
+  return grokInvocation({
+    home: snapshot.home,
+    resumeSession: snapshot.session_id,
+    promptFile: join(snapshot.cwd, 'prompt.txt'),
+  });
 }
 
 function parseTerminal(backend: BackendId, stdout: string): TerminalParse {

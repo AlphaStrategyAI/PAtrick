@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, globSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import type { CallReservation } from '../../packages/domain/src/budget.js';
@@ -25,6 +25,18 @@ import { patrickJudgment } from '../../packages/executor/harness/patrick-judgmen
 import { patrickMemory } from '../../packages/executor/harness/patrick-memory.js';
 import { dispatchPaidNext, type RouteProof } from '../../packages/executor/harness/patrick-bridge.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+
+process.env.PATH = (process.env.PATH ?? '').split(delimiter).filter((dir) => {
+  if (!dir) return false;
+  return !['codex', 'grok', 'dsh'].some((name) => {
+    try {
+      accessSync(join(dir, name), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}).join(delimiter);
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const HARNESS = fileURLToPath(new URL('../../packages/executor/harness/', import.meta.url));
@@ -246,6 +258,58 @@ test('the lima definition is the only executor yaml', () => {
   expect(yaml).not.toMatch(/location:\s*"~"/);
   expect(yaml).toContain('loadDotSSHPubKeys: false');
   expect(yaml).toContain('/etc/patrick-executor-vm');
+  expect(yaml).toContain('node_version=24.22.3');
+  expect(yaml).toContain('https://nodejs.org/dist/v${node_version}/${node_dist}.tar.xz');
+  expect(yaml).toContain('6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c');
+  expect(yaml).toContain('4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb');
+  expect(yaml).toContain('/usr/local/bin');
+  expect(yaml).toContain('/usr/bin/node');
+  expect(script).toContain('delete');
+  expect(script).toContain('--force');
+  const wrapper = readFileSync(join(ROOT, 'packages/executor/src/wrapper.ts'), 'utf8');
+  expect(wrapper).toContain('dshInvocation');
+  expect(wrapper).toContain('findExecutable');
+  expect(wrapper).toContain('runClosed');
+  for (const name of ['codex.ts', 'grok.ts', 'dsh.ts']) {
+    const source = readFileSync(join(ROOT, 'packages/executor/src/backends', name), 'utf8');
+    expect(source).toContain("from './parse.js'");
+    expect(source).toContain('export function probe');
+    expect(source).not.toMatch(/function jsonLines|function isRecord|function positiveToken/);
+  }
+});
+
+test('a present backend is drained before the terminal is classified', async () => {
+  await withDir(async (dir) => {
+    const codex = writeBackendStub(dir, 'codex', CODEX_OK, 0);
+    await withBackendPath(codex.bin, async () => {
+      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1)), workGrant({ attempt_id: 'attempt-live' }));
+      expect(receipt.classification).toBe('agent_completed');
+      expect(receipt.exit_code).toBe(0);
+      expect(receipt.session_id).toBe('thread-fixture');
+      expect(readFileSync(codex.args, 'utf8').trim().split('\n')).toEqual([
+        'exec', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"',
+      ]);
+      expect(readFileSync(`${codex.args}.codex`, 'utf8')).toBe(HOME);
+      writeFileSync(codex.args, 'not-run\n');
+      const waited = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { controller: 'policy_wait' }), workGrant({ attempt_id: 'attempt-pw' }));
+      expect(waited.classification).toBe('policy_wait');
+      expect(readFileSync(codex.args, 'utf8')).toBe('not-run\n');
+    });
+    const failed = writeBackendStub(dir, 'codex', CODEX_OK, 1);
+    await withBackendPath(failed.bin, async () => {
+      const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0)), workGrant({ attempt_id: 'attempt-live-exit' }));
+      expect(receipt.classification).toBe('technical_failure');
+      expect(receipt.exit_code).toBe(1);
+    });
+    const dsh = writeBackendStub(dir, 'dsh', DSH_OK, 0);
+    await withBackendPath(dsh.bin, async () => {
+      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1), { backend: 'dsh' }), workGrant({ attempt_id: 'attempt-dsh-live' }));
+      expect(receipt.classification).toBe('agent_completed');
+      expect(receipt.session_id).toBe('session-fixture');
+      expect(readFileSync(dsh.args, 'utf8').trim().split('\n')).toEqual(['--profile', 'headless', '--json', '--approval-policy', 'never']);
+      expect(readFileSync(`${dsh.args}.dsh`, 'utf8')).toBe(HOME);
+    });
+  });
 });
 
 test('a probe is verified only for the locked pin plus isolation, terminal readback, and a live tool call', () => {
@@ -575,6 +639,39 @@ function callFor(grant: ExecutionGrant, routeId: string, callId: string, amountM
 
 function readJson(path: string): { classification: string; origin?: string } {
   return JSON.parse(readFileSync(path, 'utf8')) as { classification: string; origin?: string };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function writeBackendStub(dir: string, name: string, stdout: string, exitCode: number): { bin: string; args: string } {
+  const bin = join(dir, 'bin');
+  mkdirSync(bin, { recursive: true });
+  const stdoutFile = join(dir, `${name}-stdout.txt`);
+  const argsFile = join(dir, `${name}-args.txt`);
+  writeFileSync(stdoutFile, stdout);
+  const script = `#!/bin/sh
+printf '%s\\n' "$@" > ${shellQuote(argsFile)}
+printf '%s' "\${DSH_HOME-}" > ${shellQuote(`${argsFile}.dsh`)}
+printf '%s' "\${CODEX_HOME-}" > ${shellQuote(`${argsFile}.codex`)}
+cat ${shellQuote(stdoutFile)}
+exit ${exitCode}
+`;
+  const path = join(bin, name);
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
+  return { bin, args: argsFile };
+}
+
+async function withBackendPath<T>(bin: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.PATH;
+  process.env.PATH = `${bin}${delimiter}${previous ?? ''}`;
+  try {
+    return await run();
+  } finally {
+    process.env.PATH = previous;
+  }
 }
 
 async function withDir(run: (dir: string) => Promise<void>) {
