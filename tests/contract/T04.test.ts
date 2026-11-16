@@ -316,9 +316,10 @@ test('the same event id is one authoritative row, and a gap refetches the whole 
 
 test('manifest appends the hub migration without changing the earlier files', () => {
   const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { file: string; sha256: string }[];
-  expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql']);
+  expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql']);
   expect(manifest[0]?.sha256).toBe('6e82bac75d455f28dc498874b61d0d778e1552b4bc5a8d1b5d7f5dfddfc06233');
   expect(manifest[1]?.sha256).toBe('3767d19a3f6c65f5ddae4f5f7d65a057082bfc978fec2d7e7a7a347f4cf2487f');
+  expect(manifest[2]?.sha256).toBe('bcd83075a607244bf5e5ee89efc621d0dd7670e42ace2b5884874ee8047dbcbe');
   const holder = temporaryDatabase();
   try {
     const applied = holder.db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();

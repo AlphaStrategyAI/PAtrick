@@ -7,7 +7,10 @@
     "./autoloop/answers": "./autoloop/answers.ts",
     "./autoloop/agent": "./autoloop/agent.ts",
     "./autoloop/client": "./autoloop/client.ts",
-    "./autoloop/observer": "./autoloop/observer.ts"
+    "./autoloop/observer": "./autoloop/observer.ts",
+    "./sources/registry": "./sources/registry.ts",
+    "./sources/github": "./sources/github.ts",
+    "./sources/directory": "./sources/directory.ts"
   },
   "dependencies": {
     "@patrick/storage": "*"

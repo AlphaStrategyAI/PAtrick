@@ -73,10 +73,13 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'blobs',
       'bootstrap_tickets',
       'caller_scopes',
+      'collection_receipts',
       'command_inbox',
       'command_records',
       'control_proposals',
       'control_receipts',
+      'delete_sweeps',
+      'dependency_checks',
       'domain_events',
       'hub_events',
       'hub_snapshots',
@@ -87,9 +90,15 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'raw_custom_answers',
       'schema_migrations',
       'sessions',
+      'source_configs',
+      'source_cursors',
+      'source_objects',
+      'source_revisions',
+      'source_versions',
+      'webhook_deliveries',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

@@ -1,0 +1,19 @@
+{
+  "repository": {
+    "full_name": "fixture/notes"
+  },
+  "ref": "refs/heads/dependabot/npm/left-pad",
+  "sender": {
+    "login": "dependabot[bot]",
+    "type": "Bot"
+  },
+  "commits": [
+    {
+      "added": [],
+      "modified": [
+        "docs/note.txt"
+      ],
+      "removed": []
+    }
+  ]
+}

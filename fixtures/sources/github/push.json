@@ -1,0 +1,18 @@
+{
+  "repository": {
+    "full_name": "fixture/notes"
+  },
+  "ref": "refs/heads/main",
+  "commits": [
+    {
+      "added": [
+        "docs/note.txt",
+        "secret/hidden.txt",
+        "../outside.txt",
+        "docs/alias.txt"
+      ],
+      "modified": [],
+      "removed": []
+    }
+  ]
+}

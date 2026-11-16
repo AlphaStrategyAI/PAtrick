@@ -10,5 +10,9 @@
   {
     "file": "0004_hub_work.sql",
     "sha256": "bcd83075a607244bf5e5ee89efc621d0dd7670e42ace2b5884874ee8047dbcbe"
+  },
+  {
+    "file": "0005_sources.sql",
+    "sha256": "8bd6d4ee8e06b94247d314030acaf0b312b635a8fccdc457267afdfdc3c22f29"
   }
 ]

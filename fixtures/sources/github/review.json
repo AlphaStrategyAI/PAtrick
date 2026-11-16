@@ -1,0 +1,18 @@
+{
+  "repository": {
+    "full_name": "fixture/notes"
+  },
+  "ref": "refs/heads/main",
+  "review": {
+    "state": "commented"
+  },
+  "commits": [
+    {
+      "added": [
+        "docs/note.txt"
+      ],
+      "modified": [],
+      "removed": []
+    }
+  ]
+}
