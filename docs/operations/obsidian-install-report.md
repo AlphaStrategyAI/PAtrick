@@ -1,6 +1,6 @@
 # Obsidian Desktop 与 Vault 部署
 
-当前准入状态：隔离文件夹和账本的部署及文件往返可复验；现有桌面应用签名、公证和默认 URI 处理器已核验；真实桌面写入、安装包和部署服务身份未准入。Obsidian 桌面状态与已登记 Vault 的后台状态分别报告。
+当前准入状态：隔离文件夹和账本的部署及文件往返可复验；现有桌面应用签名、公证、默认 URI 处理器和已锁定 DMG 的临时安装已核验；真实桌面写入与部署服务身份未准入。Obsidian 桌面状态与已登记 Vault 的后台状态分别报告。
 
 ## T23 接入
 
@@ -23,5 +23,6 @@
 - 测试主机：macOS 27.2.1 (26B131)，arm64；开发机探针，不是已登记的 Mac mini 服务身份。
 - `/Applications/Obsidian.app` 存在：`plutil` 报告 1.15.1，`file` 报告 x86_64、arm64 Universal。系统 LaunchServices 的只读查询将 `obsidian://open` 解析到 `/Applications/Obsidian.app`，确认了当前默认处理器。查询未启动应用，也没有验证 Vault 打开或保存。
 - 本人确认现有应用来自 Obsidian 官方 GitHub 安装包。主机上的只读复查 `codesign --verify --deep --strict --verbose=3 /Applications/Obsidian.app` 退出 0，输出 `valid on disk` 和 `satisfies its Designated Requirement`。早期沙箱检查曾报告 arm64 签名无效；两者范围不同，应以主机复查作为已安装签名证据。主机上的 `spctl --assess --type execute --verbose=4` 同样退出 0，并报告 `accepted` 与 `source=Notarized Developer ID`。未改变安装器签名或哈希政策。
-- T00 的 Universal installer 版本是 1.15.1，`packageHashSha256` 为空。本次没有取得或安装 DMG，也没有打开任何已有或真实 Vault。
-- 真实准入需要本地路径明确获准的、Apple 签名通过的官方 1.15.1 Universal DMG 和独立记录的 SHA-256，以及目标 Mac 桌面会话、专用隔离 Vault/账本、获准的部署服务 UID 和设备映射。用该环境补做真实编辑、后台补采、重启、升级/卸载保留及可选同步验收。隔离自动测试不证明 GUI 或后台常驻已通过。
+- 官方 [GitHub 发行记录](https://github.com/obsidianmd/obsidian-releases/releases/tag/v1.15.1) 的 [资产 API](https://api.github.com/repos/obsidianmd/obsidian-releases/releases/tags/v1.15.1) 为 `Obsidian-1.15.1.dmg` 发布了 SHA-256 `e05c7e3e2262b14c965bb246dcb74a30fc9098bd669e42957c4d9f788d04fdf4`，大小 233346990 字节。2026-11-17，本机安装包与两项一致，`hdiutil verify` 通过。DMG 容器自身未提供 Gatekeeper 可用签名；核验对象是已锁定镜像内的应用。
+- 同日使用安装配方，在新建的临时应用目录完成只读挂载、复制、卸载镜像及发布，现场验证版本、双架构、Apple Developer ID 和已公证状态。第二次安装按预期拒绝覆盖。临时应用随后清除。生产目录未更改，测试未启动 Obsidian，也未访问任何 Vault。
+- 目标环境的完整准入还需要获准的 Mac 桌面会话、专用隔离 Vault/账本、获准的部署服务 UID 和设备映射。用该环境补做真实编辑、后台补采、重启、升级/卸载保留及可选同步验收。隔离自动测试不证明 GUI 或后台常驻已通过。

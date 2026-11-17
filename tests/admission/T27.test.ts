@@ -462,7 +462,7 @@ test.each(['success', 'untrusted', 'bad-version', 'failed-detach'] as const)('Ma
       }
       if (cmd === '/usr/bin/hdiutil' && args[0] === 'detach' && caseName === 'failed-detach') throw new Error('detach failed');
       if (cmd === '/usr/bin/codesign' && args.includes('-R')) {
-        expect(args[args.indexOf('-R') + 1]).toContain('anchor apple generic and identifier "md.obsidian"');
+        expect(args[args.indexOf('-R') + 1]).toMatch(/^=anchor apple generic and identifier "md[.]obsidian"/);
         if (caseName === 'untrusted') throw new Error('untrusted signature');
       }
       if (cmd === '/usr/bin/plutil') {

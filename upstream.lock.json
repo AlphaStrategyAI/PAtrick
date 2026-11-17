@@ -179,13 +179,13 @@
     },
     "obsidian-installer-arch": {
       "status": "verified",
-      "command": "file /Applications/Obsidian.app/Contents/MacOS/Obsidian",
-      "target": "Official macOS Universal installer (https://obsidian.md/help/install)",
+      "command": "shasum -a 256 Obsidian-1.15.1.dmg; hdiutil verify Obsidian-1.15.1.dmg; T27 temporary install",
+      "target": "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/tags/v1.15.1",
       "installerVersion": "1.15.1",
       "architecture": "universal",
-      "packageHashSha256": null,
-      "observation": "Installed app 1.15.1 is a universal Mach-O (x86_64+arm64). Installer package hash was not taken from a downloaded dmg.",
-      "evidenceSha256": "d812b19a31dbe69d7319c41a28480ecfad998c07f880f019dea1fc4c6abd0418"
+      "packageHashSha256": "e05c7e3e2262b14c965bb246dcb74a30fc9098bd669e42957c4d9f788d04fdf4",
+      "observation": "Official GitHub release asset digest and size matched the on-host 1.15.1 DMG; hdiutil verified the image. A temporary install verified x86_64+arm64 and Gatekeeper Notarized Developer ID on the copied app. The app was not launched.",
+      "evidenceSha256": "b9334794563c3aca92849c9d448b8a6db019d09498a51c6021057851a3cf1cf9"
     },
     "signing-chain": {
       "status": "pending",

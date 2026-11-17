@@ -10,8 +10,9 @@ const runNative = promisify(execFile);
 const bundleId = 'md.obsidian';
 const applicationName = 'Obsidian.app';
 // Apple Developer ID trust is independent of the download digest.
+// codesign -R interprets a leading equal sign as an inline requirement.
 export const obsidianSigningRequirement =
-  'anchor apple generic and identifier "md.obsidian" and certificate leaf[subject.OU] = "6JSW4SJWN9"';
+  '=anchor apple generic and identifier "md.obsidian" and certificate leaf[subject.OU] = "6JSW4SJWN9"';
 
 const publishWithoutReplacement = `
   ObjC.import("Foundation");
