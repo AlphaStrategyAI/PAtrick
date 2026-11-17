@@ -219,40 +219,38 @@ test('consult-while-work-waits', async () => {
     const listedBody = await listed.json() as { data: { items: Array<{ conversation_id: string }> } };
     expect(listedBody.data.items.map((item) => item.conversation_id)).toContain(conversation.conversation_id);
 
-    const { createConsultationMcp } = await import('../../packages/integrations/mcp/consultation.js');
+    const { createAuthenticatedConsultationMcp } = await import('../../apps/service/src/consultation-mcp.js');
     const knowledgeBefore = fx.db.prepare('SELECT COUNT(*) AS n FROM knowledge_records').get() as { n: number };
     const messageBefore = fx.db.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number };
-    const mcp = createConsultationMcp<AdmissionPrincipal>({
-      consult: (principal, request) => api.createConsultation(principal, request),
-      result: (principal, requestId) => api.readConsultation(principal, requestId),
-      memory: async (principal, query) => {
-        const { queryEvidence } = await import('../../packages/domain/src/evidence.js');
-        return queryEvidence(fx.db, query, principal);
-      },
-    });
+    const mcpToken = issueCallerSession(fx.db, {
+      accountId: 'owner', callerId: 'tool', domain: DOMAIN, permissions: ['mcp:memory', 'mcp:consult'],
+    }, now, store);
+    const toolRequest = new Request('http://localhost', { headers: { authorization: mcpToken.authorization } });
+    const otherRequest = new Request('http://localhost', { headers: { authorization: otherCaller.authorization } });
+    const mcp = createAuthenticatedConsultationMcp(() => ({ db: fx.db, credentials: store, now }));
     expect(mcp.list()).toEqual(['patrick_consult', 'patrick_consult_result', 'patrick_memory_query']);
     expect(MCP_TOOLS.map((tool) => tool.name)).toEqual(mcp.list());
-    const memory = await mcp.call('patrick_memory_query', owner, { text: 'memory', domain: DOMAIN, withdrawalEpoch: 0 });
+    const memory = await mcp.call('patrick_memory_query', toolRequest, { text: 'memory', domain: DOMAIN, withdrawalEpoch: 0 });
     expect(memory).toEqual({ items: [] });
     expect(fx.db.prepare('SELECT COUNT(*) AS n FROM knowledge_records').get()).toEqual(knowledgeBefore);
     expect(fx.db.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual(messageBefore);
-    await expect(mcp.call('patrick_host', owner, {})).rejects.toThrow('UNKNOWN_TOOL');
-    const viaTool = await mcp.call('patrick_consult', owner, {
+    await expect(mcp.call('patrick_host', toolRequest, {})).rejects.toThrow('UNKNOWN_TOOL');
+    const viaTool = await mcp.call('patrick_consult', toolRequest, {
       client_request_id: 'mcp-1',
       text: '工具里问一句',
       data_domain: DOMAIN,
       parent_work_id: null,
     }) as { request_id: string };
-    const viaToolAgain = await mcp.call('patrick_consult', owner, {
+    const viaToolAgain = await mcp.call('patrick_consult', toolRequest, {
       client_request_id: 'mcp-1',
       text: '工具里问一句',
       data_domain: DOMAIN,
       parent_work_id: null,
     }) as { request_id: string };
     expect(viaToolAgain.request_id).toBe(viaTool.request_id);
-    const toolRead = await mcp.call('patrick_consult_result', owner, { request_id: viaTool.request_id }) as { request_id: string };
+    const toolRead = await mcp.call('patrick_consult_result', toolRequest, { request_id: viaTool.request_id }) as { request_id: string };
     expect(toolRead.request_id).toBe(viaTool.request_id);
-    await expect(mcp.call('patrick_consult_result', { ...owner, caller_id: 'other' }, { request_id: viaTool.request_id })).rejects.toThrow('FORBIDDEN');
+    await expect(mcp.call('patrick_consult_result', otherRequest, { request_id: viaTool.request_id })).rejects.toThrow('FORBIDDEN');
     expect(billing.sends).toBe(1);
     expect(parentLedger(fx.db, WORK_ID)).toEqual(before);
 

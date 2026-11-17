@@ -10,6 +10,7 @@ export type TokenUsage = {
 
 export type TerminalParse = {
   finalCount: number;
+  answerText?: string;
   completed: boolean;
   outputsValid: boolean;
   sessionId: string | null;

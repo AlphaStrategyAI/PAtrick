@@ -50,11 +50,12 @@ export function parseGrokTerminal(stdout: string): TerminalParse {
 
 function oneGrok(event: Record<string, unknown>): TerminalParse {
   const endTurn = event.stop_reason === 'end_turn';
-  const text = typeof event.result === 'string' ? event.result.trim() : '';
+  const text = typeof event.result === 'string' ? event.result : '';
   const sessionId = typeof event.session_id === 'string' ? event.session_id : null;
-  const completed = endTurn && text.length > 0;
+  const completed = endTurn && text.trim().length > 0;
   return {
     finalCount: 1,
+    answerText: text,
     completed,
     outputsValid: completed && sessionId !== null,
     sessionId,

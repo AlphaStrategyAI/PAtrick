@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 import { generateOpenApi } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
+import { startConsultationWorker, type ConsultationWorkerOptions } from '@patrick/integrations/autoloop/consultation-runtime';
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
@@ -22,10 +23,13 @@ import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
 
+export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
+
 export type CreateAppOptions = {
   databasePath?: string;
   credentialDirectory?: string;
   now?: () => Date;
+  consultationWorker?: ConsultationWorkerOptions;
 };
 
 export function createApp(options: CreateAppOptions = {}): Hono {
@@ -65,6 +69,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return state.vault;
   }
   if (options.databasePath) context();
+  if (options.consultationWorker) startConsultationWorker(context().db, now, options.consultationWorker);
 
   const app = new Hono();
   app.use('/api/v1/*', async (c, next) => {

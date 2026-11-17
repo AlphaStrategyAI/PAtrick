@@ -129,6 +129,7 @@ export function createBudgetApi(db: SqliteDatabase, principal: AdmissionPrincipa
       grantId: string,
       attemptId: string,
       routeId: string,
+      canClaim?: () => boolean,
     ): Promise<'acquired' | 'already_dispatched' | 'denied'> {
       return withImmediateTransaction(db, () => {
         const row = db.prepare('SELECT * FROM budget_reservations WHERE reservation_id = ?').get(reservationId) as ReservationRow | undefined;
@@ -136,6 +137,7 @@ export function createBudgetApi(db: SqliteDatabase, principal: AdmissionPrincipa
         if (row.grant_id !== grantId || row.attempt_id !== attemptId || row.route_id !== routeId) return 'denied';
         if (row.status !== 'held') return 'denied';
         if (row.dispatched_at) return 'already_dispatched';
+        if (canClaim && !canClaim()) return 'denied';
         if (!dispatchAllowed(db, principal, stamp(), { grantId, attemptId, businessId: row.business_id })) return 'denied';
         const claimed = db.prepare(CLAIM_DISPATCH_SQL).get({
           now: stamp(),
@@ -153,7 +155,9 @@ export function createBudgetApi(db: SqliteDatabase, principal: AdmissionPrincipa
       });
     },
 
-    async settleCall(reservationId: string, usage: Usage | null): Promise<BudgetReceipt> {
+    async settleCall(
+      reservationId: string, usage: Usage | null, onSettled?: (receipt: BudgetReceipt) => void,
+    ): Promise<BudgetReceipt> {
       return withImmediateTransaction(db, () => {
         const row = db.prepare('SELECT * FROM budget_reservations WHERE reservation_id = ?').get(reservationId) as ReservationRow | undefined;
         if (!row) throw new Error('NOT_FOUND');
@@ -199,7 +203,10 @@ export function createBudgetApi(db: SqliteDatabase, principal: AdmissionPrincipa
         db.prepare(`INSERT INTO usage_receipts (usage_id, reservation_id, amount_micros, proof, created_at)
           VALUES (?, ?, ?, ?, ?)`).run(usage.usage_id, reservationId, usage.amount_micros, usage.proof, stamped);
         const stored = db.prepare('SELECT * FROM budget_reservations WHERE reservation_id = ?').get(reservationId) as ReservationRow;
-        return receipt(db, stored);
+        const settled = receipt(db, stored);
+        // A verified result can join the same transaction as its one usage receipt.
+        onSettled?.(settled);
+        return settled;
       });
     },
   };

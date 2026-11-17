@@ -136,7 +136,7 @@ function backendInvocation(snapshot: FrozenRun): {
   });
 }
 
-function parseTerminal(backend: BackendId, stdout: string): TerminalParse {
+export function parseTerminal(backend: BackendId, stdout: string): TerminalParse {
   if (backend === 'codex') return parseCodexTerminal(stdout);
   if (backend === 'grok') return parseGrokTerminal(stdout);
   return parseDshTerminal(stdout);

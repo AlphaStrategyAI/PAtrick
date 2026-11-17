@@ -45,7 +45,7 @@ export type HubJob = {
   rule: { name: string };
   context: {
     answers: HubAnswerView[];
-    events: HubRunEventView[];
+    events: Array<HubRunEventView & { id?: string }>;
   };
 };
 
@@ -57,6 +57,7 @@ export const SOURCE_CHANGE_RULE = '来源变化';
 export const CONSULTATION_RULE = '咨询';
 export const RESUME_RULE = '阶段恢复';
 export const CONSULTATION_GROUP = 'consultation';
+export const CONSULTATION_WORKER = 'patrick-consultation';
 export const CONSULTATION_PARALLEL = 4;
 export const HUB_SOURCE = 'patrick';
 export const PINNED_HUB_COMMIT = '45aecbf578289cda72d1fc773dcad069bfe7778b';
@@ -98,6 +99,13 @@ export function hubRules(command: readonly string[]) {
         access: 'read' as const,
         command: [...command],
       },
+      consultation: {
+        name: 'Consultation',
+        worker: CONSULTATION_WORKER,
+        use: 'command',
+        access: 'read' as const,
+        command: [...command],
+      },
     },
     channels: {},
     rules: [
@@ -113,7 +121,7 @@ export function hubRules(command: readonly string[]) {
       {
         name: CONSULTATION_RULE,
         when: { source: HUB_SOURCE, types: ['consultation.requested'] },
-        to: 'probe',
+        to: 'consultation',
         cwd: '/tmp',
         prompt: '回答咨询。',
         group: CONSULTATION_GROUP,
@@ -346,7 +354,9 @@ function parseJob(value: unknown): HubJob {
     rule: { name: value.rule.name },
     context: {
       answers: value.context.answers.map(parseAnswer),
-      events: value.context.events.map(parseRunEvent),
+      events: value.context.events.map((event: unknown) => ({
+        ...parseRunEvent(event), ...(isRecord(event) && typeof event.id === 'string' ? { id: event.id } : {}),
+      })),
     },
   };
 }

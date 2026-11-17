@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHubClient, hubRules, PINNED_HUB_COMMIT, type HubClient, type HubKeys } from '../../packages/integrations/autoloop/client.js';
+import { CONSULTATION_WORKER, createHubClient, hubRules, PINNED_HUB_COMMIT, type HubClient, type HubKeys } from '../../packages/integrations/autoloop/client.js';
 
 const REMOTE = 'https://github.com/KKKKhazix/agent-autoloop.git';
 
@@ -31,6 +31,7 @@ else {
   keys = {
     owner: runtime.addKey('owner', 'owner'),
     worker: runtime.addKey('worker', 'w1'),
+    consultationWorker: runtime.addKey('worker', '${CONSULTATION_WORKER}'),
     source: runtime.addKey('source', 'patrick'),
   };
   writeFileSync(keysPath, JSON.stringify(keys));
@@ -86,6 +87,7 @@ export type PinnedHub = {
   home: string;
   source: string;
   client: HubClient;
+  consultationClient: HubClient;
   keys: HubKeys;
   stop: () => Promise<void>;
 };
@@ -147,12 +149,14 @@ export async function startPinnedHub(existingHome?: string): Promise<PinnedHub> 
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
-    const ready = JSON.parse(await readStdoutLine(child, command)) as { port: number } & HubKeys;
-    const client = createHubClient(`http://127.0.0.1:${ready.port}`, ready);
+    const ready = JSON.parse(await readStdoutLine(child, command)) as { port: number; consultationWorker: string } & HubKeys;
+    const url = `http://127.0.0.1:${ready.port}`;
+    const client = createHubClient(url, ready);
     return {
       home,
       source,
       client,
+      consultationClient: createHubClient(url, { ...ready, worker: ready.consultationWorker }),
       keys: { owner: ready.owner, worker: ready.worker, source: ready.source },
       stop: () => stopChild(child),
     };

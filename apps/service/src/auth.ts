@@ -135,8 +135,8 @@ export function canConfirm(principal: Principal): boolean {
   return principal.operations.includes('owner');
 }
 
-export async function requireSession(request: Request): Promise<Principal> {
-  const token = readPresentedToken(request);
+export async function requireSession(request: Request, options?: { bearerOnly?: boolean }): Promise<Principal> {
+  const token = options?.bearerOnly ? readBearerToken(request) : readPresentedToken(request);
   if (!token) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
   const { db, now } = authContext();
   const session = db.prepare(`SELECT s.account_id, s.caller_id, s.auth_epoch, s.expires_at, s.authenticated_at,
@@ -158,6 +158,27 @@ export async function requireSession(request: Request): Promise<Principal> {
     domains: [...new Set(scopes.map((scope) => scope.data_domain))],
     operations: [...new Set(scopes.map((scope) => scope.permission))],
   };
+}
+
+export function domainsWithPermission(
+  db: SqliteDatabase, principal: Principal, permission: string, allowOwner = true,
+): string[] {
+  const rows = db.prepare(`SELECT DISTINCT s.data_domain FROM caller_scopes s
+    JOIN accounts a ON a.account_id = s.account_id
+    WHERE s.account_id = ? AND s.caller_id = ? AND a.auth_epoch = ? AND s.revoked_at IS NULL
+      AND (s.permission = ? OR (? = 1 AND s.permission = 'owner'))
+    ORDER BY s.data_domain`).all(
+    principal.account_id, principal.caller_id, principal.auth_epoch, permission, allowOwner ? 1 : 0,
+  ) as { data_domain: string }[];
+  return rows.map((row) => row.data_domain);
+}
+
+export function assertDomainPermission(
+  db: SqliteDatabase, principal: Principal, domain: string, permission: string, allowOwner = true,
+): void {
+  if (!domainsWithPermission(db, principal, permission, allowOwner).includes(domain)) {
+    throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
+  }
 }
 
 export function snapshot(principal: Principal, data: unknown, now: Date, db: SqliteDatabase) {
@@ -197,8 +218,10 @@ export function assertBrowserOrigin(request: Request): void {
 }
 
 export function readPresentedToken(request: Request): string | null {
-  const cookie = readCookie(request, SESSION_COOKIE);
-  if (cookie) return cookie;
+  return readCookie(request, SESSION_COOKIE) || readBearerToken(request);
+}
+
+function readBearerToken(request: Request): string | null {
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer ')) return null;
   const token = authorization.slice('Bearer '.length).trim();

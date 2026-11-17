@@ -27,6 +27,7 @@ export type EvidencePack = {
 };
 
 export type EvidencePrincipal = {
+  account_id?: string;
   domains: readonly string[];
 };
 
@@ -165,6 +166,14 @@ export async function queryEvidence(
   query: EvidenceQuery,
   principal: EvidencePrincipal,
 ): Promise<EvidencePack> {
+  return queryEvidenceSnapshot(db, query, principal);
+}
+
+export function queryEvidenceSnapshot(
+  db: SqliteDatabase,
+  query: EvidenceQuery,
+  principal: EvidencePrincipal,
+): EvidencePack {
   if (!principal.domains.includes(query.domain)) throw new Error('FORBIDDEN');
   const match = ftsMatch(query.text);
   return withDeferredTransaction(db, () => {
@@ -175,7 +184,9 @@ export async function queryEvidence(
     const items: EvidencePack['items'] = [];
     for (const knowledgeId of ids) {
       const record = db.prepare(`SELECT knowledge_id, canonical_id, data_domain, status FROM knowledge_records
-        WHERE knowledge_id = ? AND data_domain = ?`).get(knowledgeId, query.domain) as {
+        WHERE knowledge_id = ? AND data_domain = ? AND (? IS NULL OR account_id = ?)`).get(
+        knowledgeId, query.domain, principal.account_id ?? null, principal.account_id ?? null,
+      ) as {
         knowledge_id: string;
         canonical_id: string;
         data_domain: string;

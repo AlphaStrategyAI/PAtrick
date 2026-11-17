@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { ackOutbox, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import type { BudgetReceipt, Usage } from './budget.js';
 import { createDelegationApi, type AdmissionPrincipal, type ConsultationGrant } from './delegation.js';
 
 export const COMPLETE_CONSULTATION_SQL = `UPDATE consultations
@@ -138,8 +139,8 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
     return now().toISOString();
   }
 
-  return {
-    async createConsultation(principal: AdmissionPrincipal, request: ConsultationRequest): Promise<ConsultationReceipt> {
+  const api = {
+    createConsultation(principal: AdmissionPrincipal, request: ConsultationRequest): ConsultationReceipt {
       assertRequest(principal, request);
       const fingerprint = requestFingerprint(request);
       const known = options.knownAnswer?.(request.text) ?? null;
@@ -194,7 +195,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       return withImmediateTransaction(db, () => answerConsultation(db, requestId, version, answer, stamp()));
     },
 
-    async cancelConsultation(principal: AdmissionPrincipal, requestId: string, version: number): Promise<boolean> {
+    cancelConsultation(principal: AdmissionPrincipal, requestId: string, version: number): boolean {
       return withImmediateTransaction(db, () => {
         const row = loadConsultation(db, requestId);
         if (!row) return false;
@@ -271,11 +272,11 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       return { sent: dispatched.sent, completed, grant };
     },
 
-    async createConversation(principal: AdmissionPrincipal, request: {
+    createConversation(principal: AdmissionPrincipal, request: {
       client_request_id: string;
       text: string;
       data_domain: string;
-    }): Promise<ConversationReceipt> {
+    }): ConversationReceipt {
       if (!principal.domains.includes(request.data_domain) || request.text.length === 0 || request.client_request_id.length === 0) {
         throw new Error('UNPROCESSABLE');
       }
@@ -312,10 +313,10 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       });
     },
 
-    async postMessage(principal: AdmissionPrincipal, conversationId: string, request: {
+    postMessage(principal: AdmissionPrincipal, conversationId: string, request: {
       client_request_id: string;
       text: string;
-    }): Promise<ConversationMessage> {
+    }): ConversationMessage {
       if (request.text.length === 0 || request.client_request_id.length === 0) throw new Error('UNPROCESSABLE');
       return withImmediateTransaction(db, () => {
         const conversation = requireOwnedConversation(db, principal, conversationId);
@@ -361,12 +362,12 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         ORDER BY created_at, message_id`).all(conversation.conversation_id, principal.account_id, conversation.data_domain) as ConversationMessage[];
     },
 
-    async linkConversationWork(
+    linkConversationWork(
       principal: AdmissionPrincipal,
       conversationId: string,
       workId: string,
       expectedRevision: number,
-    ): Promise<ConversationReceipt> {
+    ): ConversationReceipt {
       return withImmediateTransaction(db, () => {
         const conversation = requireOwnedConversation(db, principal, conversationId);
         if (conversation.kind !== 'work') throw new Error('UNPROCESSABLE');
@@ -392,6 +393,145 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       });
     },
   };
+  // HTTP callers compose these synchronous mutations with their command receipts.
+  return {
+    ...api,
+    mutations: {
+      createConsultation: api.createConsultation,
+      cancelConsultation: api.cancelConsultation,
+      createConversation: api.createConversation,
+      postMessage: api.postMessage,
+      linkConversationWork: api.linkConversationWork,
+    },
+    async createConsultation(...args: Parameters<typeof api.createConsultation>) { return api.createConsultation(...args); },
+    async cancelConsultation(...args: Parameters<typeof api.cancelConsultation>) { return api.cancelConsultation(...args); },
+    async createConversation(...args: Parameters<typeof api.createConversation>) { return api.createConversation(...args); },
+    async postMessage(...args: Parameters<typeof api.postMessage>) { return api.postMessage(...args); },
+    async linkConversationWork(...args: Parameters<typeof api.linkConversationWork>) { return api.linkConversationWork(...args); },
+  };
+}
+
+const PAID_RESULT = 'consultation.paid_result';
+const PAID_RESULT_DESTINATION = 'consultation-local';
+
+export function consultationOutbox(db: SqliteDatabase, limit: number): string[] {
+  const rows = db.prepare(`SELECT e.aggregate_id FROM outbox o JOIN domain_events e USING (event_id)
+    WHERE o.destination = 'autoloop' AND o.result IS NULL
+      AND e.event_id = 'consultation.requested:' || e.aggregate_id ORDER BY e.seq LIMIT ?`).all(limit) as { aggregate_id: string }[];
+  return rows.map((row) => row.aggregate_id);
+}
+
+export function acknowledgeConsultationOutbox(
+  db: SqliteDatabase, requestId: string, result: 'accepted' | 'duplicate',
+): void {
+  withImmediateTransaction(db, () => {
+    const eventId = `consultation.requested:${requestId}`;
+    const row = db.prepare(`SELECT o.result FROM outbox o JOIN hub_events h USING (event_id)
+      WHERE o.event_id = ? AND o.destination = 'autoloop' AND h.request_id = ? AND h.kind = 'consultation.requested'`)
+      .get(eventId, requestId) as { result: string | null } | undefined;
+    if (!row) throw new Error('CONSULTATION_HUB_RECEIPT_MISSING');
+    if (row.result === null) ackOutbox(db, eventId, 'autoloop', result);
+  });
+}
+
+export function consultationAwaitingHubReceipt(db: SqliteDatabase, requestId: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM outbox WHERE event_id = ? AND destination = 'autoloop' AND result IS NULL")
+    .get(`consultation.requested:${requestId}`));
+}
+
+export function admittedConsultation(db: SqliteDatabase, requestId: string) {
+  const row = db.prepare(`SELECT c.raw_text, c.account_id, c.caller_id, c.data_domain, e.payload, a.auth_epoch
+    FROM consultations c JOIN domain_events e ON e.event_id = 'consultation.requested:' || c.request_id
+    JOIN accounts a ON a.account_id = c.account_id
+    JOIN outbox o ON o.event_id = e.event_id AND o.destination = 'autoloop' AND o.result IS NOT NULL
+    JOIN hub_events h ON h.event_id = e.event_id AND h.request_id = c.request_id AND h.kind = 'consultation.requested'
+    WHERE c.request_id = ? AND c.raw_text IS NOT NULL AND c.status = 'pending'
+      AND c.account_id = e.account_id AND c.data_domain = e.data_domain`).get(requestId) as {
+    raw_text: string; account_id: string; caller_id: string; data_domain: string; payload: string; auth_epoch: number;
+  } | undefined;
+  if (!row) return null;
+  const event = JSON.parse(row.payload) as { type: string; auth_epoch?: number };
+  if (event.type !== 'consultation.requested' || event.auth_epoch !== row.auth_epoch) return null;
+  const scopes = db.prepare(`SELECT permission FROM caller_scopes
+    WHERE account_id = ? AND caller_id = ? AND data_domain = ? AND revoked_at IS NULL
+      AND permission IN ('owner', 'consultations.write', 'mcp:consult')`)
+    .all(row.account_id, row.caller_id, row.data_domain) as { permission: string }[];
+  if (scopes.length === 0) return null;
+  const principal: AdmissionPrincipal = {
+    account_id: row.account_id, caller_id: row.caller_id, auth_epoch: row.auth_epoch,
+    domains: [row.data_domain], operations: scopes.map((item) => item.permission),
+  };
+  return { principal, text: row.raw_text, domain: row.data_domain };
+}
+
+type PaidResult = {
+  type: typeof PAID_RESULT;
+  request_id: string;
+  result_version: number;
+  call_id: string;
+  reservation_id: string;
+  usage_id: string;
+  text: string;
+};
+
+export function persistConsultationPaidResult(
+  db: SqliteDatabase, grant: ConsultationGrant, receipt: BudgetReceipt, usage: Usage, text: string,
+): void {
+  if (!db.inTransaction) throw new Error('CONSULTATION_SETTLEMENT_REQUIRED');
+  const row = requireConsultation(db, grant.request_id);
+  const callId = `consultation:${grant.request_id}`;
+  if (receipt.business_id !== callId || receipt.call_id !== callId || receipt.grant_id !== grant.grant_id
+    || receipt.attempt_id !== grant.attempt_id || receipt.status !== 'settled' || !receipt.dispatched_at
+    || !text.trim()) throw new Error('CONSULTATION_RECEIPT_MISMATCH');
+  const eventId = paidResultEventId(grant.request_id, grant.result_version);
+  const payload: PaidResult = {
+    type: PAID_RESULT, request_id: grant.request_id, result_version: grant.result_version,
+    call_id: callId, reservation_id: receipt.reservation_id, usage_id: usage.usage_id, text,
+  };
+  appendDomainEvent(db, {
+    eventId, aggregateId: grant.request_id, aggregateVersion: grant.result_version, accountId: row.account_id,
+    dataDomain: row.data_domain, causationId: `consultation.requested:${grant.request_id}`,
+    payload, destination: PAID_RESULT_DESTINATION,
+  });
+  ackOutbox(db, eventId, PAID_RESULT_DESTINATION, 'accepted');
+}
+
+function paidResultEventId(requestId: string, version: number): string {
+  return `${PAID_RESULT}:${requestId}:${version}`;
+}
+
+export function finalizeConsultationPaidResult(db: SqliteDatabase, requestId: string, version: number, now: string): boolean {
+  return withImmediateTransaction(db, () => {
+    const callId = `consultation:${requestId}`;
+    const result = db.prepare(`SELECT e.payload, r.reservation_id, u.usage_id FROM domain_events e
+      JOIN consultations c ON c.request_id = e.aggregate_id AND c.account_id = e.account_id AND c.data_domain = e.data_domain
+      JOIN execution_grants g ON g.request_id = c.request_id AND g.subject_kind = 'consultation'
+        AND g.result_version = e.aggregate_version AND g.account_id = c.account_id
+        AND g.caller_id = c.caller_id AND g.data_domain = c.data_domain
+      JOIN budget_reservations r ON r.grant_id = g.grant_id AND r.attempt_id = g.attempt_id
+      JOIN usage_receipts u ON u.reservation_id = r.reservation_id AND u.amount_micros = r.amount_micros
+      WHERE e.event_id = ? AND e.aggregate_id = ? AND e.aggregate_version = ?
+        AND r.business_id = ? AND r.call_id = ? AND r.status = 'settled' AND r.dispatched_at IS NOT NULL AND length(u.proof) > 0`)
+      .get(paidResultEventId(requestId, version), requestId, version, callId, callId) as {
+      payload: string; reservation_id: string; usage_id: string;
+    } | undefined;
+    if (!result) return false;
+    const payload = JSON.parse(result.payload) as PaidResult;
+    if (payload.type !== PAID_RESULT || payload.request_id !== requestId || payload.result_version !== version
+      || payload.call_id !== callId || payload.reservation_id !== result.reservation_id
+      || payload.usage_id !== result.usage_id || typeof payload.text !== 'string' || !payload.text.trim()) return false;
+    if (answerConsultation(db, requestId, version, { text: payload.text }, now)) return true;
+    const row = requireConsultation(db, requestId);
+    return row.status === 'answered' && row.result_version === version + 1
+      && row.final_result === canonicalPayload({ text: payload.text });
+  });
+}
+
+export function recoverConsultationPaidResults(db: SqliteDatabase, now: string, limit: number): void {
+  const rows = db.prepare(`SELECT c.request_id, c.result_version FROM consultations c
+    JOIN domain_events e ON e.event_id = 'consultation.paid_result:' || c.request_id || ':' || c.result_version
+    WHERE c.status = 'pending' ORDER BY e.seq LIMIT ?`).all(limit) as { request_id: string; result_version: number }[];
+  for (const row of rows) finalizeConsultationPaidResult(db, row.request_id, row.result_version, now);
 }
 
 function answerConsultation(db: SqliteDatabase, requestId: string, version: number, answer: ConsultationAnswer, stamped: string): boolean {
@@ -431,6 +571,7 @@ function queueConsultation(db: SqliteDatabase, principal: AdmissionPrincipal, re
       type: 'consultation.requested',
       event_id: eventId,
       request_id: requestId,
+      auth_epoch: principal.auth_epoch,
       root: requestId,
       cause: requestId,
       generation: 0,

@@ -81,6 +81,7 @@ export function parseDshTerminal(stdout: string): TerminalParse {
   const completed = final?.kind === 'completed' && (final.text.trim().length > 0) && sessionMatches && sessionId !== null;
   return {
     finalCount: finals.length,
+    answerText: final?.text,
     completed,
     outputsValid: completed,
     sessionId,

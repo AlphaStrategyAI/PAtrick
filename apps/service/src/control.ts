@@ -6,6 +6,7 @@ import {
   ORIGIN,
   RP_ID,
   assertBrowserOrigin,
+  assertDomainPermission,
   authContext,
   canConfirm,
   readPresentedToken,
@@ -288,10 +289,13 @@ async function readCommand(c: Context): Promise<Response> {
     permission: string;
     operation: string;
   } | undefined;
-  if (!row || !permissionActive(db, principal, row.data_domain, row.permission)) {
+  if (!row) throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
+  if (row.permission === 'consultations.write' || row.permission === 'conversations.write') {
+    assertDomainPermission(db, principal, row.data_domain, row.permission);
+  } else if (!permissionActive(db, principal, row.data_domain, row.permission)) {
     throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
   }
-  return c.json(snapshot(principal, {
+  return c.json(snapshot({ ...principal, domains: [row.data_domain] }, {
     command_id: row.command_id,
     state: 'received',
     receipt_url: `/api/v1/commands/${row.command_id}`,

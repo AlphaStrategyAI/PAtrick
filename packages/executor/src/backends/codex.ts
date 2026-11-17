@@ -34,6 +34,7 @@ export function parseCodexTerminal(stdout: string): TerminalParse {
   const completed = finals === 1 && !failed && text.trim().length > 0;
   return {
     finalCount: finals,
+    answerText: text,
     completed,
     outputsValid: completed && sessionId !== null,
     sessionId,
