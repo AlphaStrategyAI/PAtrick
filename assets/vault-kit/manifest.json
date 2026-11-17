@@ -1,17 +1,41 @@
 {
   "name": "vault-kit",
+  "version": "1.0.0",
   "files": [
     {
       "path": "模板/知识笔记.md",
+      "source": "知识笔记.md",
       "sha256": "92bd80697992e39bd68d6b13f177bb1362fd09b28c632552022855b711eded9c"
     },
     {
-      "path": "判断案例.md",
+      "path": "模板/判断案例.md",
+      "source": "判断案例.md",
       "sha256": "173e720be5d5fbf641d6f76aa2bc9a0f0b0c332c66a919b3c46e47cbc5c78630"
     },
     {
-      "path": "标准修订.md",
+      "path": "模板/标准修订.md",
+      "source": "标准修订.md",
       "sha256": "27de7e671ba70e4fa70dc542b4af5589ef0cca2e17ed4b3074c43638ed706bb7"
+    },
+    {
+      "path": "系统视图/索引.md",
+      "source": "系统视图/索引.md",
+      "sha256": "726aacbe3321d653708b3e4315dccea53cb18110689377e6d3f87e346fdb04aa"
+    },
+    {
+      "path": "系统视图/知识.base",
+      "source": "系统视图/知识.base",
+      "sha256": "b6fa85a2135550edd2d2214b963db8d029ab6a150abc23f272d375a7ba112a0f"
+    },
+    {
+      "path": "系统视图/标准.base",
+      "source": "系统视图/标准.base",
+      "sha256": "ab9a057136be69a82b72565f768e57253e9b63d7f9f1836952c5b16093868130"
+    },
+    {
+      "path": "系统视图/知识关系.canvas",
+      "source": "系统视图/知识关系.canvas",
+      "sha256": "fc40dddf4780acae07a676183907c3eab6204ac476e38031c7f1d1eab2726914"
     }
   ]
 }

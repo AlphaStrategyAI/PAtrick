@@ -1,0 +1,14 @@
+# 样例视图：只查找本文件所在批次中的已导回标准。
+filters:
+  and:
+    - or:
+        - 'file.folder == this.file.folder + "/生效标准"'
+        - 'file.folder == this.file.folder + "/候选标准"'
+    - 'file.ext == "md"'
+views:
+  - type: table
+    name: 标准
+    order:
+      - file.name
+      - standard_id
+      - base_version

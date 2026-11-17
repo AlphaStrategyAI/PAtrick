@@ -1,0 +1,11 @@
+# 样例视图：只查找本文件所在批次中的已导回知识。
+filters:
+  and:
+    - 'file.folder == this.file.folder + "/知识"'
+    - 'file.ext == "md"'
+views:
+  - type: table
+    name: 知识
+    order:
+      - file.name
+      - knowledge_id
