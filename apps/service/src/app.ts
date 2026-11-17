@@ -23,6 +23,7 @@ import { mountKnowledgeRoutes } from './routes/knowledge.js';
 import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
+import { startWorkStopObserver, type WorkStopSupervisor } from './work-stop.js';
 import { mountPreferenceRoutes } from './routes/preferences.js';
 import { mountSettingsRoutes } from './routes/settings.js';
 import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
@@ -39,6 +40,7 @@ export type CreateAppOptions = {
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
   productViewHub?: ProductViewHub;
+  workStopSupervisor?: WorkStopSupervisor;
   settingsHandlers?: Readonly<Partial<Record<string, SettingsHandler>>>;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
 };
@@ -55,6 +57,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   }
   if (options.productViewHub && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
     throw new Error('PRODUCT_VIEW_DATABASE_REQUIRED');
+  }
+  if (options.workStopSupervisor && (!options.databasePath || options.databasePath === ':memory:')) {
+    throw new Error('WORK_STOP_DATABASE_REQUIRED');
   }
   const now = options.now ?? (() => new Date());
   const state: {
@@ -150,7 +155,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountEditRoutes(app, resources);
   mountStandardRoutes(app, resources);
   mountDelegationRoutes(app, resources);
-  mountWorkControlRoutes(app, resources);
+  if (options.workStopSupervisor) startWorkStopObserver(context().db, options.workStopSupervisor, now);
+  mountWorkControlRoutes(app, resources, () => !!options.workStopSupervisor && !options.workStopSupervisor.signal?.aborted);
   mountConversationRoutes(app, () => ({ db: context().db, now }));
   mountConsultationRoutes(app, () => ({ db: context().db, now }));
   const viewResources = () => {

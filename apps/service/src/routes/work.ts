@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PAGE_MAX } from '@patrick/contracts';
+import { withDeferredTransaction } from '@patrick/storage';
 import type { Hono } from 'hono';
 import type { ProjectionScope } from '../../../../packages/storage/src/views/cursors.js';
 import type { createWorkProjection, WorkFilters } from '../../../../packages/storage/src/views/work.js';
@@ -39,15 +40,31 @@ export function mountWorkProjectionRoutes(app: Hono, ready: ProjectionReady): vo
   app.get('/api/v1/work/:id', (c) => handle(c, async () => {
     const resources = ready();
     const scope = await projectionScope(resources, c.req.raw, ['work.read'], oneValue(new URL(c.req.url).searchParams, 'domain'));
-    const snapshot = resources.projection.readDetail(scope, routeId(c.req.param('id')));
-    if (!snapshot) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+    const id = routeId(c.req.param('id'));
+    const snapshot = withDeferredTransaction(resources.db, () => {
+      const value = resources.projection.readDetail(scope, id);
+      if (value) return value;
+      if (resources.db.prepare('SELECT 1 FROM work_generations WHERE work_id=? AND account_id=? AND data_domain=? LIMIT 1')
+        .get(id, scope.accountId, scope.dataDomain)) {
+        throw new ApiError(503, 'UNAVAILABLE', { reason: 'projection_syncing' }, true);
+      }
+      throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+    });
     return c.json(snapshot);
   }));
   app.get('/api/v1/work/:id/timeline', (c) => handle(c, async () => {
     const resources = ready();
     const scope = await projectionScope(resources, c.req.raw, ['work.read'], oneValue(new URL(c.req.url).searchParams, 'domain'));
-    const snapshot = resources.projection.readTimeline(scope, routeId(c.req.param('id')));
-    if (!snapshot) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+    const id = routeId(c.req.param('id'));
+    const snapshot = withDeferredTransaction(resources.db, () => {
+      const value = resources.projection.readTimeline(scope, id);
+      if (value) return value;
+      if (resources.db.prepare('SELECT 1 FROM work_generations WHERE work_id=? AND account_id=? AND data_domain=? LIMIT 1')
+        .get(id, scope.accountId, scope.dataDomain)) {
+        throw new ApiError(503, 'UNAVAILABLE', { reason: 'projection_syncing' }, true);
+      }
+      throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+    });
     return c.json(snapshot);
   }));
 }

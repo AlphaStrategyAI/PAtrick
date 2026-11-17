@@ -195,7 +195,8 @@ test('consult-while-work-waits', async () => {
     expect(firstBody.data.request_id).toBe(replayed.request_id);
     expect(firstBody.data.final_result).toEqual({ text: '隔离咨询的回答' });
 
-    const httpPayload = { text: '再问一次，不派工作', parent_work_id: WORK_ID };
+    const httpPayload = { text: '再问一次，不派工作', parent_work_id: WORK_ID,
+      request_scope: { account_id: owner.account_id, caller_id: owner.caller_id, data_domain: DOMAIN, permission_epoch: owner.auth_epoch } };
     const httpBody = envelope('http-consult-1', null, httpPayload);
     const created = await app.request('/api/v1/consultations', {
       method: 'POST',

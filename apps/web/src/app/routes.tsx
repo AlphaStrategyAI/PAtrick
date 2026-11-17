@@ -1,5 +1,9 @@
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
+import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
+import { WorkPage as LiveWorkPage } from '../features/work/WorkPage.js';
+import { WorkDetail } from '../features/work/WorkDetail.js';
+import { safeResource } from '../features/work/contracts.js';
 import { Link, Navigate, useOutletContext, useParams } from 'react-router';
 import type { RouteObject } from 'react-router';
 import type { ReactNode } from 'react';
@@ -45,13 +49,14 @@ function WorkPage() {
   return <PageFrame item={navigation[1]}><Authenticated>
     {isDemo
       ? <section className="card"><Link to={`/work/${demoWork.id}`}>{t(demoWork.title)}</Link><p>{t(demoWork.state)}</p></section>
-      : <p>{t('empty.unavailable')}</p>}
+      : <LiveWorkPage />}
   </Authenticated></PageFrame>;
 }
 
 function WorkDetailPage() {
   const { id } = useParams();
   const { t } = useLocale();
+  const workId = safeResource(id);
   const sample = isDemo && id === demoWork.id;
   return <>
     <div className="page-title">
@@ -64,7 +69,7 @@ function WorkDetailPage() {
           <SafeMarkdown>{t('demo.note')}</SafeMarkdown>
           <ScopePreview><p>{t('demo.scope')}</p></ScopePreview>
         </section>
-        : !isDemo ? <p>{t('empty.unavailable')}</p> : <LocalizedError code="NOT_FOUND" />}
+        : !isDemo && workId ? <WorkDetail workId={workId} /> : <LocalizedError code="NOT_FOUND" />}
       <Link className="secondary" to="/work">{t('button.backWork')}</Link>
     </Authenticated>
   </>;
@@ -121,7 +126,8 @@ function NotFound() {
 export const appRoutes: RouteObject[] = [{
   path: '/', element: <AppShell />, children: [
     { index: true, element: <Navigate to="/decisions" replace /> },
-    { path: '/decisions', element: <UnconnectedPage item={navigation[0]} empty="empty.decisions" /> },
+    { path: '/decisions', element: isDemo ? <UnconnectedPage item={navigation[0]} empty="empty.decisions" />
+      : <PageFrame item={navigation[0]}><Authenticated><DecisionsPage /></Authenticated></PageFrame> },
     { path: '/work', element: <WorkPage /> },
     { path: workDetailPath, element: <WorkDetailPage /> },
     { path: '/standards', element: <UnconnectedPage item={navigation[2]} empty="empty.standards" /> },

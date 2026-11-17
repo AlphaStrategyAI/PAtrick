@@ -128,6 +128,8 @@ test('openapi-sdk-no-drift', () => {
     'GET /api/v1/vaults/{id}/connection',
     'GET /api/v1/work',
     'GET /api/v1/work/{id}',
+    'GET /api/v1/work/{id}/controls',
+    'GET /api/v1/work/{id}/controls/{receiptId}',
     'GET /api/v1/work/{id}/timeline',
     'PATCH /api/v1/preferences',
     'POST /api/v1/auth/challenge',

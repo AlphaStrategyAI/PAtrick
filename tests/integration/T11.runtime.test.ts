@@ -163,7 +163,8 @@ function fixture() {
 }
 
 async function createThroughHttp(app: ReturnType<typeof createApp>, fx: ReturnType<typeof fixture>, parentWorkId: string | null = null) {
-  const payload = { text: '可以只回答这个咨询吗？', parent_work_id: parentWorkId };
+  const payload = { text: '可以只回答这个咨询吗？', parent_work_id: parentWorkId,
+      request_scope: { account_id: owner.account_id, caller_id: owner.caller_id, data_domain: DOMAIN, permission_epoch: owner.auth_epoch } };
   const response = await app.request('/api/v1/consultations', {
     method: 'POST',
     headers: { origin: ORIGIN, authorization: fx.session.authorization, 'content-type': 'application/json' },

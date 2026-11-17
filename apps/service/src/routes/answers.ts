@@ -8,7 +8,7 @@ import {
   type CardAnswer,
   type Principal as AnswerPrincipal,
 } from '../../../../packages/domain/src/answer-gate.js';
-import { snapshot, type Principal } from '../auth.js';
+import { assertDomainPermission, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 
@@ -28,13 +28,17 @@ async function readQuestion(c: Context, ready: Ready): Promise<Response> {
   const questionId = routeId(c.req.param('id'));
   const { db, now } = ready();
   const row = db.prepare(`SELECT question_id, question_version, work_id, generation, proposal_revision, options_hash,
-    hub_card_id, status, successor_question_id, data_domain, account_id
+    hub_card_id, status, successor_question_id, data_domain, account_id, options_json, custom_allowed
     FROM question_bindings WHERE question_id = ? AND account_id = ? ORDER BY question_version DESC LIMIT 1`).get(
     questionId,
     principal.account_id,
-  ) as { data_domain: string; account_id: string } | undefined;
+  ) as { data_domain: string; account_id: string; options_json: string; custom_allowed: 0 | 1 } | undefined;
   if (!row || !principal.domains.includes(row.data_domain)) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
-  return c.json(snapshot(principal, row, now(), db));
+  assertDomainPermission(db, principal, row.data_domain, 'questions.read');
+  const { options_json, custom_allowed, ...binding } = row;
+  const options = (JSON.parse(options_json) as { option_id: string; index: number; label: string }[])
+    .map(({ option_id, index, label }) => ({ option_id, index, label }));
+  return c.json(snapshot({ ...principal, domains: [row.data_domain] }, { ...binding, options, custom_allowed: !!custom_allowed }, now(), db));
 }
 
 async function postAnswer(c: Context, ready: Ready): Promise<Response> {
@@ -64,6 +68,7 @@ async function postAnswer(c: Context, ready: Ready): Promise<Response> {
   if (!scope || scope.account_id !== principal.account_id || !principal.domains.includes(scope.data_domain)) {
     throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
   }
+  assertDomainPermission(db, principal, scope.data_domain, 'questions.answer');
   const fingerprint = commandFingerprint({
     operation: 'submitAnswer',
     resource_id: questionId,
@@ -109,7 +114,8 @@ async function readReceipt(c: Context, ready: Ready): Promise<Response> {
   if (!row || row.account_id !== principal.account_id || !principal.domains.includes(row.data_domain)) {
     throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
   }
-  return c.json(snapshot(principal, row, now(), db));
+  assertDomainPermission(db, principal, row.data_domain, 'questions.read');
+  return c.json(snapshot({ ...principal, domains: [row.data_domain] }, row, now(), db));
 }
 
 function asAnswerPrincipal(principal: Principal): AnswerPrincipal {

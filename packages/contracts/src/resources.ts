@@ -6,6 +6,7 @@ import {
   errorBodySchema,
   PAGE_DEFAULT,
   PAGE_MAX,
+  scopeSchema,
   snapshotEnvelope,
   sseEventSchema,
 } from './envelope.js';
@@ -70,6 +71,9 @@ const pageQuerySchema = z.strictObject({
   cursor: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(PAGE_MAX).default(PAGE_DEFAULT),
 });
+// These resource-free commands cannot infer the active tab's scope from a path resource.
+export const browserCreationScopeSchema = scopeSchema.extend({ caller_id: z.string().min(1) });
+export type BrowserCreationScope = z.infer<typeof browserCreationScopeSchema>;
 const domainSchema = z.strictObject({ domain: z.string().min(1).optional() });
 const scopedIdSchema = idSchema.extend(domainSchema.shape);
 const workListQuerySchema = pageQuerySchema.extend({ ...domainSchema.shape,
@@ -245,6 +249,16 @@ export const healthSnapshotSchema = z.strictObject({
   edits: z.strictObject({ pending: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).optional(),
 });
 
+export const workControlActionSchema = z.enum(['pause','resume','stop']);
+const workControlStateSchema = z.enum(['running','paused','processing','stopped']);
+export const workControlViewSchema = z.strictObject({
+  work_id: z.string().min(1), generation: z.number().int().nonnegative(), control_revision: z.number().int().nonnegative(),
+  state: workControlStateSchema, actions: z.array(workControlActionSchema),
+});
+export const workControlReceiptSchema = z.strictObject({
+  receipt_id: z.string().min(1), work_id: z.string().min(1), generation: z.number().int().nonnegative(),
+  type: workControlActionSchema, state: workControlStateSchema.or(z.literal('denied')), revision: z.number().int().nonnegative(),
+});
 const workControlPayload = z.strictObject({
   type: z.enum(['pause', 'resume', 'stop']),
   generation: z.number().int().nonnegative(),
@@ -385,16 +399,21 @@ export const routes: RouteDefinition[] = [
   { ...read('listWork', '/work', 'work.read', workListQuerySchema, workListSchema), errors: [...readErrors, 'CONFLICT', 'UNPROCESSABLE'] },
   read('getWork', '/work/:id', 'work.read', scopedIdSchema, workItemSchema),
   read('getWorkTimeline', '/work/:id/timeline', 'work.read', scopedIdSchema, workTimelineSchema),
+  read('getWorkControl', '/work/:id/controls', 'work.read', scopedIdSchema, workControlViewSchema),
+  read('getWorkControlReceipt', '/work/:id/controls/:receiptId', 'work.control',
+    scopedIdSchema.extend({ receiptId: z.string().min(1) }), workControlReceiptSchema),
   command('controlWork', '/work/:id/controls', 'work.control', workControlPayload),
   read('getQuestion', '/questions/:id', 'questions.read', idSchema, z.unknown()),
   command('submitAnswer', '/questions/:id/answers', 'questions.answer', answerPayload),
   read('getAnswerReceipt', '/answers/:receiptId', 'questions.read', z.strictObject({ receiptId: z.string().min(1) }), z.unknown()),
   read('listConversations', '/conversations', 'conversations.read', pageQuerySchema, listDataSchema),
-  command('createConversation', '/conversations', 'conversations.write', z.strictObject({ text: z.string().min(1) })),
+  command('createConversation', '/conversations', 'conversations.write',
+    z.strictObject({ text: z.string().min(1), request_scope: browserCreationScopeSchema })),
   read('listMessages', '/conversations/:id/messages', 'conversations.read', idSchema, listDataSchema),
   command('postMessage', '/conversations/:id/messages', 'conversations.write', z.strictObject({ text: z.string().min(1) })),
   command('linkConversationWork', '/conversations/:id/work-links', 'conversations.write', z.strictObject({ work_id: z.string().min(1) })),
-  command('createConsultation', '/consultations', 'consultations.write', z.strictObject({ text: z.string().min(1), parent_work_id: z.string().min(1).nullable() })),
+  command('createConsultation', '/consultations', 'consultations.write',
+    z.strictObject({ text: z.string().min(1), parent_work_id: z.string().min(1).nullable(), request_scope: browserCreationScopeSchema })),
   read('getConsultation', '/consultations/:id', 'consultations.read', idSchema, z.unknown()),
   command('cancelConsultation', '/consultations/:id/cancel', 'consultations.write', emptySchema),
   read('listKnowledge', '/knowledge', 'knowledge.read', pageQuerySchema, listDataSchema),

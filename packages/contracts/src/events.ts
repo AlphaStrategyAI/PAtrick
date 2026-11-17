@@ -4,6 +4,7 @@ import { z } from 'zod';
 export const DOMAIN_EVENTS = [
   { type: 'source.revision.committed', major: 1 },
   { type: 'work.requested', major: 1 },
+  { type: 'work.stop.requested', major: 1 },
   { type: 'draft.requested', major: 1 },
   { type: 'draft.ready', major: 1 },
   { type: 'question.bound', major: 1 },

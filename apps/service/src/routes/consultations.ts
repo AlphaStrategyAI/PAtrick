@@ -1,10 +1,10 @@
 import type { Context, Hono } from 'hono';
-import { routes, type Json } from '@patrick/contracts';
+import { routes, type BrowserCreationScope, type Json } from '@patrick/contracts';
 import { createConsultationApi } from '../../../../packages/domain/src/consultations.js';
 import { assertDomainPermission, domainsWithPermission, requireSession, snapshot } from '../auth.js';
 import { ApiError } from '../errors.js';
 import {
-  commandAccepted, ownedConsultationDomain, resolvedWorkDomain, runConsultationCommand,
+  boundCreationDomain, commandAccepted, ownedConsultationDomain, resolvedWorkDomain, runConsultationCommand,
   type CommandEnvelope, type ConsultationReady,
 } from './consultation-commands.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, routeId } from './http.js';
@@ -22,24 +22,26 @@ export function mountConsultationRoutes(app: Hono, ready: ConsultationReady): vo
 
 async function postConsultation(c: Context, ready: ConsultationReady): Promise<Response> {
   assertWriteOrigin(c.req.raw);
-  const principal = await requireSession(c.req.raw);
   const parsed = createRequest.safeParse(await readJson(c.req.raw));
+  const principal = await requireSession(c.req.raw);
   if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
-  const body = parsed.data as CommandEnvelope<{ text: string; parent_work_id: string | null }>;
+  const body = parsed.data as CommandEnvelope<{ text: string; parent_work_id: string | null; request_scope: BrowserCreationScope }>;
   if (body.expected_revision !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'expected_revision' });
   assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
   const { db, now } = ready();
   const { commandId, resourceId } = runConsultationCommand(db, now, principal, 'createConsultation', writePermission, body, () => {
     const parent = body.payload.parent_work_id;
-    const domain = parent ? resolvedWorkDomain(db, principal, parent) : domainsWithPermission(db, principal, writePermission)[0];
-    if (!domain) throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
-    assertDomainPermission(db, principal, domain, writePermission);
+    const domain = boundCreationDomain(db, principal, body.payload.request_scope, writePermission);
+    if (parent) {
+      if (resolvedWorkDomain(db, principal, parent) !== domain) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+      assertDomainPermission(db, principal, domain, 'work.read');
+    }
     const authorization = domainsWithPermission(db, principal, writePermission, false).includes(domain)
       ? writePermission : 'owner';
     return { domain, resourceId: null, authorization } as const;
   }, ({ domain, authorization }) => createConsultationApi(db, { now }).mutations.createConsultation(
     { ...principal, domains: [domain] },
-    { ...body.payload, client_request_id: body.client_request_id, data_domain: domain },
+    { text: body.payload.text, parent_work_id: body.payload.parent_work_id, client_request_id: body.client_request_id, data_domain: domain },
     authorization,
   ).request_id);
   return c.json(commandAccepted(commandId, `/api/v1/consultations/${resourceId}`), 202);

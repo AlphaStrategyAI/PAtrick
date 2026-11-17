@@ -18,6 +18,7 @@ const secondary = 'beta';
 const now = () => new Date('2026-11-17T04:00:00Z');
 const consultBase = '/api/v1/consultations';
 const conversationBase = '/api/v1/conversations';
+const request_scope = { account_id: account, caller_id: caller, data_domain: primary, permission_epoch: 1 };
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'patrick-t11-commands-'));
@@ -89,9 +90,9 @@ test.each(['consult', 'cancel', 'conversation', 'message', 'link'] as const)(
       const consult = await fx.newConsultation('initial-consultation');
       if (operation === 'link') await fx.openWork(primary, 'W-link');
       const submit = {
-        consult: () => fx.post(auth, consultBase, 'test-command', { text: 'Question', parent_work_id: null }),
+        consult: () => fx.post(auth, consultBase, 'test-command', { text: 'Question', parent_work_id: null, request_scope }),
         cancel: () => fx.post(auth, `${consultBase}/${consult.request_id}/cancel`, 'test-command', {}, 0),
-        conversation: () => fx.post(auth, conversationBase, 'test-command', { text: 'New conversation' }),
+        conversation: () => fx.post(auth, conversationBase, 'test-command', { text: 'New conversation', request_scope }),
         message: () => fx.post(auth, `${conversationBase}/${conversation.conversation_id}/messages`, 'test-command', { text: 'New message' }),
         link: () => fx.post(auth, `${conversationBase}/${conversation.conversation_id}/work-links`, 'test-command', { work_id: 'W-link' }, 0),
       }[operation];
@@ -164,7 +165,7 @@ test('permissions in another domain cannot authorize conversation or consultatio
     await fx.openWork(secondary, 'W-private');
     const postMessage = fx.post(auth, `${conversationBase}/${hidden.conversation_id}/messages`, 'cross-message', { text: 'New message' });
     const cancel = fx.post(auth, `${consultBase}/${consult.request_id}/cancel`, 'cross-cancel', {}, 0);
-    const linkedConsult = fx.post(auth, consultBase, 'cross-parent', { text: 'Question', parent_work_id: 'W-private' });
+    const linkedConsult = fx.post(auth, consultBase, 'cross-parent', { text: 'Question', parent_work_id: 'W-private', request_scope });
     const readMessages = fx.app.request(`${conversationBase}/${hidden.conversation_id}/messages`, { headers: { authorization: auth } });
     const readConsult = fx.app.request(`${consultBase}/${consult.request_id}`, { headers: { authorization: auth } });
     expect((await Promise.all([postMessage, cancel, linkedConsult, readMessages, readConsult])).map((response) => response.status))
@@ -184,7 +185,7 @@ test('an MCP memory grant does not grant Web command access', async () => {
     const consult = await fx.newConsultation('seed');
     const response = await fx.post(auth, `${consultBase}/${consult.request_id}/cancel`, 'try-cancel', {}, 0);
     expect(response.status).toBe(403);
-    const create = await fx.post(auth, conversationBase, 'try-start', { text: 'New conversation' });
+    const create = await fx.post(auth, conversationBase, 'try-start', { text: 'New conversation', request_scope });
     expect(create.status).toBe(403);
   } finally {
     fx.close();
@@ -291,8 +292,8 @@ test('MCP does not accept an owner session that gained a live tool grant after i
     await expect(query()).rejects.toMatchObject({ status: 403 });
     const mcpBearer = fx.session(primary, ['mcp:memory']);
     await expect(query()).rejects.toMatchObject({ status: 403 });
-    expect((await fx.post(owner, conversationBase, 'web-still-works', { text: 'Allowed Web use' })).status).toBe(202);
-    expect((await fx.post(mcpBearer, conversationBase, 'tool-cannot-write', { text: 'Web use' })).status).toBe(403);
+    expect((await fx.post(owner, conversationBase, 'web-still-works', { text: 'Allowed Web use', request_scope })).status).toBe(202);
+    expect((await fx.post(mcpBearer, conversationBase, 'tool-cannot-write', { text: 'Web use', request_scope })).status).toBe(403);
   } finally {
     fx.close();
   }
@@ -356,7 +357,7 @@ test('HTTP consultation records the exact resolved-domain Web grant it used', as
   try {
     const auth = fx.session(primary, ['owner', 'consultations.write']);
     fx.session(primary, ['mcp:consult']);
-    const response = await fx.post(auth, consultBase, 'explicit-web-write', { text: 'Question', parent_work_id: null });
+    const response = await fx.post(auth, consultBase, 'explicit-web-write', { text: 'Question', parent_work_id: null, request_scope });
     expect(response.status).toBe(202);
     const { receipt_url: receiptUrl } = await response.json() as { receipt_url: string };
     const requestId = receiptUrl.split('/').at(-1);

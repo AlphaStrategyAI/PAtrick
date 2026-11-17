@@ -36,7 +36,7 @@ export type StopFixture = StopPort & {
 
 type WorkControlOptions = {
   now?: () => Date;
-  stopPort: StopPort;
+  stopPort?: StopPort;
 };
 
 type WorkRow = {
@@ -75,43 +75,49 @@ export function createWorkControlApi(db: SqliteDatabase, principal: AdmissionPri
     return now().toISOString();
   }
 
-  return {
-    async applyWorkControl(caller: AdmissionPrincipal, command: WorkControlCommand): Promise<WorkControlReceipt> {
-      if (caller.account_id !== principal.account_id) throw new Error('FORBIDDEN');
-      return withImmediateTransaction(db, () => {
-        const work = visibleWork(db, caller, command.work_id, command.generation);
-        if (work.revision !== command.expected_revision) throw new Error('CONFLICT');
-        if (command.type === 'pause') {
-          if (work.control_state !== 'running') {
-            return insertReceipt(db, command, 'denied', work.revision, stamp());
-          }
-          const revision = advance(db, command, stamp(), { control_state: 'paused' });
-          return insertReceipt(db, command, 'paused', revision, stamp());
+  function applyWorkControlNow(caller: AdmissionPrincipal, command: WorkControlCommand): WorkControlReceipt {
+    if (caller.account_id !== principal.account_id) throw new Error('FORBIDDEN');
+    return withImmediateTransaction(db, () => {
+      const work = visibleWork(db, caller, command.work_id, command.generation);
+      if (work.revision !== command.expected_revision) throw new Error('CONFLICT');
+      if (command.type === 'pause') {
+        if (work.control_state !== 'running') {
+          return insertReceipt(db, command, 'denied', work.revision, stamp());
         }
-        if (command.type === 'resume') {
-          if (work.control_state !== 'paused') {
-            return insertReceipt(db, command, 'denied', work.revision, stamp());
-          }
-          if (!workResumeAllowed(db, caller, stamp(), command.work_id, command.generation)) {
-            return insertReceipt(db, command, 'denied', work.revision, stamp());
-          }
-          const revision = advance(db, command, stamp(), { control_state: 'running' });
-          return insertReceipt(db, command, 'running', revision, stamp());
+        const revision = advance(db, command, stamp(), { control_state: 'paused' });
+        return insertReceipt(db, command, 'paused', revision, stamp());
+      }
+      if (command.type === 'resume') {
+        if (work.control_state !== 'paused') {
+          return insertReceipt(db, command, 'denied', work.revision, stamp());
         }
-        stopPort.submit(command.work_id, command.generation);
-        const report = stopPort.read(command.work_id, command.generation);
-        const done = report.process_tree_stopped && report.effects_reconciled;
-        const revision = advance(db, command, stamp(), {
-          control_state: done ? 'stopped' : 'processing',
-          process_tree_stopped: report.process_tree_stopped ? 1 : 0,
-          effects_reconciled: report.effects_reconciled ? 1 : 0,
-          attempt_closed: done ? 1 : undefined,
-        });
-        return insertReceipt(db, command, done ? 'stopped' : 'processing', revision, stamp());
+        if (!workResumeAllowed(db, caller, stamp(), command.work_id, command.generation)) {
+          return insertReceipt(db, command, 'denied', work.revision, stamp());
+        }
+        const revision = advance(db, command, stamp(), { control_state: 'running' });
+        return insertReceipt(db, command, 'running', revision, stamp());
+      }
+      if (!stopPort) throw new Error('STOP_SUPERVISOR_UNAVAILABLE');
+      stopPort.submit(command.work_id, command.generation);
+      const report = stopPort.read(command.work_id, command.generation);
+      const done = report.process_tree_stopped && report.effects_reconciled;
+      const revision = advance(db, command, stamp(), {
+        control_state: done ? 'stopped' : 'processing',
+        process_tree_stopped: report.process_tree_stopped ? 1 : 0,
+        effects_reconciled: report.effects_reconciled ? 1 : 0,
+        attempt_closed: done ? 1 : undefined,
       });
+      return insertReceipt(db, command, done ? 'stopped' : 'processing', revision, stamp());
+    });
+  }
+  return {
+    applyWorkControlNow,
+    async applyWorkControl(caller: AdmissionPrincipal, command: WorkControlCommand): Promise<WorkControlReceipt> {
+      return applyWorkControlNow(caller, command);
     },
 
     async syncStop(workId: string, generation: number): Promise<WorkControlReceipt> {
+      if (!stopPort) throw new Error('STOP_SUPERVISOR_UNAVAILABLE');
       return withImmediateTransaction(db, () => {
         const work = visibleWork(db, principal, workId, generation);
         const report = stopPort.read(workId, generation);

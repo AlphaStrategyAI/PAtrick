@@ -1,0 +1,16 @@
+.t15-decision form, .t15-decision fieldset, .t15-consultation form {
+  display: grid;
+  gap: 10px;
+  min-inline-size: 0;
+}
+.t15-decision fieldset {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.t15-decision fieldset > button, .t15-consultation form > button { justify-self: start; }
+.t15-decision .check-control input, .t15-consultation .check-control input { flex: 0 0 20px; }
+.t15-consultation p, .t15-consultation li, .t15-decision li { overflow-wrap: anywhere; }
+.t15-consultation ol { max-block-size: 24rem; overflow: auto; }
+.t15-consultation .actions { flex-wrap: wrap; }

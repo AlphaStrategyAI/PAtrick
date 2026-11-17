@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import type { Principal } from '../auth.js';
+import type { BrowserCreationScope } from '@patrick/contracts';
+import { assertDomainPermission, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 
 export type ConsultationReady = () => { db: SqliteDatabase; now: () => Date };
@@ -58,6 +59,14 @@ export function runConsultationCommand<T extends CommandTarget>(
     );
     return { commandId: receipt.command_id, resourceId };
   });
+}
+
+export function boundCreationDomain(db: SqliteDatabase, principal: Principal, scope: BrowserCreationScope, permission: string): string {
+  if (scope.account_id !== principal.account_id || scope.caller_id !== principal.caller_id || scope.permission_epoch !== principal.auth_epoch) {
+    throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+  }
+  assertDomainPermission(db, principal, scope.data_domain, permission);
+  return scope.data_domain;
 }
 
 export function resolvedWorkDomain(db: SqliteDatabase, principal: Principal, workId: string): string {

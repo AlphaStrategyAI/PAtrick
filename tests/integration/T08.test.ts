@@ -969,9 +969,9 @@ test('commands return 202 and delegation reads return the snapshot envelope', as
       headers,
       body: JSON.stringify(envelope('controlWork', 'work-1', 1, { type: 'stop', generation: 2 })),
     });
-    expect(workStop.status).toBe(202);
+    expect(workStop.status).toBe(503);
     expect(fx.db.prepare('SELECT control_state, process_tree_stopped, effects_reconciled FROM work_generations WHERE work_id = ?').get('work-1')).toEqual({
-      control_state: 'processing',
+      control_state: 'paused',
       process_tree_stopped: 0,
       effects_reconciled: 0,
     });

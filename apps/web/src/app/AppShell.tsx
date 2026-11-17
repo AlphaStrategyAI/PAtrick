@@ -6,25 +6,29 @@ import { CuriousLogo, Icon } from '../components/icons.js';
 import { Dialog, LocalizedError, StatusEvidence } from '../components/shared.js';
 import { LocaleProvider, useLocale } from '../i18n/LocaleProvider.js';
 import type { LocaleMode, MessageKey } from '../i18n/locale.js';
-import { browserDrafts } from '../state/browserDrafts.js';
-import type { DraftKey } from '../state/drafts.js';
+import { ConsultationPanel } from '../features/consultation/ConsultationPanel.js';
+import { CommandSession } from '../features/work/CommandSession.js';
+import '../features/work/t15.css';
 import { demoScope, isDemo } from './demo.js';
 import { navigation, settingsNavigation } from './navigation.js';
 import type { NavigationItem } from './navigation.js';
 
 export function AppShell() {
-  const { scope } = useService();
+  const { scope, accessGeneration } = useService();
   const identity = isDemo ? 'demo' : scope ? `account:${scope.account_id}` : null;
-  return <LocaleProvider key={identity} account={identity}><Shell /></LocaleProvider>;
+  const commandScope = JSON.stringify([scope?.account_id, scope?.data_domain, scope?.permission_epoch, accessGeneration]);
+  return <LocaleProvider key={identity} account={identity}>
+    <CommandSession key={commandScope}><Shell /></CommandSession>
+  </LocaleProvider>;
 }
 
 function Shell() {
   const { locale, t } = useLocale();
   const { scope, accessError, signOut } = useService();
   const [drawer, setDrawer] = useState(false);
-  const [consulting, setConsulting] = useState(false);
+  const [consulting, setConsulting] = useState<string | null>(null);
   const [hidden, setHidden] = useState(document.hidden);
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const active = [...settingsNavigation, ...navigation].find((item) => item.path === pathname)
     ?? (pathname.startsWith('/work/') ? navigation[1] : undefined);
   const health = useScopedSnapshot('getSystemHealth', {}, healthSnapshotSchema.parse, { enabled: !isDemo, refetchInterval: 15_000, projection: true });
@@ -49,7 +53,6 @@ function Shell() {
     return () => media.removeEventListener('change', onWidth);
   }, []);
 
-  const draftScope = isDemo ? demoScope : scope;
   const title = active ? t(active.label) : t('app.name');
 
   return <div className="app-shell">
@@ -65,7 +68,7 @@ function Shell() {
         <span className="crumb">{title}</span>
         <div className="topbar-actions">
           <LanguageSelect compact />
-          <button type="button" onClick={() => setConsulting(true)} aria-haspopup="dialog">{t('button.consult')}</button>
+          <button type="button" onClick={() => setConsulting(pathname + search)} aria-haspopup="dialog">{t('button.consult')}</button>
           {!!scope && <button type="button" onClick={() => { void signOut(); }}>{t('button.signOut')}</button>}
         </div>
       </header>
@@ -75,13 +78,9 @@ function Shell() {
         <Outlet context={{ health, healthStatus }} />
       </main>
     </div>
-    {consulting && <ConsultationPanel
-      key={draftScope ? JSON.stringify([draftScope.account_id, draftScope.data_domain]) : 'locked'}
-      draftKey={draftScope ? {
-        account: draftScope.account_id, domain: draftScope.data_domain,
-        conversation: 'global-consultation', resource: 'global', version: 0, kind: 'consultation',
-      } : null}
-      onClose={() => setConsulting(false)} />}
+    {consulting && <ConsultationPanel sourceRoute={consulting} returnTo={() => setConsulting(null)}
+      demoDraft={isDemo ? { account: demoScope.account_id, domain: demoScope.data_domain,
+        conversation: 'global-consultation', resource: 'global', version: 0, kind: 'consultation' } : undefined} />}
   </div>;
 }
 
@@ -116,22 +115,4 @@ export function LanguageSelect({ compact = false }: { compact?: boolean }) {
       {choices.map((choice) => <option key={choice} value={choice}>{t(`language.${choice}`)}</option>)}
     </select>
   </label>;
-}
-
-export function ConsultationPanel({ draftKey, onClose }: { draftKey: DraftKey | null; onClose: () => void }) {
-  const { t } = useLocale();
-  const [draft, setDraft] = useState(() => (draftKey ? browserDrafts.read(draftKey) : '') ?? '');
-  const [unsaved, setUnsaved] = useState(false);
-  const changeDraft = (next: string) => {
-    setDraft(next);
-    if (draftKey) setUnsaved(!browserDrafts.write(draftKey, next));
-  };
-  return <Dialog title={t('consult.title')} onClose={onClose}>
-    <p>{t(!draftKey ? 'session.required' : isDemo ? 'consult.sample' : 'consult.pending')}</p>
-    {draftKey && <>
-      <textarea aria-label={t('aria.question')} rows={5} value={draft} onChange={(event) => changeDraft(event.target.value)} />
-      {unsaved && <p role="status">{t('consult.unsaved')}</p>}
-      <footer className="actions"><button type="button" disabled={!draft} onClick={() => changeDraft('')}>{t('button.clearDraft')}</button></footer>
-    </>}
-  </Dialog>;
 }
