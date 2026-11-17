@@ -870,7 +870,17 @@ test('T12 upgrades a T11 database without changing its case rows or migration hi
   expect(t12Position).toBeGreaterThan(0);
   let db = openDatabase(location, { migrationsDir, manifest: manifest.slice(0, t12Position) });
   cleanups.push(() => { if (db.open) db.close(); rmSync(dir, { recursive: true, force: true }); });
-  await createStandardsApi(db, principal, options).seedProductDataset();
+  // Seed fixture rows on the current schema, then copy them into the historical
+  // database whose upgrade is under test. Current business APIs require recovery tables.
+  const seedPath = join(dir, 'seed.sqlite');
+  const seed = openDatabase(seedPath);
+  try { await createStandardsApi(seed, principal, options).seedProductDataset(); }
+  finally { seed.close(); }
+  db.prepare('ATTACH DATABASE ? AS fixture_seed').run(seedPath);
+  db.exec(`INSERT INTO evaluation_policies SELECT * FROM fixture_seed.evaluation_policies;
+    INSERT INTO evaluation_datasets SELECT * FROM fixture_seed.evaluation_datasets;
+    INSERT INTO cases SELECT * FROM fixture_seed.cases;`);
+  db.exec('DETACH DATABASE fixture_seed');
   const cases = db.prepare('SELECT * FROM cases ORDER BY case_id').all();
   db.close();
   db = openDatabase(location);

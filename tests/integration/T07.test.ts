@@ -10,12 +10,42 @@ import { decideTraining, scoreTrainingOnly } from '../../packages/domain/src/eva
 import { createVaultApi } from '../../packages/integrations/vault/drafts.js';
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { createRecoveryRuntimeGate } from '../../packages/storage/src/recovery-gate.js';
+import { createRecoveryWithdrawalJournal } from '../../packages/host/src/recovery/withdrawals.js';
+import { createRecoveryWitness, type RecoveryWitnessRecord } from '../../packages/host/src/recovery/witness.js';
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 
 const NOW = '2026-11-16T12:00:00.000Z';
 const DOMAIN = 'product';
+
+// In-memory independent ports exercise protection before resuming these pre-recovery
+// standard-version regressions. Recovery tests separately assert closed-domain denial.
+async function protectWithdrawalFixture(db: SqliteDatabase): Promise<void> {
+  const writerEpoch = 't07-fixture-writer';
+  let record: RecoveryWitnessRecord = { domain: DOMAIN, revision: '1', writerEpoch, writerId: 't07', state: 'open',
+    withdrawal: { seq: 0, hash: createHash('sha256').update('').digest('hex') }, certificate: null,
+    activationId: 't07-activation', parentSealedRevision: null };
+  const witness = createRecoveryWitness({ writerId: 't07', port: {
+    independence: 'independent_authority', consistency: 'linearizable', authorityId: 't07-memory-witness',
+    async readAuthoritative() { return structuredClone(record); },
+    async compareAndSwap(_domain, revision, next) {
+      if (record.revision !== revision) return false;
+      record = { ...next, revision: String(Number(revision) + 1) }; return true;
+    },
+  } });
+  const journal = createRecoveryWithdrawalJournal({ database: db, witness, now: () => new Date(NOW), log: {
+    independence: 'independent_authority',
+    async appendAndReadBack(entry) { return { domain: entry.domain, seq: entry.seq, hash: entry.hash, verified: true }; },
+  } });
+  expect(await journal.protectPending(DOMAIN, writerEpoch)).toBe('protected');
+  expect(db.prepare('SELECT COUNT(*) AS n FROM recovery_withdrawal_pending').get()).toEqual({ n: 0 });
+  db.prepare(`UPDATE recovery_domain_gates SET writer_epoch=?,status='open',activation_id='t07-activation',witness_revision=?
+    WHERE data_domain=?`).run(writerEpoch, record.revision, DOMAIN);
+  createRecoveryRuntimeGate(db).admit({ domain: DOMAIN, writerEpoch, activationId: 't07-activation', witnessRevision: record.revision });
+}
+
 const MIGRATIONS = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
 const FIXTURE = fileURLToPath(new URL('../../fixtures/evaluation/product/manifest.json', import.meta.url));
 const PREVIOUS = {
@@ -328,6 +358,9 @@ test('judgment basis stays on v1 for in-flight work, and withdrawing v1 blocks i
 
     await api.withdrawStandardVersion(first.standard_id, 1, '依赖撤回');
     expect(await api.admitJudgmentAction('work-inflight', 3)).toBe('blocked');
+    expect(await api.admitJudgmentAction('work-new', 1)).toBe('blocked');
+    await protectWithdrawalFixture(fx.db);
+    expect(await api.admitJudgmentAction('work-inflight', 3)).toBe('blocked');
     expect(await api.admitJudgmentAction('work-new', 1)).toBe('allowed');
     expect((await api.freezeJudgmentBasis('work-inflight', 3)).hash).toBe(inflight.hash);
   } finally {
@@ -388,6 +421,8 @@ RETURNING standard_id, active_version, revision;`);
     fx.db.prepare(`INSERT INTO withdrawal_events (
       event_id, data_domain, target_kind, target_id, target_version, epoch, reason, created_at
     ) VALUES ('withdraw:evidence:1', ?, 'evidence', 'ev-1', 1, 1, '水位变化', ?)`).run(DOMAIN, NOW);
+    await expect(api.adoptStandard(candidate.id, restored.id, candidate.revision)).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    await protectWithdrawalFixture(fx.db);
     expect(await api.adoptStandard(candidate.id, restored.id, candidate.revision)).toBe('stale');
     expect(await api.activeStandardVersion(candidate.standard_id)).toBeNull();
 
@@ -660,6 +695,8 @@ test('a second adopt on an already adopted candidate keeps adopted state', async
     fx.db.prepare(`INSERT INTO withdrawal_events (
       event_id, data_domain, target_kind, target_id, target_version, epoch, reason, created_at
     ) VALUES ('withdraw:evidence:adopt-guard', ?, 'evidence', 'ev-1', 1, 1, '水位变化', ?)`).run(DOMAIN, NOW);
+    await expect(api.evaluate(candidate, { version: 1 })).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    await protectWithdrawalFixture(fx.db);
     const secondReport = await api.evaluate(candidate, { version: 1 });
     expect(secondReport.id).not.toBe(firstReport.id);
     expect(await api.adoptStandard(candidate.id, secondReport.id, candidate.revision)).toBe('adopted');

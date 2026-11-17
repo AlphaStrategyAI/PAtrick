@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { dispatchAllowed, type AdmissionPrincipal, type ExecutionGrant, type RunGrant } from './delegation.js';
 import { createStandardsApi, type CaseOutcome } from './standards.js';
 export type { CaseOutcome } from './standards.js';
@@ -168,6 +168,12 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
       .get(workId, generation, principal.account_id, domain) as BuildBasis | undefined;
   }
 
+  function assertWorkRecovery(workId: string, generation: number): void {
+    const work = db.prepare('SELECT data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(workId, generation) as { data_domain: string } | undefined;
+    if (!work) throw new Error('NOT_FOUND');
+    assertRecoveryWriteAllowed(db, work.data_domain);
+  }
+
   function loadBuild(workId: string, generation: number): BuildRow | undefined {
     return db.prepare('SELECT * FROM work_pr_builds WHERE work_id = ? AND generation = ?').get(workId, generation) as BuildRow | undefined;
   }
@@ -205,9 +211,9 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
     return { datasetId, caseId };
   }
 
-  function mark(intent: IntentRow, status: Exclude<EffectStatus, 'verified'>, reason: string | null, number: number | null = null) {
+  function mark(intent: IntentRow, status: Exclude<EffectStatus, 'verified'>, reason: string | null, number: number | null = null, stamp = stamped()) {
     db.prepare(`UPDATE effect_receipts SET status = ?, reason = ?, remote_number = COALESCE(remote_number, ?), updated_at = ?
-      WHERE intent_id = ? AND status NOT IN ('verified', 'conflict', 'blocked')`).run(status, reason, number, stamped(), intent.intent_id);
+      WHERE intent_id = ? AND status NOT IN ('verified', 'conflict', 'blocked')`).run(status, reason, number, stamp, intent.intent_id);
     return readReceipt(intent);
   }
 
@@ -245,6 +251,7 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
           basis_hash: basis.basis_hash, repo_id: target.repoId, base_ref: target.baseRef,
           artifact: canonicalPayload(artifact), patch: canonicalPayload(patch) };
         if (!mayDispatch(workId, generation, grant.grant_id, stamp) || !buildCurrent(workId, generation, grant.grant_id, candidate)) throw new Error('DENIED');
+        assertWorkRecovery(workId, generation);
         const buildId = 'build:' + hash(canonicalPayload([workId, generation, candidate]));
         const prior = loadBuild(workId, generation);
         if (prior && prior.build_id !== buildId) throw new Error('CONFLICT');
@@ -286,6 +293,7 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
           if (old.payload_hash !== payloadHash || old.authorization_ref !== grantId) throw new Error('CONFLICT');
           return readReceipt(old);
         }
+        assertWorkRecovery(workId, generation);
         db.prepare(`INSERT INTO effect_intents (intent_id, effect_key, account_id, data_domain, work_id, generation,
           origin, action, authorization_ref, authorization_epoch, resource, repo_id, repo_owner, repo_name, branch, base_ref, expected_remote_version,
           head_sha, tree_sha, title, body, payload_hash, dataset_id, case_id, build_id, created_at, schema_version)
@@ -337,6 +345,7 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
           mark(intent, prior ? 'uncertain' : 'blocked', 'dispatch_denied');
           return false;
         }
+        assertRecoveryWriteAllowed(db, requireIntent(intentId).data_domain);
         const plan = loadRebuild(intentId);
         const createPermit = db.prepare("SELECT 1 FROM effect_dispatches WHERE intent_id = ? AND phase = 'create_pr'").get(intentId);
         if (phase === 'build_blob' || phase === 'build_tree' || phase === 'build_commit') {
@@ -361,7 +370,7 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
           intentId, phase, expectedRemoteVersion, intent.authorization_ref, stamp, String(rebuildId ?? 'initial'), expectedHead ?? null,
         );
         if (claim.changes !== 1) return false;
-        mark(intent, 'uncertain', phase);
+        mark(intent, 'uncertain', phase, null, stamp);
         return true;
       });
     },
@@ -412,19 +421,23 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
             || previous.replacement_head_sha !== input.expectedHead || previous.payload !== encoded) throw new Error('CONFLICT');
           return previous;
         }
+        const stamp = stamped();
+        assertRecoveryWriteAllowed(db, requireIntent(intentId).data_domain);
         db.prepare(`INSERT INTO effect_pr_rebuilds (intent_id, remote_number, parent_head_sha, observed_base_sha, base_tree_sha,
           patch_digest, source_revision_id, replacement_tree_sha, replacement_head_sha, payload, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(intentId, input.number, input.headSha, input.baseSha, input.baseTree,
-          resolvedIntent(intent).patch.digest, requireBuild(intent).source_revision_id, input.expectedTree, input.expectedHead, encoded, stamped());
+          resolvedIntent(intent).patch.digest, requireBuild(intent).source_revision_id, input.expectedTree, input.expectedHead, encoded, stamp);
         return loadRebuild(intentId)!;
       });
     },
 
     activateReplacement(intentId: string, rebuildId: number, head: string, tree: string, base: string): void {
       transaction(() => {
-        requireIntent(intentId);
+        const stamp = stamped();
+        const intent = requireIntent(intentId);
+        assertRecoveryWriteAllowed(db, intent.data_domain);
         const result = db.prepare(`UPDATE effect_pr_rebuilds SET applied_at = ? WHERE rebuild_id = ? AND intent_id = ? AND applied_at IS NULL
-          AND replacement_head_sha = ? AND replacement_tree_sha = ? AND observed_base_sha = ?`).run(stamped(), rebuildId, intentId, head, tree, base);
+          AND replacement_head_sha = ? AND replacement_tree_sha = ? AND observed_base_sha = ?`).run(stamp, rebuildId, intentId, head, tree, base);
         if (result.changes !== 1) throw new Error('CONFLICT');
       });
     },
@@ -451,6 +464,7 @@ export function createEffectRepository(db: SqliteDatabase, principal: AdmissionP
           || !buildCurrent(intent.work_id, intent.generation, intent.authorization_ref, requireBuild(intent)))) {
           return mark(intent, 'blocked', 'dispatch_denied');
         }
+        assertRecoveryWriteAllowed(db, requireIntent(intentId).data_domain);
         db.prepare(`UPDATE effect_receipts SET status = 'verified', reason = NULL, remote_number = ?, verified_base_sha = ?,
           verified_head_sha = ?, verified_tree_sha = ?, updated_at = ? WHERE intent_id = ?`).run(
           actual.number, frozenBaseSha, actual.headSha, actual.treeSha, stamp, intentId,

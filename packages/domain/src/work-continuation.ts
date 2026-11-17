@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, recoveryWriteAllowed, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { Principal } from './answer-gate.js';
 import { issueWorkGrant, type ExecutionGrant } from './delegation.js';
 import type { JudgmentBasis } from './standards.js';
@@ -103,6 +103,7 @@ export function confirmCollectedEvidence(
       if (proof.evidence_ref !== evidenceRef) throw new Error('CONFLICT');
       return;
     }
+    assertWorkRecovery(db, answerStage.work_id, answerStage.generation);
     const answer = resumeRow(db, answerStage);
     if (!answer || answer.state !== 'claimed' || !answer.next_action.startsWith('collect:')) throw new Error('WAITING');
     const question = db.prepare(`SELECT account_id, data_domain, expected_material, withdrawal_watermark, work_id, generation
@@ -205,6 +206,7 @@ export function recordCollectionRound(
     if (!question || question.account_id !== principal.account_id || !principal.domains.includes(question.data_domain)) {
       throw new Error('FORBIDDEN');
     }
+    assertRecoveryWriteAllowed(db, question.data_domain);
     if (question.expected_material !== input.material || input.evidence_ref !== input.material) throw new Error('UNPROCESSABLE');
     db.prepare(`INSERT INTO collection_rounds (
       round_id, question_id, material, evidence_ref, closed, account_id, data_domain, created_at
@@ -236,6 +238,8 @@ export function deliveryEvidenceCurrent(
   const stage = db.prepare('SELECT stage FROM work_stages WHERE work_id = ? AND generation = ?').get(workId, generation) as
     { stage: string } | undefined;
   if (stage?.stage === 'waiting_evidence') return false;
+  const work = db.prepare('SELECT data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(workId, generation) as { data_domain: string } | undefined;
+  if (!work || work.data_domain !== domain || !recoveryWriteAllowed(db, work.data_domain)) return false;
   const resumes = db.prepare(`SELECT question_id, answer_event_id, state, next_action, evidence_ref, attempt_id
     FROM resume_intents WHERE work_id = ? AND generation = ? AND phase = 'evidence_ready'`)
     .all(workId, generation) as Array<ResumeRow & { question_id: string; answer_event_id: string }>;
@@ -254,13 +258,15 @@ export function emitStage(
   now: Date = new Date(),
 ): void {
   withImmediateTransaction(db, () => {
+    const stamped = now.toISOString();
+    assertWorkRecovery(db, workId, generation);
     assertDeliveryOpen(db, workId, generation);
     db.prepare('INSERT INTO stage_events (event_id, work_id, generation, kind, created_at) VALUES (?, ?, ?, ?, ?)').run(
       `stage_${randomUUID()}`,
       workId,
       generation,
       kind,
-      now.toISOString(),
+      stamped,
     );
   });
 }
@@ -270,7 +276,14 @@ export function writePullRequest(db: SqliteDatabase, workId: string, generation:
 }
 
 export function dispatchDelivery(db: SqliteDatabase, workId: string, generation: number): void {
+  assertWorkRecovery(db, workId, generation);
   assertDeliveryOpen(db, workId, generation);
+}
+
+function assertWorkRecovery(db: SqliteDatabase, workId: string, generation: number): void {
+  const work = db.prepare('SELECT data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(workId, generation) as { data_domain: string } | undefined;
+  if (!work) throw new Error('NOT_FOUND');
+  assertRecoveryWriteAllowed(db, work.data_domain);
 }
 
 function signGrant(
@@ -384,7 +397,7 @@ function continuationReady(
     key.generation,
   ) as { account_id: string; data_domain: string; mandate_id: string } | undefined;
   if (!work || work.account_id !== principal.account_id || work.data_domain !== domain) return false;
-  if (!principal.domains.includes(domain)) return false;
+  if (!principal.domains.includes(domain) || !recoveryWriteAllowed(db, work.data_domain)) return false;
   const mandate = db.prepare('SELECT status, expires_at FROM mandates WHERE mandate_id = ?').get(work.mandate_id) as {
     status: string;
     expires_at: string;

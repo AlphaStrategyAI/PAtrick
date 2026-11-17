@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, recoveryWriteAllowed, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
   decideTraining,
   evaluateFrozen,
@@ -223,6 +223,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           data_domain: string;
         } | undefined;
         if (!vault || vault.account_id !== principal.account_id || vault.data_domain !== domain) throw new Error('FORBIDDEN');
+        assertRecoveryWriteAllowed(db, vault.data_domain);
         const relativePath = `标准修订/${safeSegment(input.draftKey)}.md`;
         db.prepare('INSERT INTO blobs (sha256, byte_length, created_at) VALUES (?, ?, ?) ON CONFLICT(sha256) DO NOTHING').run(
           hash,
@@ -327,6 +328,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
         if (document.vault_id !== input.vault_id || document.observed_seq !== input.source_revision || document.content_hash !== input.content_hash) {
           throw new Error('CONFLICT');
         }
+        assertRecoveryWriteAllowed(db, document.data_domain);
         if (!document.body_text) throw new Error('UNPROCESSABLE');
         const rules = parseRules(document.body_text);
         const existingStandard = db.prepare('SELECT active_version, revision, account_id, data_domain FROM standards WHERE standard_id = ?').get(input.standard_id) as {
@@ -391,6 +393,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
       assertDomain();
       const candidate = requireCandidate(db, candidateId);
       if (candidate.account_id !== principal.account_id || candidate.data_domain !== domain) throw new Error('FORBIDDEN');
+      assertRecoveryWriteAllowed(db, candidate.data_domain);
       const prepared = loadPrepared(db, policyVersion, domain);
       return {
         candidate_id: candidate.candidate_id,
@@ -418,6 +421,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
       return withImmediateTransaction(db, () => {
         const row = requireCandidate(db, candidate.id);
         if (row.account_id !== principal.account_id || row.data_domain !== domain) throw new Error('FORBIDDEN');
+        assertRecoveryWriteAllowed(db, row.data_domain);
         const head = documentHead(db, row.document_id);
         if (head.observed_seq !== row.source_revision || head.content_hash !== row.content_hash) throw new Error('CONFLICT');
         const prepared = loadPrepared(db, policy.version, domain);
@@ -498,6 +502,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
         if (adopted) return 'adopted';
         const candidate = requireCandidate(db, candidateId);
         if (candidate.account_id !== principal.account_id) throw new Error('FORBIDDEN');
+        assertRecoveryWriteAllowed(db, candidate.data_domain);
         const report = requireReport(db, reportId);
         const reject = (result: 'stale' | 'not_adopted'): 'adopted' | 'stale' | 'not_adopted' => {
           if (candidate.status === 'adopted') return 'adopted';
@@ -623,6 +628,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           data_domain: string;
         } | undefined;
         if (!row) throw new Error('NOT_FOUND');
+        assertRecoveryWriteAllowed(db, row.data_domain);
         const outcomeId = `outcome_${sha256(canonicalPayload({
           case_id: caseId,
           dataset_id: row.dataset_id,
@@ -642,6 +648,8 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           stamped,
         );
         onRecorded?.(outcomeId, row.dataset_id);
+        const current = db.prepare('SELECT data_domain FROM cases WHERE dataset_id = ? AND case_id = ?').get(row.dataset_id, caseId) as { data_domain: string };
+        assertRecoveryWriteAllowed(db, current.data_domain);
       });
     },
 
@@ -702,6 +710,9 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           if (existing.account_id !== principal.account_id || existing.data_domain !== domain) throw new Error('FORBIDDEN');
           return basisView(existing);
         }
+        const work = db.prepare('SELECT account_id, data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(workId, generation) as { account_id: string; data_domain: string } | undefined;
+        if (work && (work.account_id !== principal.account_id || work.data_domain !== domain)) throw new Error('FORBIDDEN');
+        assertRecoveryWriteAllowed(db, work?.data_domain ?? domain);
         const active = db.prepare(`SELECT standard_id, active_version FROM standards
           WHERE account_id = ? AND data_domain = ? AND active_version IS NOT NULL
           ORDER BY standard_id`).all(principal.account_id, domain) as Array<{ standard_id: string; active_version: number }>;
@@ -784,6 +795,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
       assertDomain();
       const basis = loadBasis(db, workId, generation);
       if (!basis || basis.account_id !== principal.account_id || basis.data_domain !== domain) throw new Error('NOT_FOUND');
+      if (!recoveryWriteAllowed(db, basis.data_domain)) return 'blocked';
       const standards = JSON.parse(basis.standards_json) as Array<{ standard_id: string; standard_version: number }>;
       for (const item of standards) {
         const withdrawn = db.prepare(`SELECT epoch FROM withdrawal_events
@@ -811,6 +823,7 @@ function seedDataset(
   const externalRules = input.externalRules ?? [{ when: [], unless: [], choice: 'interview' }];
   const splitHash = sha256(canonicalPayload({ training_ids: trainingIds, holdout_ids: holdoutIds }));
   withImmediateTransaction(db, () => {
+    assertRecoveryWriteAllowed(db, domain);
     db.prepare(`INSERT INTO evaluation_policies (
       policy_id, policy_version, data_domain, dataset_id, min_samples, threshold_thousandths, budget_micros,
       external_method_id, external_method_revision, external_rules_json, schema_version, created_at
@@ -949,6 +962,8 @@ function stageProposal(
     expected_revision: candidate.pointer_revision,
   }));
   const expiresAt = new Date(now().getTime() + 5 * 60 * 1000).toISOString();
+  const current = requireCandidate(db, candidate.candidate_id);
+  assertRecoveryWriteAllowed(db, current.data_domain);
   db.prepare(`INSERT INTO auth_challenges (
     challenge_id, account_id, purpose, challenge, challenge_hash, origin, rp_id, expires_at, consumed_at, created_at
   ) VALUES (?, ?, 'control', ?, ?, ?, ?, ?, NULL, ?)`).run(

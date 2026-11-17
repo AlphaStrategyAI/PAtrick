@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendDomainEvent, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, appendDomainEvent, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 
 const CJK = /[\u3400-\u9fff]/;
 
@@ -81,8 +81,13 @@ export function ftsMatch(text: string): string {
 
 export function reindexKnowledge(db: SqliteDatabase, knowledgeId: string, domain: string, parts: readonly string[]): void {
   const tokens = tokenDocument(parts);
-  db.prepare('DELETE FROM knowledge_fts WHERE knowledge_id = ?').run(knowledgeId);
-  db.prepare('INSERT INTO knowledge_fts (knowledge_id, data_domain, tokens) VALUES (?, ?, ?)').run(knowledgeId, domain, tokens);
+  withImmediateTransaction(db, () => {
+    const row = db.prepare('SELECT data_domain FROM knowledge_records WHERE knowledge_id = ?').get(knowledgeId) as { data_domain: string } | undefined;
+    if (row && row.data_domain !== domain) throw new Error('CONFLICT');
+    assertRecoveryWriteAllowed(db, row?.data_domain ?? domain);
+    db.prepare('DELETE FROM knowledge_fts WHERE knowledge_id = ?').run(knowledgeId);
+    db.prepare('INSERT INTO knowledge_fts (knowledge_id, data_domain, tokens) VALUES (?, ?, ?)').run(knowledgeId, domain, tokens);
+  });
 }
 
 export function recordKnowledge(db: SqliteDatabase, input: {
@@ -96,69 +101,72 @@ export function recordKnowledge(db: SqliteDatabase, input: {
   observedSeq: number;
   now: string;
 }): void {
-  const existing = db.prepare('SELECT revision, data_domain, canonical_id FROM knowledge_records WHERE knowledge_id = ?').get(input.knowledgeId) as {
-    revision: number;
-    data_domain: string;
-    canonical_id: string;
-  } | undefined;
-  if (existing && existing.data_domain !== input.domain) throw new Error('CONFLICT');
-  const revision = existing ? existing.revision + 1 : 1;
-  if (!existing) {
-    db.prepare(`INSERT INTO knowledge_records (
-      knowledge_id, canonical_id, account_id, data_domain, revision, status, title, body, schema_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, '1.0', ?, ?)`).run(
+  withImmediateTransaction(db, () => {
+    const existing = db.prepare('SELECT revision, data_domain, canonical_id FROM knowledge_records WHERE knowledge_id = ?').get(input.knowledgeId) as {
+      revision: number;
+      data_domain: string;
+      canonical_id: string;
+    } | undefined;
+    if (existing && existing.data_domain !== input.domain) throw new Error('CONFLICT');
+    assertRecoveryWriteAllowed(db, existing?.data_domain ?? input.domain);
+    const revision = existing ? existing.revision + 1 : 1;
+    if (!existing) {
+      db.prepare(`INSERT INTO knowledge_records (
+        knowledge_id, canonical_id, account_id, data_domain, revision, status, title, body, schema_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, '1.0', ?, ?)`).run(
+        input.knowledgeId,
+        input.knowledgeId,
+        input.accountId,
+        input.domain,
+        revision,
+        input.knowledgeId,
+        input.body,
+        input.now,
+        input.now,
+      );
+    } else {
+      db.prepare(`UPDATE knowledge_records
+        SET revision = ?, body = ?, status = 'candidate', updated_at = ?
+        WHERE knowledge_id = ? AND data_domain = ?`).run(revision, input.body, input.now, input.knowledgeId, input.domain);
+    }
+    if (input.alias) {
+      db.prepare(`INSERT INTO knowledge_aliases (knowledge_id, alias, data_domain) VALUES (?, ?, ?)
+        ON CONFLICT(data_domain, alias) DO NOTHING`).run(input.knowledgeId, input.alias, input.domain);
+    }
+    const evidenceId = `ev_${sha256(`${input.documentId}\0${input.revisionId}`).slice(0, 24)}`;
+    db.prepare(`INSERT INTO evidence_refs (
+      evidence_id, knowledge_id, data_domain, document_id, revision_id, source_kind, status, withdrawal_epoch, span, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'vault', 'supported', NULL, NULL, ?)
+    ON CONFLICT(evidence_id) DO NOTHING`).run(
+      evidenceId,
       input.knowledgeId,
-      input.knowledgeId,
-      input.accountId,
       input.domain,
-      revision,
-      input.knowledgeId,
-      input.body,
-      input.now,
+      input.documentId,
+      input.revisionId,
       input.now,
     );
-  } else {
-    db.prepare(`UPDATE knowledge_records
-      SET revision = ?, body = ?, status = 'candidate', updated_at = ?
-      WHERE knowledge_id = ? AND data_domain = ?`).run(revision, input.body, input.now, input.knowledgeId, input.domain);
-  }
-  if (input.alias) {
-    db.prepare(`INSERT INTO knowledge_aliases (knowledge_id, alias, data_domain) VALUES (?, ?, ?)
-      ON CONFLICT(data_domain, alias) DO NOTHING`).run(input.knowledgeId, input.alias, input.domain);
-  }
-  const evidenceId = `ev_${sha256(`${input.documentId}\0${input.revisionId}`).slice(0, 24)}`;
-  db.prepare(`INSERT INTO evidence_refs (
-    evidence_id, knowledge_id, data_domain, document_id, revision_id, source_kind, status, withdrawal_epoch, span, created_at
-  ) VALUES (?, ?, ?, ?, ?, 'vault', 'supported', NULL, NULL, ?)
-  ON CONFLICT(evidence_id) DO NOTHING`).run(
-    evidenceId,
-    input.knowledgeId,
-    input.domain,
-    input.documentId,
-    input.revisionId,
-    input.now,
-  );
-  db.prepare(`INSERT INTO evidence_dependencies (
-    dependency_id, from_kind, from_id, from_version, to_kind, to_id, to_version, data_domain, epoch, created_at
-  ) VALUES (?, 'knowledge', ?, ?, 'revision', ?, ?, ?, 0, ?)
-  ON CONFLICT(dependency_id) DO NOTHING`).run(
-    `dep_${evidenceId}`,
-    input.knowledgeId,
-    revision,
-    input.revisionId,
-    input.observedSeq,
-    input.domain,
-    input.now,
-  );
-  const aliases = db.prepare('SELECT alias FROM knowledge_aliases WHERE knowledge_id = ? AND data_domain = ?').all(input.knowledgeId, input.domain) as {
-    alias: string;
-  }[];
-  const bodies = db.prepare(`SELECT body_text FROM vault_documents
-    WHERE knowledge_id = ? AND kind = 'note' AND tombstone = 0 AND body_text IS NOT NULL`).all(input.knowledgeId) as { body_text: string }[];
-  reindexKnowledge(db, input.knowledgeId, input.domain, [
-    ...bodies.map((row) => row.body_text),
-    ...aliases.map((row) => row.alias),
-  ]);
+    db.prepare(`INSERT INTO evidence_dependencies (
+      dependency_id, from_kind, from_id, from_version, to_kind, to_id, to_version, data_domain, epoch, created_at
+    ) VALUES (?, 'knowledge', ?, ?, 'revision', ?, ?, ?, 0, ?)
+    ON CONFLICT(dependency_id) DO NOTHING`).run(
+      `dep_${evidenceId}`,
+      input.knowledgeId,
+      revision,
+      input.revisionId,
+      input.observedSeq,
+      input.domain,
+      input.now,
+    );
+    const aliases = db.prepare('SELECT alias FROM knowledge_aliases WHERE knowledge_id = ? AND data_domain = ?').all(input.knowledgeId, input.domain) as {
+      alias: string;
+    }[];
+    const bodies = db.prepare(`SELECT body_text FROM vault_documents
+      WHERE knowledge_id = ? AND kind = 'note' AND tombstone = 0 AND body_text IS NOT NULL`).all(input.knowledgeId) as { body_text: string }[];
+    reindexKnowledge(db, input.knowledgeId, input.domain, [
+      ...bodies.map((row) => row.body_text),
+      ...aliases.map((row) => row.alias),
+    ]);
+  });
 }
 
 export async function queryEvidence(

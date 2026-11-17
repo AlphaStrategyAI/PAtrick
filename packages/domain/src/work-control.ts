@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { workResumeAllowed, type AdmissionPrincipal } from './delegation.js';
 
 export type WorkControlCommand = {
@@ -94,8 +94,14 @@ export function createWorkControlApi(db: SqliteDatabase, principal: AdmissionPri
         if (!workResumeAllowed(db, caller, stamp(), command.work_id, command.generation)) {
           return insertReceipt(db, command, 'denied', work.revision, stamp());
         }
-        const revision = advance(db, command, stamp(), { control_state: 'running' });
-        return insertReceipt(db, command, 'running', revision, stamp());
+        const stamped = stamp();
+        const current = visibleWork(db, caller, command.work_id, command.generation);
+        assertRecoveryWriteAllowed(db, current.data_domain);
+        if (!workResumeAllowed(db, caller, stamped, command.work_id, command.generation)) {
+          return insertReceipt(db, command, 'denied', current.revision, stamped);
+        }
+        const revision = advance(db, command, stamped, { control_state: 'running' });
+        return insertReceipt(db, command, 'running', revision, stamped);
       }
       if (!stopPort) throw new Error('STOP_SUPERVISOR_UNAVAILABLE');
       stopPort.submit(command.work_id, command.generation);

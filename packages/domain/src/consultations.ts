@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { ackOutbox, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, recoveryWriteAllowed, ackOutbox, appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { BudgetReceipt, Usage } from './budget.js';
 import { createDelegationApi, type AdmissionPrincipal, type ConsultationGrant } from './delegation.js';
 
@@ -161,6 +161,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
           throw new Error('FORBIDDEN');
         }
         const stamped = stamp();
+        assertRecoveryWriteAllowed(db, request.data_domain);
         const requestId = `req_${randomUUID()}`;
         const conversationId = insertConversation(db, principal, {
           kind: 'consultation',
@@ -239,6 +240,9 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         generation: number;
         hops: number;
       };
+      const stamped = stamp();
+      const current = requireConsultation(db, requestId);
+      assertRecoveryWriteAllowed(db, current.data_domain);
       return hub.publish({
         event_id: payload.event_id,
         root: payload.root,
@@ -247,7 +251,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         hops: payload.hops,
         kind: 'consultation.requested',
         request_id: payload.request_id,
-      }, stamp());
+      }, stamped);
     },
 
     async runConsultation(principal: AdmissionPrincipal, requestId: string, billing: ConsultationBilling): Promise<ConsultationRun> {
@@ -264,6 +268,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         }
         throw error;
       }
+      assertRecoveryWriteAllowed(db, requireConsultation(db, requestId).data_domain);
       const businessId = `consultation:${requestId}`;
       const dispatched = await billing.dispatch({
         businessId,
@@ -298,6 +303,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
           return { conversation_id: existing.conversation_id, work_id: existing.work_id, revision: existing.revision };
         }
         const stamped = stamp();
+        assertRecoveryWriteAllowed(db, request.data_domain);
         const conversationId = insertConversation(db, principal, {
           kind: 'work',
           dataDomain: request.data_domain,
@@ -326,6 +332,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
     }): ConversationMessage {
       if (request.text.length === 0 || request.client_request_id.length === 0) throw new Error('UNPROCESSABLE');
       return withImmediateTransaction(db, () => {
+        const stamped = stamp();
         const conversation = requireOwnedConversation(db, principal, conversationId);
         const existing = db.prepare(`SELECT message_id, conversation_id, raw_text, role, kind, result_version
           FROM messages WHERE conversation_id = ? AND caller_request_id = ?`).get(conversationId, request.client_request_id) as ConversationMessage | undefined;
@@ -333,6 +340,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
           if (existing.raw_text !== request.text) throw new Error('CONFLICT');
           return existing;
         }
+        assertRecoveryWriteAllowed(db, conversation.data_domain);
         return insertMessage(db, {
           conversationId: conversation.conversation_id,
           accountId: principal.account_id,
@@ -342,7 +350,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
           rawText: request.text,
           resultVersion: null,
           callerRequestId: request.client_request_id,
-          stamped: stamp(),
+          stamped,
         });
       });
     },
@@ -376,6 +384,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       expectedRevision: number,
     ): ConversationReceipt {
       return withImmediateTransaction(db, () => {
+        const stamped = stamp();
         const conversation = requireOwnedConversation(db, principal, conversationId);
         if (conversation.kind !== 'work') throw new Error('UNPROCESSABLE');
         if (conversation.work_id === workId) {
@@ -383,13 +392,14 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
         }
         if (conversation.work_id) throw new Error('CONFLICT');
         if (!visibleWork(db, principal, workId, conversation.data_domain)) throw new Error('FORBIDDEN');
+        assertRecoveryWriteAllowed(db, conversation.data_domain);
         const updated = db.prepare(`UPDATE conversations
           SET work_id = @work_id, revision = revision + 1, updated_at = @updated_at
           WHERE conversation_id = @conversation_id AND revision = @expected_revision AND work_id IS NULL
             AND account_id = @account_id AND caller_id = @caller_id
           RETURNING revision`).get({
           work_id: workId,
-          updated_at: stamp(),
+          updated_at: stamped,
           conversation_id: conversation.conversation_id,
           expected_revision: expectedRevision,
           account_id: principal.account_id,
@@ -439,7 +449,10 @@ export function acknowledgeConsultationOutbox(
       WHERE o.event_id = ? AND o.destination = 'autoloop' AND h.request_id = ? AND h.kind = 'consultation.requested'`)
       .get(eventId, requestId) as { result: string | null } | undefined;
     if (!row) throw new Error('CONSULTATION_HUB_RECEIPT_MISSING');
-    if (row.result === null) ackOutbox(db, eventId, 'autoloop', result);
+    if (row.result === null) {
+      assertRecoveryWriteAllowed(db, requireConsultation(db, requestId).data_domain);
+      ackOutbox(db, eventId, 'autoloop', result);
+    }
   });
 }
 
@@ -459,7 +472,7 @@ export function admittedConsultation(db: SqliteDatabase, requestId: string, now:
       AND c.account_id = e.account_id AND c.data_domain = e.data_domain`).get(requestId, now) as {
     raw_text: string; account_id: string; caller_id: string; data_domain: string; deadline_at: string; payload: string; auth_epoch: number;
   } | undefined;
-  if (!row) return null;
+  if (!row || !recoveryWriteAllowed(db, row.data_domain)) return null;
   let event: { type?: unknown; auth_epoch?: unknown; authorization_permission?: unknown } | null;
   try {
     event = JSON.parse(row.payload) as typeof event;
@@ -570,6 +583,10 @@ export function recoverConsultationPaidResults(db: SqliteDatabase, now: string, 
 
 function answerConsultation(db: SqliteDatabase, requestId: string, version: number, answer: ConsultationAnswer, stamped: string): boolean {
   const stored = canonicalPayload({ text: answer.text });
+  const current = loadConsultation(db, requestId);
+  if (!current) return false;
+  if (current.result_version !== version || !['pending', 'waiting_user'].includes(current.status)) return false;
+  assertRecoveryWriteAllowed(db, current.data_domain);
   const updated = db.prepare(COMPLETE_CONSULTATION_SQL).get({
     answer: stored,
     request_id: requestId,
