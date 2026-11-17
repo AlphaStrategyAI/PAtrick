@@ -675,6 +675,7 @@ test('the source migration appends without changing earlier files', () => {
     '0008_admission_budget.sql',
     '0010_answers_channels.sql',
     '0011_conversations.sql',
+    '0012_effects_outcomes.sql',
   ]);
   for (const [file, hash] of Object.entries(HASHES)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

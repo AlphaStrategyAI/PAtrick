@@ -612,7 +612,9 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
       });
     },
 
-    async recordOutcome(caseId: string, outcome: CaseOutcome): Promise<void> {
+    async recordOutcome(
+      caseId: string, outcome: CaseOutcome, onRecorded?: (outcomeId: string, datasetId: string) => void,
+    ): Promise<void> {
       assertDomain();
       const stamped = stamp();
       withImmediateTransaction(db, () => {
@@ -639,6 +641,7 @@ export function createStandardsApi(db: SqliteDatabase, principal: StandardsPrinc
           outcome.observed_at,
           stamped,
         );
+        onRecorded?.(outcomeId, row.dataset_id);
       });
     },
 

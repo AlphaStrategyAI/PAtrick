@@ -34,5 +34,9 @@
   {
     "file": "0011_conversations.sql",
     "sha256": "d256e5b3de0f1ac3c75ce683ee3d7a8ef961e0da2d93896164546282dba6018d"
+  },
+  {
+    "file": "0012_effects_outcomes.sql",
+    "sha256": "5a04aff8c3fef40000d7c0862a0c3ac9c0eb27b69845805df63fa5ce6fbc9b44"
   }
 ]

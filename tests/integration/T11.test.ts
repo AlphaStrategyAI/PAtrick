@@ -266,12 +266,13 @@ RETURNING result_version;`);
     expect(migration).toContain('ALTER TABLE consultations');
     expect(migration).not.toContain('CREATE TABLE consultations');
     const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../../packages/storage/migrations/manifest.json', import.meta.url)), 'utf8')) as Array<{ file: string; sha256: string }>;
-    expect(manifest.at(-1)?.file).toBe('0011_conversations.sql');
-    expect(manifest.at(-2)).toEqual({
+    const conversationIndex = manifest.findIndex((entry) => entry.file === '0011_conversations.sql');
+    expect(conversationIndex).toBeGreaterThan(0);
+    expect(manifest[conversationIndex - 1]).toEqual({
       file: '0010_answers_channels.sql',
       sha256: '2d70545abe54c8ba81402f77db6de09c9153ae50ba0bfec844f38626957b752b',
     });
-    expect(manifest.at(-1)?.sha256).toBe(createHash('sha256').update(migration).digest('hex'));
+    expect(manifest[conversationIndex]?.sha256).toBe(createHash('sha256').update(migration).digest('hex'));
     const applied = fx.db.prepare('SELECT file FROM schema_migrations ORDER BY position').all() as Array<{ file: string }>;
     expect(applied.map((entry) => entry.file)).toEqual(manifest.map((entry) => entry.file));
   } finally {

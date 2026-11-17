@@ -20,10 +20,14 @@
     "./vault/uri": "./vault/uri.ts",
     "./feishu/connection": "./feishu/connection.ts",
     "./feishu/channel-gate": "./feishu/channel-gate.ts",
-    "./mcp/consultation": "./mcp/consultation.ts"
+    "./mcp/consultation": "./mcp/consultation.ts",
+    "./publisher/build": "./publisher/build.ts",
+    "./publisher/github": "./publisher/github.ts",
+    "./publisher/outcomes": "./publisher/outcomes.ts"
   },
   "dependencies": {
     "@patrick/contracts": "*",
+    "@patrick/domain": "*",
     "@patrick/storage": "*"
   }
 }

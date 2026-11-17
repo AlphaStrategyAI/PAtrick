@@ -12,6 +12,7 @@ import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/sto
 import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
 import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
 import { mountControlRoutes } from './control.js';
+import { createPrDeliveryService, type PrDeliveryOptions } from './pr-delivery.js';
 import { mountAnswerRoutes } from './routes/answers.js';
 import { mountConsultationRoutes } from './routes/consultations.js';
 import { mountConversationRoutes } from './routes/conversations.js';
@@ -30,6 +31,7 @@ export type CreateAppOptions = {
   credentialDirectory?: string;
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
+  prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
 };
 
 export function createApp(options: CreateAppOptions = {}): Hono {
@@ -38,6 +40,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   }
   if (options.consultationWorker && !options.credentialDirectory?.trim()) {
     throw new Error('CONSULTATION_WORKER_CREDENTIAL_DIRECTORY_REQUIRED');
+  }
+  if (options.prDeliveryWorker && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('PUBLISHER_DATABASE_REQUIRED');
   }
   const now = options.now ?? (() => new Date());
   const state: {
@@ -78,6 +83,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.consultationWorker) {
     const { db, credentials } = context();
     startConsultationWorker(db, now, options.consultationWorker, credentials);
+  }
+
+  if (options.prDeliveryWorker && options.databasePath) {
+    const { db } = context();
+    createPrDeliveryService(db, now, {
+      ...options.prDeliveryWorker, blobs: createBlobStore(join(dirname(options.databasePath), 'blobs')),
+    }).start();
   }
 
   const app = new Hono();

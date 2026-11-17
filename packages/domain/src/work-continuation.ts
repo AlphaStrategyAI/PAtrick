@@ -228,6 +228,24 @@ export function assertDeliveryOpen(db: SqliteDatabase, workId: string, generatio
   if (stage?.stage === 'waiting_evidence') throw new Error('WAITING_EVIDENCE');
 }
 
+// A direct delivery has no continuation proof. A collection route must still have
+// its own claimed delivery attempt and a proof at the current withdrawal watermark.
+export function deliveryEvidenceCurrent(
+  db: SqliteDatabase, principal: Principal, domain: string, workId: string, generation: number, attemptId: string, nowIso: string,
+): boolean {
+  const stage = db.prepare('SELECT stage FROM work_stages WHERE work_id = ? AND generation = ?').get(workId, generation) as
+    { stage: string } | undefined;
+  if (stage?.stage === 'waiting_evidence') return false;
+  const resumes = db.prepare(`SELECT question_id, answer_event_id, state, next_action, evidence_ref, attempt_id
+    FROM resume_intents WHERE work_id = ? AND generation = ? AND phase = 'evidence_ready'`)
+    .all(workId, generation) as Array<ResumeRow & { question_id: string; answer_event_id: string }>;
+  if (resumes.length === 0) return stage?.stage !== 'evidence_ready';
+  return resumes.some((row) => row.state === 'claimed' && row.attempt_id === attemptId && continuationReady(
+    db, principal, domain, { work_id: workId, generation, question_id: row.question_id, answer_event_id: row.answer_event_id,
+      phase: 'evidence_ready' }, row, nowIso,
+  ));
+}
+
 export function emitStage(
   db: SqliteDatabase,
   workId: string,

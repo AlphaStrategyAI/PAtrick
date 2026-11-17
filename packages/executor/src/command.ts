@@ -9,6 +9,7 @@ export type CommandOptions = {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
   pipeStdin?: boolean;
+  stdinText?: string;
   timeoutMs?: number;
 };
 
@@ -68,7 +69,10 @@ export function runClosed(
       stderr += chunk;
     });
     child.on('spawn', () => {
-      if (options.pipeStdin) child.stdin?.end();
+      if (options.pipeStdin && child.stdin) {
+        child.stdin.on('error', () => { /* Early child exit is classified by the terminal result. */ });
+        child.stdin.end(options.stdinText);
+      }
     });
     child.on('error', (error) => {
       finish({ closed: false, drained: false, exitCode: null, stdout, stderr, error: error.message });

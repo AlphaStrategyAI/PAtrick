@@ -1,11 +1,15 @@
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { open, realpath } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import type { RunGrant } from '../../domain/src/delegation.js';
 import { codexInvocation, parseCodexTerminal } from './backends/codex.js';
 import { dshInvocation, installDshProfile, parseDshTerminal } from './backends/dsh.js';
 import { grokInvocation, parseGrokTerminal } from './backends/grok.js';
 import { dispatchPaidNext, type PaidDispatch } from '../harness/patrick-bridge.js';
 import { findExecutable, runClosed } from './command.js';
-import { persistRecord } from './ledger.js';
+import { ensureLedgerDirectory, ledgerPath, persistRecord, readExactFile, syncDirectory } from './ledger.js';
+import { assertDeliveryBinding, createDeliveryRequest, planLimit, sealDeliveryMarkdown, type DeliveryArtifact, type DeliveryBinding, type DeliverySource } from './delivery-artifact.js';
 import type {
   BackendId,
   ConsultationSubject,
@@ -29,6 +33,7 @@ export type FrozenRun = {
   resume: ResumeProbe | null;
   ledger_dir: string;
   paid: PaidDispatch | null;
+  deliveryPlan?: DeliverySource & { sourceBytes: Uint8Array };
 };
 
 export type RunReceipt = {
@@ -62,8 +67,28 @@ export function resumeAllowed(snapshot: FrozenRun, grant: RunGrant, probe: Resum
 }
 
 export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<RunReceipt> {
+  const delivery = (snapshot.subject.kind === 'work' && snapshot.subject.next_action === 'publish_pr')
+    || (grant.subject_kind === 'work' && grant.next_action === 'publish_pr');
+  if ((!delivery || snapshot.controller !== 'run') && existsSync(ledgerPath(snapshot.ledger_dir, 'execution_claim', grant.attempt_id))) {
+    return unavailableReceipt(grant); // Other routes cannot take over a claimed delivery attempt.
+  }
+  let execution: DeliveryExecution | undefined;
+  if (delivery && snapshot.controller === 'run') {
+    try {
+      execution = await prepareDelivery(snapshot, grant);
+      const replay = claimDelivery(execution, snapshot, grant);
+      if (replay) return replay;
+    } catch {
+      return unavailableReceipt(grant);
+    }
+  }
+  const finish = (
+    classification: 'agent_completed' | 'technical_failure', exitCode: number | null, parsed: TerminalParse | null,
+    reservationId: string | null, artifact?: DeliveryArtifact,
+  ) => storeTerminal(execution ? { ...snapshot, ledger_dir: execution.ledgerRoot } : snapshot, grant, classification,
+    exitCode, parsed, reservationId, artifact, execution?.bindingHash);
   if (snapshot.controller === 'policy_wait') {
-    if (!sameSubject(snapshot, grant)) return storeTerminal(snapshot, grant, 'technical_failure', null, null, null);
+    if (!sameSubject(snapshot, grant)) return delivery ? unavailableReceipt(grant) : finish('technical_failure', null, null, null);
     const path = persistRecord(snapshot.ledger_dir, 'policy_wait', grant.attempt_id, {
       classification: 'policy_wait',
       origin: 'controller',
@@ -73,14 +98,14 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
     return receipt('policy_wait', grant.attempt_id, null, null, path, path, null, null);
   }
   if (!sameSubject(snapshot, grant) || (snapshot.resume?.requested && !resumeAllowed(snapshot, grant, snapshot.resume))) {
-    return storeTerminal(snapshot, grant, 'technical_failure', null, null, null);
+    return finish('technical_failure', null, null, null);
   }
   if (!snapshot.bundle_present) {
-    return storeTerminal(snapshot, grant, 'technical_failure', snapshot.terminal?.exitCode ?? null, null, null);
+    return finish('technical_failure', snapshot.terminal?.exitCode ?? null, null, null);
   }
-  const terminal = await observeTerminal(snapshot);
+  const terminal = execution ? await observeTerminal(snapshot, execution).catch(() => null) : await observeTerminal(snapshot);
   if (!terminal) {
-    return storeTerminal(snapshot, grant, 'technical_failure', null, null, null);
+    return finish('technical_failure', null, null, null);
   }
   let reservationId: string | null = null;
   if (snapshot.paid) {
@@ -88,10 +113,10 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
       const paid = await dispatchPaidNext(snapshot.paid);
       reservationId = paid.reservationId;
       if (!paid.sent || paid.settled !== 'settled') {
-        return storeTerminal(snapshot, grant, 'technical_failure', terminal.exitCode, null, reservationId);
+        return finish('technical_failure', terminal.exitCode, null, reservationId);
       }
     } catch {
-      return storeTerminal(snapshot, grant, 'technical_failure', terminal.exitCode, null, reservationId);
+      return finish('technical_failure', terminal.exitCode, null, reservationId);
     }
   }
   const parsed = parseTerminal(snapshot.backend, terminal.stdout);
@@ -105,18 +130,122 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
     outputsValid,
   });
   const classification = finished && parsed.usage !== null ? 'agent_completed' : 'technical_failure';
-  return storeTerminal(snapshot, grant, classification, terminal.exitCode, parsed, reservationId);
+  if (execution && classification === 'agent_completed') {
+    try {
+      const output = await sealPlan(execution, parsed.answerText);
+      return finish(classification, terminal.exitCode, parsed, reservationId, output);
+    } catch {
+      return finish('technical_failure', terminal.exitCode, parsed, reservationId);
+    }
+  }
+  return finish(classification, terminal.exitCode, parsed, reservationId);
 }
 
-async function observeTerminal(snapshot: FrozenRun): Promise<ObservedProcess | null> {
+type DeliveryExecution = {
+  binding: DeliveryBinding;
+  bindingHash: string;
+  request: ReturnType<typeof createDeliveryRequest>;
+  outputRoot: string;
+  ledgerRoot: string;
+};
+
+function unavailableReceipt(grant: RunGrant): RunReceipt {
+  return receipt('technical_failure', grant.attempt_id, null, null, '', null, null, null);
+}
+
+async function prepareDelivery(snapshot: FrozenRun, grant: RunGrant): Promise<DeliveryExecution> {
+  if (!snapshot.deliveryPlan || snapshot.subject.kind !== 'work' || !sameSubject(snapshot, grant) || !snapshot.bundle_present
+    || grant.subject_kind !== 'work' || grant.phase !== 'delivery' || !grant.allowed_effects.includes('publish_pr')
+    || (snapshot.resume?.requested && !resumeAllowed(snapshot, grant, snapshot.resume))) throw new Error('UNAUTHORIZED_DELIVERY');
+  const { source_revision, source_sha256, sourceBytes } = snapshot.deliveryPlan;
+  const binding = { source_revision, source_sha256, work_id: snapshot.subject.work_id, generation: snapshot.subject.generation,
+    attempt_id: grant.attempt_id, basis_hash: snapshot.subject.judgment_basis.hash,
+    evidence_watermark: snapshot.subject.judgment_basis.evidence_watermark };
+  assertDeliveryBinding(binding);
+  const bytes = Buffer.from(sourceBytes);
+  ensureLedgerDirectory(snapshot.ledger_dir);
+  const outputRoot = await realpath(snapshot.cwd);
+  const ledgerRoot = await realpath(snapshot.ledger_dir);
+  if (outputRoot === ledgerRoot || outputRoot.startsWith(ledgerRoot + sep) || ledgerRoot.startsWith(outputRoot + sep)) {
+    throw new Error('DELIVERY_LEDGER_NOT_ISOLATED');
+  }
+  const request = createDeliveryRequest(bytes, binding);
+  const bindingHash = createHash('sha256').update(JSON.stringify([
+    'delivery-attempt-v1', Object.values(binding), request.sha256, grant.grant_id, grant.mandate_id,
+    snapshot.backend, snapshot.home, snapshot.config_hash, snapshot.session_id, snapshot.subject.resume_phase,
+    outputRoot, ledgerRoot,
+  ])).digest('hex');
+  return { outputRoot, ledgerRoot, binding, request, bindingHash };
+}
+
+function claimDelivery(execution: DeliveryExecution, snapshot: FrozenRun, grant: RunGrant): RunReceipt | null {
+  const path = ledgerPath(execution.ledgerRoot, 'terminal', grant.attempt_id);
+  const claimPath = ledgerPath(execution.ledgerRoot, 'execution_claim', grant.attempt_id);
+  const key = { binding: execution.bindingHash, attempt_id: grant.attempt_id, grant_id: grant.grant_id,
+    request_sha256: execution.request.sha256 };
+  if (!existsSync(path)) {
+    try {
+      persistRecord(execution.ledgerRoot, 'execution_claim', grant.attempt_id, key);
+      if (!existsSync(path)) return null;
+      throw new Error('DELIVERY_TERMINAL_PREEXISTED');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  const decode = (filename: string) => JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readExactFile(filename, 64 * 1024, 'supervisor_record')));
+  const claim = decode(claimPath) as Partial<typeof key>;
+  if (claim.binding !== key.binding || claim.attempt_id !== key.attempt_id
+    || claim.grant_id !== key.grant_id || claim.request_sha256 !== key.request_sha256) throw new Error('DELIVERY_CLAIM_MISMATCH');
+  const terminal = decode(path) as {
+    execution_binding?: string; attempt_id?: string; backend?: BackendId; origin?: string;
+    classification: 'agent_completed' | 'technical_failure'; session_id: string | null; exit_code: number | null;
+    delivery_artifact?: DeliveryArtifact; usage: TerminalParse['usage']; reservation_id: string | null;
+  };
+  if (terminal.execution_binding !== key.binding || terminal.attempt_id !== key.attempt_id
+    || terminal.backend !== snapshot.backend || terminal.origin !== 'wrapper'
+    || !['agent_completed', 'technical_failure'].includes(terminal.classification)) throw new Error('DELIVERY_TERMINAL_MISMATCH');
+  if (terminal.classification === 'agent_completed') {
+    const markdown = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+      .decode(readExactFile(join(execution.outputRoot, 'plan.md'), planLimit));
+    const sealed = sealDeliveryMarkdown(markdown, execution.binding, execution.request.sha256).artifact;
+    if (terminal.exit_code !== 0 || !terminal.delivery_artifact
+      || Object.entries(sealed).some(([field, expected]) => terminal.delivery_artifact?.[field as keyof DeliveryArtifact] !== expected)) {
+      throw new Error('DELIVERY_OUTPUT_CHANGED');
+    }
+  }
+  return receipt(terminal.classification, grant.attempt_id, terminal.session_id, terminal.exit_code, path, null,
+    terminal.usage, terminal.reservation_id);
+}
+
+async function observeTerminal(snapshot: FrozenRun, execution?: DeliveryExecution): Promise<ObservedProcess | null> {
+  // Grok's file prompt lives in an executor-writable workspace; it cannot attest a delivery input.
+  if (execution && snapshot.backend === 'grok') return null;
+  const prompt = execution?.request.text;
   const invocation = backendInvocation(snapshot);
   const binary = findExecutable(invocation.command);
-  if (!binary) return snapshot.terminal;
+  if (!binary) return execution ? null : snapshot.terminal;
   if (snapshot.backend === 'dsh') installDshProfile(snapshot.home);
-  return runClosed(binary, invocation.args, {
+  const args = prompt && snapshot.backend === 'codex' ? [...invocation.args, '-'] : invocation.args;
+  return runClosed(binary, args, {
+    cwd: execution?.outputRoot,
     env: { ...process.env, ...invocation.env },
     pipeStdin: invocation.stdin,
+    stdinText: invocation.stdin ? prompt : undefined,
   });
+}
+
+async function sealPlan(execution: DeliveryExecution, markdown: string | undefined): Promise<DeliveryArtifact> {
+  if (markdown === undefined) throw new Error('DELIVERY_PLAN_MISSING');
+  const { bytes, artifact } = sealDeliveryMarkdown(markdown, execution.binding, execution.request.sha256);
+  const output = await open(join(execution.outputRoot, 'plan.md'), 'wx', 0o600);
+  try {
+    await output.writeFile(bytes);
+    await output.sync();
+  } finally {
+    await output.close();
+  }
+  syncDirectory(execution.outputRoot);
+  return artifact;
 }
 
 function backendInvocation(snapshot: FrozenRun): {
@@ -162,6 +291,8 @@ function storeTerminal(
   exitCode: number | null,
   parsed: TerminalParse | null,
   reservationId: string | null,
+  deliveryArtifact?: DeliveryArtifact,
+  bindingHash?: string,
 ): RunReceipt {
   const path = persistRecord(snapshot.ledger_dir, 'terminal', grant.attempt_id, {
     classification,
@@ -171,6 +302,10 @@ function storeTerminal(
     session_id: parsed?.sessionId ?? null,
     exit_code: exitCode,
     subject: snapshot.subject,
+    usage: parsed?.usage ?? null,
+    reservation_id: reservationId,
+    ...(bindingHash ? { execution_binding: bindingHash } : {}),
+    ...(deliveryArtifact ? { delivery_artifact: deliveryArtifact } : {}),
   });
   return receipt(classification, grant.attempt_id, parsed?.sessionId ?? null, exitCode, path, null, parsed?.usage ?? null, reservationId);
 }
