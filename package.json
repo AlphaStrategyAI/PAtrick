@@ -13,13 +13,14 @@
   ],
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @patrick/web",
     "test:unit": "vitest run tests/unit",
     "test:contract": "vitest run tests/contract",
     "test:integration": "vitest run tests/integration",
     "test:admission": "vitest run tests/admission",
     "test:recovery": "vitest run tests/recovery",
-    "test:t00": "node --test tests/contract/T00.test.mjs"
+    "test:t00": "node --test tests/contract/T00.test.mjs",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

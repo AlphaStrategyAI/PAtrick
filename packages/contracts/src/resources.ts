@@ -7,6 +7,7 @@ import {
   PAGE_DEFAULT,
   PAGE_MAX,
   snapshotEnvelope,
+  sseEventSchema,
 } from './envelope.js';
 
 export const HTTP_ERROR_STATUS = {
@@ -28,6 +29,7 @@ export type RouteDefinition = {
   kind: 'read' | 'write';
   request: z.ZodType;
   response: z.ZodType;
+  responseMediaType?: 'text/event-stream';
   errors: readonly string[];
 };
 
@@ -65,6 +67,21 @@ const pageQuerySchema = z.strictObject({
   cursor: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(PAGE_MAX).default(PAGE_DEFAULT),
 });
+const domainSchema = z.strictObject({ domain: z.string().min(1).optional() });
+const scopedIdSchema = idSchema.extend(domainSchema.shape);
+const workListQuerySchema = pageQuerySchema.extend({ ...domainSchema.shape,
+  state: z.enum(['open', 'awaiting_answer', 'blocked', 'delivered', 'all']).default('open') });
+const workItemSchema = z.strictObject({
+  work_id: z.string().min(1), generation: z.number().int().nonnegative(), updated_at: z.string().min(1),
+  state: z.enum(['researching', 'awaiting_answer', 'verifying', 'paused', 'blocked', 'delivered']),
+  attempt_ids: z.array(z.number().int().positive()), question_id: z.string().nullable(), delivery_id: z.string().nullable(),
+  revision: z.number().int().positive(),
+});
+const workListSchema = z.strictObject({ items: z.array(workItemSchema), next_cursor: z.string().nullable(),
+  counts: z.strictObject({ open: z.number().int().nonnegative(), awaiting_answer: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative() }) });
+const workTimelineSchema = z.strictObject({ items: z.array(z.strictObject({ event_id: z.string().min(1),
+  type: z.string().min(1), at: z.string().min(1) })) });
 
 export const vaultConnectionStatusSchema = z.enum([
   'not_connected',
@@ -218,6 +235,11 @@ export const healthSnapshotSchema = z.strictObject({
   impact: z.string(),
   next_step: z.string().nullable(),
   as_of: z.string().min(1),
+  connections: z.strictObject({
+    vault: z.strictObject({ status: z.string(), revision: z.number().int().nonnegative(), epoch: z.number().int().nonnegative() }).nullable(),
+    feishu: z.strictObject({ status: z.string(), revision: z.number().int().nonnegative(), epoch: z.number().int().nonnegative() }).nullable(),
+  }).optional(),
+  edits: z.strictObject({ pending: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).optional(),
 });
 
 const workControlPayload = z.strictObject({
@@ -308,9 +330,9 @@ export const routes: RouteDefinition[] = [
   write('verifyAuth', 'POST', '/auth/verify', 'public', z.strictObject({ challenge_id: z.string().min(1), credential: z.unknown() }), z.strictObject({ session: z.unknown() }), ['UNAUTHENTICATED']),
   read('getSession', '/session', 'session', emptySchema, z.unknown()),
   write('deleteSession', 'DELETE', '/session', 'session', emptySchema, z.strictObject({ ok: z.literal(true) }), readErrors),
-  read('listWork', '/work', 'work.read', pageQuerySchema, listDataSchema),
-  read('getWork', '/work/:id', 'work.read', idSchema, z.unknown()),
-  read('getWorkTimeline', '/work/:id/timeline', 'work.read', idSchema, listDataSchema),
+  { ...read('listWork', '/work', 'work.read', workListQuerySchema, workListSchema), errors: [...readErrors, 'CONFLICT', 'UNPROCESSABLE'] },
+  read('getWork', '/work/:id', 'work.read', scopedIdSchema, workItemSchema),
+  read('getWorkTimeline', '/work/:id/timeline', 'work.read', scopedIdSchema, workTimelineSchema),
   command('controlWork', '/work/:id/controls', 'work.control', workControlPayload),
   read('getQuestion', '/questions/:id', 'questions.read', idSchema, z.unknown()),
   command('submitAnswer', '/questions/:id/answers', 'questions.answer', answerPayload),
@@ -384,7 +406,7 @@ export const routes: RouteDefinition[] = [
   read('getFeishuTest', '/channels/feishu/tests/:id', 'channels.read', idSchema, channelTestSchema),
   read('getPreferences', '/preferences', 'session', emptySchema, preferencePayload),
   command('patchPreferences', '/preferences', 'session', preferencePayload, 'PATCH'),
-  read('getSystemHealth', '/system/health', 'session', emptySchema, healthSnapshotSchema),
+  read('getSystemHealth', '/system/health', 'session', domainSchema, healthSnapshotSchema),
   read('getSystemIncident', '/system/incidents/:id', 'session', idSchema, z.unknown()),
   command('runSystemOperation', '/system/operations', 'owner', z.strictObject({ operation: z.string().min(1) })),
   command('confirmControlProposal', '/control-proposals/:id/confirm', 'owner', z.strictObject({ proposal_hash: z.string().min(1), challenge_id: z.string().min(1) })),
@@ -394,7 +416,9 @@ export const routes: RouteDefinition[] = [
   command('testNotification', '/notifications/test', 'owner', z.strictObject({ destination: z.string().min(1), intent: z.string().min(1) })),
   command('previewDiagnostics', '/diagnostics/preview', 'owner', emptySchema),
   command('exportDiagnostics', '/diagnostics/export', 'owner', emptySchema),
-  read('listEvents', '/events', 'events.read', z.strictObject({ after: z.string().min(1).optional() }), listDataSchema),
+  { operationId: 'listEvents', method: 'GET', path: '/events', permission: 'events.read', kind: 'read',
+    request: z.strictObject({ after: z.string().min(1).optional(), ...domainSchema.shape }), response: sseEventSchema,
+    responseMediaType: 'text/event-stream', errors: [...readErrors, 'UNPROCESSABLE'] },
   read('getCommand', '/commands/:id', 'commands.read', idSchema, z.unknown()),
 ];
 
@@ -466,11 +490,15 @@ export function generateOpenApi(): OpenApiDocument {
           schema: { type: 'string' },
         })),
         ...queryParameters(route),
+        ...(route.responseMediaType === 'text/event-stream' ? [{ name: 'Last-Event-ID', in: 'header', required: false,
+          schema: { type: 'string' } }] : []),
       ],
       responses: {
         [successStatus]: {
           description: 'success',
-          content: { 'application/json': { schema: { $ref: `#/components/schemas/${responseName}` } } },
+          content: route.responseMediaType === 'text/event-stream' ? {
+            'text/event-stream': { schema: { type: 'string' }, 'x-event-data-schema': { $ref: `#/components/schemas/${responseName}` } },
+          } : { 'application/json': { schema: { $ref: `#/components/schemas/${responseName}` } } },
         },
       },
     };

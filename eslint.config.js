@@ -6,6 +6,9 @@ export default tseslint.config(
   {
     ignores: [
       'node_modules/**',
+      '**/dist/**',
+      'test-results/**',
+      'playwright-report/**',
       'docs/**',
       'design-inputs.lock.json',
       'upstream.lock.json',

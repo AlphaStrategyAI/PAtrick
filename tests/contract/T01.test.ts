@@ -301,7 +301,7 @@ test('quality-fix-command-openapi-query-and-versions', () => {
       .filter((parameter) => parameter.in === 'query');
 
   const listWorkQueries = queryParams('listWork');
-  expect(listWorkQueries.map((parameter) => parameter.name).sort()).toEqual(['cursor', 'limit']);
+  expect(listWorkQueries.map((parameter) => parameter.name).sort()).toEqual(['cursor', 'domain', 'limit', 'state']);
   expect(listWorkQueries.find((parameter) => parameter.name === 'cursor')?.required).toBe(false);
   expect(listWorkQueries.find((parameter) => parameter.name === 'limit')?.required).toBe(false);
 
@@ -316,7 +316,11 @@ test('quality-fix-command-openapi-query-and-versions', () => {
   const listEventsQueries = queryParams('listEvents');
   expect(listEventsQueries).toEqual([
     expect.objectContaining({ name: 'after', required: false }),
+    expect.objectContaining({ name: 'domain', required: false }),
   ]);
+  expect(openApiOperation('listEvents')).toMatchObject({ responses: { '200': {
+    content: { 'text/event-stream': { schema: { type: 'string' } } },
+  } } });
 
   const send = routes.find((route) => route.operationId === 'sendFeishuTest');
   const envelopeBase = {
