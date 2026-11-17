@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { createApp } from '../../apps/service/src/app.js';
+import { createApp, createAuthenticatedConsultationMcp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
 import { createBudgetApi } from '../../packages/domain/src/budget.js';
@@ -119,22 +119,34 @@ function fixture() {
   let current = new Date(NOW);
   const now = () => current;
   issueBootstrapTicket(db, { accountId: owner.account_id }, now);
+  const credentials = createCredentialStore(credentialDirectory, now);
   const session = issueCallerSession(db, {
     accountId: owner.account_id, callerId: owner.caller_id, domain: DOMAIN, permissions: ['owner'],
-  }, now, createCredentialStore(credentialDirectory, now));
+  }, now, credentials);
   const controllers: AbortController[] = [];
   const errors: unknown[] = [];
   return {
     db, now, errors, session,
+    async enqueueThroughMcp() {
+      const mcp = createAuthenticatedConsultationMcp(() => ({ db, now, credentials }));
+      const token = issueCallerSession(db, {
+        accountId: owner.account_id, callerId: owner.caller_id, domain: DOMAIN, permissions: ['mcp:consult'],
+      }, now, credentials);
+      const credential = new Request('http://localhost', { headers: { authorization: token.authorization } });
+      return mcp.call('patrick_consult', credential, {
+        client_request_id: 'mcp-runtime-consultation', text: 'Question', data_domain: DOMAIN, parent_work_id: null,
+        authorization_permission: 'owner',
+      }) as Promise<{ request_id: string }>;
+    },
     advance() { current = new Date(EXPIRED); },
     stopWorkers() { for (const abort of controllers) abort.abort(); },
-    start(hub: ReturnType<typeof hubBoundary>, paid: ConsultationBackend | undefined, stopOnError = false, executionTimeoutMs?: number) {
+    start(hub: ReturnType<typeof hubBoundary>, paid: ConsultationBackend | undefined, stopOnError = false, executionTimeoutMs?: number, hubTimeoutMs?: number) {
       const abort = new AbortController();
       controllers.push(abort);
       return createApp({
         databasePath, credentialDirectory, now,
         consultationWorker: {
-          hub: hub.bridge, backend: paid, signal: abort.signal, intervalMs: 10, heartbeatIntervalMs: 10, executionTimeoutMs,
+          hub: hub.bridge, backend: paid, signal: abort.signal, intervalMs: 10, heartbeatIntervalMs: 10, executionTimeoutMs, hubTimeoutMs,
           onError(error: unknown) {
             errors.push(error);
             if (stopOnError) abort.abort();
@@ -198,6 +210,9 @@ test('the configured service retries the hub ACK and answers once in the consult
     expect(hub.posted).toHaveLength(2);
     expect(hub.posted[0]).toMatchObject({ id: `consultation.requested:${requestId}`, type: 'consultation.requested', subject: requestId });
     expect(hub.posted[1]).toEqual(hub.posted[0]);
+    expect(fx.db.prepare("SELECT json_extract(payload, '$.authorization_permission') AS permission FROM domain_events WHERE event_id = ?")
+      .get(hub.posted[0].id)).toEqual({ permission: 'owner' });
+    expect(hub.posted[0]).not.toHaveProperty('authorization_permission');
     expect(fx.db.prepare('SELECT result FROM outbox WHERE event_id = ?').get(hub.posted[0].id)).toEqual({ result: 'duplicate' });
     expect(sends).toBe(1);
     expect(paidLedger(fx, requestId)).toMatchObject({
@@ -374,6 +389,53 @@ test('a Hub job cannot send after its queued caller scope has been revoked', asy
       return { exitCode: 0, provedUsage: true };
     }));
     await expect.poll(() => worker.settled.size).toBe(1);
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, requestId)).toBeUndefined();
+  } finally {
+    fx.close();
+  }
+});
+
+test('an MCP consultation cannot borrow Web owner at the paid permit after MCP revocation', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const { request_id: requestId } = await fx.enqueueThroughMcp();
+    // Revoke only the MCP grant during reservation; admission was still valid on entering the worker.
+    fx.db.exec(`CREATE TRIGGER revoke_test_mcp_before_permit AFTER INSERT ON budget_reservations
+      BEGIN UPDATE caller_scopes SET revoked_at = '${NOW}' WHERE account_id = '${owner.account_id}'
+        AND caller_id = '${owner.caller_id}' AND data_domain = '${DOMAIN}' AND permission = 'mcp:consult'; END`);
+    fx.start(hub, backend(async () => {
+      sends += 1;
+      return { exitCode: 0, provedUsage: true };
+    }));
+    await expect.poll(() => hub.settled.size).toBe(1);
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, requestId)).toMatchObject({ dispatched_at: null, spent_micros: 0 });
+    expect(fx.db.prepare('SELECT auth_epoch FROM accounts WHERE account_id = ?').get(owner.account_id)).toEqual({ auth_epoch: 1 });
+    expect(fx.db.prepare("SELECT revoked_at FROM caller_scopes WHERE permission = 'owner'").get()).toEqual({ revoked_at: null });
+    const event = fx.db.prepare('SELECT payload FROM domain_events WHERE event_id = ?')
+      .get(`consultation.requested:${requestId}`) as { payload: string };
+    expect(JSON.parse(event.payload)).toMatchObject({ authorization_permission: 'mcp:consult' });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a legacy consultation without reliable authorization provenance cannot send', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const requestId = await createThroughHttp(fx.start(hub, undefined), fx);
+    const eventId = `consultation.requested:${requestId}`;
+    fx.db.prepare("UPDATE domain_events SET payload = json_remove(payload, '$.authorization_permission') WHERE event_id = ?").run(eventId);
+    fx.start(hub, backend(async () => {
+      sends += 1;
+      return { exitCode: 0, provedUsage: true };
+    }));
+    await expect.poll(() => hub.settled.size).toBe(1);
     expect(sends).toBe(0);
     expect(paidLedger(fx, requestId)).toBeUndefined();
   } finally {
@@ -645,6 +707,179 @@ test('a changed fixed quote cannot consume an earlier reservation for a differen
     await expect.poll(() => worker.settled.size).toBe(1);
     expect(sends).toBe(0);
     expect(paidLedger(fx, requestId)).toMatchObject({ status: 'held', dispatched_at: null, held_micros: 1, spent_micros: 0 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a hung Hub publish cannot block a later eligible consultation', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let blockedSignal: AbortSignal | undefined;
+  let sends = 0;
+  try {
+    const api = createConsultationApi(fx.db, { now: fx.now });
+    const input = { text: 'Only this consultation', data_domain: DOMAIN, parent_work_id: null };
+    const blocked = await api.createConsultation(owner, { ...input, client_request_id: 'hung-first' });
+    const later = await api.createConsultation(owner, { ...input, client_request_id: 'later-ready' });
+    const original = hub.bridge.postEvent;
+    hub.bridge.postEvent = (body, signal) => {
+      if (body.subject !== blocked.request_id) return original(body, signal);
+      blockedSignal ??= signal;
+      return new Promise(() => {}); // A driver that ignores abort.
+    };
+    fx.start(hub, backend(async () => { sends += 1; return { exitCode: 0, provedUsage: true }; }), false, undefined, 30);
+    await expect.poll(async () => (await api.readConsultation(owner, later.request_id)).status).toBe('answered');
+    expect(blockedSignal?.aborted).toBe(true);
+    expect(await api.readConsultation(owner, blocked.request_id)).toMatchObject({ status: 'pending', result_version: 0 });
+    expect(fx.db.prepare('SELECT result FROM outbox WHERE event_id = ?').get(`consultation.requested:${blocked.request_id}`))
+      .toEqual({ result: null });
+    expect(sends).toBe(1);
+  } finally {
+    fx.close();
+  }
+});
+
+test('a hung Hub result replays the identical protected receipt and never sends again', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  const deliveries: Array<{ run: number; token: string; body: unknown }> = [];
+  let firstSignal: AbortSignal | undefined;
+  let sends = 0;
+  try {
+    const original = hub.bridge.result;
+    hub.bridge.result = async (run, token, body, signal) => {
+      deliveries.push({ run, token, body });
+      const reply = await original(run, token, body, signal);
+      if (deliveries.length === 1) {
+        firstSignal = signal;
+        return new Promise(() => {}); // Remote applied the result, but never finished replying.
+      }
+      return reply;
+    };
+    const app = fx.start(hub, backend(async () => { sends += 1; return { exitCode: 0, provedUsage: true }; }), false, undefined, 30);
+    await createThroughHttp(app, fx);
+    await expect.poll(() => deliveries.length).toBe(2);
+    expect(firstSignal?.aborted).toBe(true);
+    expect(deliveries[1]).toEqual(deliveries[0]);
+    expect(sends).toBe(1);
+  } finally {
+    fx.close();
+  }
+});
+
+test('a claim already cancelled by the Hub cannot issue a paid grant or permit', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const original = hub.bridge.claim;
+    hub.bridge.claim = async (...args) => {
+      const job = await original(...args);
+      return job ? { ...job, cancelled: true } : null;
+    };
+    const app = fx.start(hub, backend(async () => { sends += 1; return { exitCode: 0, provedUsage: true }; }));
+    const requestId = await createThroughHttp(app, fx);
+    await expect.poll(() => hub.outcomes.length).toBe(1);
+    expect(hub.outcomes[0]).toMatchObject({ outcome: 'cancelled' });
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, requestId)).toBeUndefined();
+    expect(fx.db.prepare('SELECT COUNT(*) n FROM execution_grants WHERE request_id = ?').get(requestId)).toEqual({ n: 0 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a stuck staged result leaves the exact old claim recoverable without blocking a second run', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  const runStates = new Map<number, { wire: HubWireEvent; claim?: string }>();
+  const oldDeliveries: Array<Parameters<HubClient['result']>> = [];
+  const sentRequests: string[] = [];
+  let lostSecondClaim: string | undefined;
+  const secondClaims: string[] = [];
+  try {
+    const api = createConsultationApi(fx.db, { now: fx.now });
+    const input = { text: 'Only this consultation', data_domain: DOMAIN, parent_work_id: null };
+    const old = await api.createConsultation(owner, { ...input, client_request_id: 'held-result-first' });
+    const next = await api.createConsultation(owner, { ...input, client_request_id: 'available-while-held' });
+    hub.bridge.postEvent = async (wire) => {
+      const id = wire.subject === old.request_id ? 201 : 202;
+      runStates.set(id, { wire });
+      return { event: id, duplicate: false, routed: [CONSULTATION_RULE] };
+    };
+    hub.bridge.eventOutcome = async (event) => {
+      const entry = runStates.get(event);
+      return { event, runs: entry ? [{ run: event, rule: CONSULTATION_RULE, state: entry.claim ? 'claimed' : 'queued' }] : [] };
+    };
+    hub.bridge.claim = async (claim) => {
+      const entries = [...runStates.entries()];
+      const candidate = entries.find(([, item]) => item.claim === claim) ?? entries.find(([, item]) => !item.claim);
+      if (!candidate) return null;
+      const [run, item] = candidate;
+      item.claim = claim;
+      if (run === 202) {
+        secondClaims.push(claim);
+        if (!lostSecondClaim) {
+          lostSecondClaim = claim;
+          fx.stopWorkers(); // Hub claimed the next slot, but the service never received the job.
+          return new Promise(() => {});
+        }
+      }
+      return { run, token: `fixture:${run}`, rule: { name: CONSULTATION_RULE }, context: {
+        events: [{ ...item.wire, source: HUB_SOURCE }], answers: [],
+      } };
+    };
+    const result = hub.bridge.result;
+    hub.bridge.result = (run, token, body, signal) => {
+      if (run === 201) {
+        oldDeliveries.push([run, token, body, signal]);
+        return new Promise(() => {}); // This time the old Hub result was never applied.
+      }
+      runStates.delete(run);
+      return result(run, token, body, signal);
+    };
+    const paid = backend(async () => ({ exitCode: 0, provedUsage: true }));
+    const scoped = { ...paid, async send(item: Parameters<ConsultationBackend['send']>[0]) {
+      sentRequests.push(item.requestId);
+      const sent = await paid.send(item);
+      return { ...sent, usage: { ...sent.usage!, usage_id: `usage:${item.requestId}` } };
+    } };
+    fx.start(hub, scoped, false, undefined, 30);
+    await expect.poll(() => lostSecondClaim).toBeDefined();
+    fx.start(hub, scoped, false, undefined, 30);
+    await expect.poll(() => hub.settled.has(202)).toBe(true);
+    expect(secondClaims).toEqual([lostSecondClaim, lostSecondClaim]);
+    expect(runStates.get(201)?.claim).toBeDefined();
+    expect(sentRequests).toEqual([old.request_id, next.request_id]);
+    expect(oldDeliveries.length).toBeGreaterThanOrEqual(2);
+    expect(oldDeliveries[1].slice(0, 3)).toEqual(oldDeliveries[0].slice(0, 3));
+    expect(oldDeliveries[0][3]?.aborted).toBe(true);
+    expect(await api.readConsultation(owner, old.request_id)).toMatchObject({ status: 'answered' });
+    expect(await api.readConsultation(owner, next.request_id)).toMatchObject({ status: 'answered' });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a wrong-scope job never schedules beyond its stored deadline', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const api = createConsultationApi(fx.db, { now: fx.now });
+    const request = await api.createConsultation(owner, {
+      client_request_id: 'near-deadline', text: 'Only this consultation', data_domain: DOMAIN, parent_work_id: null,
+    });
+    const deadline = new Date(fx.now().getTime() + 1000).toISOString();
+    fx.db.prepare('UPDATE consultations SET deadline_at = ? WHERE request_id = ?').run(deadline, request.request_id);
+    const paid = backend(async () => { sends += 1; return { exitCode: 0, provedUsage: true }; });
+    const scope = { accountId: owner.account_id, dataDomain: 'personal' };
+    fx.start(hub, { ...paid, scope, pricing: fixedPricing({ ...quoteTerms, ...scope }) });
+    await expect.poll(() => hub.outcomes.length).toBe(1);
+    expect(hub.outcomes[0]).toMatchObject({ later: [{ at: deadline }] });
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, request.request_id)).toBeUndefined();
   } finally {
     fx.close();
   }

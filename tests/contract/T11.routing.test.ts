@@ -8,6 +8,7 @@ import { createConsultationApi } from '../../packages/domain/src/consultations.j
 import { fixedConsultationQuoteHash, type ConsultationBackend } from '../../packages/executor/src/consultation.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { CONSULTATION_RULE, type HubClient, type HubEventAck } from '../../packages/integrations/autoloop/client.js';
+import { createConsultationRouting } from '../../packages/integrations/autoloop/consultation-routing.js';
 import { startConsultationWorker } from '../../packages/integrations/autoloop/consultation-runtime.js';
 import { openDatabase } from '../../packages/storage/src/database.js';
 import { startPinnedHub, type PinnedHub } from './pinned-hub.js';
@@ -123,7 +124,8 @@ test('the same completed Hub result is recovered after an acknowledged response 
         throw new Error('lost terminal reply after Hub commit');
       },
     });
-    await expect.poll(() => fx.errors.map(String)).toEqual(['Error: lost terminal reply after Hub commit']);
+    await expect.poll(() => firstWorker.signal.aborted).toBe(true);
+    expect(fx.errors).toEqual([]);
     expect(fx.status(consultation.request_id)).toBe('answered');
     expect(fx.deliveryResult(consultation.request_id)).toBeNull();
     expect((await client.state()).runs.map((run) => run.state)).toEqual(['done']);
@@ -145,6 +147,54 @@ test('the same completed Hub result is recovered after an acknowledged response 
     expect(fx.sends).toHaveLength(1);
     expect(fx.requestCount(consultation.request_id)).toBe(1);
     expect((await client.state()).runs.map((run) => run.state)).toEqual(['done']);
+  } finally {
+    await fx.close();
+  }
+}, 15000);
+
+test('a cancellation in a recovered Hub claim prevents reservation and send', async () => {
+  const fx = await fixture();
+  try {
+    const consultation = await fx.request('product', 'cancel-before-start');
+    const client = fx.hub.consultationClient;
+    await fx.route();
+    expect(fx.outboxResult(consultation.request_id)).toBe('accepted');
+
+    // Reuse the service's stable claim identity to recreate a restart with a held job.
+    const claimId = 'patrick-consultation-service-v1';
+    const held = await client.claim(claimId);
+    expect(held?.context.events[0]).toMatchObject({ subject: consultation.request_id });
+    if (!held) throw new Error('fixture could not pre-claim consultation');
+    const stopped = await fetch(`${fx.hub.baseUrl}/v1/runs/${held.run}/cancel`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${fx.hub.keys.owner}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(stopped.ok).toBe(true);
+    expect((await client.state()).runs).toMatchObject([{ id: held.run, state: 'claimed' }]);
+
+    const claims: Array<{ run: number; cancelled: boolean }> = [];
+    const results: Array<{ run: number; outcome: string }> = [];
+    fx.start('product', {
+      ...client,
+      async claim(id, signal) {
+        const job = await client.claim(id, signal);
+        if (job) claims.push({ run: job.run, cancelled: job.cancelled === true });
+        return job;
+      },
+      async result(run, token, body) {
+        const ack = await client.result(run, token, body);
+        results.push({ run, outcome: body.outcome });
+        return ack;
+      },
+    });
+    await expect.poll(() => results.length).toBe(1);
+    expect(fx.sends).toHaveLength(0);
+    expect(fx.reservations(consultation.request_id)).toBe(0);
+    expect(claims).toEqual([{ run: held.run, cancelled: true }]);
+    expect(results).toEqual([{ run: held.run, outcome: 'cancelled' }]);
+    expect((await client.state()).runs).toMatchObject([{ id: held.run, state: 'cancelled' }]);
+    expect(fx.errors).toEqual([]);
   } finally {
     await fx.close();
   }
@@ -179,6 +229,7 @@ async function fixture(now = () => new Date()) {
   const eventId = (requestId: string) => `consultation.requested:${requestId}`;
   return {
     hub, errors, sends,
+    route: () => createConsultationRouting(db, hub.consultationClient, now).drain(1, undefined, (error) => { throw error; }),
     request: (domain: string, key: string) => createConsultationApi(db, { now }).createConsultation(principal, {
       client_request_id: key, data_domain: domain, text: 'A private question', parent_work_id: null,
     }),

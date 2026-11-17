@@ -101,6 +101,9 @@ export type ConsultationRun = {
   grant: ConsultationGrant | null;
 };
 
+const CONSULTATION_PERMISSIONS = ['consultations.write', 'owner', 'mcp:consult'] as const;
+type ConsultationPermission = (typeof CONSULTATION_PERMISSIONS)[number];
+
 type ConsultationOptions = {
   now?: () => Date;
   knownAnswer?: (text: string) => ConsultationAnswer | null;
@@ -140,7 +143,11 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
   }
 
   const api = {
-    createConsultation(principal: AdmissionPrincipal, request: ConsultationRequest): ConsultationReceipt {
+    createConsultation(
+      principal: AdmissionPrincipal,
+      request: ConsultationRequest,
+      authorizationPermission = CONSULTATION_PERMISSIONS.find((permission) => principal.operations.includes(permission)),
+    ): ConsultationReceipt {
       assertRequest(principal, request);
       const fingerprint = requestFingerprint(request);
       const known = options.knownAnswer?.(request.text) ?? null;
@@ -184,7 +191,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
           const completed = answerConsultation(db, requestId, 0, known, stamped);
           if (!completed) throw new Error('CONFLICT');
         } else {
-          queueConsultation(db, principal, requestId, request.data_domain);
+          queueConsultation(db, principal, requestId, request.data_domain, authorizationPermission);
         }
         const stored = requireConsultation(db, requestId);
         return receiptOf(stored);
@@ -442,7 +449,7 @@ export function consultationAwaitingHubReceipt(db: SqliteDatabase, requestId: st
 }
 
 export function admittedConsultation(db: SqliteDatabase, requestId: string, now: string) {
-  const row = db.prepare(`SELECT c.raw_text, c.account_id, c.caller_id, c.data_domain, e.payload, a.auth_epoch
+  const row = db.prepare(`SELECT c.raw_text, c.account_id, c.caller_id, c.data_domain, c.deadline_at, e.payload, a.auth_epoch
     FROM consultations c JOIN domain_events e ON e.event_id = 'consultation.requested:' || c.request_id
     JOIN accounts a ON a.account_id = c.account_id
     JOIN outbox o ON o.event_id = e.event_id AND o.destination = 'autoloop' AND o.result IS NOT NULL
@@ -450,21 +457,26 @@ export function admittedConsultation(db: SqliteDatabase, requestId: string, now:
     WHERE c.request_id = ? AND c.raw_text IS NOT NULL AND c.status = 'pending'
       AND c.cancelled_at IS NULL AND c.deadline_at > ?
       AND c.account_id = e.account_id AND c.data_domain = e.data_domain`).get(requestId, now) as {
-    raw_text: string; account_id: string; caller_id: string; data_domain: string; payload: string; auth_epoch: number;
+    raw_text: string; account_id: string; caller_id: string; data_domain: string; deadline_at: string; payload: string; auth_epoch: number;
   } | undefined;
   if (!row) return null;
-  const event = JSON.parse(row.payload) as { type: string; auth_epoch?: number };
-  if (event.type !== 'consultation.requested' || event.auth_epoch !== row.auth_epoch) return null;
-  const scopes = db.prepare(`SELECT permission FROM caller_scopes
-    WHERE account_id = ? AND caller_id = ? AND data_domain = ? AND revoked_at IS NULL
-      AND permission IN ('owner', 'consultations.write', 'mcp:consult')`)
-    .all(row.account_id, row.caller_id, row.data_domain) as { permission: string }[];
-  if (scopes.length === 0) return null;
+  let event: { type?: unknown; auth_epoch?: unknown; authorization_permission?: unknown } | null;
+  try {
+    event = JSON.parse(row.payload) as typeof event;
+  } catch {
+    return null;
+  }
+  const permission = CONSULTATION_PERMISSIONS.find((candidate) => candidate === event?.authorization_permission);
+  if (event?.type !== 'consultation.requested' || event.auth_epoch !== row.auth_epoch || !permission) return null;
+  const active = db.prepare(`SELECT 1 FROM caller_scopes
+    WHERE account_id = ? AND caller_id = ? AND data_domain = ? AND permission = ? AND revoked_at IS NULL`)
+    .get(row.account_id, row.caller_id, row.data_domain, permission);
+  if (!active) return null;
   const principal: AdmissionPrincipal = {
     account_id: row.account_id, caller_id: row.caller_id, auth_epoch: row.auth_epoch,
-    domains: [row.data_domain], operations: scopes.map((item) => item.permission),
+    domains: [row.data_domain], operations: [permission],
   };
-  return { principal, text: row.raw_text, domain: row.data_domain };
+  return { principal, text: row.raw_text, domain: row.data_domain, deadlineAt: row.deadline_at };
 }
 
 export type ConsultationPaidTerminal =
@@ -581,7 +593,13 @@ function answerConsultation(db: SqliteDatabase, requestId: string, version: numb
   return true;
 }
 
-function queueConsultation(db: SqliteDatabase, principal: AdmissionPrincipal, requestId: string, dataDomain: string): void {
+function queueConsultation(
+  db: SqliteDatabase,
+  principal: AdmissionPrincipal,
+  requestId: string,
+  dataDomain: string,
+  authorizationPermission: ConsultationPermission | undefined,
+): void {
   const eventId = `consultation.requested:${requestId}`;
   appendDomainEvent(db, {
     eventId,
@@ -594,6 +612,7 @@ function queueConsultation(db: SqliteDatabase, principal: AdmissionPrincipal, re
       event_id: eventId,
       request_id: requestId,
       auth_epoch: principal.auth_epoch,
+      authorization_permission: authorizationPermission ?? null,
       root: requestId,
       cause: requestId,
       generation: 0,

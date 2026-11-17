@@ -34,10 +34,13 @@ async function postConsultation(c: Context, ready: ConsultationReady): Promise<R
     const domain = parent ? resolvedWorkDomain(db, principal, parent) : domainsWithPermission(db, principal, writePermission)[0];
     if (!domain) throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
     assertDomainPermission(db, principal, domain, writePermission);
-    return { domain, resourceId: null };
-  }, ({ domain }) => createConsultationApi(db, { now }).mutations.createConsultation(
+    const authorization = domainsWithPermission(db, principal, writePermission, false).includes(domain)
+      ? writePermission : 'owner';
+    return { domain, resourceId: null, authorization } as const;
+  }, ({ domain, authorization }) => createConsultationApi(db, { now }).mutations.createConsultation(
     { ...principal, domains: [domain] },
     { ...body.payload, client_request_id: body.client_request_id, data_domain: domain },
+    authorization,
   ).request_id);
   return c.json(commandAccepted(commandId, `/api/v1/consultations/${resourceId}`), 202);
 }

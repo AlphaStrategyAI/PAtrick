@@ -350,3 +350,20 @@ test('an unbound legacy MCP session must be reissued', async () => {
     fx.close();
   }
 });
+
+test('HTTP consultation records the exact resolved-domain Web grant it used', async () => {
+  const fx = fixture();
+  try {
+    const auth = fx.session(primary, ['owner', 'consultations.write']);
+    fx.session(primary, ['mcp:consult']);
+    const response = await fx.post(auth, consultBase, 'explicit-web-write', { text: 'Question', parent_work_id: null });
+    expect(response.status).toBe(202);
+    const { receipt_url: receiptUrl } = await response.json() as { receipt_url: string };
+    const requestId = receiptUrl.split('/').at(-1);
+    const event = fx.db.prepare("SELECT json_extract(payload, '$.authorization_permission') AS permission FROM domain_events WHERE event_id = ?")
+      .get(`consultation.requested:${requestId}`);
+    expect(event).toEqual({ permission: 'consultations.write' });
+  } finally {
+    fx.close();
+  }
+});

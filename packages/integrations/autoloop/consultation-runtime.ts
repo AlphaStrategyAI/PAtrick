@@ -15,7 +15,7 @@ import { consultationRequestForJob, createConsultationRouting, deferConsultation
 const BATCH = 32;
 // The pinned Hub lease is five minutes. Keep renewals well inside that window.
 const HEARTBEAT_MS = 30_000;
-const HEARTBEAT_TIMEOUT_MS = 10_000;
+const HUB_TIMEOUT_MS = 5000;
 const EXECUTION_TIMEOUT_MS = 10 * 60_000;
 // The dedicated Hub worker key may recover this same outstanding claim after a service restart.
 const CLAIM_ID = 'patrick-consultation-service-v1';
@@ -25,6 +25,7 @@ export type ConsultationWorkerOptions = {
   backend?: ConsultationBackend;
   signal?: AbortSignal;
   intervalMs?: number;
+  hubTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   executionTimeoutMs?: number;
   onError?: (error: unknown) => void;
@@ -35,49 +36,97 @@ export function startConsultationWorker(
 ): void {
   const interval = options.intervalMs ?? 1000;
   const heartbeatInterval = options.heartbeatIntervalMs ?? HEARTBEAT_MS;
+  const hubTimeout = options.hubTimeoutMs ?? HUB_TIMEOUT_MS;
   const executionTimeout = options.executionTimeoutMs ?? EXECUTION_TIMEOUT_MS;
   if (!Number.isSafeInteger(heartbeatInterval) || heartbeatInterval < 1 || heartbeatInterval > 60_000
+    || !Number.isSafeInteger(hubTimeout) || hubTimeout < 1 || hubTimeout > HUB_TIMEOUT_MS
     || !Number.isSafeInteger(executionTimeout) || executionTimeout < 1 || executionTimeout > EXECUTION_TIMEOUT_MS) {
     throw new Error('CONSULTATION_WORKER_TIMEOUT_INVALID');
   }
-  const routing = createConsultationRouting(db, options.hub, now);
-  const receipts = createConsultationHubReceipts(db, credentials, options.hub);
+  const hub: ConsultationWorkerOptions['hub'] = {
+    postEvent: (body, phase) => request((signal) => options.hub.postEvent(body, signal), phase),
+    eventOutcome: (event, phase) => request((signal) => options.hub.eventOutcome(event, signal), phase),
+    claim: (id, phase) => request((signal) => options.hub.claim(id, signal), phase),
+    heartbeat: (id, run, phase) => request((signal) => options.hub.heartbeat(id, run, signal), phase),
+    result: (run, token, body, phase) => request((signal) => options.hub.result(run, token, body, signal), phase),
+  };
+  const routing = createConsultationRouting(db, hub, now);
+  const receipts = createConsultationHubReceipts(db, credentials, hub);
   let timeout: NodeJS.Timeout | undefined;
   options.signal?.addEventListener('abort', () => clearTimeout(timeout), { once: true });
 
+  function combinedDeadline(milliseconds: number, phase?: AbortSignal): AbortSignal {
+    const signals = [AbortSignal.timeout(milliseconds)];
+    if (options.signal) signals.push(options.signal);
+    if (phase) signals.push(phase);
+    return AbortSignal.any(signals);
+  }
+
+  async function request<T>(start: (signal: AbortSignal) => Promise<T>, phase?: AbortSignal): Promise<T> {
+    const signal = combinedDeadline(hubTimeout, phase);
+    signal.throwIfAborted();
+    let abort!: () => void;
+    const stopped = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); });
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      return await Promise.race([Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return start(signal);
+      }), stopped]);
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+
   async function tick() {
+    if (options.signal?.aborted) return;
     // Local completion is independent of both the Hub lease and the current send grant.
     recoverConsultationPaidResults(db, now().toISOString(), BATCH);
-    await receipts.recover(BATCH, report);
-    await routing.drain(BATCH, options.signal, report);
+    await receipts.recover(BATCH, report, combinedDeadline(2 * hubTimeout));
+    await routing.drain(BATCH, combinedDeadline(2 * hubTimeout), report);
     const backend = options.backend;
     if (options.signal?.aborted || !backend || !consultationBackendAdmitted(backend)) return;
-    const job = await options.hub.claim(CLAIM_ID);
+    // The same slot is recovered after restart or an ambiguous claim response. Once a result
+    // is staged, the next slot is deterministic and the old run can be replayed independently.
+    const stagedRun = receipts.lastStagedRun();
+    const claimedAs = stagedRun === null ? CLAIM_ID : `${CLAIM_ID}:${stagedRun}`;
+    const job = await hub.claim(claimedAs);
     if (!job || options.signal?.aborted) return;
     if (job.rule.name !== CONSULTATION_RULE) throw new Error('CONSULTATION_WORKER_KEY_SCOPE');
     const requestId = consultationRequestForJob(job);
-    if (requestId && consultationAwaitingHubReceipt(db, requestId)) return;
+    const cancelled = job.cancelled ? { outcome: 'cancelled' as const, summary: 'consultation run cancelled in Hub' } : null;
+    if (!cancelled && requestId && consultationAwaitingHubReceipt(db, requestId)) return;
     const binding = requestId ? receipts.bind(requestId, job) : null;
     if (!requestId || !binding) {
-      await options.hub.result(job.run, job.token, consultationHubResult(null));
+      await hub.result(job.run, job.token, cancelled ?? consultationHubResult(null));
       return;
     }
-    const admitted = admittedConsultation(db, requestId, now().toISOString());
+    if (receipts.hasStaged(binding)) return; // Recovery owns the exact payload.
+    async function submit(bound: NonNullable<typeof binding>, result: Parameters<HubClient['result']>[2]) {
+      const deliveryId = receipts.stage(bound, result);
+      await receipts.sendStaged(deliveryId);
+    }
+    if (cancelled) {
+      await submit(binding, cancelled);
+      return;
+    }
+    const requestedAt = now();
+    const admitted = admittedConsultation(db, requestId, requestedAt.toISOString());
     if (admitted && !consultationBackendMatches(backend, { accountId: admitted.principal.account_id, dataDomain: admitted.domain })) {
-      await receipts.deliver(binding, deferConsultationScope(requestId, now()));
+      await submit(binding, deferConsultationScope(requestId, requestedAt, admitted.deadlineAt));
       return;
     }
-    const finished = await withLease(job, (signal) => execute(requestId, backend, signal));
+    const finished = await withLease(job, claimedAs, (signal) => execute(requestId, backend, signal));
     if (options.signal?.aborted) return;
-    await receipts.deliver(binding, consultationHubResult(finished));
+    await submit(binding, consultationHubResult(finished));
   }
 
-  async function withLease<T>(job: HubJob, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async function withLease<T>(job: HubJob, claimedAs: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const stop = new AbortController();
     const signals = [stop.signal, AbortSignal.timeout(executionTimeout)];
     if (options.signal) signals.push(options.signal);
     const signal = AbortSignal.any(signals);
-    void keepLease(job.run, signal, stop).catch((error: unknown) => {
+    void keepLease(job.run, claimedAs, signal, stop).catch((error: unknown) => {
       if (!signal.aborted) report(error);
     });
     try {
@@ -87,11 +136,11 @@ export function startConsultationWorker(
     }
   }
 
-  async function keepLease(run: number, signal: AbortSignal, stop: AbortController): Promise<void> {
+  async function keepLease(run: number, claimedAs: string, signal: AbortSignal, stop: AbortController): Promise<void> {
     while (!signal.aborted) {
       await delay(heartbeatInterval, undefined, { signal, ref: false });
       try {
-        const cancelled = await options.hub.heartbeat(CLAIM_ID, run, AbortSignal.any([signal, AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS)]));
+        const cancelled = await hub.heartbeat(claimedAs, run, signal);
         if (cancelled.includes(run)) stop.abort();
       } catch (error) {
         // A lost heartbeat does not retry the paid call or mint a new permit.
@@ -138,6 +187,7 @@ export function startConsultationWorker(
   }
 
   function report(error: unknown) {
+    if (options.signal?.aborted) return;
     if (options.onError) options.onError(error);
     else process.emitWarning('Consultation worker could not finish a polling step', { code: 'CONSULTATION_WORKER' });
   }

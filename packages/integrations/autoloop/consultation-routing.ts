@@ -14,34 +14,34 @@ const eventId = (requestId: string) => `${eventKind}:${requestId}`;
 
 export function createConsultationRouting(db: SqliteDatabase, hub: RoutingHub, now: () => Date) {
   const api = createConsultationApi(db, { now });
-  const port = createConsultationHubPort(db, {
-    async postEvent(body) {
-      const ack = await hub.postEvent(body);
-      const stored = hubReceipt(body.id);
-      if (!Number.isSafeInteger(ack.event) || ack.event <= 0 || (stored && stored.hub_event !== ack.event)) {
-        throw new Error('CONSULTATION_HUB_RECEIPT_MISMATCH');
-      }
-      return ack;
-    },
-  });
   let cursor = 0;
 
   function hubReceipt(id: string) {
     return db.prepare('SELECT hub_event FROM hub_events WHERE event_id = ?').get(id) as { hub_event: number } | undefined;
   }
 
-  async function reconcile(requestId: string) {
+  async function reconcile(requestId: string, signal?: AbortSignal) {
     const id = eventId(requestId);
     let receipt = hubReceipt(id);
     let result: 'accepted' | 'duplicate' = 'duplicate';
     if (!receipt) {
+      const port = createConsultationHubPort(db, {
+        async postEvent(body) {
+          const ack = await hub.postEvent(body, signal);
+          const stored = hubReceipt(body.id);
+          if (!Number.isSafeInteger(ack.event) || ack.event <= 0 || (stored && stored.hub_event !== ack.event)) {
+            throw new Error('CONSULTATION_HUB_RECEIPT_MISMATCH');
+          }
+          return ack;
+        },
+      });
       const posted = await api.dispatchConsultation(requestId, port);
       if (posted === 'missing') return;
       result = posted;
       receipt = hubReceipt(id);
     }
     if (!receipt) throw new Error('CONSULTATION_HUB_RECEIPT_MISSING');
-    const outcome = await hub.eventOutcome(receipt.hub_event);
+    const outcome = await hub.eventOutcome(receipt.hub_event, signal);
     if (outcome.event !== receipt.hub_event) throw new Error('CONSULTATION_HUB_RECEIPT_MISMATCH');
     // The source event may exist without any run while the rule is paused. Resume alone is
     // insufficient; the owner explicitly replays skipped events and Hub adds the run to readback.
@@ -60,7 +60,7 @@ export function createConsultationRouting(db: SqliteDatabase, hub: RoutingHub, n
         if (signal?.aborted) return;
         cursor = entry.seq;
         try {
-          await reconcile(entry.aggregate_id);
+          await reconcile(entry.aggregate_id, signal);
         } catch (error) {
           report(error);
         }
@@ -70,11 +70,13 @@ export function createConsultationRouting(db: SqliteDatabase, hub: RoutingHub, n
   };
 }
 
-export function deferConsultationScope(requestId: string, now: Date): HubResult {
+export function deferConsultationScope(requestId: string, now: Date, deadlineAt: string): HubResult {
+  const at = Math.min(now.getTime() + SCOPE_RETRY_MS, Date.parse(deadlineAt));
+  if (!Number.isFinite(at) || at <= now.getTime()) return { outcome: 'nothing', summary: 'no verified consultation result' };
   return {
     outcome: 'done',
     summary: 'consultation waiting for a scoped backend',
-    later: [{ key: SCOPE_TIMER, at: new Date(now.getTime() + SCOPE_RETRY_MS).toISOString(), about: scopeTimerAbout(requestId) }],
+    later: [{ key: SCOPE_TIMER, at: new Date(at).toISOString(), about: scopeTimerAbout(requestId) }],
   };
 }
 

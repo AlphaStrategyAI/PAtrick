@@ -23,7 +23,7 @@ export function createAuthenticatedConsultationMcp(ready: () => AuthContext) {
               : request.data_domain;
             assertMcpPermission(db, principal, domain, 'mcp:consult');
             if (domain !== request.data_domain) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
-            return api.mutations.createConsultation({ ...principal, domains: [domain] }, request);
+            return api.mutations.createConsultation(principal, request, 'mcp:consult');
           });
         },
         async result(credential, requestId) {

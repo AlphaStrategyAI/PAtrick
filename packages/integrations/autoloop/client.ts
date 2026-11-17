@@ -50,6 +50,7 @@ export type HubAnswerView = {
 export type HubJob = {
   run: number;
   token: string;
+  cancelled?: true;
   rule: { name: string };
   context: {
     answers: HubAnswerView[];
@@ -59,7 +60,7 @@ export type HubJob = {
 };
 
 export type HubPublisher = {
-  postEvent(body: HubWireEvent): Promise<HubEventAck>;
+  postEvent(body: HubWireEvent, signal?: AbortSignal): Promise<HubEventAck>;
 };
 
 export const SOURCE_CHANGE_RULE = '来源变化';
@@ -211,17 +212,17 @@ export type HubKeys = { owner: string; worker: string; source: string };
 
 export type HubClient = HubPublisher & {
   health(): Promise<{ ok: boolean; commit: string }>;
-  eventOutcome(event: number): Promise<HubEventOutcome>;
+  eventOutcome(event: number, signal?: AbortSignal): Promise<HubEventOutcome>;
   state(before?: number): Promise<HubStatePage>;
   answer(cardId: number, body: { text: string } | { choice: number }): Promise<{ changed: boolean; state: string }>;
-  claim(claimId: string): Promise<HubJob | null>;
+  claim(claimId: string, signal?: AbortSignal): Promise<HubJob | null>;
   heartbeat(claimId: string, run: number, signal?: AbortSignal): Promise<number[]>;
   result(run: number, token: string, body: {
-    outcome: 'done' | 'nothing' | 'failed';
+    outcome: 'done' | 'nothing' | 'failed' | 'cancelled';
     summary?: string;
     ask?: unknown[];
     later?: HubLater[];
-  }): Promise<{ rejected: unknown[] }>;
+  }, signal?: AbortSignal): Promise<{ rejected: unknown[] }>;
 };
 
 export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
@@ -261,10 +262,10 @@ export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
       }
       return { ok: true, commit: parsed.commit };
     },
-    postEvent: async (body) => parseAck(await request('POST', '/v1/events', keys.source, body)),
-    eventOutcome: async (event) => {
+    postEvent: async (body, signal) => parseAck(await request('POST', '/v1/events', keys.source, body, signal)),
+    eventOutcome: async (event, signal) => {
       if (!Number.isSafeInteger(event) || event < 1) throw new Error('HUB_EVENT_OUTCOME_INVALID');
-      return parseEventOutcome(await request('GET', `/v1/events/${event}`, keys.source), event);
+      return parseEventOutcome(await request('GET', `/v1/events/${event}`, keys.source, undefined, signal), event);
     },
     state: async (before) => parseState(await request('GET', before === undefined ? '/v1/state' : `/v1/state?before=${before}`, keys.owner)),
     answer: async (cardId, body) => {
@@ -274,27 +275,31 @@ export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
       }
       return { changed: parsed.changed, state: parsed.state };
     },
-    claim: async (claimId) => {
-      const parsed = await request('GET', `/v1/work?claim=${encodeURIComponent(claimId)}&wait=0&capacity=1`, keys.worker);
-      if (!isRecord(parsed)) throw new Error('HUB_WORK_INVALID');
+    claim: async (claimId, signal) => {
+      const parsed = await request('GET', `/v1/work?claim=${encodeURIComponent(claimId)}&wait=0&capacity=1`, keys.worker, undefined, signal);
+      if (!isRecord(parsed) || !validCancellationIds(parsed.cancel)) throw new Error('HUB_WORK_INVALID');
       if (parsed.job === null) return null;
-      return parseJob(parsed.job);
+      const job = parseJob(parsed.job);
+      return parsed.cancel.includes(job.run) ? { ...job, cancelled: true } : job;
     },
     heartbeat: async (claimId, run, signal) => {
       const params = new URLSearchParams({ claim: claimId, wait: '0', capacity: '0', running: String(run) });
       const parsed = await request('GET', `/v1/work?${params}`, keys.worker, undefined, signal);
-      if (!isRecord(parsed) || parsed.job !== null || !Array.isArray(parsed.cancel)
-        || !parsed.cancel.every((id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) {
+      if (!isRecord(parsed) || parsed.job !== null || !validCancellationIds(parsed.cancel)) {
         throw new Error('HUB_HEARTBEAT_INVALID');
       }
       return parsed.cancel;
     },
-    result: async (run, token, body) => {
-      const parsed = await request('POST', `/v1/runs/${run}/result`, token, body);
+    result: async (run, token, body, signal) => {
+      const parsed = await request('POST', `/v1/runs/${run}/result`, token, body, signal);
       if (!isRecord(parsed) || !Array.isArray(parsed.rejected)) throw new Error('HUB_RESULT_INVALID');
       return { rejected: parsed.rejected };
     },
   };
+}
+
+function validCancellationIds(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every((id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
 }
 
 function parseAck(value: unknown): HubEventAck {
