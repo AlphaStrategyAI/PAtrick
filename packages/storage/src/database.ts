@@ -77,10 +77,25 @@ function migrate(db: SqliteDatabase, options?: OpenDatabaseOptions): void {
     if (actual !== entry.sha256) throw new Error('SCHEMA_FILE_HASH_MISMATCH');
     const position = applied.length + offset;
     const sql = bytes.toString('utf8');
-    db.transaction(() => {
-      db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations (position, file, sha256) VALUES (?, ?, ?)').run(position, entry.file, entry.sha256);
-    }).immediate();
+    const rebuildSources = entry.file === '0020_http_sources.sql';
+    // SQLite requires disabling FK enforcement on this connection before replacing a referenced table.
+    // The replacement plus foreign_key_check and its manifest row commit as one write transaction.
+    if (rebuildSources) db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        const concurrent = readApplied(db);
+        if (concurrent.length !== position) {
+          pendingMigrations(concurrent, manifest);
+          if (concurrent.length > position) return;
+          throw new Error('SCHEMA_HISTORY_MISMATCH');
+        }
+        db.exec(sql);
+        if (rebuildSources && db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('SCHEMA_FOREIGN_KEY_MISMATCH');
+        db.prepare('INSERT INTO schema_migrations (position, file, sha256) VALUES (?, ?, ?)').run(position, entry.file, entry.sha256);
+      }).immediate();
+    } finally {
+      if (rebuildSources) db.pragma('foreign_keys = ON');
+    }
   }
 }
 

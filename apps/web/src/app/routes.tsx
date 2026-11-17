@@ -1,3 +1,4 @@
+import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { StatsPage } from '../features/stats/StatsPage.js';
 import { KnowledgePage } from '../features/knowledge/KnowledgePage.js';
 import { StandardsPage } from '../features/standards/StandardsPage.js';
@@ -145,7 +146,7 @@ export const appRoutes: RouteObject[] = [{
       : <PageFrame item={navigation[6]}><Authenticated><StatsPage /></Authenticated></PageFrame> },
     { path: '/settings', element: <SettingsPage /> },
     ...settingsNavigation.slice(0, 5).map((item) => ({ path: item.path, element: isDemo ? <UnconnectedPage item={item} />
-      : <PageFrame item={item}><Authenticated><SettingsGroup group={item.path.split('/').at(-1)!} /></Authenticated></PageFrame> })),
+      : <PageFrame item={item}><Authenticated>{item.path === '/settings/collection' ? <CollectionPage /> : <SettingsGroup group={item.path.split('/').at(-1)!} />}</Authenticated></PageFrame> })),
     { path: '/settings/preferences', element: <PreferencesPage /> },
     { path: '*', element: <NotFound /> },
   ],

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import type { Json } from '@patrick/contracts/envelope';
 import { settingsControlSchema, settingsValidationSchema } from '@patrick/contracts/resources';
 import { asClientError, useService } from '../../api/query.js';
 import { ConnectionWizard, LocalizedError } from '../../components/shared.js';
@@ -7,13 +8,13 @@ import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate, type MessageKey } from '../../i18n/locale.js';
 import { safeEnvelope } from './envelope.js';
 
-type Target = { target: string; device: string | null; status: string; revision: number };
+type Target = { target: string; device: string | null; label?: string; status?: string; revision: number; input?: Json };
 type Proof = ReturnType<typeof settingsValidationSchema.parse>;
 type Proposal = ReturnType<typeof settingsControlSchema.parse> & { challengeId: string };
 const steps = ['settings.stepTarget', 'settings.stepValidation', 'settings.stepConfirmation'] as const satisfies readonly MessageKey[];
 
-export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged }: {
-  operation: string; targets: Target[]; entryLabel: MessageKey; onChanged: () => void;
+export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged, receiptQuery }: {
+  operation: string; targets: Target[]; entryLabel: MessageKey; onChanged: () => void; receiptQuery?: Readonly<Record<string, string>>;
 }) {
   const { api, scope, accessGeneration } = useService();
   const { t, locale } = useLocale();
@@ -34,7 +35,7 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
   }, [accessGeneration]);
   const selected = targets.find((target) => targetKey(target) === selectedId);
   const draft = selected && scope ? { operation, domain: scope.data_domain, target: selected.target,
-    input: selected.device ? { device_id: selected.device } : null } : undefined;
+    input: selected.input !== undefined ? selected.input : selected.device ? { device_id: selected.device } : null } : undefined;
 
   function reset(next = 0) {
     if (running.current) return;
@@ -96,7 +97,12 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
       payload: { draft, validation_id: proof.validation_id, control_receipt_id: receiptId },
     }, { signal });
     signal.throwIfAborted();
-    setSearch((previous) => { const next = new URLSearchParams(previous); next.set('change', change.command_id); return next; });
+    setSearch((previous) => {
+      const next = new URLSearchParams(previous);
+      for (const [key, value] of Object.entries(receiptQuery ?? {})) next.set(key, value);
+      next.set('change', change.command_id);
+      return next;
+    });
     finalIds.current = undefined;
     setStep(0);
     setSelectedId('');
@@ -117,12 +123,12 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
       <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={busy}>
         <option value="">{t('settings.chooseTarget')}</option>
         {targets.map((target) => <option key={targetKey(target)} value={targetKey(target)}>
-          {target.target}{target.device ? ' · ' + target.device : ''}
+          {target.label ?? target.target}{target.device ? ' · ' + target.device : ''}
         </option>)}
       </select>
     </label>}
     {step > 0 && proof && <>
-      <p>{t('settings.selectTarget')}: <code>{selected?.target}</code></p>
+      <p>{t('settings.selectTarget')}: <code>{selected?.label ?? selected?.target}</code></p>
       <p>{t(proof.valid ? 'settings.validationPassed' : 'settings.validationFailed')}</p>
       <p>{t('settings.validationExpiry')}: {formatDate(locale, proof.expires_at)}</p>
     </>}

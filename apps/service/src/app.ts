@@ -7,6 +7,7 @@ import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
 import { startConsultationWorker, type ConsultationWorkerOptions } from '@patrick/integrations/autoloop/consultation-runtime';
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
+import { createSourceRegistry, type RegistryOptions } from '@patrick/integrations/sources/registry';
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
@@ -25,9 +26,12 @@ import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
 import { startWorkStopObserver, type WorkStopSupervisor } from './work-stop.js';
 import { mountPreferenceRoutes } from './routes/preferences.js';
+import { mountSourceRoutes } from './routes/sources.js';
 import { mountSettingsRoutes } from './routes/settings.js';
 import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
 import { builtinSettingsHandlers } from './settings/builtin.js';
+import { createHttpCollectionWorker, type HttpCollectionWorkerOptions } from './source-collection.js';
+import { sourceSettingsHandlers } from './settings/sources.js';
 import { createProductViewService, startProductViewHubObserver, type ProductViewHub } from './product-views.js';
 import { mountStatsRoutes } from './routes/stats.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
@@ -42,6 +46,8 @@ export type CreateAppOptions = {
   consultationWorker?: ConsultationWorkerOptions;
   productViewHub?: ProductViewHub;
   workStopSupervisor?: WorkStopSupervisor;
+  httpSources?: RegistryOptions['http'];
+  httpSourceWorker?: HttpCollectionWorkerOptions;
   settingsHandlers?: Readonly<Partial<Record<string, SettingsHandler>>>;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
 };
@@ -62,6 +68,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.workStopSupervisor && (!options.databasePath || options.databasePath === ':memory:')) {
     throw new Error('WORK_STOP_DATABASE_REQUIRED');
   }
+  if (options.httpSourceWorker && (!options.databasePath || options.databasePath === ':memory:' || !options.httpSources)) {
+    throw new Error('HTTP_SOURCE_WORKER_DURABLE_POLICY_REQUIRED');
+  }
   const now = options.now ?? (() => new Date());
   const state: {
     db?: SqliteDatabase;
@@ -70,6 +79,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     vault?: ReturnType<typeof createVaultApi>;
     hub?: LocalHubPort;
     productViews?: ReturnType<typeof createProductViewService>;
+    sourceRegistry?: ReturnType<typeof createSourceRegistry>;
     settings?: ReturnType<typeof createSettingsChanges>;
   } = {};
   function context(): AuthContext {
@@ -119,6 +129,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     state.productViews.start({ signal: options.productViewHub.signal, onError: options.productViewHub.onError });
   }
 
+  function sourceResources() {
+    const current = context();
+    state.sourceRegistry ??= createSourceRegistry(current.db, {
+      blobs: createBlobStore(join(dirname(state.databasePath ?? ''), 'blobs')),
+      now: () => current.now().toISOString(),
+      http: options.httpSources,
+    });
+    return { ...current, registry: state.sourceRegistry };
+  }
+
+  if (options.httpSourceWorker) {
+    const { db, registry } = sourceResources();
+    createHttpCollectionWorker(db, registry, now, options.httpSourceWorker).start();
+  }
   const app = new Hono();
   app.use('/api/v1/*', async (_c, next) => {
     await runWithAuth(context(), async () => {
@@ -132,10 +156,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountSettingsRoutes(app, () => {
     const current = context();
     state.settings ??= createSettingsChanges({ ...current,
-      handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }), ...options.settingsHandlers },
+      handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }),
+        ...sourceSettingsHandlers(sourceResources()), ...options.settingsHandlers },
     });
     return { ...current, engine: state.settings };
   });
+  mountSourceRoutes(app, sourceResources);
   mountControlRoutes(app);
   mountAnswerRoutes(app, () => {
     const current = context();

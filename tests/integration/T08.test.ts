@@ -1061,6 +1061,7 @@ test('the admission migration appends without changing earlier files', () => {
     '0017_settings.sql',
     '0018_delegation_control.sql',
     '0019_stats.sql',
+    '0020_http_sources.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

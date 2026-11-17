@@ -54,5 +54,9 @@
   {
     "file": "0019_stats.sql",
     "sha256": "4a70bc35537204792bb1ce12700fc05189222d8caa036c354201f20314db1850"
+  },
+  {
+    "file": "0020_http_sources.sql",
+    "sha256": "c7ef66ba19c6fceabbe3f9b9108471dab634b09b4381db2f01b44a60395512f1"
   }
 ]

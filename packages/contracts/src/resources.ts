@@ -15,6 +15,7 @@ import {
 export const HTTP_ERROR_STATUS = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
+  NOT_FOUND: 404,
   CONFLICT: 409,
   VALIDATION_STALE: 409,
   UNPROCESSABLE: 422,
@@ -78,6 +79,57 @@ export type BrowserCreationScope = z.infer<typeof browserCreationScopeSchema>;
 const domainSchema = z.strictObject({ domain: z.string().min(1).optional() });
 const scopedIdSchema = idSchema.extend(domainSchema.shape);
 const learningPageQuery = pageQuerySchema.extend(domainSchema.shape);
+export const detectHttpSourcePayload = z.strictObject({
+  type: z.enum(['rss', 'webpage']), target: z.string().min(1).max(2048), request_scope: browserCreationScopeSchema,
+});
+export const sourceEntrySchema = z.strictObject({
+  source_id: z.string().min(1), connector_type: z.enum(['github', 'directory', 'rss', 'webpage']),
+  normalized_target: z.string().min(1), frequency: z.string().min(1),
+  config_revision: z.number().int().positive(), status: z.string().min(1), updated_at: z.iso.datetime(),
+});
+export const sourcePreviewSchema = z.strictObject({
+  preview_id: z.string().min(1), target: z.string().min(1), type: detectHttpSourcePayload.shape.type,
+  duplicate_source_id: z.string().min(1).nullable(), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
+  allowed_urls: z.array(z.string().min(1).max(2048)).min(1).max(32),
+  samples: z.array(z.strictObject({ locator: z.string().min(1), byteLength: z.number().int().nonnegative() })).max(8),
+  expires_at: z.iso.datetime(),
+});
+export const sourceReceiptSchema = z.strictObject({
+  event_id: z.string().min(1), config_revision: z.number().int().positive(), kind: z.string().min(1),
+  cursor: z.string(), object_count: z.number().int().nonnegative(), observed_at: z.iso.datetime(),
+  accepted: z.boolean(), reason: z.string().nullable(),
+});
+export const rssHistoryPreviewPayload = z.strictObject({
+  from: z.string().min(1).max(36), until: z.string().min(1).max(36),
+  max_objects: z.number().int().min(1).max(500), max_bytes: z.number().int().min(1).max(4 * 1024 * 1024),
+  request_scope: browserCreationScopeSchema,
+});
+const historyCount = z.number().int().nonnegative();
+const historyHash = z.string().regex(/^[a-f0-9]{64}$/u);
+export const rssHistoryViewSchema = z.strictObject({
+  plan_id: z.string().min(1), source_id: z.string().min(1), config_revision: z.number().int().positive(),
+  plan_hash: historyHash, response_hash: historyHash, expires_at: z.iso.datetime(),
+  target: z.string().min(1), response_url: z.string().min(1),
+  range: z.strictObject({ from: z.iso.datetime(), until: z.iso.datetime() }),
+  budget: z.strictObject({ max_objects: rssHistoryPreviewPayload.shape.max_objects, max_bytes: rssHistoryPreviewPayload.shape.max_bytes }),
+  cost: z.strictObject({
+    evidence_bytes: historyCount, eligible_objects: historyCount, eligible_bytes: historyCount, selected_objects: historyCount,
+    selected_bytes: historyCount, total_bytes: historyCount, omitted_objects: historyCount, unknown_date_objects: historyCount,
+    outside_range_objects: historyCount, additional_network_requests: z.literal(0), coverage: z.literal('feed_snapshot_only'),
+  }),
+  state: z.enum(['pending', 'expired', 'stale', 'applied']),
+  receipt: z.strictObject({
+    receipt_id: z.string().min(1), applied_at: z.iso.datetime(), selected_objects: historyCount,
+    imported_objects: historyCount, existing_objects: historyCount,
+  }).nullable(),
+}).refine(({ range, budget, cost, state, receipt }) =>
+  range.from < range.until &&
+  cost.selected_objects <= budget.max_objects && cost.total_bytes <= budget.max_bytes &&
+  cost.total_bytes === cost.evidence_bytes + cost.selected_bytes && cost.selected_bytes <= cost.eligible_bytes &&
+  cost.eligible_objects === cost.selected_objects + cost.omitted_objects &&
+  (state === 'applied' ? receipt !== null && receipt.selected_objects === cost.selected_objects &&
+    receipt.imported_objects + receipt.existing_objects === receipt.selected_objects : receipt === null),
+{ message: 'Invalid frozen history plan costs or receipt' });
 const editTargetSchema = z.strictObject({
   vault_id: z.string().min(1), document_id: z.string().min(1), observed_seq: z.number().int().nonnegative(),
   relative_path: z.string().min(1), obsidian_uri: z.string().optional(),
@@ -483,10 +535,20 @@ export const routes: RouteDefinition[] = [
   read('getDelegationProposal', '/delegation-proposals/:id', 'owner', scopedIdSchema, delegationProposalSchema),
   write('controlDelegation', 'POST', '/delegations/:id/controls', 'owner', delegationControlRequest, commandAcceptedSchema),
   write('applyDelegationProposal', 'POST', '/delegation-proposals/:id/apply', 'owner', delegationApplyRequest, commandAcceptedSchema),
-  read('listSources', '/sources', 'sources.read', pageQuerySchema, listDataSchema),
-  read('getSource', '/sources/:id', 'sources.read', idSchema, z.unknown()),
-  read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', idSchema, listDataSchema),
-  command('detectSources', '/sources/detect', 'sources.detect', z.strictObject({ target: z.string().min(1) })),
+  { ...read('listSources', '/sources', 'sources.read', learningPageQuery,
+    z.strictObject({ items: z.array(sourceEntrySchema), next_cursor: z.string().nullable() })),
+  errors: [...readErrors, 'UNPROCESSABLE'] },
+  read('getSource', '/sources/:id', 'sources.read', scopedIdSchema, sourceEntrySchema),
+  read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', scopedIdSchema,
+    z.strictObject({ items: z.array(sourceReceiptSchema) })),
+  write('detectSources', 'POST', '/sources/detect', 'sources.detect', commandEnvelope(detectHttpSourcePayload),
+    snapshotEnvelope(sourcePreviewSchema)),
+  write('previewRssHistory', 'POST', '/sources/:id/history/preview', 'owner',
+    commandEnvelope(rssHistoryPreviewPayload).extend({ expected_revision: z.number().int().positive() }),
+    snapshotEnvelope(rssHistoryViewSchema), [...writeErrors, 'VALIDATION_STALE']),
+  { ...read('getRssHistory', '/sources/:id/history/:planId', 'sources.read',
+    scopedIdSchema.extend({ planId: z.string().min(1) }), rssHistoryViewSchema),
+  errors: [...readErrors, 'NOT_FOUND', 'UNPROCESSABLE', 'VALIDATION_STALE'] },
   read('getSettings', '/settings', 'settings.read', domainSchema, settingsDashboardSchema),
   command('inspectSettings', '/settings/inspections', 'settings.inspect', emptySchema),
   write('validateSettings', 'POST', '/settings/validations', 'settings.validate', commandEnvelope(settingsDraftSchema),

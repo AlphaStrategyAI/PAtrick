@@ -28,6 +28,8 @@
   "dependencies": {
     "@patrick/contracts": "*",
     "@patrick/domain": "*",
-    "@patrick/storage": "*"
+    "@patrick/storage": "*",
+    "parse5": "7.3.0",
+    "saxes": "6.0.0"
   }
 }
