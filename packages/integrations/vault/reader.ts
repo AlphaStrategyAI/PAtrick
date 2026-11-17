@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, lstatSync, realpathSync } from 'node:fs';
 import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
 import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { recordKnowledge } from '../../domain/src/evidence.js';
-import { requireVault, type VaultRecord } from './connection.js';
+import { assertVaultWriteAllowed, requireVault, type VaultRecord } from './connection.js';
 
 const NOTE_DIRS = new Set(['知识笔记', '判断案例', '标准修订']);
 const ATTACHMENT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']);
@@ -32,11 +32,32 @@ export type VaultReadResult = {
 
 export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: string, now: string): Promise<VaultReadResult> {
   const vault = requireVault(db, vaultId);
+  assertVaultWriteAllowed(db, vault);
+  if (vault.status !== 'connected') throw new Error('CONFLICT');
+  let root;
+  try {
+    root = await lstat(vault.root_path);
+  } catch (error) {
+    if (OFFLINE_CODES.has(errorCode(error) ?? '')) return { state: 'offline', collected: 0, attachments: 0 };
+    throw error;
+  }
+  const assertRoot = () => {
+    const current = lstatSync(vault.root_path);
+    if (!current.isDirectory() || current.dev !== root.dev || current.ino !== root.ino ||
+        realpathSync(vault.root_path) !== vault.physical_root) throw new Error('CONFLICT');
+  };
   const scan = await scanVault(vault.root_path);
+  assertVaultWriteAllowed(db, vault);
   if (scan.state !== 'ready') return { state: scan.state, collected: 0, attachments: 0 };
-  for (const file of scan.files) await blobs.putBlob(file.bytes);
+  assertRoot();
+  for (const file of scan.files) {
+    assertVaultWriteAllowed(db, vault);
+    assertRoot();
+    await blobs.putBlob(file.bytes);
+  }
   return withImmediateTransaction(db, () => {
-    const current = requireVault(db, vault.vault_id);
+    const current = assertVaultWriteAllowed(db, vault);
+    assertRoot();
     let collected = 0;
     let attachments = 0;
     for (const file of scan.files) {
@@ -54,6 +75,15 @@ export async function readVaultEdit(
   db: SqliteDatabase, blobs: BlobStore, vaultId: string, relativePath: string, now: string, authorize: () => void,
 ): Promise<void> {
   const vault = requireVault(db, vaultId);
+  assertVaultWriteAllowed(db, vault);
+  const authorizeWrite = () => {
+    authorize();
+    const current = assertVaultWriteAllowed(db, vault);
+    const root = lstatSync(vault.root_path);
+    if (!root.isDirectory() || `${root.dev}:${root.ino}` !== vault.root_identity ||
+        realpathSync(vault.root_path) !== vault.physical_root) throw new Error('CONFLICT');
+    return current;
+  };
   const parts = relativePath.split('/');
   if (!NOTE_DIRS.has(parts[0]) || parts.length < 2 || extname(relativePath).toLowerCase() !== '.md' ||
     parts.some((part) => !part || part.startsWith('.') || /[:\\\p{Cc}]/u.test(part) || skippedFile(part))) throw new Error('CONFLICT');
@@ -67,7 +97,7 @@ export async function readVaultEdit(
   try {
     if (vault.status !== 'connected' || !await sameRoot()) throw new Error('CONFLICT');
     if ((await realpath(path)).normalize('NFC') !== path.normalize('NFC')) throw new Error('CONFLICT');
-    authorize();
+    authorizeWrite();
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const before = await file.stat();
@@ -79,10 +109,10 @@ export async function readVaultEdit(
       if (bytesRead !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs ||
         live.dev !== after.dev || live.ino !== after.ino || live.mtimeMs !== after.mtimeMs || !await sameRoot() ||
         (await realpath(path)).normalize('NFC') !== path.normalize('NFC')) throw new Error('CONFLICT');
+      authorizeWrite();
       const hash = await blobs.putBlob(bytes);
       withImmediateTransaction(db, () => {
-        authorize();
-        const current = requireVault(db, vaultId);
+        const current = authorizeWrite();
         if (current.root_identity !== vault.root_identity || current.status !== 'connected' ||
           current.connection_epoch !== vault.connection_epoch || current.config_revision !== vault.config_revision) throw new Error('CONFLICT');
         applyFile(db, current, { relativePath, kind: 'note', bytes, hash, dev: after.dev, ino: after.ino }, now);

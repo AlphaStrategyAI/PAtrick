@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-export async function publishCreateOnly(stagedPath: string, destination: string): Promise<'created' | 'exists'> {
+export async function publishCreateOnly(stagedPath: string, destination: string, beforePublish?: () => void): Promise<'created' | 'exists'> {
+  beforePublish?.();
   const bytes = await readFile(stagedPath);
+  beforePublish?.();
   const parent = dirname(destination);
   await mkdir(parent, { recursive: true });
   const staging = join(parent, '.patrick-staging');
@@ -18,6 +20,7 @@ export async function publishCreateOnly(stagedPath: string, destination: string)
     await handle.close();
   }
   try {
+    beforePublish?.();
     await link(temporary, destination);
   } catch (error) {
     await rm(temporary, { force: true });

@@ -3,7 +3,7 @@ import { access, realpath, stat } from 'node:fs/promises';
 import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { canonicalPayload, vaultConnectionSchema, type Json } from '@patrick/contracts';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { appendDomainEvent, assertRecoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 
 export type VaultConnection = {
   status: 'not_connected' | 'checking' | 'needs_install' | 'needs_permission' | 'awaiting_confirmation' | 'connected' | 'degraded';
@@ -47,6 +47,7 @@ export async function connectVault(db: SqliteDatabase, input: {
   captureHost: string;
   now: string;
 }): Promise<void> {
+  assertRecoveryWriteAllowed(db, input.domain);
   const physicalRoot = await realpath(input.root);
   const info = await stat(physicalRoot);
   if (!info.isDirectory()) throw new Error('UNPROCESSABLE');
@@ -57,6 +58,7 @@ export async function connectVault(db: SqliteDatabase, input: {
   } satisfies Json)).digest('hex');
   const sourceId = `src_${input.vaultId}`;
   withImmediateTransaction(db, () => {
+    assertRecoveryWriteAllowed(db, input.domain);
     if (sourceRootTaken(db, physicalRoot) || vaultRootTaken(db, physicalRoot)) throw new Error('VAULT_ROOT_TAKEN');
     db.prepare(`INSERT INTO vaults (
       vault_id, source_id, account_id, data_domain, capture_host, root_path, isolation_root, root_identity,
@@ -120,6 +122,7 @@ export async function confirmVault(
   options?: { beforeWrite: () => string },
 ): Promise<void> {
   const vault = requireVault(db, vaultId);
+  assertVaultWriteAllowed(db, vault);
   const mapping = db.prepare('SELECT mapping_revision FROM vault_clients WHERE device_id=? AND vault_id=?');
   const currentMapping = mapping.get(deviceId, vaultId) as { mapping_revision: number } | undefined;
   if (!currentMapping || vault.status !== 'awaiting_confirmation') throw new VaultConfirmationBlocked('binding_changed');
@@ -139,6 +142,7 @@ export async function confirmVault(
       if (knownRootFailure(error)) throw new VaultConfirmationBlocked('root_unavailable');
       throw error;
     }
+    assertVaultWriteAllowed(db, vault);
     const changed = db.prepare(`UPDATE vaults
       SET status='connected',connection_epoch=connection_epoch+1,updated_at=?
       WHERE vault_id=? AND account_id=? AND data_domain=? AND capture_host=? AND root_path=? AND physical_root=?
@@ -208,6 +212,16 @@ export function requireVault(db: SqliteDatabase, vaultId: string): VaultRecord {
   const vault = loadVault(db, vaultId);
   if (!vault) throw new Error('NOT_FOUND');
   return vault;
+}
+
+/** Re-read the authoritative binding after callbacks and asynchronous preparation. */
+export function assertVaultWriteAllowed(db: SqliteDatabase, expected: VaultRecord): VaultRecord {
+  const current = requireVault(db, expected.vault_id);
+  assertRecoveryWriteAllowed(db, current.data_domain);
+  if (Object.keys(expected).some((key) => current[key as keyof VaultRecord] !== expected[key as keyof VaultRecord])) {
+    throw new Error('CONFLICT');
+  }
+  return current;
 }
 
 export function sourceRootTaken(db: SqliteDatabase, physicalRoot: string): boolean {

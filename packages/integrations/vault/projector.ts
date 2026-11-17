@@ -4,7 +4,7 @@ import { cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, ren
 import { basename, dirname, join } from 'node:path';
 import { canonicalPayload } from '@patrick/contracts';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import { requireVault } from './connection.js';
+import { assertVaultWriteAllowed, requireVault } from './connection.js';
 import { assertBoundRender, assertFailedReceiptCurrent, observeAdoptionProjection, supersedeAdoptionProjection,
   type AdoptionRender } from './adoption-projection.js';
 import { INDEX_PATH, indexSeedMatches, readIndexFile } from './index-proof.js';
@@ -52,6 +52,12 @@ export async function projectVault(
   },
 ): Promise<ProjectionResult> {
   const vault = requireVault(db, input.vaultId);
+  const authorize = () => {
+    options.authorize?.();
+    assertVaultWriteAllowed(db, vault);
+    if (vault.status !== 'connected') throw new Error('CONFLICT');
+  };
+  authorize();
   // All views share the index. Serialize by Vault domain; the SQL row is also shared across processes.
   const key = vault.data_domain;
   const lockView = 'vault-index';
@@ -61,6 +67,7 @@ export async function projectVault(
     liveLocks.set(key, holder);
     try {
       withImmediateTransaction(db, () => {
+        authorize();
         acquireProjectionLock(db, vault.data_domain, lockView, holder, options.now);
         // Preserve the view-specific observation expected by existing diagnostics.
         db.prepare(`INSERT INTO projection_locks (data_domain,view_kind,holder,acquired_at) VALUES (?,?,?,?)
@@ -69,12 +76,13 @@ export async function projectVault(
       });
       let filesystemFailure: (() => ProjectionResult) | undefined;
       try {
-        options.authorize?.();
+        authorize();
         options.onProjectionLock?.(vault.data_domain, input.viewKind);
+        authorize();
         if (input.adoptionRender) {
           assertFailedReceiptCurrent(db, input);
           const superseded = withImmediateTransaction(db, () => {
-            options.authorize?.();
+            authorize();
             return supersedeAdoptionProjection(db, input, options.now);
           });
           if (superseded) return superseded;
@@ -108,11 +116,14 @@ export async function projectVault(
           { intent_id: string } | undefined;
         const precedingBatch = pointer === null ? null : batchName(pointer, previous?.intent_id);
         if (!manifestComplete(input.files) || !await rootMatches(vault)) return failed();
+        authorize();
         const manifest = projectionManifest(input);
         const scope = publicationScope(vault, input, pointer, manifest, index);
         const pending = loadPublicationProof(db, scope);
         if (pending === 'conflict') return failed();
-        if (options.failProjection?.(input.revision)) {
+        const simulateFailure = options.failProjection?.(input.revision);
+        authorize();
+        if (simulateFailure) {
           if (!pending && !input.adoptionRender) withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
           return failed();
         }
@@ -120,6 +131,7 @@ export async function projectVault(
         let live: IndexSnapshot;
         try {
           live = await readIndexFile(destination);
+          authorize();
         } catch (error) {
           if (error instanceof Error && error.message === 'PROJECTION_INDEX_UNSAFE') return failed();
           throw error;
@@ -135,28 +147,36 @@ export async function projectVault(
             if (!pending && !input.adoptionRender) withImmediateTransaction(db, () => remember(db, vault, input, 'failed', 0, options.now));
             return failed();
           }
+          authorize();
           const system = await writableDirectory(vault.root_path, '系统视图');
+          authorize();
           await writableDirectory(system, '批次');
+          authorize();
           const staged = await stageIndex(vault.root_path, batch, index);
           try {
+            authorize();
             const stamped = await readIndexFile(staged);
+            authorize();
             if (!stamped || stamped.sha256 !== scope.indexSha256) throw new Error('PROJECTION_INDEX_STAGE_INVALID');
             const proof = writePublicationProof(scope, live, stamped);
             withImmediateTransaction(db, () => {
-              options.authorize?.();
+              authorize();
               const actual = requireVault(db, vault.vault_id);
               if (input.adoptionRender) assertBoundRender(db, input);
               if (actual.config_revision !== vault.config_revision || actual.connection_epoch !== vault.connection_epoch ||
                   !remember(db, vault, input, 'pending', 0, options.now, proof)) throw new Error('PROJECTION_SCOPE_CHANGED');
             });
             await publishBatch(vault.root_path, batch, input.files, !pending && !input.adoptionRender, () => {
-              options.authorize?.();
+              authorize();
               if (input.adoptionRender) assertBoundRender(db, input);
             });
-            if (precedingBatch) await preserveBatch(vault.root_path, vault.isolation_root, vault.vault_id, precedingBatch);
-            options.authorize?.();
+            if (precedingBatch) await preserveBatch(vault.root_path, vault.isolation_root, vault.vault_id, precedingBatch, authorize);
+            authorize();
             if (input.adoptionRender) assertBoundRender(db, input);
-            await publishIndex(destination, staged, live);
+            await publishIndex(destination, staged, live, () => {
+              authorize();
+              if (input.adoptionRender) assertBoundRender(db, input);
+            });
           } finally {
             await removeStaged(staged);
           }
@@ -165,7 +185,7 @@ export async function projectVault(
         if (!await exactPublishedBatch(vault.root_path, batch, input.files) || !await rootMatches(vault)) return failed();
         const publishedIndex = await readIndexFile(destination);
         const moved = withImmediateTransaction(db, () => {
-          options.authorize?.();
+          authorize();
           const actual = requireVault(db, vault.vault_id);
           if (input.adoptionRender) assertBoundRender(db, input);
           const actualPointer = currentPointer(db, vault.data_domain, input.viewKind);
@@ -329,14 +349,15 @@ async function removeStaged(path: string, recursive = false): Promise<void> {
   }
 }
 
-async function preserveBatch(root: string, isolationRoot: string, vaultId: string, revision: string): Promise<void> {
+async function preserveBatch(root: string, isolationRoot: string, vaultId: string, revision: string, authorize: () => void): Promise<void> {
   const from = batchPath(root, revision);
   if (!await batchDirectoryComplete(from)) return;
   const container = await writableDirectory(await realpath(dirname(isolationRoot)), basename(isolationRoot));
   const safeIsolation = await writableDirectory(container, vaultId);
   const destination = join(safeIsolation, revision);
   if (await batchDirectoryComplete(destination) && await batchBytesMatch(from, destination)) return;
-  await copyBatchToIsolation(from, safeIsolation, revision);
+  authorize();
+  await copyBatchToIsolation(from, safeIsolation, revision, authorize);
   if (!(await batchDirectoryComplete(destination)) || !(await batchBytesMatch(from, destination))) {
     throw new Error('PRESERVE_INCOMPLETE');
   }
@@ -409,6 +430,7 @@ async function copyBatchToIsolation(
   from: string,
   container: string,
   revision: string,
+  authorize: () => void,
 ): Promise<void> {
   await assertPhysicalDirectory(container);
   const destination = join(container, revision);
@@ -431,8 +453,10 @@ async function copyBatchToIsolation(
       await assertPhysicalDirectory(destination);
       const quarantine = await mkdtemp(join(container, `.patrick-isolation-quarantine-${revision}-`));
       await assertPhysicalDirectory(quarantine);
+      authorize();
       await rename(destination, join(quarantine, 'original'));
     }
+    authorize();
     await rename(staging, destination);
   } finally {
     await removeStaged(staging, true);
@@ -483,15 +507,17 @@ async function stageIndex(root: string, batch: string, body: string): Promise<st
   return staging;
 }
 
-async function publishIndex(destination: string, staging: string, replacing: IndexSnapshot): Promise<void> {
+async function publishIndex(destination: string, staging: string, replacing: IndexSnapshot, authorize: () => void): Promise<void> {
   await assertPhysicalDirectory(dirname(destination));
   await assertPhysicalDirectory(dirname(staging));
   if (!replacing) {
     // Publish the exact inode registered by the pending proof, without replacing a racing file.
+    authorize();
     await link(staging, destination);
   } else {
     const current = await readIndexFile(destination);
     if (!sameIndex(current, replacing)) throw new Error('PROJECTION_INDEX_CONFLICT');
+    authorize();
     await rename(staging, destination);
   }
   await syncIndexPublication(destination);

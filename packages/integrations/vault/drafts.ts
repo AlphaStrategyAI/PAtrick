@@ -10,7 +10,7 @@ import { canonicalPayload, editIntentRequestSchema, editReceiptSchema, type Json
 import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { queryEvidence, withdrawEvidence, type EvidencePack, type EvidenceQuery } from '../../domain/src/evidence.js';
 import { publishCreateOnly } from './create-file.js';
-import { confirmVault, connectVault, inspectVault, requireVault, type VaultConnection, type VaultRecord } from './connection.js';
+import { assertVaultWriteAllowed, confirmVault, connectVault, inspectVault, requireVault, type VaultConnection, type VaultRecord } from './connection.js';
 import { readVault, readVaultEdit, type VaultReadResult } from './reader.js';
 import { projectPendingAdoption, publishAdoptionProjection, retryAdoptionProjection } from './adoption-projection.js';
 import { projectVault, type ProjectionRequest, type ProjectionResult } from './projector.js';
@@ -107,12 +107,27 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
       authorize: () => void) {
       await retryAdoptionProjection(db, options.blobs, editId, expected, {
         now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock,
-      }, authorize);
+      }, () => {
+        authorize();
+        const current = receipt(db, editId);
+        const replay = ['current', 'superseded'].includes(current.projection.state) &&
+          current.receipt_revision > expected.receiptRevision && current.projection.intent_id === expected.intentId &&
+          current.projection.projection_revision === expected.projectionRevision && db.prepare(`SELECT 1 FROM edit_receipts
+            WHERE edit_id=? AND receipt_revision=? AND business_state='adopted' AND projection_state='failed'
+              AND projection_intent_id=? AND projection_revision=? AND candidate_id=? AND result_ref=?`)
+            .get(editId, expected.receiptRevision, expected.intentId, expected.projectionRevision,
+              current.business.candidate_id, current.business.result_ref);
+        if (!replay) assertEditWriteAllowed(db, editId);
+      });
       return receipt(db, editId);
     },
     projectPendingStandardAdoption(candidateId: string, reportId: string, authorize: () => void) {
       return projectPendingAdoption(db, options.blobs, candidateId, reportId, {
-        now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock, authorize,
+        now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock, authorize: () => {
+          authorize();
+          const target = db.prepare('SELECT edit_id FROM standard_candidates WHERE candidate_id=?').get(candidateId) as { edit_id: string } | undefined;
+          if (target) assertEditWriteAllowed(db, target.edit_id);
+        },
       });
     },
     queryEvidence(query: EvidenceQuery, principal: VaultPrincipal): Promise<EvidencePack> {
@@ -122,7 +137,11 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
       return Promise.resolve(withdrawEvidence(db, { ...input, now: now() }));
     },
     project(input: ProjectionRequest): Promise<ProjectionResult> {
-      const projector = { now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock };
+      const projector = { now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock,
+        authorize: () => {
+          if (input.editId) assertEditWriteAllowed(db, input.editId);
+          else assertVaultWriteAllowed(db, requireVault(db, input.vaultId));
+        } };
       return input.viewKind === 'standards' && input.editId
         ? publishAdoptionProjection(db, options.blobs, input, projector)
         : projectVault(db, input, projector);
@@ -137,6 +156,17 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
       return obsidianFileUri(basename(vault.root_path), intent.relative_path);
     },
   };
+}
+
+function assertEditWriteAllowed(db: SqliteDatabase, editId: string): void {
+  const intent = db.prepare('SELECT vault_id,account_id,data_domain FROM edit_intents WHERE edit_id=?').get(editId) as {
+    vault_id: string; account_id: string; data_domain: string;
+  } | undefined;
+  if (!intent) throw new Error('NOT_FOUND');
+  const vault = assertVaultWriteAllowed(db, requireVault(db, intent.vault_id));
+  if (vault.account_id !== intent.account_id || vault.data_domain !== intent.data_domain || vault.status !== 'connected') {
+    throw new Error('CONFLICT');
+  }
 }
 
 async function createEdit(
@@ -156,10 +186,12 @@ async function createEdit(
   const active = activeKey(input);
   const existing = openIntent(db, vault, active);
   if (existing) return reopen(db, vault, existing, now);
+  assertVaultWriteAllowed(db, vault);
   const plan = planEdit(db, vault, input);
   const editId = randomUUID();
   const stamped = now();
   withImmediateTransaction(db, () => {
+    assertVaultWriteAllowed(db, vault);
     db.prepare(`INSERT INTO edit_intents (
       edit_id, account_id, data_domain, vault_id, operation, active_key, draft_key, target_id, base_version,
       document_id, relative_path, request_hash, closed_at, schema_version, created_at, updated_at
@@ -216,10 +248,11 @@ async function createEdit(
   });
   if (!plan.writes || !plan.bytes) return receipt(db, editId);
   options.beforeDraftWrite?.(editId);
-  const outcome = await placeDraft(vault.root_path, plan.relativePath, plan.bytes);
+  const outcome = await placeDraft(vault.root_path, plan.relativePath, plan.bytes, () => assertVaultWriteAllowed(db, vault));
   if (outcome === 'created') options.afterDraftWrite?.(editId);
   const observed = now();
   withImmediateTransaction(db, () => {
+    assertVaultWriteAllowed(db, vault);
     const proof = outcome === 'created' ? sha256(plan.bytes ?? Buffer.alloc(0)) : null;
     insertReceipt(db, {
       editId,
@@ -255,17 +288,19 @@ async function createEdit(
 async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow, now: () => string): Promise<EditReceipt> {
   const current = receipt(db, intent.edit_id);
   if (!intent.relative_path || intent.operation === 'edit_original' || current.file.state !== 'preparing') return current;
+  assertVaultWriteAllowed(db, vault);
   const destination = resolveInside(vault.root_path, intent.relative_path);
   if (!(await fileExists(destination))) {
     const draft = db.prepare('SELECT write_state FROM draft_intents WHERE edit_id = ?').get(intent.edit_id) as { write_state: string } | undefined;
     if (draft && draft.write_state !== 'pending') return current;
     const bytes = plannedBytes(intent);
     if (!bytes) return current;
-    const outcome = await placeDraft(vault.root_path, intent.relative_path, bytes);
+    const outcome = await placeDraft(vault.root_path, intent.relative_path, bytes, () => assertVaultWriteAllowed(db, vault));
     if (outcome === 'created') {
       const proof = sha256(bytes);
       const stamped = now();
       withImmediateTransaction(db, () => {
+        assertVaultWriteAllowed(db, vault);
         insertReceipt(db, {
           editId: intent.edit_id,
           revision: current.receipt_revision + 1,
@@ -292,6 +327,7 @@ async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow,
   const observed = sha256(await readFile(destination));
   const stamped = now();
   withImmediateTransaction(db, () => {
+    assertVaultWriteAllowed(db, vault);
     insertReceipt(db, {
       editId: intent.edit_id,
       revision: current.receipt_revision + 1,
@@ -397,10 +433,11 @@ function planEdit(db: SqliteDatabase, vault: VaultRecord, input: EditIntentReque
 }
 
 function retryProjection(db: SqliteDatabase, editId: string, expectedRevision: number, now: () => string): Promise<EditReceipt> {
-  const intent = db.prepare('SELECT edit_id, account_id, data_domain FROM edit_intents WHERE edit_id = ?').get(editId) as {
+  const intent = db.prepare('SELECT edit_id, account_id, data_domain, vault_id FROM edit_intents WHERE edit_id = ?').get(editId) as {
     edit_id: string;
     account_id: string;
     data_domain: string;
+    vault_id: string;
   } | undefined;
   if (!intent) throw new Error('NOT_FOUND');
   const pointer = db.prepare(`SELECT projection_revision, intent_id FROM projection_pointers
@@ -412,8 +449,18 @@ function retryProjection(db: SqliteDatabase, editId: string, expectedRevision: n
   if (!pointer || expectedRevision >= pointer.projection_revision || current.projection.projection_revision === pointer.projection_revision) {
     return Promise.resolve(current);
   }
+  const vault = requireVault(db, intent.vault_id);
   const stamped = now();
   withImmediateTransaction(db, () => {
+    assertVaultWriteAllowed(db, vault);
+    assertEditWriteAllowed(db, editId);
+    const sameIntent = db.prepare(`SELECT 1 FROM edit_intents
+      WHERE edit_id=? AND account_id=? AND data_domain=? AND vault_id=?`)
+      .get(editId, intent.account_id, intent.data_domain, intent.vault_id);
+    const samePointer = db.prepare(`SELECT 1 FROM projection_pointers
+      WHERE data_domain=? AND view_kind='knowledge' AND projection_revision=? AND intent_id=?`)
+      .get(intent.data_domain, pointer.projection_revision, pointer.intent_id);
+    if (!sameIntent || !samePointer) throw new Error('CONFLICT');
     insertReceipt(db, {
       editId,
       revision: current.receipt_revision + 1,
@@ -516,7 +563,8 @@ function receipt(db: SqliteDatabase, editId: string): EditReceipt {
   };
 }
 
-async function placeDraft(root: string, relativePath: string, bytes: Buffer): Promise<'created' | 'exists'> {
+async function placeDraft(root: string, relativePath: string, bytes: Buffer, authorize: () => void): Promise<'created' | 'exists'> {
+  authorize();
   const staged = join(root, '.patrick-staging', `${randomUUID()}.md`);
   await mkdir(dirname(staged), { recursive: true });
   const handle = await open(staged, 'w', 0o644);
@@ -527,7 +575,7 @@ async function placeDraft(root: string, relativePath: string, bytes: Buffer): Pr
     await handle.close();
   }
   try {
-    return await publishCreateOnly(staged, resolveInside(root, relativePath));
+    return await publishCreateOnly(staged, resolveInside(root, relativePath), authorize);
   } finally {
     await rm(staged, { force: true });
   }
