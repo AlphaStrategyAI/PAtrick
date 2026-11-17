@@ -1,0 +1,166 @@
+{
+  "schema_version": "1.0",
+  "recorded_at": "2026-11-17",
+  "session_id": "t27-82633658-936d-46dc-ad32-adafbe569121",
+  "account": "fengpengcheng",
+  "uid": 501,
+  "application": "/Applications/Obsidian.app",
+  "application_version": "1.15.1",
+  "isolation": "new synthetic Vault and database; same editor/service UID",
+  "gui_evidence": "CUA native accessibility: opened exact synthetic Vault, source-mode appended both session markers, saved; opened projection index 1 and unadopted candidate; then quit application",
+  "human_gui_confirmation": "pending; original receipt retained operator_confirmation_required",
+  "phases": [
+    {
+      "phase": "editor-open",
+      "receipt_sha256": "f45ef13bea970a02c77184830ee183aa2b3f9b29ff5856fc9463f6d4945c39b8",
+      "worker_pid": 41043,
+      "process_instance": "b74e26e8-ba04-44e0-8a4a-973a5bda2554",
+      "editor": {
+        "start": "running",
+        "atCapture": "running",
+        "startProcess": {
+          "running": true,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": 52756
+        },
+        "capturedProcess": {
+          "running": true,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": 52756
+        }
+      },
+      "source": [
+        {
+          "documentId": "doc_ca32ecf26d7ec8b9fb80e4ab",
+          "relativePath": "知识笔记/演练笔记 #1.md",
+          "observedSeq": 2,
+          "revisionId": "rev_51de726707f83e93eb10aec7",
+          "sha256": "f363031fa17a90d46113f8091e1ce36ab7325d14a5a0287336e326f1bc2722d3"
+        },
+        {
+          "documentId": "doc_d4a41511d53479ef785f4f78",
+          "relativePath": "标准修订/native-rehearsal.md",
+          "observedSeq": 2,
+          "revisionId": "rev_90c18298185b31abb554dd96",
+          "sha256": "8f573331f1e0a36038152653e401091b45552d8bf7f4c79d4d4992d0a0152da4"
+        }
+      ],
+      "candidate": {
+        "id": "cand_d10ce0ec6f6bb80d1a2542f7",
+        "documentId": "doc_d4a41511d53479ef785f4f78",
+        "sourceRevision": 2,
+        "sha256": "8f573331f1e0a36038152653e401091b45552d8bf7f4c79d4d4992d0a0152da4",
+        "activeVersion": null
+      },
+      "publication": {
+        "intentId": "projection:personal:t27-rehearsal:1",
+        "manifestSha256": "0e8b17ba90fac59854d292df3d44a59b109ffcb9c0f33da83753c472037761c1",
+        "revision": 1,
+        "indexSha256": "5d82e79155b7c8358ffa8dca0a2a1270b7a3e77d4790465a16fde99cc7e6b38b",
+        "path": "系统视图/批次/1"
+      },
+      "fresh_worker_process": null,
+      "boot_compared_to_prior": "not_applicable"
+    },
+    {
+      "phase": "editor-closed",
+      "receipt_sha256": "dc104803450bbcec01c0531f8cb9c2cb86057e6502d928d26d17e96d94624746",
+      "worker_pid": 41515,
+      "process_instance": "6650598f-2fa1-45d1-839d-8f67bcad9ef3",
+      "editor": {
+        "start": "stopped",
+        "atCapture": "stopped",
+        "startProcess": {
+          "running": false,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": null
+        },
+        "capturedProcess": {
+          "running": false,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": null
+        }
+      },
+      "source": [
+        {
+          "documentId": "doc_ca32ecf26d7ec8b9fb80e4ab",
+          "relativePath": "知识笔记/演练笔记 #1.md",
+          "observedSeq": 3,
+          "revisionId": "rev_46618cc2ac334a6bf420794b",
+          "sha256": "cb62a1750904461db410f33827502a43c94f885c142d0c9527c45514d5c384e4"
+        }
+      ],
+      "candidate": {
+        "id": "cand_d10ce0ec6f6bb80d1a2542f7",
+        "documentId": "doc_d4a41511d53479ef785f4f78",
+        "sourceRevision": 2,
+        "sha256": "8f573331f1e0a36038152653e401091b45552d8bf7f4c79d4d4992d0a0152da4",
+        "activeVersion": null
+      },
+      "publication": {
+        "intentId": "projection:personal:t27-rehearsal:2",
+        "manifestSha256": "42d40d741484d08e3658edddd153da88d1dafe4f3a34b26fa20a4659d0e1c91e",
+        "revision": 2,
+        "indexSha256": "be011d51c4fde9a444b89d2ea47949e6944ad814f8a73940c8484b96d88aad39",
+        "path": "系统视图/批次/2"
+      },
+      "fresh_worker_process": true,
+      "boot_compared_to_prior": "unchanged"
+    },
+    {
+      "phase": "after-restart",
+      "receipt_sha256": "f20c398121a97aa8a55f105d64ce39c3cd5f4b474747a3f6e4034c45cc385eef",
+      "worker_pid": 41991,
+      "process_instance": "12b85079-de93-44a8-a496-470e0b67a0ec",
+      "editor": {
+        "start": "stopped",
+        "atCapture": "stopped",
+        "startProcess": {
+          "running": false,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": null
+        },
+        "capturedProcess": {
+          "running": false,
+          "bundlePath": "/Applications/Obsidian.app",
+          "pid": null
+        }
+      },
+      "source": [
+        {
+          "documentId": "doc_ca32ecf26d7ec8b9fb80e4ab",
+          "relativePath": "知识笔记/演练笔记 #1.md",
+          "observedSeq": 4,
+          "revisionId": "rev_93f28c4594a670456a0280c5",
+          "sha256": "861395f5097a547f085945e4d3fe2d7a5d27b9eae1be21599525e6f319015e0c"
+        }
+      ],
+      "candidate": {
+        "id": "cand_d10ce0ec6f6bb80d1a2542f7",
+        "documentId": "doc_d4a41511d53479ef785f4f78",
+        "sourceRevision": 2,
+        "sha256": "8f573331f1e0a36038152653e401091b45552d8bf7f4c79d4d4992d0a0152da4",
+        "activeVersion": null
+      },
+      "publication": {
+        "intentId": "projection:personal:t27-rehearsal:3",
+        "manifestSha256": "d196bb1a7d35d20a713c545f43896df5ef4e01f9000768393e9f0434f3ee49c0",
+        "revision": 3,
+        "indexSha256": "422a48263a9a9c242c905fb912dc685fa31023584d61415c0a88deb6b4bd8da6",
+        "path": "系统视图/批次/3"
+      },
+      "fresh_worker_process": true,
+      "boot_compared_to_prior": "unchanged"
+    }
+  ],
+  "verified": {
+    "sqlite_quick_check": "ok",
+    "archived_revision_blob_hashes": "matched for every phase",
+    "candidate": "same open candidate; never adopted",
+    "projection_batches": "1, 2, 3 applied; historical batch files may be quarantined by subsequent projection",
+    "macos_reboot": "not performed; boot identifier unchanged",
+    "production_launchd": "not exercised",
+    "separate_service_uid": "not exercised",
+    "sync_upgrade_uninstall_retention": "pending"
+  }
+}

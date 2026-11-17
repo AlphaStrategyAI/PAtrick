@@ -1,6 +1,6 @@
 # Obsidian Desktop 与 Vault 部署
 
-当前准入状态：隔离文件夹和账本的部署及文件往返可复验；现有桌面应用签名、公证、默认 URI 处理器和已锁定 DMG 的临时安装已核验；真实桌面写入与部署服务身份未准入。Obsidian 桌面状态与已登记 Vault 的后台状态分别报告。
+当前准入状态：隔离文件夹和账本的部署及文件往返可复验；现有桌面应用签名、公证、默认 URI 处理器和已锁定 DMG 的临时安装已核验。2026-11-17 已在操作者选定的当前账户中完成合成 Vault 的桌面界面保存、编辑器退出后的补采和演练进程重启后的继续补采。独立服务身份、生产 launchd、macOS 重启及升级/卸载保留仍未准入。Obsidian 桌面状态与已登记 Vault 的后台状态分别报告。
 
 ## T23 接入
 
@@ -66,3 +66,20 @@ node deploy/obsidian/rehearsal.mjs status "${T27_ARGS[@]}" --session "$T27_SESSI
 每阶段把 `evidence-<phase>.json` 写在 Vault 旁边。收据记录 `vault_revisions.revision_id`、观察序号和实际原始字节 SHA-256；可按 hash 找到 `blobs/<前两位>/<完整 hash>` 并复核。候选记录指向 T07 的开放候选，没有采纳或外部调用。导回记录给出 T06 的真实批次和指针、manifest SHA-256 与本阶段索引 hash。此前批次由 T06 放入本会话的隔离目录；历史收据不是当前状态。可用 `sqlite3 -readonly <databasePath>` 查询 `vault_revisions`、`standard_candidates`、`projection_batches` 与 `projection_pointers` 独立核对。没有收据、只做过自动 fixture 或未经操作者确认的 GUI 步骤不可记为真机通过。观察被中止或只完成部分阶段时，保留原会话供复核，用 `init` 新建合成会话重演，无需覆盖或删除任何已有 Vault。
 
 此演练不改系统权限或卸载程序。真实账号权限不足（包括独立服务 UID 或 macOS 审批拒绝）和卸载后 Vault/账本保留，仍需另行获准的隔离真机验收。
+
+
+## 2026-11-17 当前账户原生演练记录
+
+操作者最终选定 `fengpengcheng`（UID 501），与前台桌面 UID 一致。本次使用新建的 `~/PAtrick-T27-Rehearsals/t27-82633658-936d-46dc-ad32-adafbe569121/`，其中 Vault、SQLite、blob、暂存和隔离区分别独立，服务演练进程与编辑器共用 UID。合成 Vault 名为 `PAtrick T27 adafbe569121`，编辑器为已验证的 `/Applications/Obsidian.app` 1.15.1。
+
+| 阶段 | 实际观察 | 账本及导回 |
+|---|---|---|
+| `editor-open` | 观察进程 41043 等待后，通过 CUA 原生界面以源码模式在中文/空格/`#` 笔记及标准修订末尾追加各自标记并保存；GUI 读到索引修订 1 及“合成候选（未采纳）” | 两份原稿各入第 2 修订；批次 1 已应用 |
+| `editor-closed` | 界面退出 Obsidian；开始与收录时均核对编辑器进程不存在；独立写入进程 41617 在观察进程 41515 等待后追加固定标记 | 知识笔记第 3 修订；同一开放候选；批次 2 已应用 |
+| `after-restart` | 新观察进程 41991 与前次 `processInstance` 不同；写入进程 42073 在它等待后追加下一标记，编辑器持续退出 | 知识笔记第 4 修订；同一开放候选；批次 3 已应用 |
+
+独立只读复核 `PRAGMA quick_check` 为 `ok`，四份归档修订均与 blob 的 SHA-256 一致，候选始终 `open`，三份批次 manifest 与已应用账本相符。结构化摘要与原始回执摘要见 [原生演练证据](evidence/obsidian-native-2026-11-17.json)。原始 `evidence-*.json` 及停用写入收据留在上述专用会话目录。后续导回可能将旧批次移入本会话隔离区，历史收据不代表旧文件仍在活动生成区。
+
+GUI 保存由 CUA 执行并从原生无障碍树读回，没有伪造人工确认；原始回执的 `manualGuiSave: operator_confirmation_required` 保持原样。三阶段 macOS boot ID 相同，`freshWorkerProcess: true` 只证明演练进程已重新启动，不能据此声称主机重启或生产常驻服务通过。独立服务 UID、权限拒绝、URI 打开、升级/卸载保留和同步仍需后续验收。
+
+首次会话 `t27-79f1310c-ccfd-4a50-af03-73af6f008001` 因 CUA 粘贴多出一行空行触发精确格式拒绝，未生成通过回执，现场保留。切换会话时误选 Downloads，产生的 `.obsidian` 设置经创建时间、文件列表和逐项摘要核对后移入本次演练目录留存，并只撤销该次新增 Vault 登记；未打开或编辑 Downloads 文档。成功会话另行新建，未放宽脚本的身份或内容校验。
