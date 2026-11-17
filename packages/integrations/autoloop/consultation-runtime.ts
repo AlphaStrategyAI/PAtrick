@@ -62,7 +62,7 @@ export function startConsultationWorker(
       await options.hub.result(job.run, job.token, consultationHubResult(null));
       return;
     }
-    const admitted = admittedConsultation(db, requestId);
+    const admitted = admittedConsultation(db, requestId, now().toISOString());
     if (admitted && !consultationBackendMatches(backend, { accountId: admitted.principal.account_id, dataDomain: admitted.domain })) {
       await receipts.deliver(binding, deferConsultationScope(requestId, now()));
       return;
@@ -103,7 +103,7 @@ export function startConsultationWorker(
   async function execute(
     requestId: string, backend: ConsultationBackend, signal: AbortSignal,
   ): Promise<ConsultationPaidTerminal['status'] | null> {
-    const admitted = admittedConsultation(db, requestId);
+    const admitted = admittedConsultation(db, requestId, now().toISOString());
     if (!admitted) {
       const finished = db.prepare("SELECT result_version FROM consultations WHERE request_id = ? AND status IN ('answered', 'failed')").get(requestId) as {
         result_version: number;
@@ -123,7 +123,7 @@ export function startConsultationWorker(
         billing: {
           reserveCall: budget.reserveCall,
           claimPaidDispatch: (...args) => budget.claimPaidDispatch(...args,
-            () => !signal.aborted && admittedConsultation(db, requestId) !== null),
+            () => !signal.aborted && admittedConsultation(db, requestId, now().toISOString()) !== null),
           settleCall: budget.settleCall,
         },
         settleResult: (reservationId, usage, result) => budget.settleCall(reservationId, usage,

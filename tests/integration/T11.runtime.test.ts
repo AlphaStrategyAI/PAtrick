@@ -533,6 +533,31 @@ test('the worker cannot start without an explicit file database', () => {
   }
 });
 
+test('an expired consultation does not schedule another scope-deferral timer', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const api = createConsultationApi(fx.db, { now: fx.now });
+    const request = await api.createConsultation(owner, {
+      client_request_id: 'expired-before-claim', data_domain: DOMAIN, parent_work_id: null, text: 'Question',
+    });
+    fx.advance();
+    const paid = backend(async () => {
+      sends += 1;
+      return { exitCode: 0, provedUsage: true };
+    });
+    const dataDomain = 'other-domain';
+    fx.start(hub, { ...paid, scope: { ...paid.scope, dataDomain }, pricing: fixedPricing({ ...quoteTerms, dataDomain }) });
+    await expect.poll(() => hub.outcomes.length).toBe(1);
+    expect(hub.outcomes[0]).toEqual({ outcome: 'nothing', summary: 'no verified consultation result' });
+    expect(paidLedger(fx, request.request_id)).toBeUndefined();
+    expect(sends).toBe(0);
+  } finally {
+    fx.close();
+  }
+});
+
 test('shutdown aborts the backend and an in-flight heartbeat without submitting a Hub result', async () => {
   const fx = fixture();
   const hub = hubBoundary();

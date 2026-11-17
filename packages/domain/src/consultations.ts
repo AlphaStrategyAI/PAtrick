@@ -441,14 +441,15 @@ export function consultationAwaitingHubReceipt(db: SqliteDatabase, requestId: st
     .get(`consultation.requested:${requestId}`));
 }
 
-export function admittedConsultation(db: SqliteDatabase, requestId: string) {
+export function admittedConsultation(db: SqliteDatabase, requestId: string, now: string) {
   const row = db.prepare(`SELECT c.raw_text, c.account_id, c.caller_id, c.data_domain, e.payload, a.auth_epoch
     FROM consultations c JOIN domain_events e ON e.event_id = 'consultation.requested:' || c.request_id
     JOIN accounts a ON a.account_id = c.account_id
     JOIN outbox o ON o.event_id = e.event_id AND o.destination = 'autoloop' AND o.result IS NOT NULL
     JOIN hub_events h ON h.event_id = e.event_id AND h.request_id = c.request_id AND h.kind = 'consultation.requested'
     WHERE c.request_id = ? AND c.raw_text IS NOT NULL AND c.status = 'pending'
-      AND c.account_id = e.account_id AND c.data_domain = e.data_domain`).get(requestId) as {
+      AND c.cancelled_at IS NULL AND c.deadline_at > ?
+      AND c.account_id = e.account_id AND c.data_domain = e.data_domain`).get(requestId, now) as {
     raw_text: string; account_id: string; caller_id: string; data_domain: string; payload: string; auth_epoch: number;
   } | undefined;
   if (!row) return null;
