@@ -6,12 +6,14 @@ import { commandFingerprint, recordCommand, withImmediateTransaction, type Sqlit
 import { encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { channelPermit, createAnswerGate, type AnswerPayload } from '../../../../packages/domain/src/answer-gate.js';
 import { createFeishuChannel, type EnableProof } from '../../../../packages/integrations/feishu/connection.js';
-import { snapshot, type Principal } from '../auth.js';
+import { assertDomainPermission, domainsWithPermission, ORIGIN, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { registerSettingsOperation, runSettingsOperation, runSettingsOperationNow } from '../settings/registry.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 
-type Ready = () => { db: SqliteDatabase; now: () => Date; credentials: CredentialStore; hub: LocalHubPort };
+type Ready = () => { db: SqliteDatabase; now: () => Date; hub: LocalHubPort; feishuCredentials?: CredentialStore };
+type PairingCodes = Map<string, { code: string; expires_at: string; connection_id: string }>;
+const secureSetupOrigin = ORIGIN.replace(/^http:/u, 'https:');
 type Envelope<T> = { client_request_id: string; expected_revision: number | null; payload_hash: string; payload: T };
 
 const bindingRequest = routeRequest('createFeishuBinding');
@@ -28,117 +30,160 @@ export function mountFeishuRoutes(app: Hono, ready: Ready): void {
     const resources = ready();
     return { db: resources.db, now: resources.now, hub: resources.hub };
   });
+  const pairingCodes: PairingCodes = new Map();
   app.get('/api/v1/channels/feishu', (c) => handle(c, () => readChannel(c, ready)));
   app.post('/api/v1/channels/feishu/inspections', (c) => handle(c, () => inspectChannel(c, ready)));
   app.post('/api/v1/channels/feishu/validations', (c) => handle(c, () => validateChannel(c, ready)));
   app.post('/api/v1/channels/feishu/inbound', (c) => handle(c, () => postInbound(c, ready)));
   app.post('/api/v1/channels/feishu/credentials', (c) => handle(c, () => putCredential(c, ready)));
-  app.post('/api/v1/channels/feishu/bindings', (c) => handle(c, () => createBinding(c, ready)));
+  app.post('/api/v1/channels/feishu/bindings', (c) => handle(c, () => createBinding(c, ready, pairingCodes)));
   app.post('/api/v1/channels/feishu/bindings/:id/confirm', (c) => handle(c, () => confirmBinding(c, ready)));
-  app.get('/api/v1/channels/feishu/bindings/:id', (c) => handle(c, () => readBinding(c, ready)));
+  app.get('/api/v1/channels/feishu/bindings/:id', (c) => handle(c, () => readBinding(c, ready, pairingCodes)));
   app.post('/api/v1/channels/feishu/tests', (c) => handle(c, () => createTest(c, ready)));
   app.post('/api/v1/channels/feishu/tests/:id/send', (c) => handle(c, () => sendTest(c, ready)));
   app.get('/api/v1/channels/feishu/tests/:id', (c) => handle(c, () => readTest(c, ready)));
 }
 
 async function readChannel(c: Context, ready: Ready): Promise<Response> {
-  const principal = await requirePermission(c.req.raw, 'channels.read');
+  const principal = await requireSession(c.req.raw);
   const { db, now } = ready();
-  const row = db.prepare(`SELECT status, reason_code, transport_mode, data_domain, account_id FROM channel_connections
-    WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1`).get(principal.account_id) as {
-    status: string;
-    reason_code: string | null;
-    transport_mode: string;
-    data_domain: string;
-    account_id: string;
-  } | undefined;
-  const data = row && principal.domains.includes(row.data_domain)
-    ? { status: row.status, reason_code: row.reason_code, transport_mode: row.transport_mode }
-    : { status: 'not_configured', reason_code: null, transport_mode: 'probe' };
-  return c.json(snapshot(principal, data, now(), db));
+  const domain = readChannelDomain(db, principal);
+  const row = db.prepare(`SELECT status, reason_code, transport_mode FROM channel_connections
+    WHERE account_id = ? AND data_domain = ? ORDER BY updated_at DESC LIMIT 1`).get(principal.account_id, domain);
+  return c.json(snapshot(principal, row ?? { status: 'not_configured', reason_code: null, transport_mode: 'probe' }, now(), db));
 }
 
 async function putCredential(c: Context, ready: Ready): Promise<Response> {
-  assertWriteOrigin(c.req.raw);
+  assertFeishuOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
-  const body = await readJson(c.req.raw) as { app_id?: string; app_secret?: string };
-  if (!body.app_id || !body.app_secret) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'credential' });
-  const { credentials, db, now } = ready();
-  const ref = credentials.put(new TextEncoder().encode(body.app_secret), 10 * 60 * 1000);
-  const stamped = now().toISOString();
-  const version = withImmediateTransaction(db, () => {
-    const current = db.prepare('SELECT credential_version FROM channel_connections WHERE account_id = ?').get(principal.account_id) as {
-      credential_version: number;
-    } | undefined;
-    const next = (current?.credential_version ?? 0) + 1;
-    if (!current) {
+  if (new URL(c.req.url).origin !== secureSetupOrigin || c.req.header('origin') !== secureSetupOrigin) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'tls_required' });
+  }
+  const { feishuCredentials, db, now } = ready();
+  // The general session credential store is not an admitted system provider for Feishu.
+  if (!feishuCredentials) throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_provider_not_configured' });
+  if (principal.caller_id !== 'web') throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
+  const body = await readJson(c.req.raw) as { app_id?: unknown; app_secret?: unknown } | null;
+  if (typeof body?.app_id !== 'string' || !body.app_id.trim() || body.app_id.length > 200 ||
+      typeof body.app_secret !== 'string' || !body.app_secret.trim() || body.app_secret.length > 1024) {
+    throw new ApiError(422, 'UNPROCESSABLE', { reason: 'credential' });
+  }
+  const secret = new TextEncoder().encode(body.app_secret);
+  const appId = body.app_id.trim();
+  c.header('Cache-Control', 'no-store');
+  try {
+    const ref = withImmediateTransaction(db, () => {
+      const domain = channelDomain(db, principal, 'owner');
+      // Bootstrap never rotates credentials or modifies an existing binding. Those
+      // transitions need a separate Settings proof and a live connection fence.
+      if (db.prepare('SELECT 1 FROM channel_connections WHERE account_id = ?').get(principal.account_id)) {
+        throw new ApiError(409, 'CONFLICT', { reason: 'connection_already_exists' });
+      }
+      const stamped = now().toISOString();
+      let credentialRef: string;
+      try { credentialRef = feishuCredentials.put(secret, 10 * 60 * 1000); }
+      catch { throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_store' }); }
       db.prepare(`INSERT INTO channel_connections (
         connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
         config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id, current_test_id,
         owner_open_id, chat_id, status, transport_mode, reason_code, cutoff_seq, schema_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'pending-tenant', ?, ?, 1, 1, 1, 1, NULL, NULL, NULL, NULL, 'needs_binding', 'probe', NULL, NULL, '1.0', ?, ?)`).run(
-        `conn_${sha256(principal.account_id).slice(0, 12)}`,
-        principal.account_id,
-        principal.domains[0] ?? 'personal',
-        body.app_id,
-        ref,
-        next,
-        stamped,
-        stamped,
+      ) VALUES (?, ?, ?, ?, 'pending-tenant', ?, 1, 1, 1, 1, 1, NULL, NULL, NULL, NULL,
+        'needs_binding', 'probe', 'NATIVE_PROBE_REQUIRED', NULL, '1.0', ?, ?)`).run(
+        connectionIdFor(principal), principal.account_id, domain, appId, credentialRef, stamped, stamped,
       );
-    } else {
-      db.prepare(`UPDATE channel_connections SET credential_ref = ?, credential_version = ?, app_id = ?, updated_at = ?
-        WHERE account_id = ?`).run(ref, next, body.app_id, stamped, principal.account_id);
-    }
-    return next;
-  });
-  return c.json({ credential_ref: ref, version });
+      return credentialRef;
+    });
+    return c.json({ credential_ref: ref, version: 1 });
+  } finally {
+    secret.fill(0);
+  }
 }
 
-async function createBinding(c: Context, ready: Ready): Promise<Response> {
-  return command(c, ready, 'createFeishuBinding', bindingRequest, 'channels/feishu/bindings', (resources, principal) => {
-    const channel = feishu(resources, principal);
-    channel.configure();
-    channel.createPairing();
-    const row = resources.db.prepare('SELECT current_pairing_id FROM channel_connections WHERE connection_id = ?').get(
-      connectionIdFor(principal),
-    ) as { current_pairing_id: string | null } | undefined;
-    if (!row?.current_pairing_id) throw new Error('PAIRING_MISSING');
-    return row.current_pairing_id;
-  }, true);
+async function createBinding(c: Context, ready: Ready, codes: PairingCodes): Promise<Response> {
+  let transient: { pairing_id: string; code: string; expires_at: string; connection_id: string } | undefined;
+  const response = await command(c, ready, 'createFeishuBinding', bindingRequest, 'channels/feishu/bindings', (resources, principal) => {
+    const row = assertProbe(resources.db, principal, 'needs_binding');
+    assertPairingProbe(row);
+    const pairing = feishu(resources, principal).createPairing();
+    transient = { ...pairing, connection_id: row.connection_id };
+    return pairing.pairing_id;
+  }, { atomic: true });
+  if (transient) {
+    const now = ready().now().toISOString();
+    for (const [id, entry] of codes) {
+      if (entry.expires_at <= now || entry.connection_id === transient.connection_id) codes.delete(id);
+    }
+    if (codes.size >= 1000) codes.delete(codes.keys().next().value!);
+    codes.set(transient.pairing_id, transient);
+  }
+  return response;
 }
 
 async function confirmBinding(c: Context, ready: Ready): Promise<Response> {
   const pairingId = routeId(c.req.param('id'));
   return command(c, ready, 'confirmFeishuBinding', confirmRequest, `channels/feishu/bindings/${pairingId}`, (resources, principal) => {
+    assertPairingProbe(assertProbe(resources.db, principal, 'needs_binding'));
     feishu(resources, principal).confirmPairing(principal, pairingId);
     return pairingId;
-  }, true);
+  }, { atomic: true, pathResourceId: pairingId });
 }
 
-async function readBinding(c: Context, ready: Ready): Promise<Response> {
-  const principal = await requirePermission(c.req.raw, 'channels.read');
-  const pairingId = routeId(c.req.param('id'));
-  const { db, now } = ready();
-  const row = db.prepare(`SELECT pairing_id, status, expires_at, candidate_open_id, account_id, data_domain
-    FROM channel_pairings WHERE pairing_id = ?`).get(pairingId) as { account_id: string; data_domain: string } | undefined;
-  if (!row || row.account_id !== principal.account_id || !principal.domains.includes(row.data_domain)) {
-    throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
-  }
-  return c.json(snapshot(principal, row, now(), db));
+async function readBinding(c: Context, ready: Ready, codes: PairingCodes): Promise<Response> {
+  const principal = await requireSession(c.req.raw);
+  const requested = routeId(c.req.param('id'));
+  const { db, now, feishuCredentials } = ready();
+  const domain = readChannelDomain(db, principal);
+  const connection = db.prepare(`SELECT connection_id, app_id, current_test_id, current_pairing_id, owner_open_id
+    FROM channel_connections WHERE connection_id = ? AND account_id = ? AND data_domain = ?`).get(
+    connectionIdFor(principal), principal.account_id, domain,
+  ) as { connection_id: string; app_id: string; current_test_id: string | null; current_pairing_id: string | null; owner_open_id: string | null } | undefined;
+  const current = requested === 'current';
+  const pairingId = current ? connection?.current_pairing_id : requested;
+  const stamped = now();
+  c.header('Cache-Control', 'no-store');
+  const pairing = pairingId && connection ? db.prepare(`SELECT pairing_id, status, expires_at, candidate_open_id
+    FROM channel_pairings WHERE pairing_id = ? AND connection_id = ? AND account_id = ? AND data_domain = ?`).get(
+    pairingId, connection.connection_id, principal.account_id, domain,
+  ) as { pairing_id: string; status: string; expires_at: string; candidate_open_id: string | null } | undefined : undefined;
+  if (!current && !pairing) throw new ApiError(404, 'NOT_FOUND');
+  const owner = principal.caller_id === 'web' && domainsWithPermission(db, principal, 'owner', false).includes(domain);
+  const isCurrent = !!pairing && pairing.pairing_id === connection?.current_pairing_id;
+  const expired = !!pairing && pairing.status !== 'consumed' &&
+    (!isCurrent || pairing.status === 'expired' || pairing.expires_at <= stamped.toISOString());
+  const disclose = !current && isCurrent && pairing.status === 'open' && !expired && owner &&
+    new URL(c.req.url).origin === secureSetupOrigin;
+  const code = disclose && pairingId ? codes.get(pairingId)?.code ?? null : null;
+  if ((code || expired) && pairingId) codes.delete(pairingId);
+  const summary = {
+    credential_setup_available: owner && !!feishuCredentials && new URL(c.req.url).origin === secureSetupOrigin,
+    transport_available: false,
+    owner_actions_available: owner,
+    data_domain: domain, app_id: connection?.app_id ?? null, destination: connection?.owner_open_id ?? null,
+    current_test_id: connection?.current_test_id ?? null, code,
+  };
+  return c.json(snapshot(principal, {
+    ...summary, pairing_id: pairing?.pairing_id ?? null, expires_at: pairing?.expires_at ?? null,
+    status: expired ? 'expired' : pairing?.status ?? null, candidate_open_id: pairing?.candidate_open_id ?? null,
+  }, stamped, db));
 }
 
 async function createTest(c: Context, ready: Ready): Promise<Response> {
   return command(c, ready, 'createFeishuTest', testRequest, 'channels/feishu/tests', (resources, principal, body) => {
     const destination = (body as { destination?: string }).destination;
     if (!destination) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'destination' });
+    const rowBefore = assertProbe(resources.db, principal, 'needs_test');
+    const prior = resources.db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(rowBefore.current_test_id) as
+      { status: string } | undefined;
+    if (prior && ['sending', 'sent', 'unknown'].includes(prior.status)) {
+      throw new ApiError(409, 'CONFLICT', { reason: 'test_reconciliation_required' });
+    }
     feishu(resources, principal).createTest(destination);
     const row = resources.db.prepare('SELECT current_test_id FROM channel_connections WHERE connection_id = ?').get(
       connectionIdFor(principal),
     ) as { current_test_id: string | null } | undefined;
     if (!row?.current_test_id) throw new Error('TEST_MISSING');
     return row.current_test_id;
-  }, true);
+  }, { atomic: true });
 }
 
 async function sendTest(c: Context, ready: Ready): Promise<Response> {
@@ -146,22 +191,68 @@ async function sendTest(c: Context, ready: Ready): Promise<Response> {
   return command(c, ready, 'sendFeishuTest', sendRequest, `channels/feishu/tests/${testId}`, (resources, principal, body) => {
     const payload = body as { test_id: string; preview_hash: string; destination: string };
     if (payload.test_id !== testId) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'test' });
-    feishu(resources, principal).sendTest(payload);
-    return testId;
-  }, true);
+    assertProbe(resources.db, principal, 'needs_test');
+    try {
+      feishu(resources, principal).assertTestPreview(payload);
+    } catch (error) {
+      if (error instanceof Error && (error.message === 'BINDING_STALE' || error.message === 'NOT_FOUND')) {
+        throw new ApiError(409, 'CONFLICT', { reason: 'stale_test_preview' });
+      }
+      throw error;
+    }
+    // T10's local send only records synthetic progress; without a supervised native
+    // transport the service must leave the real test at its preview.
+    throw new ApiError(503, 'UNAVAILABLE', { reason: 'transport_not_configured' });
+  }, { atomic: true, pathResourceId: testId });
 }
 
 async function readTest(c: Context, ready: Ready): Promise<Response> {
-  const principal = await requirePermission(c.req.raw, 'channels.read');
+  const principal = await requireSession(c.req.raw);
   const testId = routeId(c.req.param('id'));
   const { db, now } = ready();
+  const domain = readChannelDomain(db, principal);
   const row = db.prepare(`SELECT test_id, status, preview_hash, destination, message_id, inbound_evidence, app_id, tenant_key,
-    config_revision, credential_version, binding_id, data_domain, incarnation, epoch, account_id
-    FROM channel_tests WHERE test_id = ?`).get(testId) as { account_id: string; data_domain: string } | undefined;
-  if (!row || row.account_id !== principal.account_id || !principal.domains.includes(row.data_domain)) {
-    throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
-  }
+    config_revision, credential_version, binding_id, data_domain, incarnation, epoch
+    FROM channel_tests WHERE test_id = ? AND connection_id = ? AND account_id = ? AND data_domain = ?`).get(
+    testId, connectionIdFor(principal), principal.account_id, domain,
+  );
+  if (!row) throw new ApiError(404, 'NOT_FOUND');
   return c.json(snapshot(principal, row, now(), db));
+}
+
+function assertFeishuOrigin(request: Request): void {
+  if (new URL(request.url).origin === secureSetupOrigin && request.headers.get('origin') === secureSetupOrigin) return;
+  assertWriteOrigin(request);
+}
+
+function readChannelDomain(db: SqliteDatabase, principal: Principal): string {
+  const domain = principal.domains[0] ?? 'personal';
+  if (!domainsWithPermission(db, principal, 'channels.read').includes(domain)) throw new ApiError(404, 'NOT_FOUND');
+  return domain;
+}
+
+function channelDomain(db: SqliteDatabase, principal: Principal, permission: string): string {
+  const domain = principal.domains[0] ?? 'personal';
+  assertDomainPermission(db, principal, domain, permission);
+  return domain;
+}
+
+function assertProbe(db: SqliteDatabase, principal: Principal, status: string) {
+  if (principal.caller_id !== 'web') throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
+  const domain = channelDomain(db, principal, 'owner');
+  const row = db.prepare(`SELECT connection_id, current_test_id, status, transport_mode, tenant_key, reason_code FROM channel_connections
+    WHERE connection_id = ? AND account_id = ? AND data_domain = ?`).get(connectionIdFor(principal), principal.account_id, domain) as {
+    connection_id: string; current_test_id: string | null; status: string; transport_mode: string;
+    tenant_key: string; reason_code: string | null;
+  } | undefined;
+  if (row?.status !== status || row.transport_mode !== 'probe') throw new ApiError(409, 'CONFLICT', { reason: 'channel_stage' });
+  return row;
+}
+
+function assertPairingProbe(row: ReturnType<typeof assertProbe>): void {
+  if (row.tenant_key === 'pending-tenant' || row.reason_code === 'NATIVE_PROBE_REQUIRED') {
+    throw new ApiError(409, 'CONFLICT', { reason: 'native_probe_required' });
+  }
 }
 
 function feishu(resources: ReturnType<Ready>, principal: Principal) {
@@ -341,22 +432,22 @@ async function command(
   schema: { safeParse: (value: unknown) => { success: boolean; data?: unknown } },
   receiptPath: string,
   run: (resources: ReturnType<Ready>, principal: Principal, payload: unknown) => string | Promise<string>,
-  atomic = false,
+  options: { atomic?: boolean; pathResourceId?: string } = {},
 ): Promise<Response> {
-  assertWriteOrigin(c.req.raw);
+  assertFeishuOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
   const parsed = schema.safeParse(await readJson(c.req.raw));
   if (!parsed.success || !parsed.data) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
   const body = parsed.data as Envelope<unknown>;
   assertPayloadHash((body.payload ?? {}) as Json, body.payload_hash);
   const resources = ready();
-  const domain = principal.domains[0] ?? 'personal';
+  const domain = channelDomain(resources.db, principal, 'owner');
   const prior = findCommand(resources.db, principal, body.client_request_id);
   if (prior) {
-    assertReplay(prior, operation, domain, body.expected_revision, body.payload_hash);
+    assertReplay(prior, operation, domain, body.expected_revision, body.payload_hash, options.pathResourceId);
     return c.json(accepted(prior.command_id, receiptPath, prior.resource_id), 202);
   }
-  if (atomic) {
+  if (options.atomic) {
     let resourceId = '';
     const commandId = withImmediateTransaction(resources.db, () => {
       const outcome = run(resources, principal, body.payload);
@@ -390,10 +481,11 @@ function assertReplay(
   domain: string,
   expectedRevision: number | null,
   payloadHash: string,
+  requestedResourceId = prior.resource_id,
 ): void {
   const fingerprint = commandFingerprint({
     operation,
-    resource_id: prior.resource_id,
+    resource_id: requestedResourceId,
     data_domain: domain,
     expected_revision: expectedRevision,
     payload_hash: payloadHash,

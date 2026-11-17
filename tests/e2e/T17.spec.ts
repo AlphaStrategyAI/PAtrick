@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { connectVault, requireVault } from '@patrick/integrations/vault/connecti
 import { issueCallerSession } from '../../apps/service/src/auth.js';
 import { createApp } from '../../apps/service/src/app.js';
 
-async function setup(page: Page, withVault = false) {
+async function setup(page: Page, withVault = false, permissions = ['owner']) {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t17-browser-'));
   const databasePath = join(dir, 't17.sqlite');
   const credentialDirectory = join(dir, 'cred');
@@ -22,7 +23,7 @@ async function setup(page: Page, withVault = false) {
       root, domain: 'personal', captureHost: hostname(), now: now().toISOString() });
   }
   const credentials = createCredentialStore(credentialDirectory, now);
-  const { token } = issueCallerSession(db, { accountId: 'owner', callerId: 'web', domain: 'personal', permissions: ['owner'] }, now, credentials);
+  const { token } = issueCallerSession(db, { accountId: 'owner', callerId: 'web', domain: 'personal', permissions }, now, credentials);
   await page.context().addCookies([{ name: 'patrick_session', value: token, url: 'http://localhost', httpOnly: true, sameSite: 'Strict' }]);
   const app = createApp({ databasePath, credentialDirectory, now });
   await page.route('**/api/v1/**', async (route) => {
@@ -124,4 +125,70 @@ test('the first account read does not overwrite a language choice made while it 
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     expect(fx.db.prepare("SELECT revision FROM account_preferences WHERE account_id='owner'").get()).toBeUndefined();
   } finally { release(); await fx.close(); }
+});
+
+test('Feishu setup reports unavailable ingress instead of asking for a secret on local HTTP', async ({ page }) => {
+  const fx = await setup(page);
+  try {
+    await page.goto('/settings/interaction');
+    const bot = page.getByRole('region', { name: 'Feishu bot' });
+    await expect(bot.getByText('Not configured', { exact: true })).toBeVisible();
+    await bot.getByText('Connection setup', { exact: true }).click();
+    await expect(bot.getByText('Secure credential setup is unavailable in this installation.')).toBeVisible();
+    await expect(bot.getByLabel('App Secret')).toHaveCount(0);
+    expect(fx.db.prepare('SELECT COUNT(*) AS n FROM channel_connections').get()).toEqual({ n: 0 });
+  } finally { await fx.close(); }
+});
+
+test('Feishu confirms the scoped pairing, previews the exact test and leaves delivery unverified without a transport', async ({ page }) => {
+  const fx = await setup(page);
+  try {
+    const stamp = '2026-11-17T05:00:00.000Z';
+    const id = 'conn_' + createHash('sha256').update('owner').digest('hex').slice(0, 12);
+    fx.db.prepare(`INSERT INTO channel_connections (
+      connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
+      config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id, status,
+      transport_mode, schema_version, created_at, updated_at
+    ) VALUES (?, 'owner', 'personal', 'cli_browser_fixture', 'tenant_fixture', 'cred_fixture', 1,
+      1, 1, 1, 1, 'pair_fixture', 'needs_binding', 'probe', '1.0', ?, ?)`).run(id, stamp, stamp);
+    fx.db.prepare(`INSERT INTO channel_pairings (
+      pairing_id, connection_id, account_id, data_domain, code_hash, expires_at, candidate_open_id,
+      candidate_chat_id, app_id, tenant_key, config_revision, credential_version, binding_revision, incarnation, epoch,
+      status, schema_version, created_at
+    ) VALUES ('pair_fixture', ?, 'owner', 'personal', ?, '2026-11-17T05:05:00.000Z', 'ou_browser_fixture',
+      'oc_browser_fixture', 'cli_browser_fixture', 'tenant_fixture', 1, 1, 1, 1, 1, 'candidate', '1.0', ?)`).run(id, 'a'.repeat(64), stamp);
+    await page.goto('/settings/interaction');
+    const bot = page.getByRole('region', { name: 'Feishu bot' });
+    await bot.getByText('Connection setup', { exact: true }).click();
+    await expect(bot.getByText('Personal chat identity: ou_browser_fixture')).toBeVisible();
+    await expect(bot.getByText('Data scope: personal')).toBeVisible();
+    await bot.getByRole('button', { name: 'Confirm identity and data scope' }).click();
+    await bot.getByRole('button', { name: 'Preview test' }).click();
+    await expect(bot.getByText('PAtrick 连接测试，不含业务资料。')).toBeVisible();
+    await expect(bot.getByText('Previewed; no message sent')).toBeVisible();
+    await expect(bot.getByRole('button', { name: 'Send test message' })).toBeDisabled();
+    await expect(bot.getByText('The supervised Feishu connection is not configured.')).toBeVisible();
+    await page.reload();
+    await bot.getByText('Connection setup', { exact: true }).click();
+    await expect(bot.getByText('Previewed; no message sent')).toBeVisible();
+    expect(fx.db.prepare('SELECT status, transport_mode FROM channel_connections').get()).toEqual({ status: 'needs_test', transport_mode: 'probe' });
+    expect(fx.db.prepare('SELECT status, message_id, inbound_evidence FROM channel_tests').get()).toEqual({
+      status: 'previewed', message_id: null, inbound_evidence: null,
+    });
+  } finally { await fx.close(); }
+});
+
+
+test('opening interaction settings does not revoke a session that cannot read channels', async ({ page }) => {
+  const fx = await setup(page, false, ['settings.read']);
+  try {
+    const channelRequests: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/v1/channels/feishu')) channelRequests.push(request.url());
+    });
+    await page.goto('/settings/interaction');
+    await expect(page.getByRole('region', { name: 'Feishu bot' })).toContainText('Feishu settings are unavailable with this permission.');
+    await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeVisible();
+    expect(channelRequests).toEqual([]);
+  } finally { await fx.close(); }
 });

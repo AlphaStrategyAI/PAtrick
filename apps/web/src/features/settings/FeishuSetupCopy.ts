@@ -1,0 +1,48 @@
+export const feishuSetupCopy = {
+  en: {
+    readUnavailable: 'Feishu settings are unavailable with this permission.',
+    title: 'Feishu bot', checking: 'Checking connection status', setup: 'Connection setup', refresh: 'Refresh report',
+    appId: 'App ID', secret: 'App Secret', stage: 'Save for verification', managed: 'Manage this connection through verified settings changes.',
+    credentialsStage: '1. App credentials', secureUnavailable: 'Secure credential setup is unavailable in this installation.',
+    nativeProbeRequired: 'Credentials are staged. The bot, tenant and permissions still need verification.',
+    bindingStage: '2. Pair your personal chat', identity: 'Personal chat identity', domain: 'Data scope',
+    pairingSend: 'Send this code to your bot in a personal chat', pairingStart: 'Create a pairing code', expires: 'Expires',
+    confirm: 'Confirm identity and data scope', testStage: '3. Preview and verify a test', preview: 'Preview test',
+    bot: 'Bot application', send: 'Send test message', messageId: 'Message receipt',
+    transportUnavailable: 'The supervised Feishu connection is not configured.', lastChecked: 'Status read at',
+    activeUnverified: 'Enabled; live connection not verified here',
+    unverifiedTransport: 'Round trip cannot be verified in this installation.',
+    connection: {
+      not_configured: 'Not configured', checking: 'Checking', needs_binding: 'Pairing required', needs_test: 'Test required',
+      needs_enable: 'Enablement required', ready: 'Connected', degraded: 'Connection degraded',
+      draining: 'Disabling; replies are being reconciled', disabled: 'Disabled', requires_reauthorization: 'Reauthorization required',
+    },
+    test: {
+      previewed: 'Previewed; no message sent', sending: 'Sending', sent: 'Sent; waiting for the reply',
+      verified: 'Round trip verified; enablement is separate', unknown: 'Delivery uncertain; reconcile before sending again', expired: 'Test expired',
+    },
+  },
+  zh: {
+    readUnavailable: '当前权限无法查看飞书设置。',
+    title: '飞书机器人', checking: '正在读取连接状态', setup: '连接设置', refresh: '刷新报告',
+    appId: 'App ID', secret: 'App Secret', stage: '暂存并等待核验', managed: '此连接通过经过核验的设置变更管理。',
+    credentialsStage: '1. 应用凭据', secureUnavailable: '当前安装未配置安全凭据入口。',
+    nativeProbeRequired: '凭据已暂存，仍需核验机器人、租户和权限。',
+    bindingStage: '2. 本人单聊配对', identity: '单聊身份', domain: '资料范围',
+    pairingSend: '在单聊中将此配对码发送给机器人', pairingStart: '生成配对码', expires: '有效期至',
+    confirm: '确认身份和资料范围', testStage: '3. 预览并核验测试', preview: '预览测试',
+    bot: '机器人应用', send: '发送测试消息', messageId: '消息回执',
+    transportUnavailable: '当前安装未配置受监督的飞书连接。', lastChecked: '状态读取时间',
+    activeUnverified: '已启用，当前安装未核验实时连接',
+    unverifiedTransport: '当前安装无法核验双向回传。',
+    connection: {
+      not_configured: '未配置', checking: '检查中', needs_binding: '待配对', needs_test: '待测试',
+      needs_enable: '待启用', ready: '已连接', degraded: '连接异常',
+      draining: '停用中，答复核对中', disabled: '已停用', requires_reauthorization: '需要重新授权',
+    },
+    test: {
+      previewed: '已预览，尚未发送', sending: '发送中', sent: '已发送，等待回传',
+      verified: '双向回传已核验，仍需单独启用', unknown: '送达状态不明，核对后再试', expired: '测试已过期',
+    },
+  },
+} as const;

@@ -557,17 +557,14 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       return { test_id: testId, preview_hash: previewHash, destination };
     },
 
-    sendTest(input: { test_id: string; preview_hash: string; destination: string }) {
+    assertTestPreview(input: TestPreview) {
+      assertTestPreview(db, connectionId, input);
+    },
+
+    sendTest(input: TestPreview) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
-        if (connection.current_test_id !== input.test_id) throw new Error('BINDING_STALE');
-        const test = requireTest(db, input.test_id);
-        if (test.preview_hash !== input.preview_hash || test.destination !== input.destination || test.status !== 'previewed') {
-          throw new Error('BINDING_STALE');
-        }
-        assertSnap(connection, snapFromTest(test));
-        assertBindingRow(db, connection, test.binding_id);
+        assertTestPreview(db, connectionId, input);
         db.prepare(`UPDATE channel_tests SET status = 'sent', updated_at = ? WHERE test_id = ?`).run(stamped, input.test_id);
       });
     },
@@ -580,6 +577,19 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       );
     },
   };
+}
+
+type TestPreview = { test_id: string; preview_hash: string; destination: string };
+
+function assertTestPreview(db: SqliteDatabase, connectionId: string, input: TestPreview): void {
+  const connection = requireConnection(db, connectionId);
+  if (connection.current_test_id !== input.test_id) throw new Error('BINDING_STALE');
+  const test = requireTest(db, input.test_id);
+  if (test.preview_hash !== input.preview_hash || test.destination !== input.destination || test.status !== 'previewed') {
+    throw new Error('BINDING_STALE');
+  }
+  assertSnap(connection, snapFromTest(test));
+  assertBindingRow(db, connection, test.binding_id);
 }
 
 type TestRow = {

@@ -4,6 +4,7 @@ import { asClientError, useScopedSnapshot } from '../../api/query.js';
 import { LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate, type MessageKey } from '../../i18n/locale.js';
+import { FeishuSetup } from './FeishuSetup.js';
 import { SettingsChangeWizard } from './SettingsChangeWizard.js';
 
 const effectKeys: Record<string, MessageKey> = {
@@ -24,6 +25,7 @@ export function SettingsGroup({ group }: { group: string }) {
     {settings.error && <LocalizedError code={asClientError(settings.error).code} onRetry={() => { void settings.refetch(); }} />}
     {!settings.error && !current && <p role="status">{t('status.unknown')}</p>}
     {current && <>
+      {group === 'interaction' && <FeishuSetup key={JSON.stringify(settings.data!.scope)} onChanged={() => { void settings.refetch(); }} />}
       <ul>
         {current.operations.map(({ operation, registered, targets }) => <li key={operation}>
           {t(operationKeys[operation] ?? 'status.unknown')}: {t(registered ? 'settings.registered' : 'settings.notConfigured')}

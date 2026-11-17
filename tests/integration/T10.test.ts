@@ -560,12 +560,7 @@ test('a repeated pairing request returns the original pairing', async () => {
     const app = createApp({ databasePath, credentialDirectory, now });
     expect(settingsOperations().slice().sort()).toEqual(['apply', 'inspect', 'recheck', 'validate']);
     const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
-    const credential = await app.request('/api/v1/channels/feishu/credentials', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
-    });
-    expect(credential.status).toBe(200);
+    seedFeishuApiProbe(db);
     const payload = {};
     const body = {
       client_request_id: 'pair-once',
@@ -624,11 +619,7 @@ test('a failed pairing write rolls back the pairing and command', async () => {
     }, now, store);
     const app = createApp({ databasePath, credentialDirectory, now });
     const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
-    await app.request('/api/v1/channels/feishu/credentials', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
-    });
+    seedFeishuApiProbe(db);
     db.exec(`CREATE TRIGGER abort_pairing_command BEFORE INSERT ON command_records
       WHEN NEW.operation = 'createFeishuBinding'
       BEGIN SELECT RAISE(ABORT, 'pairing_command_write_failed'); END`);
@@ -672,11 +663,7 @@ test('a stale send does not record the command', async () => {
     }, now, store);
     const app = createApp({ databasePath, credentialDirectory, now });
     const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
-    await app.request('/api/v1/channels/feishu/credentials', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ app_id: 'cli_app', app_secret: 'secret-value' }),
-    });
+    seedFeishuApiProbe(db);
     const bindPayload = {};
     await app.request('/api/v1/channels/feishu/bindings', {
       method: 'POST',
@@ -734,7 +721,8 @@ test('a stale send does not record the command', async () => {
       headers,
       body: JSON.stringify(sendBody),
     });
-    expect(failed.status).not.toBe(202);
+    expect(failed.status).toBe(409);
+    expect(await failed.json()).toMatchObject({ params: { reason: 'stale_test_preview' } });
     expect(db.prepare('SELECT COUNT(*) AS n FROM command_inbox WHERE client_request_id = ?').get('send-stale-once')).toEqual({ n: 0 });
     expect(db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(test.test_id)).toEqual({ status: 'previewed' });
     db.prepare('UPDATE channel_connections SET config_revision = 1 WHERE account_id = ?').run('owner');
@@ -743,8 +731,9 @@ test('a stale send does not record the command', async () => {
       headers,
       body: JSON.stringify(sendBody),
     });
-    expect(accepted.status).toBe(202);
-    expect(db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(test.test_id)).toEqual({ status: 'sent' });
+    expect(accepted.status).toBe(503);
+    expect(await accepted.json()).toMatchObject({ params: { reason: 'transport_not_configured' } });
+    expect(db.prepare('SELECT status FROM channel_tests WHERE test_id = ?').get(test.test_id)).toEqual({ status: 'previewed' });
   } finally {
     clearSettingsOperations();
     db.close();
@@ -1120,6 +1109,15 @@ async function admit(db: SqliteDatabase, now: () => Date) {
     expected_revision: 0,
   });
   return { mandateId: mandate.mandate_id };
+}
+
+function seedFeishuApiProbe(db: SqliteDatabase) {
+  db.prepare(`INSERT INTO channel_connections (
+    connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
+    config_revision, channel_incarnation, connection_epoch, binding_revision, status, transport_mode,
+    schema_version, created_at, updated_at
+  ) VALUES (?, 'owner', 'personal', 'cli_fixture', 'tenant_fixture', 'cred_fixture', 1,
+    1, 1, 1, 1, 'needs_binding', 'probe', '1.0', ?, ?)`).run(`conn_${sha256('owner').slice(0, 12)}`, NOW, NOW);
 }
 
 function sha256(value: string): string {
