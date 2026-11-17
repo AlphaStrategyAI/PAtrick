@@ -8,7 +8,7 @@ import { assertName, canonical, containedPath, digest, durableCopy, durableJson,
 import { localRecoveryCut, tableInventory, type RecoveryLocalCut } from './cut.js';
 import { verifyWithdrawalChain, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
 import { assertVaultRoot, bindVaultRoot, readVaultFile, restoredVaultRoot, withVaultRoot, type BoundVaultRoot } from './vaults.js';
-import type { RecoveryDatabaseReader, RecoveryDatabases, RecoveryManifestAuthority, RecoveryReceipt, RecoveryVault, WithdrawalEntry } from './types.js';
+import type { RecoveryDatabaseReader, RecoveryDatabases, RecoveryManifestAuthority, RecoveryReceipt, RecoveryRestoreReceipt, RecoveryVault, WithdrawalEntry } from './types.js';
 
 export type RecoveryReplayContext = RecoveryDatabases & { domain: string; directory: string; externalAccess: 'read_only' };
 export type RecoveryReadback = { confirmed: boolean };
@@ -56,7 +56,7 @@ function outside(source: string, target: string): void {
 export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
   const now = options.now ?? (() => new Date());
   return {
-    async restoreRecoverySet(setId: string, mode: 'drill' | 'activate' = 'drill'): Promise<RecoveryReceipt> {
+    async restoreRecoverySet(setId: string, mode: 'drill' | 'activate' = 'drill', expectedManifestHash?: string): Promise<RecoveryRestoreReceipt> {
       const survivors = structuredClone(options.survivors ?? []);
       assertName(setId);
       if (mode !== 'drill' && mode !== 'activate') throw new Error('RECOVERY_MODE_INVALID');
@@ -65,6 +65,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       for (const survivor of survivors) outside(survivor.root, options.isolationRoot);
       const set = await verifyRecoverySet(sourceDirectory, options.authority, options.versionLocks, options.readDatabase);
       if (set.manifest.setId !== setId) throw new Error('RECOVERY_SET_ID_MISMATCH');
+      if (expectedManifestHash !== undefined && set.manifestHash !== expectedManifestHash) throw new Error('RECOVERY_MANIFEST_HASH_MISMATCH');
       const startedAt = now().toISOString();
       const startedMs = performance.now();
       await mkdir(options.isolationRoot, { recursive: true, mode: 0o700 });
@@ -72,8 +73,8 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       outside(await realpath(options.recoveryRoot), actualIsolation);
       for (const survivor of survivors) outside(await realpath(survivor.root), actualIsolation);
       const directory = await mkdtemp(join(actualIsolation, `${setId}-`));
-      const receipt: RecoveryReceipt = {
-        receiptId: randomUUID(), setId, mode, directory, startedAt, finishedAt: startedAt, elapsedMs: 0,
+      const receipt: RecoveryRestoreReceipt = {
+        receiptId: randomUUID(), setId, manifestHash: set.manifestHash, mode, directory, startedAt, finishedAt: startedAt, elapsedMs: 0,
         rpoMs: Math.max(0, now().getTime() - Date.parse(set.manifest.createdAt)), orderlyHandoff: false, external_writes: 0,
         channels: { feishu: 'requires_reauthorization' }, data_domains: {}, stages: [], conflicts: [],
       };

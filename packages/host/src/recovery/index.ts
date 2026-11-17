@@ -5,3 +5,5 @@ export * from './restore.js';
 export * from './owner-import.js';
 export * from './restic.js';
 export * from './withdrawals.js';
+
+export * from './operations.js';

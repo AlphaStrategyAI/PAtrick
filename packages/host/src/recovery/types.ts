@@ -57,3 +57,4 @@ export type RecoveryReceipt = {
   data_domains: Record<string, RecoveryDomainReceipt>; stages: RecoveryStage[];
   conflicts: Array<{ domain: string; vaultId?: string; path: string; backupHash: string; survivorHash: string; preservedBackupPath: string }>;
 };
+export type RecoveryRestoreReceipt = RecoveryReceipt & { manifestHash: string };
