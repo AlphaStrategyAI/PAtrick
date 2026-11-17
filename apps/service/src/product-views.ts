@@ -2,6 +2,7 @@ import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage'
 import { HUB_CURSOR, readConsistentHubSnapshot, storeHubView, type HubSnapshot, type HubStateReader } from '@patrick/integrations/autoloop/observer';
 import { createProjectionCursorCodec, type ProjectionScope } from '../../../packages/storage/src/views/cursors.js';
 import { createWorkProjection } from '../../../packages/storage/src/views/work.js';
+import { createStatsProjection } from '../../../packages/storage/src/views/stats.js';
 import { deriveWorkBatch } from '../../../packages/storage/src/views/work-source.js';
 
 type ProductScope = Pick<ProjectionScope, 'accountId' | 'dataDomain'>;
@@ -14,6 +15,7 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
   const key = db.prepare("SELECT bytes FROM product_view_keys WHERE name='cursor'").get() as { bytes: Uint8Array } | undefined;
   if (!key) throw new Error('PRODUCT_VIEW_CURSOR_KEY_MISSING');
   const projection = createWorkProjection(db, createProjectionCursorCodec(key.bytes));
+  const stats = createStatsProjection(db);
   const observed = new Map<string, string>();
   let authored = 0;
   let started = false;
@@ -31,12 +33,15 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
     const at = now();
     const stamp = inputStamp(at);
     const index = JSON.stringify([scope.accountId, scope.dataDomain]);
-    if (onlyChanged && observed.get(index) === stamp) return;
+    if (onlyChanged && observed.get(index) === stamp && !stats.needsRefresh(scope, at)) return;
     const batch = deriveWorkBatch(db, scope, at, staleAfterMs);
     const before = totalChanges();
-    const applied = projection.apply(scope, batch, () => inputStamp(at) === stamp);
-    authored += totalChanges() - before;
-    if (applied) {
+    let complete: boolean;
+    try {
+      const applied = projection.apply(scope, batch, () => inputStamp(at) === stamp);
+      complete = applied && stats.refresh(scope, at);
+    } finally { authored += totalChanges() - before; }
+    if (complete) {
       observed.delete(index);
       observed.set(index, stamp);
       if (observed.size > 4096) observed.delete(observed.keys().next().value!);
@@ -83,7 +88,7 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
       authored += totalChanges() - before;
     }
   }
-  return { projection, refresh, start, recordHubObservation };
+  return { projection, stats, refresh, start, recordHubObservation };
 }
 
 export type ProductViewHub = { hub: HubStateReader; signal?: AbortSignal; onError?: (error: unknown) => void };

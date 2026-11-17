@@ -14,6 +14,7 @@ type Service = {
   commandJournal: ReturnType<typeof createCommandJournal>;
   scope: Scope | null;
   callerId: string | null;
+  scopeOperations: readonly string[];
   accessGeneration: number;
   rejectedCursor?: string;
   verifying: boolean;
@@ -30,6 +31,7 @@ export function ServiceProvider({ children, demo, onAccountExit }: {
   const queryClient = useQueryClient();
   const [scope, setScope] = useState<Scope | null>(null);
   const [callerId, setCallerId] = useState<string | null>(null);
+  const [scopeOperations, setScopeOperations] = useState<string[]>([]);
   const [accessError, setAccessError] = useState<ClientError | null>(null);
   const [verifying, setVerifying] = useState(!demo);
   const [attempt, setAttempt] = useState(0);
@@ -41,6 +43,7 @@ export function ServiceProvider({ children, demo, onAccountExit }: {
     purgeAccountQueries(queryClient, old.account_id);
     setScope(null);
     setCallerId(null);
+    setScopeOperations([]);
     setAccessGeneration((prior) => prior + 1);
     if (cause.kind === 'reset') {
       // The cursor binds permissions beyond the public epoch. Block everything until session
@@ -67,6 +70,7 @@ export function ServiceProvider({ children, demo, onAccountExit }: {
         commandJournal.hide('revoked');
         setScope(null);
         setCallerId(null);
+        setScopeOperations([]);
         throw new ClientError('INVALID_RESPONSE');
       }
       if (commandJournal.changedCaller(identity)) api.revoke();
@@ -74,6 +78,8 @@ export function ServiceProvider({ children, demo, onAccountExit }: {
       commandJournal.verify(identity);
       setScope(session.scope);
       setCallerId(identity.caller_id);
+      const operations = (session.data as { scope_operations?: unknown }).scope_operations;
+      setScopeOperations(Array.isArray(operations) ? operations.filter((operation): operation is string => typeof operation === 'string') : []);
       setAccessError(null);
     }).catch((cause: unknown) => {
       if (controller.signal.aborted) return;
@@ -98,7 +104,7 @@ export function ServiceProvider({ children, demo, onAccountExit }: {
   }
 
   return <ServiceContext.Provider value={{
-    api, scope, callerId, commandJournal, accessGeneration, rejectedCursor, verifying, accessError, signOut,
+    api, scope, callerId, scopeOperations, commandJournal, accessGeneration, rejectedCursor, verifying, accessError, signOut,
     recheck: () => { setVerifying(true); setAttempt((previous) => previous + 1); },
   }}>{children}</ServiceContext.Provider>;
 }

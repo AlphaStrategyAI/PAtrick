@@ -1,0 +1,5 @@
+.stats-view { display: grid; gap: 1.25rem; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 1rem; }
+.stats-periods, .stats-work { flex-wrap: wrap; }
+.stats-work a { display: inline-flex; min-height: 44px; align-items: center; }
+.stats-count { font-size: 2rem; font-variant-numeric: tabular-nums; }

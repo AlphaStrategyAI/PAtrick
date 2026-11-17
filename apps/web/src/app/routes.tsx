@@ -1,3 +1,4 @@
+import { StatsPage } from '../features/stats/StatsPage.js';
 import { KnowledgePage } from '../features/knowledge/KnowledgePage.js';
 import { StandardsPage } from '../features/standards/StandardsPage.js';
 import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
@@ -140,7 +141,8 @@ export const appRoutes: RouteObject[] = [{
     { path: '/delegations', element: isDemo ? <UnconnectedPage item={navigation[4]} empty="empty.delegations" />
       : <PageFrame item={navigation[4]}><Authenticated><DelegationsPage /></Authenticated></PageFrame> },
     { path: '/system', element: <SystemPage /> },
-    { path: '/stats', element: <UnconnectedPage item={navigation[6]} /> },
+    { path: '/stats', element: isDemo ? <UnconnectedPage item={navigation[6]} />
+      : <PageFrame item={navigation[6]}><Authenticated><StatsPage /></Authenticated></PageFrame> },
     { path: '/settings', element: <SettingsPage /> },
     ...settingsNavigation.slice(0, 5).map((item) => ({ path: item.path, element: isDemo ? <UnconnectedPage item={item} />
       : <PageFrame item={item}><Authenticated><SettingsGroup group={item.path.split('/').at(-1)!} /></Authenticated></PageFrame> })),

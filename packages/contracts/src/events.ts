@@ -12,6 +12,7 @@ export const DOMAIN_EVENTS = [
   { type: 'evidence.ready', major: 1 },
   { type: 'consultation.requested', major: 1 },
   { type: 'decision.committed', major: 1 },
+  { type: 'stats.fact.invalidated', major: 1 },
   { type: 'work.delivered', major: 1 },
   { type: 'evidence.invalidated', major: 1 },
   { type: 'capability.changed', major: 1 },

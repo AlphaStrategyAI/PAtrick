@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { statsSnapshotSchema } from './stats.js';
 import {
   ALLOWED_SCHEMA_MAJORS,
   commandAcceptedSchema,
@@ -373,6 +374,7 @@ export const settingsDashboardSchema = z.strictObject({ groups: z.array(z.strict
 })) });
 
 const statsQuerySchema = z.strictObject({
+  ...domainSchema.shape,
   period: z.enum(['7d', '30d', 'all']),
   timezone: z.string().min(1),
 });
@@ -527,7 +529,8 @@ export const routes: RouteDefinition[] = [
   command('runSystemOperation', '/system/operations', 'owner', z.strictObject({ operation: z.string().min(1) })),
   command('confirmControlProposal', '/control-proposals/:id/confirm', 'owner', z.strictObject({ proposal_hash: z.string().min(1), challenge_id: z.string().min(1) })),
   read('getControlReceipt', '/control-receipts/:id', 'owner', idSchema, z.unknown()),
-  read('getStats', '/stats', 'stats.read', statsQuerySchema, z.unknown()),
+  { ...read('getStats', '/stats', 'stats.read', statsQuerySchema, statsSnapshotSchema),
+    scopePermissions: ['work.read'], errors: [...readErrors, 'UNPROCESSABLE'] },
   command('previewNotification', '/notifications/preview', 'owner', z.strictObject({ intent: z.string().min(1) })),
   command('testNotification', '/notifications/test', 'owner', z.strictObject({ destination: z.string().min(1), intent: z.string().min(1) })),
   command('previewDiagnostics', '/diagnostics/preview', 'owner', emptySchema),

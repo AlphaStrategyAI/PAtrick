@@ -363,12 +363,17 @@ async function verifyChallenge(c: Context): Promise<Response> {
 async function readSession(c: Context): Promise<Response> {
   const { db, now } = authContext();
   const principal = await requireSession(c.req.raw);
+  const scope = principal.domains[0];
+  const operations = scope ? db.prepare(`SELECT s.permission FROM caller_scopes s JOIN accounts a USING(account_id)
+    WHERE s.account_id=? AND s.caller_id=? AND s.data_domain=? AND s.revoked_at IS NULL AND a.auth_epoch=?
+    ORDER BY s.permission`).all(principal.account_id, principal.caller_id, scope, principal.auth_epoch) as { permission: string }[] : [];
   return c.json(snapshot(principal, {
     account_id: principal.account_id,
     caller_id: principal.caller_id,
     auth_epoch: principal.auth_epoch,
     domains: principal.domains,
     operations: principal.operations,
+    scope_operations: operations.map(({ permission }) => permission),
   }, now(), db));
 }
 

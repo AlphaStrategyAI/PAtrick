@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "intent": "Local reproducible workload for T13, T19, and T25 admission; the fixture is not business data.",
+  "queued_updates": 1000,
+  "stats_facts": 10000,
+  "data_domains": ["personal", "other"],
+  "slow_subscribers": 1,
+  "stats_window": {
+    "period": "7d",
+    "timezone": "America/New_York",
+    "as_of": "2025-03-10T12:00:00.000Z"
+  }
+}

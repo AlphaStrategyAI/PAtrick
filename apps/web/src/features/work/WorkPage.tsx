@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { asClientError, useScopedSnapshot } from '../../api/query.js';
 import { LocalizedError } from '../../components/shared.js';
 import { useT15 } from './messages.js';
@@ -10,15 +10,24 @@ const filters = ['open', 'awaiting_answer', 'blocked', 'delivered', 'all'] as co
 type Filter = typeof filters[number];
 
 export function WorkPage() {
+  const [params, setParams] = useSearchParams();
+  const filter = filters.find((candidate) => candidate === params.get('state')) ?? 'open';
+  return <FilteredWork key={filter} filter={filter} select={(state) => setParams((prior) => {
+    const next = new URLSearchParams(prior);
+    next.set('state', state);
+    return next;
+  })} />;
+}
+
+function FilteredWork({ filter, select }: { filter: Filter; select: (filter: Filter) => void }) {
   const t = useT15();
-  const [filter, setFilter] = useState<Filter>('open');
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors.at(-1);
   const work = useScopedSnapshot('listWork', { state: filter, cursor }, parseWorkList, { projection: !cursor });
   const snapshot = work.data;
   return <section aria-label={t.open}>
     <label>{t.filter}{' '}
-      <select value={filter} onChange={(event) => { setFilter(event.target.value as Filter); setCursors([]); }}>
+      <select value={filter} onChange={(event) => { select(event.target.value as Filter); }}>
         {filters.map((value) => <option key={value} value={value}>{t[value]}</option>)}
       </select>
     </label>

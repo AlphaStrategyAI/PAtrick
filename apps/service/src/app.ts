@@ -29,6 +29,7 @@ import { mountSettingsRoutes } from './routes/settings.js';
 import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
 import { builtinSettingsHandlers } from './settings/builtin.js';
 import { createProductViewService, startProductViewHubObserver, type ProductViewHub } from './product-views.js';
+import { mountStatsRoutes } from './routes/stats.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
 import { mountProjectionEventRoutes } from './routes/events.js';
 
@@ -165,6 +166,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return { ...current, ...state.productViews };
   };
   mountWorkProjectionRoutes(app, viewResources);
+  mountStatsRoutes(app, viewResources);
   mountProjectionEventRoutes(app, viewResources);
   return app;
 }
