@@ -46,5 +46,9 @@
   {
     "file": "0017_settings.sql",
     "sha256": "d42febc9861ae7847d5ee1863887e590023938df3fec6f58e5050193122c0a06"
+  },
+  {
+    "file": "0018_delegation_control.sql",
+    "sha256": "47c2a5a89a0de8111255ee31ac89a899c5b9036801a179a28b1d7bfe79690408"
   }
 ]

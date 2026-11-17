@@ -498,6 +498,16 @@ test('revise_standard follows the adopted version and routes use command and sna
       body: JSON.stringify(adoptEnvelope),
     });
     expect(adopted.status).toBe(202);
+    const publishedIndex = readFileSync(join(root, '系统视图', '索引.md'), 'utf8');
+    const batch = /当前批次：系统视图\/批次\/([^\n]+)/u.exec(publishedIndex)?.[1];
+    expect(batch).toBeTruthy();
+    const projected = readFileSync(join(root, '系统视图', '批次', batch!, '生效标准', '当前.md'), 'utf8');
+    expect(projected).toContain(candidate.standard_id);
+    expect(projected).toContain('v1');
+    expect(fx.db.prepare(`SELECT r.business_state,r.projection_state,r.projection_intent_id,p.intent_id
+      FROM edit_receipts r JOIN projection_pointers p ON p.data_domain=? AND p.view_kind='standards'
+      WHERE r.business_state='adopted' ORDER BY r.receipt_revision DESC LIMIT 1`).get(DOMAIN))
+      .toMatchObject({ business_state: 'adopted', projection_state: 'current', intent_id: expect.stringMatching(/^intent_fact_/) });
     const listed = await app.request('/api/v1/standards', { headers });
     expect(listed.status).toBe(200);
     const listedBody = await listed.json() as { data: { items: { standard_id: string; active_version: number | null }[] } };
@@ -772,6 +782,7 @@ test('the standards migration appends without changing earlier files', () => {
     '0012_effects_outcomes.sql',
     '0013_views.sql',
     '0017_settings.sql',
+    '0018_delegation_control.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

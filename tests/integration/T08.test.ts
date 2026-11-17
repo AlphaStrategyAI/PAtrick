@@ -19,7 +19,7 @@ import {
 } from '../../packages/domain/src/delegation.js';
 import { createStopFixture, createWorkControlApi, type StopFixture } from '../../packages/domain/src/work-control.js';
 import { createApp } from '../../apps/service/src/app.js';
-import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
+import { issueBootstrapTicket, issueCallerSession, ORIGIN, RP_ID } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
 
@@ -898,24 +898,54 @@ test('commands return 202 and delegation reads return the snapshot envelope', as
       budget_micros: 1000,
       expires_at: '2027-01-01T00:00:00.000Z',
     };
-    const proposalBody = envelope('createDelegationProposal', 'type-judge', null, proposal);
-    const created = await app.request('/api/v1/delegation-proposals', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(proposalBody),
+    const post = (path: string, payload: Json, revision: number | null) => app.request(path, {
+      method: 'POST', headers, body: JSON.stringify(envelope(path, path, revision, payload)),
     });
+    async function challenge() {
+      const response = await app.request('/api/v1/auth/challenge', {
+        method: 'POST', headers, body: JSON.stringify({ rp_id: RP_ID }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { challenge_id: string }).challenge_id;
+    }
+    async function prepared(url: string) {
+      const response = await app.request(url, { headers });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { data: { proposal_id: string; proposal_hash: string; base_revision: number; mandate_id: string } }).data;
+    }
+    async function confirm(stage: Awaited<ReturnType<typeof prepared>>, challengeId: string) {
+      const response = await post(`/api/v1/control-proposals/${stage.proposal_id}/confirm`,
+        { proposal_hash: stage.proposal_hash, challenge_id: challengeId }, stage.base_revision);
+      expect(response.status).toBe(202);
+      const accepted = await response.json() as { receipt_url: string };
+      const command = await app.request(accepted.receipt_url, { headers });
+      expect(command.status).toBe(200);
+      return ((await command.json()) as { data: { control_receipt_id: string } }).data.control_receipt_id;
+    }
+
+    const challengeId = await challenge();
+    const stagedPayload = { ...proposal, challenge_id: challengeId };
+    const proposalBody = envelope('createDelegationProposal', 'type-judge', null, stagedPayload);
+    const stage = () => app.request('/api/v1/delegation-proposals', { method: 'POST', headers, body: JSON.stringify(proposalBody) });
+    const created = await stage();
     expect(created.status).toBe(202);
     const createdBody = await created.json() as { command_id: string; state: string; receipt_url: string };
     expect(createdBody.state).toBe('received');
-    expect(createdBody.receipt_url).toContain('/api/v1/delegations/');
-    const mandateId = createdBody.receipt_url.split('/').at(-1);
-    const replay = await app.request('/api/v1/delegation-proposals', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(proposalBody),
-    });
-    expect(replay.status).toBe(202);
-    expect(await replay.json()).toEqual(createdBody);
+    expect(createdBody.receipt_url).toContain('/api/v1/delegation-proposals/');
+    expect(await (await stage()).json()).toEqual(createdBody);
+    const staged = await prepared(createdBody.receipt_url);
+    const mandateId = staged.mandate_id;
+    const applyPath = `/api/v1/delegation-proposals/${staged.proposal_id}/apply`;
+    expect(fx.db.prepare('SELECT 1 FROM mandates WHERE mandate_id=?').get(mandateId)).toBeUndefined();
+    expect((await post(applyPath, { control_receipt_id: 'unconfirmed' }, null)).status).toBe(403);
+    expect(fx.db.prepare('SELECT 1 FROM mandates WHERE mandate_id=?').get(mandateId)).toBeUndefined();
+    const receipt = await confirm(staged, challengeId);
+    expect(fx.db.prepare('SELECT 1 FROM mandates WHERE mandate_id=?').get(mandateId)).toBeUndefined();
+    const applyBody = envelope('applyDelegationProposal', staged.proposal_id, null, { control_receipt_id: receipt });
+    const apply = () => app.request(applyPath, { method: 'POST', headers, body: JSON.stringify(applyBody) });
+    const applied = await apply();
+    expect(applied.status).toBe(202);
+    expect(await (await apply()).json()).toEqual(await applied.json());
 
     const listed = await app.request('/api/v1/delegations', { headers: { authorization: session.authorization } });
     expect(listed.status).toBe(200);
@@ -936,22 +966,42 @@ test('commands return 202 and delegation reads return the snapshot envelope', as
     const one = await app.request(`/api/v1/delegations/${mandateId}`, { headers: { authorization: session.authorization } });
     expect(one.status).toBe(200);
     const oneBody = await one.json() as { data: { mandate_id: string; status: string; budget_micros: number } };
-    expect(oneBody.data).toMatchObject({ mandate_id: mandateId, status: 'active', budget_micros: 1000 });
+    expect(oneBody.data).toMatchObject({ mandate_id: mandateId, status: 'active', budget_micros: 1000, resources: ['work'] });
 
-    const paused = await app.request(`/api/v1/delegations/${mandateId}/controls`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(envelope('controlDelegation', mandateId ?? '', 0, { type: 'pause' })),
-    });
-    expect(paused.status).toBe(202);
+    const controlPath = `/api/v1/delegations/${mandateId}/controls`;
+    expect((await post(controlPath, { type: 'pause' }, 0)).status).toBe(422);
+    const pauseChallenge = await challenge();
+    const pauseStage = await post(controlPath, { type: 'pause', challenge_id: pauseChallenge }, 0);
+    expect(pauseStage.status).toBe(202);
+    const pauseUrl = ((await pauseStage.json()) as { receipt_url: string }).receipt_url;
+    const paused = await prepared(pauseUrl);
+    const applyPause = `/api/v1/delegation-proposals/${paused.proposal_id}/apply`;
+    expect((await post(applyPause, { control_receipt_id: receipt }, 0)).status).toBe(403);
+    expect(fx.db.prepare('SELECT status,revision FROM mandates WHERE mandate_id=?').get(mandateId))
+      .toEqual({ status: 'active', revision: 0 });
+    const stopChallenge = await challenge();
+    const stopStage = await post(controlPath, { type: 'stop', challenge_id: stopChallenge }, 0);
+    expect(stopStage.status).toBe(202);
+    const stopped = await prepared(((await stopStage.json()) as { receipt_url: string }).receipt_url);
+    const staleStopReceipt = await confirm(stopped, stopChallenge);
+    const pauseReceipt = await confirm(paused, pauseChallenge);
+    const pauseBody = envelope('applyDelegationProposal', paused.proposal_id, 0, { control_receipt_id: pauseReceipt });
+    const applyOnce = () => app.request(applyPause, { method: 'POST', headers, body: JSON.stringify(pauseBody) });
+    const firstPause = await applyOnce();
+    expect(firstPause.status).toBe(202);
+    expect(await (await applyOnce()).json()).toEqual(await firstPause.json());
+    expect((await post(applyPause, { control_receipt_id: pauseReceipt }, 0)).status).toBe(409);
     const afterPause = await app.request(`/api/v1/delegations/${mandateId}`, { headers: { authorization: session.authorization } });
-    expect((await afterPause.json() as { data: { status: string } }).data.status).toBe('paused');
+    expect((await afterPause.json() as { data: { status: string; revision: number } }).data)
+      .toMatchObject({ status: 'paused', revision: 1 });
 
-    const over = await app.request('/api/v1/delegation-proposals', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(envelope('createDelegationProposal', 'type-judge', null, { ...proposal, budget_micros: 9000 })),
-    });
+    expect((await post(`/api/v1/delegation-proposals/${stopped.proposal_id}/apply`,
+      { control_receipt_id: staleStopReceipt }, 0)).status).toBe(409);
+    expect(fx.db.prepare('SELECT status,revision FROM mandates WHERE mandate_id=?').get(mandateId))
+      .toEqual({ status: 'paused', revision: 1 });
+
+    const over = await post('/api/v1/delegation-proposals',
+      { ...proposal, budget_micros: 9000, challenge_id: await challenge() }, null);
     expect(over.status).toBe(422);
 
     const workPause = await app.request('/api/v1/work/work-1/controls', {
@@ -1009,6 +1059,7 @@ test('the admission migration appends without changing earlier files', () => {
     '0012_effects_outcomes.sql',
     '0013_views.sql',
     '0017_settings.sql',
+    '0018_delegation_control.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
 import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { recordKnowledge } from '../../domain/src/evidence.js';
@@ -46,6 +47,53 @@ export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: s
     }
     return { state: 'ready' as const, collected, attachments };
   });
+}
+
+/** An explicit edit check observes one registered file. It never sweeps unrelated input. */
+export async function readVaultEdit(
+  db: SqliteDatabase, blobs: BlobStore, vaultId: string, relativePath: string, now: string, authorize: () => void,
+): Promise<void> {
+  const vault = requireVault(db, vaultId);
+  const parts = relativePath.split('/');
+  if (!NOTE_DIRS.has(parts[0]) || parts.length < 2 || extname(relativePath).toLowerCase() !== '.md' ||
+    parts.some((part) => !part || part.startsWith('.') || /[:\\\p{Cc}]/u.test(part) || skippedFile(part))) throw new Error('CONFLICT');
+  const path = resolve(vault.root_path, ...parts);
+  const limit = 8 * 1024 * 1024;
+  const sameRoot = async () => {
+    const root = await lstat(vault.root_path);
+    return root.isDirectory() && `${root.dev}:${root.ino}` === vault.root_identity &&
+      (await realpath(vault.root_path)).normalize('NFC') === vault.physical_root.normalize('NFC');
+  };
+  try {
+    if (vault.status !== 'connected' || !await sameRoot()) throw new Error('CONFLICT');
+    if ((await realpath(path)).normalize('NFC') !== path.normalize('NFC')) throw new Error('CONFLICT');
+    authorize();
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = await file.stat();
+      if (!before.isFile() || before.size > limit) throw new Error('CONFLICT');
+      const bytes = Buffer.alloc(before.size);
+      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+      const after = await file.stat();
+      const live = await lstat(path);
+      if (bytesRead !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs ||
+        live.dev !== after.dev || live.ino !== after.ino || live.mtimeMs !== after.mtimeMs || !await sameRoot() ||
+        (await realpath(path)).normalize('NFC') !== path.normalize('NFC')) throw new Error('CONFLICT');
+      const hash = await blobs.putBlob(bytes);
+      withImmediateTransaction(db, () => {
+        authorize();
+        const current = requireVault(db, vaultId);
+        if (current.root_identity !== vault.root_identity || current.status !== 'connected' ||
+          current.connection_epoch !== vault.connection_epoch || current.config_revision !== vault.config_revision) throw new Error('CONFLICT');
+        applyFile(db, current, { relativePath, kind: 'note', bytes, hash, dev: after.dev, ino: after.ino }, now);
+      });
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') throw new Error('CONFLICT', { cause: error });
+    throw error;
+  }
 }
 
 function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, now: string): boolean {
@@ -150,6 +198,11 @@ function applyFile(db: SqliteDatabase, vault: VaultRecord, file: ScannedFile, no
     });
   }
   if (draft && !stillTemplate) observeOwnerDraft(db, draft.editId, file.hash, parsed, now);
+  const originals = db.prepare(`SELECT e.edit_id FROM edit_intents e JOIN vault_documents d ON d.document_id=e.document_id
+    WHERE e.vault_id=? AND e.account_id=? AND e.data_domain=? AND e.operation='edit_original' AND e.closed_at IS NULL
+      AND e.relative_path=? AND e.document_id=? AND e.base_version<? AND d.tombstone=0`)
+    .all(vault.vault_id,vault.account_id,vault.data_domain,file.relativePath,documentId,observedSeq) as { edit_id: string }[];
+  for (const { edit_id } of originals) observeOwnerDraft(db, edit_id, file.hash, parsed, now);
   return true;
 }
 

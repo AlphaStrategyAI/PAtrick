@@ -45,11 +45,12 @@ export function publicationScope(vault: VaultRecord, input: ProjectionRequest, p
     precedingPointer,
     manifest,
     indexSha256: sha256(indexBody),
+    ...(input.adoptionRender ? { adoptionRender: input.adoptionRender } : {}),
   };
 }
 
 export function projectionIntentId(vault: Pick<VaultRecord, 'data_domain'>, input: ProjectionRequest): string {
-  return `projection:${vault.data_domain}:${input.viewKind}:${input.revision}`;
+  return input.adoptionRender?.intentId ?? `projection:${vault.data_domain}:${input.viewKind}:${input.revision}`;
 }
 
 type Scope = ReturnType<typeof publicationScope>;

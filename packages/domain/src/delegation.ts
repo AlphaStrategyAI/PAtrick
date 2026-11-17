@@ -150,6 +150,7 @@ export type DelegationView = {
   level: Level;
   budget_micros: number;
   actions: string[];
+  resources: string[];
   effects: string[];
   domains: string[];
   risk: string;
@@ -295,42 +296,7 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
 
     async openMandate(input: MandateInput): Promise<DelegationView> {
       assertDomain();
-      assertMicros(input.budget_micros);
-      const stamped = stamp();
-      return withImmediateTransaction(db, () => {
-        const type = requireType(db, principal, domain, input.type_id);
-        assertInsideType(input, type);
-        if (input.expires_at <= stamped) throw new Error('UNPROCESSABLE');
-        const scope = scopeHash(input);
-        const existing = db.prepare('SELECT * FROM mandates WHERE mandate_id = ?').get(input.mandate_id) as MandateRow | undefined;
-        if (existing) {
-          if (existing.account_id !== principal.account_id || existing.scope_hash !== scope) throw new Error('CONFLICT');
-          return viewMandate(existing);
-        }
-        db.prepare(`INSERT INTO mandates (
-          mandate_id, type_id, account_id, data_domain, status, actions_json, resources_json, effects_json, domains_json,
-          risk, level, budget_micros, expires_at, revision, scope_hash, config_version, schema_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, '1.0', ?, ?)`).run(
-          input.mandate_id,
-          input.type_id,
-          principal.account_id,
-          domain,
-          JSON.stringify(input.actions),
-          JSON.stringify(input.resources),
-          JSON.stringify(input.effects),
-          JSON.stringify(input.domains),
-          input.risk,
-          input.level,
-          input.budget_micros,
-          input.expires_at,
-          scope,
-          type.config_version,
-          stamped,
-          stamped,
-        );
-        const stored = requireMandate(db, input.mandate_id);
-        return viewMandate(stored);
-      });
+      return openMandate(db, principal, domain, stamp(), input);
     },
 
     async setCapability(input: CapabilityInput): Promise<void> {
@@ -732,13 +698,17 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async listDelegations(): Promise<DelegationView[]> {
-      const rows = db.prepare(`SELECT * FROM mandates WHERE account_id = ? ORDER BY mandate_id`).all(principal.account_id) as MandateRow[];
-      return rows.filter((row) => principal.domains.includes(row.data_domain)).map(viewMandate);
+      assertDomain();
+      const rows = db.prepare('SELECT * FROM mandates WHERE account_id=? AND data_domain=? ORDER BY mandate_id')
+        .all(principal.account_id, domain) as MandateRow[];
+      return rows.map(viewMandate);
     },
 
     async getDelegation(mandateId: string): Promise<DelegationView> {
-      const row = db.prepare('SELECT * FROM mandates WHERE mandate_id = ?').get(mandateId) as MandateRow | undefined;
-      if (!row || row.account_id !== principal.account_id || !principal.domains.includes(row.data_domain)) throw new Error('NOT_FOUND');
+      assertDomain();
+      const row = db.prepare('SELECT * FROM mandates WHERE mandate_id=? AND account_id=? AND data_domain=?')
+        .get(mandateId, principal.account_id, domain) as MandateRow | undefined;
+      if (!row) throw new Error('NOT_FOUND');
       return viewMandate(row);
     },
   };
@@ -956,6 +926,94 @@ function reportBlocked(db: SqliteDatabase, capability: CapabilityRow): boolean {
   return Boolean(withdrawn);
 }
 
+export type MandateChange =
+  | { action: 'create'; scope: Omit<MandateInput, 'mandate_id'> }
+  | { action: 'pause' | 'resume' | 'stop' };
+
+export type MandateChangeBaseline = {
+  configuration: number;
+  scopeHash: string;
+  status: DelegationView['status'] | null;
+};
+
+export function prepareMandateChange(
+  db: SqliteDatabase, principal: AdmissionPrincipal, domain: string, now: string,
+  mandateId: string, change: MandateChange, revision: number | null,
+): MandateChangeBaseline {
+  if (!principal.domains.includes(domain)) throw new Error('FORBIDDEN');
+  if (change.action === 'create') {
+    const input = { ...change.scope, mandate_id: mandateId };
+    if (revision !== null) throw new Error('CONFLICT');
+    if (!input.domains.includes(domain) || input.domains.some((value) => !principal.domains.includes(value))) throw new Error('FORBIDDEN');
+    assertMicros(input.budget_micros);
+    const type = requireType(db, principal, domain, input.type_id);
+    assertInsideType(input, type);
+    if (input.expires_at <= now) throw new Error('UNPROCESSABLE');
+    if (db.prepare('SELECT 1 FROM mandates WHERE mandate_id = ?').get(mandateId)) throw new Error('CONFLICT');
+    return { configuration: type.config_version, scopeHash: scopeHash(input), status: null };
+  }
+  const mandate = requireMandate(db, mandateId);
+  if (mandate.account_id !== principal.account_id || mandate.data_domain !== domain) throw new Error('FORBIDDEN');
+  if (mandate.revision !== revision || mandate.status === 'stopped') throw new Error('CONFLICT');
+  if (change.action === 'pause' && mandate.status !== 'active' ||
+      change.action === 'resume' && (mandate.status !== 'paused' || mandate.expires_at <= now)) throw new Error('CONFLICT');
+  return { configuration: mandate.config_version, scopeHash: mandate.scope_hash, status: mandate.status };
+}
+
+export function applyPreparedMandateChange(
+  db: SqliteDatabase, principal: AdmissionPrincipal, domain: string, now: string,
+  mandateId: string, change: MandateChange, revision: number | null, expected: MandateChangeBaseline,
+): DelegationView {
+  return withImmediateTransaction(db, () => {
+    const current = prepareMandateChange(db, principal, domain, now, mandateId, change, revision);
+    if (current.configuration !== expected.configuration || current.scopeHash !== expected.scopeHash ||
+      current.status !== expected.status) throw new Error('CONFLICT');
+    return change.action === 'create'
+      ? openMandate(db, principal, domain, now, { ...change.scope, mandate_id: mandateId })
+      : changeMandate(db, principal, domain, now, mandateId, change.action, revision ?? undefined);
+  });
+}
+
+function openMandate(
+  db: SqliteDatabase, principal: AdmissionPrincipal, domain: string, stamped: string, input: MandateInput,
+): DelegationView {
+  assertMicros(input.budget_micros);
+  return withImmediateTransaction(db, () => {
+    const type = requireType(db, principal, domain, input.type_id);
+    assertInsideType(input, type);
+    if (input.expires_at <= stamped) throw new Error('UNPROCESSABLE');
+    const scope = scopeHash(input);
+    const existing = db.prepare('SELECT * FROM mandates WHERE mandate_id = ?').get(input.mandate_id) as MandateRow | undefined;
+    if (existing) {
+      if (existing.account_id !== principal.account_id || existing.scope_hash !== scope) throw new Error('CONFLICT');
+      return viewMandate(existing);
+    }
+    db.prepare(`INSERT INTO mandates (
+      mandate_id, type_id, account_id, data_domain, status, actions_json, resources_json, effects_json, domains_json,
+      risk, level, budget_micros, expires_at, revision, scope_hash, config_version, schema_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, '1.0', ?, ?)`).run(
+      input.mandate_id,
+      input.type_id,
+      principal.account_id,
+      domain,
+      JSON.stringify(input.actions),
+      JSON.stringify(input.resources),
+      JSON.stringify(input.effects),
+      JSON.stringify(input.domains),
+      input.risk,
+      input.level,
+      input.budget_micros,
+      input.expires_at,
+      scope,
+      type.config_version,
+      stamped,
+      stamped,
+    );
+    const stored = requireMandate(db, input.mandate_id);
+    return viewMandate(stored);
+  });
+}
+
 function changeMandate(
   db: SqliteDatabase,
   principal: AdmissionPrincipal,
@@ -1151,6 +1209,7 @@ function viewMandate(row: MandateRow): DelegationView {
     level: row.level,
     budget_micros: row.budget_micros,
     actions: parseList(row.actions_json),
+    resources: parseList(row.resources_json),
     effects: parseList(row.effects_json),
     domains: parseList(row.domains_json),
     risk: row.risk,

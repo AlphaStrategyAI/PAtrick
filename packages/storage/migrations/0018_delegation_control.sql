@@ -1,0 +1,22 @@
+CREATE TABLE delegation_control_proposals (
+  proposal_id TEXT PRIMARY KEY REFERENCES control_proposals(proposal_id),
+  stage_command_id TEXT NOT NULL UNIQUE REFERENCES command_inbox(command_id),
+  account_id TEXT NOT NULL REFERENCES accounts(account_id),
+  caller_id TEXT NOT NULL,
+  auth_epoch INTEGER NOT NULL CHECK(auth_epoch >= 0),
+  data_domain TEXT NOT NULL,
+  mandate_id TEXT NOT NULL,
+  change_json TEXT NOT NULL CHECK(json_valid(change_json)),
+  mandate_revision INTEGER CHECK(mandate_revision >= 0),
+  config_revision INTEGER NOT NULL CHECK(config_revision >= 0),
+  scope_hash TEXT NOT NULL CHECK(length(scope_hash) = 64),
+  current_status TEXT CHECK(current_status IN ('active', 'paused', 'stopped')),
+  apply_command_id TEXT UNIQUE REFERENCES command_inbox(command_id),
+  applied_control_receipt_id TEXT UNIQUE REFERENCES control_receipts(receipt_id),
+  applied_result_json TEXT CHECK(json_valid(applied_result_json)),
+  applied_at TEXT,
+  CHECK((mandate_revision IS NULL) = (current_status IS NULL)),
+  CHECK((apply_command_id IS NULL) = (applied_control_receipt_id IS NULL)),
+  CHECK((apply_command_id IS NULL) = (applied_result_json IS NULL)),
+  CHECK((apply_command_id IS NULL) = (applied_at IS NULL))
+) STRICT;

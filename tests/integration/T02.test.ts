@@ -100,6 +100,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'control_receipts',
       'conversations',
       'decision_submissions',
+      'delegation_control_proposals',
       'delete_sweeps',
       'dependency_checks',
       'domain_events',
@@ -180,7 +181,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'work_stages',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql', '0011_conversations.sql', '0012_effects_outcomes.sql', '0013_views.sql','0017_settings.sql']);
+    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql', '0011_conversations.sql', '0012_effects_outcomes.sql', '0013_views.sql','0017_settings.sql', '0018_delegation_control.sql']);
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

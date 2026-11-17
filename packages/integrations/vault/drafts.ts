@@ -11,7 +11,8 @@ import { appendDomainEvent, withImmediateTransaction, type BlobStore, type Sqlit
 import { queryEvidence, withdrawEvidence, type EvidencePack, type EvidenceQuery } from '../../domain/src/evidence.js';
 import { publishCreateOnly } from './create-file.js';
 import { confirmVault, connectVault, inspectVault, requireVault, type VaultConnection, type VaultRecord } from './connection.js';
-import { readVault, type VaultReadResult } from './reader.js';
+import { readVault, readVaultEdit, type VaultReadResult } from './reader.js';
+import { projectPendingAdoption, publishAdoptionProjection, retryAdoptionProjection } from './adoption-projection.js';
 import { projectVault, type ProjectionRequest, type ProjectionResult } from './projector.js';
 import { editKey, obsidianFileUri } from './uri.js';
 
@@ -91,6 +92,29 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
     retryProjection(editId: string, expectedRevision: number): Promise<EditReceipt> {
       return retryProjection(db, editId, expectedRevision, now);
     },
+    async checkEdit(editId: string, expectedRevision: number, authorize: () => void): Promise<EditReceipt> {
+      const target = db.prepare('SELECT vault_id,relative_path FROM edit_intents WHERE edit_id=?').get(editId) as {
+        vault_id: string; relative_path: string | null;
+      } | undefined;
+      if (!target?.relative_path || receipt(db, editId).receipt_revision !== expectedRevision) throw new Error('CONFLICT');
+      await readVaultEdit(db, options.blobs, target.vault_id, target.relative_path, now(), () => {
+        authorize();
+        if (receipt(db, editId).receipt_revision !== expectedRevision) throw new Error('CONFLICT');
+      });
+      return receipt(db, editId);
+    },
+    async retryAdoptedProjection(editId: string, expected: { receiptRevision: number; intentId: string; projectionRevision: number },
+      authorize: () => void) {
+      await retryAdoptionProjection(db, options.blobs, editId, expected, {
+        now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock,
+      }, authorize);
+      return receipt(db, editId);
+    },
+    projectPendingStandardAdoption(candidateId: string, reportId: string, authorize: () => void) {
+      return projectPendingAdoption(db, options.blobs, candidateId, reportId, {
+        now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock, authorize,
+      });
+    },
     queryEvidence(query: EvidenceQuery, principal: VaultPrincipal): Promise<EvidencePack> {
       return queryEvidence(db, query, principal);
     },
@@ -98,11 +122,10 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
       return Promise.resolve(withdrawEvidence(db, { ...input, now: now() }));
     },
     project(input: ProjectionRequest): Promise<ProjectionResult> {
-      return projectVault(db, input, {
-        now: now(),
-        failProjection: options.failProjection,
-        onProjectionLock: options.onProjectionLock,
-      });
+      const projector = { now: now(), failProjection: options.failProjection, onProjectionLock: options.onProjectionLock };
+      return input.viewKind === 'standards' && input.editId
+        ? publishAdoptionProjection(db, options.blobs, input, projector)
+        : projectVault(db, input, projector);
     },
     fileUri(editId: string): string {
       const intent = db.prepare('SELECT relative_path, vault_id FROM edit_intents WHERE edit_id = ?').get(editId) as {
@@ -124,7 +147,7 @@ async function createEdit(
   now: () => string,
 ): Promise<EditReceipt> {
   if (!principal.operations.includes('owner') && !principal.operations.includes('edits.write')) throw new Error('FORBIDDEN');
-  const vault = connectedVault(db, principal);
+  const vault = connectedVault(db, principal, input.vault_id);
   try {
     await access(vault.root_path, constants.W_OK);
   } catch {
@@ -416,8 +439,8 @@ function retryProjection(db: SqliteDatabase, editId: string, expectedRevision: n
   return Promise.resolve(receipt(db, editId));
 }
 
-function connectedVault(db: SqliteDatabase, principal: VaultPrincipal): VaultRecord {
-  const rows = db.prepare(`SELECT vault_id, data_domain FROM vaults WHERE account_id = ? AND status = 'connected'`).all(principal.account_id) as {
+function connectedVault(db: SqliteDatabase, principal: VaultPrincipal, vaultId?: string): VaultRecord {
+  const rows = db.prepare(`SELECT vault_id, data_domain FROM vaults WHERE account_id=? AND status='connected' AND (? IS NULL OR vault_id=?)`).all(principal.account_id, vaultId ?? null, vaultId ?? null) as {
     vault_id: string;
     data_domain: string;
   }[];

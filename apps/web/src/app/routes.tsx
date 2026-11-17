@@ -1,3 +1,6 @@
+import { KnowledgePage } from '../features/knowledge/KnowledgePage.js';
+import { StandardsPage } from '../features/standards/StandardsPage.js';
+import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
 import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
@@ -130,9 +133,12 @@ export const appRoutes: RouteObject[] = [{
       : <PageFrame item={navigation[0]}><Authenticated><DecisionsPage /></Authenticated></PageFrame> },
     { path: '/work', element: <WorkPage /> },
     { path: workDetailPath, element: <WorkDetailPage /> },
-    { path: '/standards', element: <UnconnectedPage item={navigation[2]} empty="empty.standards" /> },
-    { path: '/knowledge', element: <UnconnectedPage item={navigation[3]} empty="empty.knowledge" /> },
-    { path: '/delegations', element: <UnconnectedPage item={navigation[4]} empty="empty.delegations" /> },
+    { path: '/standards', element: isDemo ? <UnconnectedPage item={navigation[2]} empty="empty.standards" />
+      : <PageFrame item={navigation[2]}><Authenticated><StandardsPage /></Authenticated></PageFrame> },
+    { path: '/knowledge', element: isDemo ? <UnconnectedPage item={navigation[3]} empty="empty.knowledge" />
+      : <PageFrame item={navigation[3]}><Authenticated><KnowledgePage /></Authenticated></PageFrame> },
+    { path: '/delegations', element: isDemo ? <UnconnectedPage item={navigation[4]} empty="empty.delegations" />
+      : <PageFrame item={navigation[4]}><Authenticated><DelegationsPage /></Authenticated></PageFrame> },
     { path: '/system', element: <SystemPage /> },
     { path: '/stats', element: <UnconnectedPage item={navigation[6]} /> },
     { path: '/settings', element: <SettingsPage /> },

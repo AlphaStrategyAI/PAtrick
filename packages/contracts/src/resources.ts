@@ -76,6 +76,11 @@ export const browserCreationScopeSchema = scopeSchema.extend({ caller_id: z.stri
 export type BrowserCreationScope = z.infer<typeof browserCreationScopeSchema>;
 const domainSchema = z.strictObject({ domain: z.string().min(1).optional() });
 const scopedIdSchema = idSchema.extend(domainSchema.shape);
+const learningPageQuery = pageQuerySchema.extend(domainSchema.shape);
+const editTargetSchema = z.strictObject({
+  vault_id: z.string().min(1), document_id: z.string().min(1), observed_seq: z.number().int().nonnegative(),
+  relative_path: z.string().min(1), obsidian_uri: z.string().optional(),
+});
 const workListQuerySchema = pageQuerySchema.extend({ ...domainSchema.shape,
   state: z.enum(['open', 'awaiting_answer', 'blocked', 'delivered', 'all']).default('open') });
 const workItemSchema = z.strictObject({
@@ -166,23 +171,27 @@ export const editReceiptSchema = z.strictObject({
 export const editIntentRequestSchema = z.discriminatedUnion('operation', [
   z.strictObject({
     operation: z.literal('edit_original'),
+    vault_id: z.string().min(1).optional(),
     knowledge_id: z.string().min(1),
     document_id: z.string().min(1),
     expected_source_revision: z.number().int().nonnegative(),
   }),
   z.strictObject({
     operation: z.literal('supplement_knowledge'),
+    vault_id: z.string().min(1).optional(),
     knowledge_id: z.string().min(1),
     expected_knowledge_revision: z.number().int().nonnegative(),
     draft_key: z.string().min(1),
   }),
   z.strictObject({
     operation: z.literal('create_standard'),
+    vault_id: z.string().min(1).optional(),
     draft_key: z.string().min(1),
     expected_active_version: z.null(),
   }),
   z.strictObject({
     operation: z.literal('revise_standard'),
+    vault_id: z.string().min(1).optional(),
     standard_id: z.string().min(1),
     base_version: z.number().int().nonnegative(),
     draft_key: z.string().min(1),
@@ -313,6 +322,33 @@ export const settingsControlSchema = z.strictObject({
   proposal_id: z.string().min(1), proposal_hash: z.string().regex(/^[a-f0-9]{64}$/u),
   base_revision: z.number().int().nonnegative(), object_revision: z.number().int().nonnegative(), expires_at: z.iso.datetime(),
 });
+export const delegationFields = z.strictObject({
+  type_id: z.string().min(1).max(160),
+  actions: z.array(z.string().min(1).max(160)).max(100),
+  resources: z.array(z.string().min(1).max(160)).max(100),
+  effects: z.array(z.string().min(1).max(160)).max(100),
+  domains: z.array(z.string().min(1).max(160)).min(1).max(25),
+  risk: z.string().min(1).max(100),
+  level: z.enum(['L0', 'L1', 'L2', 'L3']),
+  budget_micros: z.number().int().nonnegative(),
+  expires_at: z.iso.datetime(),
+});
+const delegationId = z.string().min(1).max(160);
+const delegationStatus = z.enum(['active', 'paused', 'stopped']);
+const delegationAction = z.enum(['pause', 'resume', 'stop']);
+export const delegationProposalRequest = commandEnvelope(delegationFields.extend({ challenge_id: delegationId }));
+export const delegationControlRequest = commandEnvelope(z.strictObject({ type: delegationAction, challenge_id: delegationId }));
+export const delegationApplyRequest = commandEnvelope(z.strictObject({ control_receipt_id: delegationId }));
+export const delegationProposalSchema = z.strictObject({
+  proposal_id: delegationId, mandate_id: delegationId, base_revision: z.number().int().nonnegative(),
+  proposal_hash: z.string().regex(/^[a-f0-9]{64}$/u), expires_at: z.iso.datetime(),
+  mandate_revision: z.number().int().nonnegative().nullable(), before: delegationStatus.nullable(),
+  change: z.union([z.strictObject({ action: z.literal('create'), scope: delegationFields }),
+    z.strictObject({ action: delegationAction })]),
+  state: z.enum(['staged', 'expired', 'applied']),
+  result: z.strictObject({ status: delegationStatus, revision: z.number().int().nonnegative(),
+    control_receipt_id: delegationId, applied_at: z.iso.datetime() }).nullable(),
+});
 export const settingsValidationSchema = z.strictObject({
   validation_id: z.string().min(1), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
   base_revision: z.number().int().nonnegative(), device_id: z.string().min(1),
@@ -416,30 +452,35 @@ export const routes: RouteDefinition[] = [
     z.strictObject({ text: z.string().min(1), parent_work_id: z.string().min(1).nullable(), request_scope: browserCreationScopeSchema })),
   read('getConsultation', '/consultations/:id', 'consultations.read', idSchema, z.unknown()),
   command('cancelConsultation', '/consultations/:id/cancel', 'consultations.write', emptySchema),
-  read('listKnowledge', '/knowledge', 'knowledge.read', pageQuerySchema, listDataSchema),
-  read('getKnowledge', '/knowledge/:id', 'knowledge.read', idSchema, z.unknown()),
-  read('getKnowledgeEvidence', '/knowledge/:id/evidence', 'knowledge.read', idSchema, listDataSchema),
-  read('getSourceRevision', '/sources/:id/revisions/:rev', 'sources.read', z.strictObject({ id: z.string().min(1), rev: z.string().min(1) }), z.unknown()),
+  read('listKnowledge', '/knowledge', 'knowledge.read', learningPageQuery.extend({ q: z.string().min(1).max(160).optional() }), listDataSchema),
+  read('getKnowledge', '/knowledge/:id', 'knowledge.read', scopedIdSchema, z.unknown()),
+  read('getKnowledgeEvidence', '/knowledge/:id/evidence', 'knowledge.read', scopedIdSchema, listDataSchema),
+  read('getSourceRevision', '/sources/:id/revisions/:rev', 'sources.read', scopedIdSchema.extend({ rev: z.string().min(1) }), z.unknown()),
   read('listVaults', '/vaults', 'vault.read', pageQuerySchema, listDataSchema),
   read('getVaultConnection', '/vaults/:id/connection', 'vault.read', idSchema, vaultConnectionSchema),
   command('inspectVaults', '/vaults/inspections', 'vault.inspect', z.strictObject({ device_id: z.string().min(1), vault_id: z.string().min(1) })),
   command('validateVaults', '/vaults/validations', 'vault.inspect', z.strictObject({ device_id: z.string().min(1), vault_id: z.string().min(1) })),
-  read('getKnowledgeEditTarget', '/knowledge/:id/edit-target', 'edits.read', idSchema, z.unknown()),
-  read('getStandardEditTarget', '/standards/:id/edit-target', 'edits.read', idSchema, z.unknown()),
+  { ...read('getKnowledgeEditTarget', '/knowledge/:id/edit-target', 'edits.read', scopedIdSchema.extend({ document: z.string().min(1).optional() }), editTargetSchema), errors: [...readErrors, 'CONFLICT'] },
+  { ...read('getStandardEditTarget', '/standards/:id/edit-target', 'edits.read', scopedIdSchema, editTargetSchema), errors: [...readErrors, 'CONFLICT'] },
+  read('getEditDestination', '/edits/:id/destination', 'edits.read', scopedIdSchema, editTargetSchema),
   command('createEdit', '/edits', 'edits.write', editIntentRequestSchema),
-  read('getEdit', '/edits/:id', 'edits.read', idSchema, editReceiptSchema),
+  read('getEdit', '/edits/:id', 'edits.read', scopedIdSchema, editReceiptSchema),
   command('checkEdit', '/edits/:id/checks', 'edits.write', emptySchema),
-  command('retryEditProjection', '/edits/:id/projection-retries', 'edits.write', z.strictObject({ expected_revision: z.number().int().nonnegative() })),
-  read('listStandards', '/standards', 'standards.read', pageQuerySchema, listDataSchema),
-  read('listStandardVersions', '/standards/:id/versions', 'standards.read', idSchema, listDataSchema),
-  read('getEvaluation', '/evaluations/:id', 'standards.read', idSchema, z.unknown()),
+  command('retryEditProjection', '/edits/:id/projection-retries', 'edits.write', z.strictObject({
+    expected_revision: z.number().int().nonnegative(), intent_id: z.string().min(1), projection_revision: z.number().int().nonnegative(),
+  })),
+  read('listStandards', '/standards', 'standards.read', learningPageQuery, listDataSchema),
+  read('listStandardVersions', '/standards/:id/versions', 'standards.read', scopedIdSchema, listDataSchema.extend({ candidates: z.array(z.unknown()) })),
+  read('getEvaluation', '/evaluations/:id', 'standards.read', scopedIdSchema, z.unknown()),
   command('createStandardCandidate', '/standard-candidates', 'standards.write', z.strictObject({ standard_id: z.string().min(1).nullable(), draft_key: z.string().min(1) })),
   command('evaluateStandardCandidate', '/standard-candidates/:id/evaluations', 'standards.write', z.strictObject({ dataset_id: z.string().min(1) })),
   command('adoptStandardCandidate', '/standard-candidates/:id/adoptions', 'owner', z.strictObject({ report_id: z.string().min(1) })),
-  read('listDelegations', '/delegations', 'delegations.read', pageQuerySchema, listDataSchema),
-  read('getDelegation', '/delegations/:id', 'delegations.read', idSchema, z.unknown()),
-  command('createDelegationProposal', '/delegation-proposals', 'owner', z.unknown()),
-  command('controlDelegation', '/delegations/:id/controls', 'owner', z.strictObject({ type: z.enum(['pause', 'resume', 'stop']) })),
+  read('listDelegations', '/delegations', 'delegations.read', learningPageQuery, listDataSchema),
+  read('getDelegation', '/delegations/:id', 'delegations.read', scopedIdSchema, z.unknown()),
+  write('createDelegationProposal', 'POST', '/delegation-proposals', 'owner', delegationProposalRequest, commandAcceptedSchema),
+  read('getDelegationProposal', '/delegation-proposals/:id', 'owner', scopedIdSchema, delegationProposalSchema),
+  write('controlDelegation', 'POST', '/delegations/:id/controls', 'owner', delegationControlRequest, commandAcceptedSchema),
+  write('applyDelegationProposal', 'POST', '/delegation-proposals/:id/apply', 'owner', delegationApplyRequest, commandAcceptedSchema),
   read('listSources', '/sources', 'sources.read', pageQuerySchema, listDataSchema),
   read('getSource', '/sources/:id', 'sources.read', idSchema, z.unknown()),
   read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', idSchema, listDataSchema),

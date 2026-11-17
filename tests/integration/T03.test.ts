@@ -861,6 +861,7 @@ test('the auth migration appends after the untouched core schema', () => {
     { file: '0012_effects_outcomes.sql', sha256: effectsHash },
     { file: '0013_views.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0013_views.sql'))).digest('hex') },
     { file: '0017_settings.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0017_settings.sql'))).digest('hex') },
+    { file: '0018_delegation_control.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0018_delegation_control.sql'))).digest('hex') },
   ]);
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);

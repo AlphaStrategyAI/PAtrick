@@ -3,11 +3,13 @@ import type { Context, Hono } from 'hono';
 import { routes, type Json } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createStandardsApi, type StandardsPrincipal } from '../../../../packages/domain/src/standards.js';
-import { snapshot, type Principal } from '../auth.js';
+import type { createVaultApi } from '@patrick/integrations/vault/drafts';
+import { assertDomainPermission, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
+import { domainPrincipal, learningDomain, queryParameter, vaultRelativePath } from './learning-scope.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 
-type Ready = () => { db: SqliteDatabase; now: () => Date };
+type Ready = () => { db: SqliteDatabase; now: () => Date; api: ReturnType<typeof createVaultApi> };
 type Envelope<T> = { client_request_id: string; expected_revision: number | null; payload_hash: string; payload: T };
 
 const createRequest = routeRequest('createStandardCandidate');
@@ -16,6 +18,7 @@ const adoptRequest = routeRequest('adoptStandardCandidate');
 
 export function mountStandardRoutes(app: Hono, ready: Ready): void {
   app.get('/api/v1/standards', (c) => handle(c, () => listStandards(c, ready)));
+  app.get('/api/v1/standards/:id/edit-target', (c) => handle(c, () => standardEditTarget(c, ready)));
   app.get('/api/v1/standards/:id/versions', (c) => handle(c, () => listVersions(c, ready)));
   app.get('/api/v1/evaluations/:id', (c) => handle(c, () => readEvaluation(c, ready)));
   app.post('/api/v1/standard-candidates', (c) => handle(c, () => createCandidate(c, ready)));
@@ -26,22 +29,62 @@ export function mountStandardRoutes(app: Hono, ready: Ready): void {
 async function listStandards(c: Context, ready: Ready): Promise<Response> {
   const principal = await requirePermission(c.req.raw, 'standards.read');
   const { db, now } = ready();
-  const items = await standardsApi(db, principal, now).listStandards();
-  return c.json(snapshot(principal, { items }, now(), db));
+  const domain = learningDomain(db, principal, 'standards.read', queryParameter(c, 'domain'));
+  const caller = domainPrincipal(db, principal, domain);
+  const standardRows = await standardsApi(db, caller, now, domain).listStandards();
+  const withdrawn = db.prepare(`SELECT s.standard_id FROM standards s JOIN standard_versions sv
+    ON sv.standard_id=s.standard_id AND sv.data_domain=s.data_domain AND sv.version=s.active_version AND sv.status='withdrawn'
+    WHERE s.account_id=? AND s.data_domain=?`).all(principal.account_id,domain) as { standard_id: string }[];
+  const degraded = new Set(withdrawn.map((row) => row.standard_id));
+  const items = standardRows.map((item) => degraded.has(item.standard_id) ? { ...item, degraded: true } : item);
+  return c.json(snapshot(caller, { items }, now(), db));
 }
 
 async function listVersions(c: Context, ready: Ready): Promise<Response> {
   const principal = await requirePermission(c.req.raw, 'standards.read');
   const { db, now } = ready();
-  const items = await standardsApi(db, principal, now).listVersions(routeId(c.req.param('id')));
-  return c.json(snapshot(principal, { items }, now(), db));
+  const domain = learningDomain(db, principal, 'standards.read', queryParameter(c, 'domain'));
+  const caller = domainPrincipal(db, principal, domain);
+  const id = routeId(c.req.param('id'));
+  const versions = await standardsApi(db, caller, now, domain).listVersions(id);
+  const links = db.prepare(`SELECT a.active_version,a.report_id FROM adoption_facts a
+    JOIN standard_candidates c ON c.candidate_id=a.candidate_id AND c.account_id=? AND c.data_domain=a.data_domain
+    WHERE a.standard_id=? AND a.data_domain=?`).all(principal.account_id,id,domain) as { active_version: number; report_id: string }[];
+  const reports = new Map(links.map((link) => [link.active_version, link.report_id]));
+  const items = versions.map((version) => ({ ...version, report_id: reports.get(version.version) ?? null }));
+  const candidates = db.prepare(`SELECT c.candidate_id,c.status,c.base_version,c.source_revision,
+    (SELECT r.report_id FROM evaluation_reports r WHERE r.candidate_id=c.candidate_id AND r.account_id=c.account_id
+      AND r.data_domain=c.data_domain ORDER BY r.frozen_at DESC,r.report_id LIMIT 1) AS report_id
+    FROM standard_candidates c WHERE c.standard_id=? AND c.account_id=? AND c.data_domain=? AND c.status<>'adopted'
+    ORDER BY c.created_at DESC,c.candidate_id LIMIT 50`).all(id, principal.account_id,domain);
+  return c.json(snapshot(caller, { items, candidates }, now(), db));
 }
 
 async function readEvaluation(c: Context, ready: Ready): Promise<Response> {
   const principal = await requirePermission(c.req.raw, 'standards.read');
   const { db, now } = ready();
-  const report = await standardsApi(db, principal, now).getEvaluation(routeId(c.req.param('id')));
-  return c.json(snapshot(principal, report, now(), db));
+  const domain = learningDomain(db, principal, 'standards.read', queryParameter(c, 'domain'));
+  const caller = domainPrincipal(db, principal, domain);
+  const report = await standardsApi(db, caller, now, domain).getEvaluation(routeId(c.req.param('id')));
+  return c.json(snapshot(caller, report, now(), db));
+}
+
+async function standardEditTarget(c: Context, ready: Ready): Promise<Response> {
+  const principal = await requirePermission(c.req.raw, 'edits.read');
+  const { db, now } = ready();
+  const domain = learningDomain(db, principal, 'edits.read', queryParameter(c, 'domain'));
+  assertDomainPermission(db, principal, domain, 'standards.read');
+  const target = db.prepare(`SELECT d.document_id,sv.source_revision AS observed_seq,r.relative_path,v.vault_id
+    FROM standards s JOIN standard_versions sv ON sv.standard_id=s.standard_id AND sv.version=s.active_version
+      AND sv.status='active' AND sv.data_domain=s.data_domain
+    JOIN vault_documents d ON d.document_id=sv.document_id AND d.account_id=s.account_id AND d.data_domain=s.data_domain
+    JOIN vault_revisions r ON r.document_id=d.document_id AND r.vault_id=d.vault_id AND r.account_id=s.account_id
+      AND r.data_domain=s.data_domain AND r.observed_seq=sv.source_revision AND r.content_hash=sv.content_hash AND r.tombstone=0
+    JOIN vaults v ON v.vault_id=d.vault_id AND v.account_id=s.account_id AND v.data_domain=s.data_domain AND v.status='connected'
+    WHERE s.standard_id=? AND s.account_id=? AND s.data_domain=? AND d.tombstone=0`)
+    .get(routeId(c.req.param('id')),principal.account_id,domain) as { relative_path: string } | undefined;
+  if (!target || !vaultRelativePath(target.relative_path)) throw new ApiError(409, 'CONFLICT', { reason: 'edit_target' });
+  return c.json(snapshot({ ...principal, domains: [domain] }, target, now(), db));
 }
 
 async function createCandidate(c: Context, ready: Ready): Promise<Response> {
@@ -54,6 +97,7 @@ async function createCandidate(c: Context, ready: Ready): Promise<Response> {
   assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
   const { db, now } = ready();
   const opened = openStandardDraft(db, principal, body.payload.draft_key);
+  assertDomainPermission(db, principal, opened.intent.data_domain, 'standards.write');
   if (body.payload.standard_id !== null && body.payload.standard_id !== opened.intent.target_id) {
     throw new ApiError(409, 'CONFLICT', { reason: 'standard' });
   }
@@ -100,6 +144,7 @@ async function evaluateCandidate(c: Context, ready: Ready): Promise<Response> {
   const { db, now } = ready();
   const candidateId = routeId(c.req.param('id'));
   const candidate = visibleCandidate(db, principal, candidateId);
+  assertDomainPermission(db, principal, candidate.data_domain, 'standards.write');
   if (body.expected_revision !== null && body.expected_revision !== candidate.pointer_revision) {
     throw new ApiError(409, 'CONFLICT', { reason: 'revision' });
   }
@@ -140,9 +185,10 @@ async function adoptCandidate(c: Context, ready: Ready): Promise<Response> {
   const body = parsed.data as Envelope<{ report_id: string }>;
   if (body.expected_revision === null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'expected_revision' });
   assertPayloadHash(body.payload as unknown as Json, body.payload_hash);
-  const { db, now } = ready();
+  const { db, now, api } = ready();
   const candidateId = routeId(c.req.param('id'));
   const candidate = visibleCandidate(db, principal, candidateId);
+  assertDomainPermission(db, principal, candidate.data_domain, 'owner', false);
   const fingerprint = commandFingerprint({
     operation: 'adoptStandardCandidate',
     resource_id: candidateId,
@@ -150,9 +196,18 @@ async function adoptCandidate(c: Context, ready: Ready): Promise<Response> {
     expected_revision: body.expected_revision,
     payload_hash: body.payload_hash,
   });
+  const reportId = body.payload.report_id;
+  const authorize = () => assertDomainPermission(db, principal, candidate.data_domain, 'owner', false);
   const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
-  if (existing) return c.json(accepted(existing, 'adoptStandardCandidate', commandResource(db, existing)), 202);
-  await standardsApi(db, principal, now, candidate.data_domain).adoptStandard(candidateId, body.payload.report_id, body.expected_revision);
+  if (existing) {
+    await api.projectPendingStandardAdoption(candidateId, reportId, authorize);
+    return c.json(accepted(existing, 'adoptStandardCandidate', commandResource(db, existing)), 202);
+  }
+  const adopted = await standardsApi(db, principal, now, candidate.data_domain).adoptStandard(candidateId, reportId, body.expected_revision);
+  if (adopted === 'adopted') {
+    // A response lost before the command record can resume the pending publication with the same command.
+    await api.projectPendingStandardAdoption(candidateId, reportId, authorize);
+  }
   const commandId = storeCommand(db, principal, {
     operation: 'adoptStandardCandidate',
     resourceId: body.payload.report_id,

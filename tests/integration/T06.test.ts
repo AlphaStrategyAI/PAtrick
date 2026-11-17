@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -464,6 +464,45 @@ test('offline rescan keeps documents and a later manuscript is a new revision', 
   }
 });
 
+test('projection refuses unsafe batch parents before publication', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  const outside = join(fx.dir, 'outside-vault');
+  mkdirSync(join(root, '系统视图'), { recursive: true });
+  mkdirSync(outside);
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    symlinkSync(outside, join(root, '系统视图', '批次'), 'dir');
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, `# ${path}\n`]));
+    expect(await api.project({ vaultId, viewKind: 'knowledge', revision: 1, files }))
+      .toEqual({ applied: false, pointer: null, state: 'failed' });
+    expect(readdirSync(outside)).toEqual([]);
+    expect(existsSync(join(root, '系统视图', '索引.md'))).toBe(false);
+  } finally {
+    fx.close();
+  }
+});
+
+test('a real staging I/O error leaves the index and pointer unchanged', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  mkdirSync(root);
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    const stage = join(root, '.patrick-staging');
+    writeFileSync(stage, 'keep this file');
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, `# ${path}\n`]));
+    expect(await api.project({ vaultId, viewKind: 'knowledge', revision: 1, files }))
+      .toEqual({ applied: false, pointer: null, state: 'failed' });
+    expect(readFileSync(stage, 'utf8')).toBe('keep this file');
+    expect(existsSync(join(root, '系统视图', '索引.md'))).toBe(false);
+  } finally {
+    fx.close();
+  }
+});
+
 test('a failed or older projection does not move the current pointer', async () => {
   const fx = temporaryDatabase();
   const root = join(fx.dir, 'vault');
@@ -545,6 +584,10 @@ test('a leftover lock and a partial batch still project that revision', async ()
       projection_revision: revision,
     });
     expect(readFileSync(join(root, '系统视图', '批次', String(revision), '知识', '当前.md'), 'utf8')).toBe('# 知识/当前.md\n');
+    const staging = join(root, '.patrick-staging');
+    const quarantine = readdirSync(staging).find((name) => name.startsWith('batch-quarantine-'));
+    expect(quarantine).toBeTruthy();
+    expect(readFileSync(join(staging, quarantine!, 'original', '知识', '当前.md'), 'utf8')).toBe('# 半截批次\n');
     expect(fx.db.prepare(`SELECT holder FROM projection_locks WHERE data_domain = 'personal' AND view_kind = 'knowledge'`).get()).toBeUndefined();
   } finally {
     fx.close();
@@ -874,6 +917,7 @@ test('the vault migration appends without changing earlier files', () => {
     '0012_effects_outcomes.sql',
     '0013_views.sql',
     '0017_settings.sql',
+    '0018_delegation_control.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);
