@@ -38,11 +38,10 @@ export function runClosed(
     let stderr = '';
     let settled = false;
     let timedOut = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (result: ClosedProcess) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       resolve(result);
     };
     const child = spawn(command, [...args], {
@@ -50,7 +49,7 @@ export function runClosed(
       env: options.env,
       stdio: [options.pipeStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
     }, timeoutMs);
