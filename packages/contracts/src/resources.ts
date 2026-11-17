@@ -14,6 +14,7 @@ export const HTTP_ERROR_STATUS = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   CONFLICT: 409,
+  VALIDATION_STALE: 409,
   UNPROCESSABLE: 422,
   RATE_LIMITED: 429,
   UNAVAILABLE: 503,
@@ -262,15 +263,64 @@ const answerPayload = z.strictObject({
   ]),
 });
 
-const preferencePayload = z.strictObject({
+export const preferencePayload = z.strictObject({
   mode: z.enum(['system', 'en', 'zh']).optional(),
   reduced_motion: z.boolean().optional(),
   notifications: z.enum(['necessary', 'all']).optional(),
   quiet_hours: z.strictObject({
-    start: z.string().min(1),
-    end: z.string().min(1),
+    start: z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u),
+    end: z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u),
   }).nullable().optional(),
 });
+
+export const storedPreferences = preferencePayload.required().extend({ revision: z.number().int().nonnegative() });
+export const preferencePatchRequest = commandEnvelope(z.strictObject({
+  account_id: z.string().min(1), auth_epoch: z.number().int().nonnegative(),
+  changes: preferencePayload.refine((value) => Object.keys(value).length > 0),
+}));
+
+export const settingsDraftSchema = z.strictObject({
+  operation: z.string().min(1).max(80),
+  domain: z.string().min(1).max(160),
+  target: z.string().min(1).max(160),
+  input: z.json(),
+});
+export const settingsChangePayload = z.strictObject({
+  draft: settingsDraftSchema,
+  validation_id: z.string().min(1).max(160),
+  control_receipt_id: z.string().min(1).max(160),
+});
+export const settingsControlPayload = z.strictObject({
+  draft: settingsDraftSchema,
+  validation_id: z.string().min(1).max(160),
+  challenge_id: z.string().min(1).max(160),
+});
+export const settingsControlSchema = z.strictObject({
+  proposal_id: z.string().min(1), proposal_hash: z.string().regex(/^[a-f0-9]{64}$/u),
+  base_revision: z.number().int().nonnegative(), object_revision: z.number().int().nonnegative(), expires_at: z.iso.datetime(),
+});
+export const settingsValidationSchema = z.strictObject({
+  validation_id: z.string().min(1), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
+  base_revision: z.number().int().nonnegative(), device_id: z.string().min(1),
+  identity_id: z.string().min(1), scope_hash: z.string().regex(/^[a-f0-9]{64}$/u),
+  valid: z.boolean(), checked_at: z.iso.datetime(), expires_at: z.iso.datetime(),
+});
+export const settingsReceiptSchema = z.strictObject({
+  change_id: z.string().min(1), validation_id: z.string().min(1), operation: z.string().min(1), target_id: z.string().min(1),
+  phase: z.enum(['applying','applied','observed','uncertain']), applied_revision: z.number().int().nonnegative().nullable(),
+  verified: z.boolean(), checked_at: z.iso.datetime().nullable(), issues: z.array(z.string()),
+  effects: z.array(z.strictObject({ item: z.string(), outcome: z.enum(['applied','unchanged','blocked','uncertain']),
+    revision: z.number().int().nonnegative().nullable() })),
+});
+
+const settingsTargetSchema = z.strictObject({
+  target: z.string().min(1), device: z.string().min(1).nullable(), status: z.string().min(1), revision: z.number().int().nonnegative(),
+});
+export const settingsDashboardSchema = z.strictObject({ groups: z.array(z.strictObject({
+  id: z.string(), operations: z.array(z.strictObject({
+    operation: z.string(), registered: z.boolean(), targets: z.array(settingsTargetSchema),
+  })),
+})) });
 
 const statsQuerySchema = z.strictObject({
   period: z.enum(['7d', '30d', 'all']),
@@ -375,11 +425,15 @@ export const routes: RouteDefinition[] = [
   read('getSource', '/sources/:id', 'sources.read', idSchema, z.unknown()),
   read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', idSchema, listDataSchema),
   command('detectSources', '/sources/detect', 'sources.detect', z.strictObject({ target: z.string().min(1) })),
-  read('getSettings', '/settings', 'settings.read', emptySchema, z.unknown()),
+  read('getSettings', '/settings', 'settings.read', domainSchema, settingsDashboardSchema),
   command('inspectSettings', '/settings/inspections', 'settings.inspect', emptySchema),
-  command('validateSettings', '/settings/validations', 'settings.validate', z.strictObject({ draft_hash: z.string().min(1) })),
-  command('applySettingsChanges', '/settings/changes', 'owner', z.strictObject({ draft_hash: z.string().min(1) })),
-  read('getSettingsChange', '/settings/changes/:id', 'settings.read', idSchema, z.unknown()),
+  write('validateSettings', 'POST', '/settings/validations', 'settings.validate', commandEnvelope(settingsDraftSchema),
+    snapshotEnvelope(settingsValidationSchema), [...writeErrors, 'VALIDATION_STALE']),
+  write('prepareSettingsControl', 'POST', '/settings/control-proposals', 'owner', commandEnvelope(settingsControlPayload),
+    snapshotEnvelope(settingsControlSchema), [...writeErrors, 'VALIDATION_STALE']),
+  write('applySettingsChanges', 'POST', '/settings/changes', 'owner', commandEnvelope(settingsChangePayload),
+    commandAcceptedSchema, [...writeErrors, 'VALIDATION_STALE']),
+  read('getSettingsChange', '/settings/changes/:id', 'settings.read', idSchema, settingsReceiptSchema),
   read('getFeishuChannel', '/channels/feishu', 'channels.read', emptySchema, feishuConnectionSchema),
   command('inspectFeishu', '/channels/feishu/inspections', 'channels.inspect', emptySchema),
   command('validateFeishu', '/channels/feishu/validations', 'channels.validate', emptySchema),
@@ -406,10 +460,10 @@ export const routes: RouteDefinition[] = [
     }),
   ),
   read('getFeishuTest', '/channels/feishu/tests/:id', 'channels.read', idSchema, channelTestSchema),
-  read('getPreferences', '/preferences', 'session', emptySchema, preferencePayload),
-  command('patchPreferences', '/preferences', 'session', preferencePayload, 'PATCH'),
+  read('getPreferences', '/preferences', 'session', emptySchema, storedPreferences),
+  write('patchPreferences', 'PATCH', '/preferences', 'session', preferencePatchRequest, snapshotEnvelope(storedPreferences)),
   read('getSystemHealth', '/system/health', 'session', domainSchema, healthSnapshotSchema),
-  read('getSystemIncident', '/system/incidents/:id', 'session', idSchema, z.unknown()),
+  read('getSystemIncident', '/system/incidents/:id', 'settings.read', idSchema, settingsReceiptSchema),
   command('runSystemOperation', '/system/operations', 'owner', z.strictObject({ operation: z.string().min(1) })),
   command('confirmControlProposal', '/control-proposals/:id/confirm', 'owner', z.strictObject({ proposal_hash: z.string().min(1), challenge_id: z.string().min(1) })),
   read('getControlReceipt', '/control-receipts/:id', 'owner', idSchema, z.unknown()),
@@ -422,7 +476,10 @@ export const routes: RouteDefinition[] = [
     scopePermissions: ['work.read'],
     request: z.strictObject({ after: z.string().min(1).optional(), ...domainSchema.shape }), response: sseEventSchema,
     responseMediaType: 'text/event-stream', errors: [...readErrors, 'UNPROCESSABLE'] },
-  read('getCommand', '/commands/:id', 'commands.read', idSchema, z.unknown()),
+  read('getCommand', '/commands/:id', 'commands.read', idSchema, z.strictObject({
+    ...commandAcceptedSchema.shape, resource_id: z.string().min(1), operation: z.string().min(1),
+    control_receipt_id: z.string().min(1).optional(),
+  })),
 ];
 
 export const MCP_TOOLS = [

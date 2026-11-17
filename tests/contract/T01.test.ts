@@ -156,6 +156,7 @@ test('openapi-sdk-no-drift', () => {
     'POST /api/v1/notifications/test',
     'POST /api/v1/questions/{id}/answers',
     'POST /api/v1/settings/changes',
+    'POST /api/v1/settings/control-proposals',
     'POST /api/v1/settings/inspections',
     'POST /api/v1/settings/validations',
     'POST /api/v1/sources/detect',

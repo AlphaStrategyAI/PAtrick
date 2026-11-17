@@ -253,6 +253,45 @@ test('channel-lifecycle', async () => {
   }
 });
 
+test('trusted disable drains a dispatch whose Hub response has not returned', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  const channel = createFeishuChannel(scene.db, { now: scene.now, hub: scene.hub, encode: encodeHubAnswer, domain: DOMAIN });
+  const gate = createAnswerGate(scene.db, {
+    domain: DOMAIN, now: scene.now, encode: encodeHubAnswer,
+    hub: {
+      accept: async (questionId, cardId, body) => {
+        const accepted = await scene.hub.accept(questionId, cardId, body);
+        entered();
+        await hold;
+        return accepted;
+      },
+      read: (questionId) => scene.hub.read(questionId),
+    },
+  });
+  const binding = await scene.bind(questionInput('Q-in-flight', 121, proceedOptions(), []));
+  const answer = gate.submitAnswer(feishuPrincipal, scene.command(feishuPrincipal, 'in-flight', binding, { kind: 'option', option_id: 'A' }));
+  try {
+    await Promise.race([started, answer.then(() => { throw new Error('Dispatched without waiting for the Hub response'); })]);
+    const stopped = await channel.disableTrusted({ accountId: 'owner', configRevision: 1, epoch: 1 });
+    expect(stopped).toEqual({ status: 'draining', epoch: 2 });
+    expect(scene.db.prepare('SELECT dispatch_seq,cutoff,terminal FROM channel_permits WHERE inbound_id=?').get('in-in-flight'))
+      .toEqual({ dispatch_seq: 1, cutoff: 1, terminal: 0 });
+    expect((await channel.finishAfterReconciliation()).status).toBe('draining');
+    release();
+    expect(await answer).toMatchObject({ validity: 'verified' });
+    expect((await channel.finishAfterReconciliation()).status).toBe('disabled');
+    expect(scene.db.prepare('SELECT terminal FROM channel_permits WHERE inbound_id=?').get('in-in-flight')).toEqual({ terminal: 1 });
+  } finally {
+    release();
+    await answer.catch(() => {});
+    scene.close();
+  }
+});
+
 test('pairing codes stay hashed and every channel step rechecks the binding', async () => {
   const scene = await openScene({ crashAfterAccept: false });
   try {

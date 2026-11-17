@@ -42,5 +42,9 @@
   {
     "file": "0013_views.sql",
     "sha256": "3e9f0f1fea8ed4c4e3a3f6bfe9b06fd8c59169b2bf0fe0eb66fd6060434bfe35"
+  },
+  {
+    "file": "0017_settings.sql",
+    "sha256": "d42febc9861ae7847d5ee1863887e590023938df3fec6f58e5050193122c0a06"
   }
 ]

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { access, realpath, stat } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { canonicalPayload, vaultConnectionSchema, type Json } from '@patrick/contracts';
 import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
@@ -92,20 +92,61 @@ export async function connectVault(db: SqliteDatabase, input: {
   });
 }
 
-export async function confirmVault(db: SqliteDatabase, deviceId: string, vaultId: string, now: string): Promise<void> {
-  const vault = requireVault(db, vaultId);
-  const info = await stat(vault.root_path);
-  if (!info.isDirectory() || `${info.dev}:${info.ino}` !== vault.root_identity) throw new Error('CONFLICT');
-  try {
-    await access(vault.root_path, constants.R_OK | constants.W_OK);
-  } catch {
-    throw new Error('FORBIDDEN');
+export class VaultConfirmationBlocked extends Error {
+  readonly reason: 'root_unavailable' | 'binding_changed';
+  constructor(reason: 'root_unavailable' | 'binding_changed') {
+    super(reason);
+    this.reason = reason;
   }
+}
+
+export async function probeVaultConfirmation(vault: VaultRecord): Promise<boolean> {
+  if (vault.status !== 'awaiting_confirmation') return false;
+  try {
+    const absolute = await realpath(vault.root_path);
+    if (absolute !== vault.root_path || absolute !== vault.physical_root) return false;
+    const info = await stat(absolute);
+    if (!info.isDirectory() || `${info.dev}:${info.ino}` !== vault.root_identity) return false;
+    await access(absolute, constants.R_OK | constants.W_OK);
+    return true;
+  } catch (error) {
+    if (knownRootFailure(error)) return false;
+    throw error;
+  }
+}
+
+export async function confirmVault(
+  db: SqliteDatabase, deviceId: string, vaultId: string, now: string,
+  options?: { beforeWrite: () => string },
+): Promise<void> {
+  const vault = requireVault(db, vaultId);
+  const mapping = db.prepare('SELECT mapping_revision FROM vault_clients WHERE device_id=? AND vault_id=?');
+  const currentMapping = mapping.get(deviceId, vaultId) as { mapping_revision: number } | undefined;
+  if (!currentMapping || vault.status !== 'awaiting_confirmation') throw new VaultConfirmationBlocked('binding_changed');
+  if (!await probeVaultConfirmation(vault)) throw new VaultConfirmationBlocked('root_unavailable');
   withImmediateTransaction(db, () => {
-    db.prepare(`UPDATE vaults
-      SET status = 'connected', connection_epoch = connection_epoch + 1, updated_at = ?
-      WHERE vault_id = ? AND root_identity = ? AND status = 'awaiting_confirmation'`).run(now, vaultId, vault.root_identity);
-    db.prepare(`UPDATE vault_clients SET observed_at = ? WHERE device_id = ? AND vault_id = ?`).run(now, deviceId, vaultId);
+    const stamped = options?.beforeWrite() ?? now;
+    const current = mapping.get(deviceId, vaultId) as { mapping_revision: number } | undefined;
+    if (current?.mapping_revision !== currentMapping.mapping_revision) throw new VaultConfirmationBlocked('binding_changed');
+    // The asynchronous observation may be obsolete. Recheck the canonical on-disk identity and permissions immediately before CAS.
+    try {
+      const absolute = realpathSync(vault.root_path);
+      const info = lstatSync(vault.root_path);
+      if (absolute !== vault.root_path || absolute !== vault.physical_root || !info.isDirectory() ||
+          `${info.dev}:${info.ino}` !== vault.root_identity) throw new VaultConfirmationBlocked('root_unavailable');
+      accessSync(absolute, constants.R_OK | constants.W_OK);
+    } catch (error) {
+      if (knownRootFailure(error)) throw new VaultConfirmationBlocked('root_unavailable');
+      throw error;
+    }
+    const changed = db.prepare(`UPDATE vaults
+      SET status='connected',connection_epoch=connection_epoch+1,updated_at=?
+      WHERE vault_id=? AND account_id=? AND data_domain=? AND capture_host=? AND root_path=? AND physical_root=?
+        AND root_identity=? AND scope_hash=? AND config_revision=? AND connection_epoch=? AND status='awaiting_confirmation'`)
+      .run(stamped, vaultId, vault.account_id, vault.data_domain, vault.capture_host, vault.root_path, vault.physical_root,
+        vault.root_identity, vault.scope_hash, vault.config_revision, vault.connection_epoch);
+    if (changed.changes !== 1) throw new VaultConfirmationBlocked('binding_changed');
+    db.prepare('UPDATE vault_clients SET observed_at=? WHERE device_id=? AND vault_id=?').run(stamped, deviceId, vaultId);
     appendDomainEvent(db, {
       eventId: `vault.connection:${vaultId}:confirmed`,
       aggregateId: vaultId,
@@ -116,6 +157,10 @@ export async function confirmVault(db: SqliteDatabase, deviceId: string, vaultId
       destination: 'vault',
     });
   });
+}
+
+function knownRootFailure(error: unknown): boolean {
+  return ['ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES', 'EPERM'].includes(errorCode(error) ?? '');
 }
 
 export async function inspectVault(db: SqliteDatabase, deviceId: string, vaultId: string): Promise<VaultConnection> {

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
   channelPermit,
   createAnswerGate,
@@ -211,11 +211,11 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       return { status: connection.status, transport_mode: connection.transport_mode };
     },
 
-    async applyTrustedEnable(proof: EnableProof) {
-      const stamped = stamp();
+    async applyTrustedEnable(proof: EnableProof, authorization?: { beforeWrite: () => string }) {
       withImmediateTransaction(db, () => {
+        const stamped = authorization?.beforeWrite() ?? stamp();
         const connection = requireConnection(db, connectionId);
-        if (connection.status !== 'needs_enable') throw new Error('BINDING_STALE');
+        if (connection.status !== 'needs_enable' || connection.data_domain !== options.domain) throw new Error('BINDING_STALE');
         if (proof.connection_id !== connection.connection_id || proof.account_id !== connection.account_id) throw new Error('BINDING_STALE');
         if (proof.test_id !== connection.current_test_id) throw new Error('BINDING_STALE');
         assertSnap(connection, {
@@ -267,6 +267,38 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
         await new Promise((resolve) => setImmediate(resolve));
       }
       throw new Error('HUB_ACCEPT_NOT_RECORDED');
+    },
+
+    async disableTrusted(
+      proof: { accountId: string; configRevision: number; epoch: number },
+      authorization?: { beforeWrite: () => string },
+    ) {
+      return withImmediateTransaction(db, () => {
+        const stamped = authorization?.beforeWrite() ?? stamp();
+        const channel = requireConnection(db, connectionId);
+        if (channel.account_id !== proof.accountId || channel.data_domain !== options.domain ||
+            channel.config_revision !== proof.configRevision || channel.connection_epoch !== proof.epoch ||
+            channel.status !== 'ready' || channel.transport_mode !== 'active') throw new Error('BINDING_STALE');
+        const { cutoff } = db.prepare(`SELECT MAX(dispatch_seq) AS cutoff FROM channel_permits
+          WHERE connection_id=? AND account_id=? AND epoch=? AND incarnation=?
+          AND permit_recorded=1 AND terminal=0`).get(connectionId, channel.account_id, proof.epoch, channel.channel_incarnation) as
+          { cutoff: number | null };
+        const status = cutoff === null ? 'disabled' : 'draining';
+        const epoch = proof.epoch + 1;
+        const updated = db.prepare(`UPDATE channel_connections SET status=?,transport_mode=?,connection_epoch=?,cutoff_seq=?,updated_at=?
+          WHERE connection_id=? AND config_revision=? AND connection_epoch=? AND status='ready' AND transport_mode='active'`)
+          .run(status, status, epoch, cutoff, stamped, connectionId, proof.configRevision, proof.epoch);
+        if (updated.changes !== 1) throw new Error('BINDING_STALE');
+        if (cutoff !== null) db.prepare(`UPDATE channel_permits SET cutoff=? WHERE connection_id=? AND account_id=? AND epoch=?
+          AND incarnation=? AND terminal=0 AND permit_recorded=1 AND dispatch_seq<=?`)
+          .run(cutoff, connectionId, channel.account_id, proof.epoch, channel.channel_incarnation, cutoff);
+        db.prepare(`INSERT INTO channel_receipts(receipt_id,connection_id,kind,status,created_at) VALUES (?,?,'disable',?,?)`)
+          .run(`ch_${sha256(`${connectionId}:disable:${epoch}:${status}`).slice(0,16)}`, connectionId, status, stamped);
+        appendDomainEvent(db, { eventId: `channel.mode:${connectionId}:${epoch}:${status}`, aggregateId: connectionId,
+          aggregateVersion: epoch, accountId: channel.account_id, dataDomain: channel.data_domain, destination: 'local',
+          payload: { type: 'channel.mode.changed', connection_id: connectionId, status, epoch } });
+        return { status, epoch };
+      });
     },
 
     async disableWhileHubIsUncertain() {

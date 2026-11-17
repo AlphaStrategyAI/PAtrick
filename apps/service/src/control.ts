@@ -251,10 +251,10 @@ async function readControlReceipt(c: Context): Promise<Response> {
   const principal = await requireSession(c.req.raw);
   if (!canConfirm(principal)) throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
   const { db, now } = authContext();
-  const row = db.prepare(`SELECT receipt_id, proposal_id, command_id, proposal_hash, auth_epoch,
-      authenticated_at, credential_ref, base_revision
-    FROM control_receipts
-    WHERE receipt_id = ? AND account_id = ?`).get(c.req.param('id'), principal.account_id) as {
+  const row = db.prepare(`SELECT r.receipt_id,r.proposal_id,r.command_id,r.proposal_hash,r.auth_epoch,
+      r.authenticated_at,r.credential_ref,r.base_revision,p.scope AS data_domain
+    FROM control_receipts r JOIN control_proposals p ON p.proposal_id=r.proposal_id AND p.account_id=r.account_id
+    WHERE r.receipt_id=? AND r.account_id=? AND r.caller_id=?`).get(c.req.param('id'), principal.account_id, principal.caller_id) as {
     receipt_id: string;
     proposal_id: string;
     command_id: string;
@@ -263,9 +263,11 @@ async function readControlReceipt(c: Context): Promise<Response> {
     authenticated_at: string;
     credential_ref: string;
     base_revision: number;
+    data_domain: string;
   } | undefined;
   if (!row) throw new ApiError(404, 'NOT_FOUND', { reason: 'receipt' });
-  return c.json(snapshot(principal, {
+  assertDomainPermission(db, principal, row.data_domain, 'owner', false);
+  return c.json(snapshot({ ...principal, domains: [row.data_domain] }, {
     receipt_id: row.receipt_id,
     proposal_id: row.proposal_id,
     command_id: row.command_id,
@@ -295,12 +297,17 @@ async function readCommand(c: Context): Promise<Response> {
   } else if (!permissionActive(db, principal, row.data_domain, row.permission)) {
     throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
   }
+  const control = row.operation === OPERATION
+    ? db.prepare('SELECT receipt_id FROM control_receipts WHERE command_id=? AND account_id=? AND caller_id=?')
+      .get(row.command_id, principal.account_id, principal.caller_id) as { receipt_id: string } | undefined
+    : undefined;
   return c.json(snapshot({ ...principal, domains: [row.data_domain] }, {
     command_id: row.command_id,
     state: 'received',
     receipt_url: `/api/v1/commands/${row.command_id}`,
     resource_id: row.resource_id,
     operation: row.operation,
+    ...(control ? { control_receipt_id: control.receipt_id } : {}),
   }, now(), db));
 }
 

@@ -23,6 +23,10 @@ import { mountKnowledgeRoutes } from './routes/knowledge.js';
 import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
+import { mountPreferenceRoutes } from './routes/preferences.js';
+import { mountSettingsRoutes } from './routes/settings.js';
+import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
+import { builtinSettingsHandlers } from './settings/builtin.js';
 import { createProductViewService, startProductViewHubObserver, type ProductViewHub } from './product-views.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
 import { mountProjectionEventRoutes } from './routes/events.js';
@@ -35,6 +39,7 @@ export type CreateAppOptions = {
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
   productViewHub?: ProductViewHub;
+  settingsHandlers?: Readonly<Partial<Record<string, SettingsHandler>>>;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
 };
 
@@ -59,6 +64,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     vault?: ReturnType<typeof createVaultApi>;
     hub?: LocalHubPort;
     productViews?: ReturnType<typeof createProductViewService>;
+    settings?: ReturnType<typeof createSettingsChanges>;
   } = {};
   function context(): AuthContext {
     if (!state.db || !state.credentials || !state.databasePath) {
@@ -116,6 +122,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.get('/api/openapi.json', (c) => c.json(generateOpenApi()));
   app.get('/healthz', (c) => c.json({ ok: true }));
   mountAuthRoutes(app);
+  mountPreferenceRoutes(app, context);
+  mountSettingsRoutes(app, () => {
+    const current = context();
+    state.settings ??= createSettingsChanges({ ...current,
+      handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }), ...options.settingsHandlers },
+    });
+    return { ...current, engine: state.settings };
+  });
   mountControlRoutes(app);
   mountAnswerRoutes(app, () => {
     const current = context();

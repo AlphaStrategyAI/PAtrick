@@ -202,13 +202,24 @@ export function createAnswerGate(db: SqliteDatabase, options: AnswerGateOptions)
       if (prepared.decision.disposition !== 'proceed') {
         return withImmediateTransaction(db, () => finishLocal(db, principal, options.domain, prepared, stamp()));
       }
-      const won = withImmediateTransaction(db, () => takeSendLock(db, prepared.intent.intent_id, prepared.binding.question_id, stamp()));
-      if (!won) return withImmediateTransaction(db, () => writeReceipt(db, prepared.intent, 'conflict', prepared.decision, null, stamp()));
-      const body = options.encode(
-        prepared.intent.answer_kind === 'option'
-          ? { kind: 'choice', index: prepared.intent.option_index ?? 0 }
-          : { kind: 'custom', raw_text: prepared.intent.raw_custom ?? '' },
-      );
+      const dispatch = withImmediateTransaction(db, () => {
+        const sentAt = stamp();
+        const { intent, binding, decision } = prepared;
+        if (!takeSendLock(db, intent.intent_id, binding.question_id, sentAt)) {
+          return { receipt: writeReceipt(db, intent, 'conflict', decision, null, sentAt) } as const;
+        }
+        const body = options.encode(intent.answer_kind === 'option'
+          ? { kind: 'choice', index: intent.option_index ?? 0 }
+          : { kind: 'custom', raw_text: intent.raw_custom ?? '' });
+        if (intent.entry === 'feishu' && !recordChannelDispatch(db, intent.intent_id)) {
+          db.prepare(`UPDATE question_locks SET state = 'open', holder_intent_id = NULL, updated_at = ?
+            WHERE question_id = ? AND holder_intent_id = ? AND state = 'sending'`).run(sentAt, binding.question_id, intent.intent_id);
+          return { receipt: writeReceipt(db, intent, 'audit_only', decision, null, sentAt) } as const;
+        }
+        return { body } as const;
+      });
+      if (dispatch.receipt) return dispatch.receipt;
+      const { body } = dispatch;
       const accepted = await options.hub.accept(prepared.binding.question_id, prepared.binding.hub_card_id, body);
       if (!accepted.changed) {
         const current = await options.hub.read(prepared.binding.question_id);
@@ -219,15 +230,6 @@ export function createAnswerGate(db: SqliteDatabase, options: AnswerGateOptions)
       withImmediateTransaction(db, () => {
         db.prepare(`UPDATE answer_intents SET send_status = 'accepted', hub_answer_event_id = ?, updated_at = ?
           WHERE intent_id = ?`).run(accepted.answer_event_id, stamp(), prepared.intent.intent_id);
-        if (prepared.intent.connection_id && prepared.intent.inbound_event_id) {
-          const next = db.prepare(`SELECT COALESCE(MAX(dispatch_seq), 0) + 1 AS n FROM channel_permits
-            WHERE connection_id = ?`).get(prepared.intent.connection_id) as { n: number };
-          db.prepare(`UPDATE channel_permits SET dispatch_seq = ? WHERE connection_id = ? AND inbound_id = ? AND dispatch_seq IS NULL`).run(
-            next.n,
-            prepared.intent.connection_id,
-            prepared.intent.inbound_event_id,
-          );
-        }
       });
       if (options.afterHubAccept) await options.afterHubAccept();
       const intent = requireIntent(db, prepared.intent.intent_id);
@@ -534,12 +536,6 @@ function commitVerified(
     intent.question_version,
   );
   db.prepare(`UPDATE question_locks SET state = 'verified', updated_at = ? WHERE question_id = ?`).run(stamped, intent.question_id);
-  if (intent.connection_id && intent.inbound_event_id) {
-    db.prepare(`UPDATE channel_permits SET terminal = 1 WHERE connection_id = ? AND inbound_id = ?`).run(
-      intent.connection_id,
-      intent.inbound_event_id,
-    );
-  }
   if (intent.next_action?.startsWith('collect:')) {
     db.prepare(`INSERT INTO work_stages (work_id, generation, stage, updated_at) VALUES (?, ?, 'waiting_evidence', ?)
       ON CONFLICT(work_id, generation) DO UPDATE SET stage = 'waiting_evidence', updated_at = excluded.updated_at`).run(
@@ -674,6 +670,12 @@ function writeReceipt(
   if (successorId) {
     db.prepare('UPDATE decision_submissions SET replacement_ref = ? WHERE answer_intent_id = ?').run(successorId, intent.intent_id);
   }
+  if (validity !== 'uncertain' && intent.entry === 'feishu') {
+    db.prepare(`UPDATE channel_permits SET terminal = 1 WHERE permit_id = (
+      SELECT channel_permit FROM answer_intents WHERE intent_id = ?
+    ) AND (intent_id = ? OR (intent_id IS NULL AND dispatch_seq IS NOT NULL AND ? = 'accepted'))`)
+      .run(intent.intent_id, intent.intent_id, intent.send_status);
+  }
   db.prepare(`UPDATE answer_intents SET send_status = ?, updated_at = ? WHERE intent_id = ?`).run(
     validity === 'verified' ? 'accepted' : validity === 'uncertain' ? 'uncertain' : 'rejected',
     stamped,
@@ -767,7 +769,44 @@ function takeSendLock(db: SqliteDatabase, intentId: string, questionId: string, 
   return info.changes === 1;
 }
 
+// Sequence and intent are committed together before calling the Hub. The disable
+// transaction either observes this dispatch in its cutoff, or wins and prevents it.
+function recordChannelDispatch(db: SqliteDatabase, intentId: string): boolean {
+  const info = db.prepare(`UPDATE channel_permits AS permit
+    SET intent_id = @intent, dispatch_seq = (
+      SELECT COALESCE(MAX(p.dispatch_seq), 0) + 1 FROM channel_permits p WHERE p.connection_id = permit.connection_id
+    )
+    WHERE permit.dispatch_seq IS NULL AND permit.intent_id IS NULL AND permit.permit_recorded = 1 AND permit.terminal = 0
+      AND EXISTS (
+        SELECT 1 FROM answer_intents a JOIN channel_connections c ON c.connection_id = a.connection_id
+        WHERE a.intent_id = @intent AND a.channel_permit = permit.permit_id AND a.connection_id = permit.connection_id
+          AND a.inbound_event_id = permit.inbound_id AND a.question_id = permit.question_id AND a.account_id = permit.account_id
+          AND a.incarnation = permit.incarnation AND a.epoch = permit.epoch
+          AND a.config_revision = permit.config_revision AND a.binding_revision = permit.binding_revision
+          AND c.account_id = a.account_id AND c.data_domain = a.data_domain
+          AND c.channel_incarnation = permit.incarnation AND c.connection_epoch = permit.epoch
+          AND c.config_revision = permit.config_revision AND c.binding_revision = permit.binding_revision
+          AND c.status = 'ready' AND c.transport_mode = 'active'
+      )`).run({ intent: intentId });
+  return info.changes === 1;
+}
+
+function hasRecoverableDispatch(db: SqliteDatabase, intentId: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM answer_intents a JOIN channel_permits p ON p.permit_id = a.channel_permit
+    JOIN channel_connections c ON c.connection_id = p.connection_id
+    WHERE a.intent_id = ? AND (p.intent_id = a.intent_id OR (p.intent_id IS NULL AND a.send_status = 'accepted'))
+      AND p.connection_id = a.connection_id AND p.account_id = a.account_id AND p.inbound_id = a.inbound_event_id
+      AND p.question_id = a.question_id AND p.dispatch_seq IS NOT NULL AND p.permit_recorded = 1 AND p.terminal = 0
+      AND a.incarnation = p.incarnation AND a.epoch = p.epoch AND a.config_revision = p.config_revision AND a.binding_revision = p.binding_revision
+      AND c.account_id = a.account_id AND c.data_domain = a.data_domain AND c.channel_incarnation = p.incarnation
+      AND c.config_revision = p.config_revision AND c.binding_revision = p.binding_revision
+      AND ((c.status = 'ready' AND c.transport_mode = 'active' AND c.connection_epoch = p.epoch)
+        OR (c.status = 'draining' AND c.transport_mode = 'draining' AND c.connection_epoch = p.epoch + 1
+          AND p.cutoff = c.cutoff_seq AND p.dispatch_seq <= p.cutoff))`).get(intentId));
+}
+
 function recoveryAllowed(db: SqliteDatabase, intent: IntentRow, stamped: string): boolean {
+  if (intent.entry === 'feishu' && !hasRecoverableDispatch(db, intent.intent_id)) return false;
   const work = db.prepare('SELECT mandate_id, account_id, data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(
     intent.work_id,
     intent.generation,

@@ -531,6 +531,7 @@ test('a legitimate confirm writes one receipt and a same-key replay does not wri
     const getCommand = routes.find((route) => route.operationId === 'getCommand');
     expect(getCommand?.response.safeParse(snapshot).success).toBe(true);
     expect(snapshot.data.command_id).toBe(receipt.command_id);
+    expect(snapshot.data).toMatchObject({ control_receipt_id: stored.receipt_id });
     expect(snapshot.scope.account_id).toBe('owner');
     const session = await owner.api.get('/api/v1/session');
     const sessionBody = await session.json() as { data: { operations: string[]; auth_epoch: number } };
@@ -859,6 +860,7 @@ test('the auth migration appends after the untouched core schema', () => {
     { file: '0011_conversations.sql', sha256: conversationHash },
     { file: '0012_effects_outcomes.sql', sha256: effectsHash },
     { file: '0013_views.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0013_views.sql'))).digest('hex') },
+    { file: '0017_settings.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0017_settings.sql'))).digest('hex') },
   ]);
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);

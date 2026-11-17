@@ -1,3 +1,5 @@
+import { AccountPreferences } from '../features/settings/AccountPreferences.js';
+import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
 import { Link, Navigate, useOutletContext, useParams } from 'react-router';
 import type { RouteObject } from 'react-router';
 import type { ReactNode } from 'react';
@@ -84,6 +86,7 @@ function SystemPage() {
         <button type="button" className="primary" disabled={health.isFetching} onClick={() => { void health.refetch(); }}>
           {t(health.isFetching ? 'status.refreshing' : 'button.refreshStatus')}
         </button>
+        <ChangeReceipt system />
       </>}
     </section>
   </Authenticated></PageFrame>;
@@ -101,12 +104,12 @@ function SettingsPage() {
 function PreferencesPage() {
   const { t, reducedMotion, setReducedMotion, storageFailed } = useLocale();
   return <PageFrame item={settingsNavigation[5]}><Authenticated>
-    <section className="card preference-card">
+    {!isDemo ? <AccountPreferences><LanguageSelect /></AccountPreferences> : <section className="card preference-card">
       <LanguageSelect />
       <label className="check-control"><input type="checkbox" checked={reducedMotion}
         onChange={(event) => setReducedMotion(event.target.checked)} /> {t('motion.label')}</label>
       <p role="status">{t(storageFailed ? 'language.memoryOnly' : 'language.unsynced')}</p>
-    </section>
+    </section>}
   </Authenticated></PageFrame>;
 }
 
@@ -127,7 +130,8 @@ export const appRoutes: RouteObject[] = [{
     { path: '/system', element: <SystemPage /> },
     { path: '/stats', element: <UnconnectedPage item={navigation[6]} /> },
     { path: '/settings', element: <SettingsPage /> },
-    ...settingsNavigation.slice(0, 5).map((item) => ({ path: item.path, element: <UnconnectedPage item={item} /> })),
+    ...settingsNavigation.slice(0, 5).map((item) => ({ path: item.path, element: isDemo ? <UnconnectedPage item={item} />
+      : <PageFrame item={item}><Authenticated><SettingsGroup group={item.path.split('/').at(-1)!} /></Authenticated></PageFrame> })),
     { path: '/settings/preferences', element: <PreferencesPage /> },
     { path: '*', element: <NotFound /> },
   ],

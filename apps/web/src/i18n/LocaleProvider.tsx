@@ -13,6 +13,7 @@ type Preference = {
   t: (key: MessageKey) => string;
   setMode: (mode: LocaleMode) => void;
   setReducedMotion: (enabled: boolean) => void;
+  applyPreferences: (mode: LocaleMode, reduced: boolean) => void;
 };
 
 const LocaleContext = createContext<Preference | null>(null);
@@ -67,6 +68,7 @@ export function LocaleProvider({ account, children }: { account: string | null; 
     t: (key) => message(locale, key),
     setMode: (mode) => save(mode, local.reduced),
     setReducedMotion: (reduced) => save(local.mode, reduced),
+    applyPreferences: save,
   }}>{children}</LocaleContext.Provider>;
 }
 
