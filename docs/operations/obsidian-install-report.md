@@ -26,3 +26,43 @@
 - 官方 [GitHub 发行记录](https://github.com/obsidianmd/obsidian-releases/releases/tag/v1.15.1) 的 [资产 API](https://api.github.com/repos/obsidianmd/obsidian-releases/releases/tags/v1.15.1) 为 `Obsidian-1.15.1.dmg` 发布了 SHA-256 `e05c7e3e2262b14c965bb246dcb74a30fc9098bd669e42957c4d9f788d04fdf4`，大小 233346990 字节。2026-11-17，本机安装包与两项一致，`hdiutil verify` 通过。DMG 容器自身未提供 Gatekeeper 可用签名；核验对象是已锁定镜像内的应用。
 - 同日使用安装配方，在新建的临时应用目录完成只读挂载、复制、卸载镜像及发布，现场验证版本、双架构、Apple Developer ID 和已公证状态。第二次安装按预期拒绝覆盖。临时应用随后清除。生产目录未更改，测试未启动 Obsidian，也未访问任何 Vault。
 - 目标环境的完整准入还需要获准的 Mac 桌面会话、专用隔离 Vault/账本、获准的部署服务 UID 和设备映射。用该环境补做真实编辑、后台补采、重启、升级/卸载保留及可选同步验收。隔离自动测试不证明 GUI 或后台常驻已通过。
+
+## 独立 macOS 测试登录的 GUI 与后台演练
+
+先确认测试登录短名和数字 UID，再在该登录的前台桌面开 Terminal。该账号必须与日常账号分开，不使用个人或公司 Vault、同步账户、生产 token 或应用凭据。把本仓库及依赖放入该登录可用的独立开发目录；不要使用 sudo、修改其它账号的文件权限，或复制现有 Vault。脚本核对真实 UID、有效 UID、短名和前台桌面登录。写目录前检查规范主目录及其祖先，禁止在既有 Vault 内创建演练。每阶段在读写前重新核对隔离账本 inode、Vault 根及其 inode、账户、资料域、采集主机与隔离目录。它只支持服务演练进程与测试桌面共用一个非 root UID；独立服务 UID 的生产权限仍需验证。
+
+macOS 默认 zsh 示例。填入事先确认的短名和 UID，不要自动选择当前主账号：
+
+```zsh
+T27_TEST_USER='<已确认的测试账号短名>'
+T27_TEST_UID='<该账号数字 UID>'
+T27_ARGS=(--test-user "$T27_TEST_USER" --test-uid "$T27_TEST_UID" --service-uid "$T27_TEST_UID")
+node deploy/obsidian/rehearsal.mjs init "${T27_ARGS[@]}"
+```
+
+1. 记录输出的 `sessionId` 并设为 `T27_SESSION`。生成目录固定在测试登录的 `~/PAtrick-T27-Rehearsals/<sessionId>/` 内，Vault、SQLite、blob、隔离目录和暂存路径分别独立。查看输出中的 `vaultPath` 和 `guiEdits`。脚本不启动、退出或切换 Obsidian；在**测试桌面**手动打开已验证的应用，选择“打开文件夹为仓库”，只选这次新生成的目录，不开启同步。
+2. 在终端 A 启动 `editor-open`。等看到“正在等待”，在 Obsidian 源码模式打开指定的两个文件，分别在原文末尾留一个空行，逐字粘贴对应标记并保存。确认含中文、空格和 `#` 的笔记路径，随后在 GUI 中确认系统索引和候选投影。若需验证 URI，先在同一测试登录中核对本机别名，再由操作者打开受控 URI。收据保留 `manualGuiSave: operator_confirmation_required`；AppKit 观察和文件变化不能证明 GUI 写入来源。
+3. 手动完全退出这个测试登录的 Obsidian。终端 A 跑 `editor-closed` 并等待，终端 B 运行对应 `sample-save`。它只向此次合成笔记追加固定标记。观察进程读取实际文件、提交 SQLite 修订并导回；收据区分开始与收集时的桌面进程状态。已验证的 Obsidian bundle 路径、AppKit PID 与按测试 UID 核对的进程 PID/可执行路径需要一致；打不开探针或结果矛盾时不出具通过收据。停用编辑器阶段另外记录合成写入者和活动观察者的进程身份、阶段、写入时间及前后 hash；仅靠复制标记不能冒充停用写入证据。
+4. 前一观察退出后，在终端 A 启动新的 `after-restart` 观察，在 B 执行对应 `sample-save`。这验证演练进程重启后继续使用同一隔离账本，不代表生产 launchd 常驻已验证。如果另行获准并确实完成了主机重启，回到同一测试桌面，保持 Obsidian 退出，再运行这一步；只有 `bootComparedToPrior: changed` 才记录为不同 macOS 启动会话，`unchanged` 和 `unknown` 不能证明重启。
+
+```zsh
+# 两个终端都先设置相同的 T27_ARGS 和 T27_SESSION。
+T27_SESSION='<init 返回的 sessionId>'
+node deploy/obsidian/rehearsal.mjs watch "${T27_ARGS[@]}" --session "$T27_SESSION" --phase editor-open --seconds 180
+
+# 在测试桌面手动退出 Obsidian 后，终端 A：
+node deploy/obsidian/rehearsal.mjs watch "${T27_ARGS[@]}" --session "$T27_SESSION" --phase editor-closed
+# 等 A 显示正在等待，终端 B：
+node deploy/obsidian/rehearsal.mjs sample-save "${T27_ARGS[@]}" --session "$T27_SESSION" --phase editor-closed
+
+# 第三阶段，终端 A（新进程）：
+node deploy/obsidian/rehearsal.mjs watch "${T27_ARGS[@]}" --session "$T27_SESSION" --phase after-restart
+# 等 A 显示正在等待，终端 B：
+node deploy/obsidian/rehearsal.mjs sample-save "${T27_ARGS[@]}" --session "$T27_SESSION" --phase after-restart
+
+node deploy/obsidian/rehearsal.mjs status "${T27_ARGS[@]}" --session "$T27_SESSION"
+```
+
+每阶段把 `evidence-<phase>.json` 写在 Vault 旁边。收据记录 `vault_revisions.revision_id`、观察序号和实际原始字节 SHA-256；可按 hash 找到 `blobs/<前两位>/<完整 hash>` 并复核。候选记录指向 T07 的开放候选，没有采纳或外部调用。导回记录给出 T06 的真实批次和指针、manifest SHA-256 与本阶段索引 hash。此前批次由 T06 放入本会话的隔离目录；历史收据不是当前状态。可用 `sqlite3 -readonly <databasePath>` 查询 `vault_revisions`、`standard_candidates`、`projection_batches` 与 `projection_pointers` 独立核对。没有收据、只做过自动 fixture 或未经操作者确认的 GUI 步骤不可记为真机通过。观察被中止或只完成部分阶段时，保留原会话供复核，用 `init` 新建合成会话重演，无需覆盖或删除任何已有 Vault。
+
+此演练不改系统权限或卸载程序。真实账号权限不足（包括独立服务 UID 或 macOS 审批拒绝）和卸载后 Vault/账本保留，仍需另行获准的隔离真机验收。
