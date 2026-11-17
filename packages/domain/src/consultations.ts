@@ -213,7 +213,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       });
     },
 
-    async readConsultation(principal: AdmissionPrincipal, requestId: string): Promise<ConsultationView> {
+    readConsultation(principal: AdmissionPrincipal, requestId: string): ConsultationView {
       const row = loadConsultation(db, requestId);
       if (!row || !owns(principal, row.account_id, row.caller_id, row.data_domain)) throw new Error('FORBIDDEN');
       return viewOf(row);
@@ -396,6 +396,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
   // HTTP callers compose these synchronous mutations with their command receipts.
   return {
     ...api,
+    readConsultationSnapshot: api.readConsultation,
     mutations: {
       createConsultation: api.createConsultation,
       cancelConsultation: api.cancelConsultation,
@@ -403,6 +404,7 @@ export function createConsultationApi(db: SqliteDatabase, options: ConsultationO
       postMessage: api.postMessage,
       linkConversationWork: api.linkConversationWork,
     },
+    async readConsultation(...args: Parameters<typeof api.readConsultation>) { return api.readConsultation(...args); },
     async createConsultation(...args: Parameters<typeof api.createConsultation>) { return api.createConsultation(...args); },
     async cancelConsultation(...args: Parameters<typeof api.cancelConsultation>) { return api.cancelConsultation(...args); },
     async createConversation(...args: Parameters<typeof api.createConversation>) { return api.createConversation(...args); },
@@ -464,6 +466,10 @@ export function admittedConsultation(db: SqliteDatabase, requestId: string) {
   return { principal, text: row.raw_text, domain: row.data_domain };
 }
 
+export type ConsultationPaidTerminal =
+  | { status: 'answered'; text: string }
+  | { status: 'failed'; exit_code: number };
+
 type PaidResult = {
   type: typeof PAID_RESULT;
   request_id: string;
@@ -471,22 +477,27 @@ type PaidResult = {
   call_id: string;
   reservation_id: string;
   usage_id: string;
-  text: string;
-};
+} & (ConsultationPaidTerminal | { status?: undefined; text: string });
+
+function validTerminal(terminal: ConsultationPaidTerminal | { status?: undefined; text: string }): boolean {
+  if (terminal.status === 'failed') return Number.isSafeInteger(terminal.exit_code) && terminal.exit_code !== 0;
+  return (terminal.status === undefined || terminal.status === 'answered')
+    && typeof terminal.text === 'string' && Boolean(terminal.text.trim());
+}
 
 export function persistConsultationPaidResult(
-  db: SqliteDatabase, grant: ConsultationGrant, receipt: BudgetReceipt, usage: Usage, text: string,
+  db: SqliteDatabase, grant: ConsultationGrant, receipt: BudgetReceipt, usage: Usage, result: ConsultationPaidTerminal,
 ): void {
   if (!db.inTransaction) throw new Error('CONSULTATION_SETTLEMENT_REQUIRED');
   const row = requireConsultation(db, grant.request_id);
   const callId = `consultation:${grant.request_id}`;
   if (receipt.business_id !== callId || receipt.call_id !== callId || receipt.grant_id !== grant.grant_id
     || receipt.attempt_id !== grant.attempt_id || receipt.status !== 'settled' || !receipt.dispatched_at
-    || !text.trim()) throw new Error('CONSULTATION_RECEIPT_MISMATCH');
+    || !validTerminal(result)) throw new Error('CONSULTATION_RECEIPT_MISMATCH');
   const eventId = paidResultEventId(grant.request_id, grant.result_version);
   const payload: PaidResult = {
     type: PAID_RESULT, request_id: grant.request_id, result_version: grant.result_version,
-    call_id: callId, reservation_id: receipt.reservation_id, usage_id: usage.usage_id, text,
+    call_id: callId, reservation_id: receipt.reservation_id, usage_id: usage.usage_id, ...result,
   };
   appendDomainEvent(db, {
     eventId, aggregateId: grant.request_id, aggregateVersion: grant.result_version, accountId: row.account_id,
@@ -500,7 +511,9 @@ function paidResultEventId(requestId: string, version: number): string {
   return `${PAID_RESULT}:${requestId}:${version}`;
 }
 
-export function finalizeConsultationPaidResult(db: SqliteDatabase, requestId: string, version: number, now: string): boolean {
+export function finalizeConsultationPaidResult(
+  db: SqliteDatabase, requestId: string, version: number, now: string,
+): ConsultationPaidTerminal['status'] | null {
   return withImmediateTransaction(db, () => {
     const callId = `consultation:${requestId}`;
     const result = db.prepare(`SELECT e.payload, r.reservation_id, u.usage_id FROM domain_events e
@@ -515,15 +528,23 @@ export function finalizeConsultationPaidResult(db: SqliteDatabase, requestId: st
       .get(paidResultEventId(requestId, version), requestId, version, callId, callId) as {
       payload: string; reservation_id: string; usage_id: string;
     } | undefined;
-    if (!result) return false;
+    if (!result) return null;
     const payload = JSON.parse(result.payload) as PaidResult;
     if (payload.type !== PAID_RESULT || payload.request_id !== requestId || payload.result_version !== version
       || payload.call_id !== callId || payload.reservation_id !== result.reservation_id
-      || payload.usage_id !== result.usage_id || typeof payload.text !== 'string' || !payload.text.trim()) return false;
-    if (answerConsultation(db, requestId, version, { text: payload.text }, now)) return true;
+      || payload.usage_id !== result.usage_id || !validTerminal(payload)) return null;
+    if (payload.status === 'failed') {
+      const updated = db.prepare(`UPDATE consultations SET status = 'failed', result_version = result_version + 1, updated_at = ?
+        WHERE request_id = ? AND result_version = ? AND status IN ('pending', 'waiting_user')`)
+        .run(now, requestId, version);
+      if (updated.changes === 1) return 'failed';
+      const row = requireConsultation(db, requestId);
+      return row.status === 'failed' && row.result_version === version + 1 ? 'failed' : null;
+    }
+    if (answerConsultation(db, requestId, version, { text: payload.text }, now)) return 'answered';
     const row = requireConsultation(db, requestId);
     return row.status === 'answered' && row.result_version === version + 1
-      && row.final_result === canonicalPayload({ text: payload.text });
+      && row.final_result === canonicalPayload({ text: payload.text }) ? 'answered' : null;
   });
 }
 

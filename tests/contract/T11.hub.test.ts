@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession } from '../../apps/service/src/auth.js';
-import type { ConsultationBackend } from '../../packages/executor/src/consultation.js';
+import { fixedConsultationQuoteHash, type ConsultationBackend } from '../../packages/executor/src/consultation.js';
 import { createConsultationApi } from '../../packages/domain/src/consultations.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import {
@@ -25,10 +25,21 @@ test('the pinned Hub isolates consultation claims and receives the service resul
   const seen: HubJob[] = [];
   const acknowledgements: HubEventAck[] = [];
   const failed: unknown[] = [];
+  const renewals: Array<{ run: number; cancelled: number[] }> = [];
+  let releaseBackend!: () => void;
+  const holdBackend = new Promise<void>((resolve) => { releaseBackend = resolve; });
   const now = () => new Date('2026-11-17T04:00:00.000Z');
   const principal = { account_id: 'owner', caller_id: 'web', auth_epoch: 1, domains: ['product'], operations: ['owner'] };
   const api = createConsultationApi(db, { now });
   const observation = 'trusted test boundary with no model process or network call';
+  const admission = {
+    backend: 'dsh' as const, available: true, status: 'verified' as const, command: 'fixture', observation,
+    evidenceSha256: createHash('sha256').update(observation).digest('hex'),
+  };
+  const terms = {
+    accountId: principal.account_id, dataDomain: 'product', backend: admission.backend,
+    admissionSha256: admission.evidenceSha256, routeId: 'contract-fixture', chargeMicros: 31, providerQuoteRef: 'contract-fixture-quote',
+  };
   const sends: Array<Parameters<ConsultationBackend['send']>[0]> = [];
   try {
     expect(hub.consultationClient).toBeDefined();
@@ -83,18 +94,21 @@ test('the pinned Hub isolates consultation claims and receives the service resul
             if (job) seen.push(job);
             return job;
           },
+          async heartbeat(id, run, signal) {
+            const cancelled = await dedicated.heartbeat(id, run, signal);
+            renewals.push({ run, cancelled });
+            return cancelled;
+          },
         },
-        signal: stopWorker.signal, intervalMs: 10, onError: (error) => failed.push(error),
+        signal: stopWorker.signal, intervalMs: 10, heartbeatIntervalMs: 20, onError: (error) => failed.push(error),
         backend: {
           scope: { accountId: principal.account_id, dataDomain: 'product' },
-          admission: {
-            backend: 'dsh', available: true, status: 'verified', command: 'fixture', observation,
-            evidenceSha256: createHash('sha256').update(observation).digest('hex'),
-          },
+          admission,
           route: { sdkMaxRetries: 0, implicitResend: false, perHttpAccounted: false, verifiedMaxSends: null },
-          routeId: 'contract-fixture', amountMicros: 31,
+          routeId: terms.routeId, pricing: { kind: 'fixed', terms, evidenceSha256: fixedConsultationQuoteHash(terms) },
           async send(input) {
             sends.push(input);
+            await holdBackend;
             return {
               usage: { usage_id: 'test-usage', amount_micros: 31, proof: 'test-usage-proof' },
               terminal: {
@@ -110,8 +124,14 @@ test('the pinned Hub isolates consultation claims and receives the service resul
         },
       },
     });
+    await expect.poll(() => renewals.length).toBeGreaterThan(0);
+    expect(seen).toHaveLength(1);
+    expect(renewals[0]).toEqual({ run: seen[0].run, cancelled: [] });
+    let state = await hub.client.state();
+    expect(state.runs.find((run) => run.id === seen[0].run)?.state).toBe('claimed');
+    releaseBackend();
     await expect.poll(async () => {
-      const state = await hub.client.state();
+      state = await hub.client.state();
       return state.runs.find((run) => run.rule === CONSULTATION_RULE)?.state;
     }).toBe('done');
     stopWorker.abort();
@@ -125,9 +145,11 @@ test('the pinned Hub isolates consultation claims and receives the service resul
     expect(sends).toMatchObject([{
       accountId: principal.account_id, dataDomain: 'product', requestId: consultation.request_id,
       resultVersion: 0, callId: `consultation:${consultation.request_id}`, text: 'Only answer this consultation.',
+      fixedQuote: { evidenceSha256: fixedConsultationQuoteHash(terms), chargeMicros: 31, providerQuoteRef: terms.providerQuoteRef },
     }]);
     expect(failed.map(String)).toEqual(['Error: simulated lost Hub reply after commit']);
   } finally {
+    releaseBackend();
     stopWorker.abort();
     stopPublisher.abort();
     db.close();

@@ -33,6 +33,12 @@ export type CreateAppOptions = {
 };
 
 export function createApp(options: CreateAppOptions = {}): Hono {
+  if (options.consultationWorker && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('CONSULTATION_WORKER_DATABASE_REQUIRED');
+  }
+  if (options.consultationWorker && !options.credentialDirectory?.trim()) {
+    throw new Error('CONSULTATION_WORKER_CREDENTIAL_DIRECTORY_REQUIRED');
+  }
   const now = options.now ?? (() => new Date());
   const state: {
     db?: SqliteDatabase;
@@ -69,7 +75,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return state.vault;
   }
   if (options.databasePath) context();
-  if (options.consultationWorker) startConsultationWorker(context().db, now, options.consultationWorker);
+  if (options.consultationWorker) {
+    const { db, credentials } = context();
+    startConsultationWorker(db, now, options.consultationWorker, credentials);
+  }
 
   const app = new Hono();
   app.use('/api/v1/*', async (c, next) => {

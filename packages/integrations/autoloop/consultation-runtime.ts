@@ -1,98 +1,138 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { SqliteDatabase } from '@patrick/storage';
 import { createBudgetApi } from '../../domain/src/budget.js';
 import {
-  acknowledgeConsultationOutbox, admittedConsultation, consultationAwaitingHubReceipt, consultationOutbox, createConsultationApi,
-  finalizeConsultationPaidResult, persistConsultationPaidResult, recoverConsultationPaidResults,
+  admittedConsultation, consultationAwaitingHubReceipt,
+  finalizeConsultationPaidResult, persistConsultationPaidResult, recoverConsultationPaidResults, type ConsultationPaidTerminal,
 } from '../../domain/src/consultations.js';
 import { createDelegationApi } from '../../domain/src/delegation.js';
 import { consultationBackendAdmitted, consultationBackendMatches, runPaidConsultation, type ConsultationBackend } from '../../executor/src/consultation.js';
-import { CONSULTATION_RULE, HUB_SOURCE, type HubClient, type HubJob } from './client.js';
-import { createConsultationHubPort } from './consultation-port.js';
+import type { CredentialStore } from '../../host/src/credentials.js';
+import { CONSULTATION_RULE, type HubClient, type HubJob } from './client.js';
+import { consultationHubResult, createConsultationHubReceipts } from './consultation-hub-receipts.js';
+import { consultationRequestForJob, createConsultationRouting, deferConsultationScope } from './consultation-routing.js';
 
 const BATCH = 32;
+// The pinned Hub lease is five minutes. Keep renewals well inside that window.
+const HEARTBEAT_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+const EXECUTION_TIMEOUT_MS = 10 * 60_000;
 // The dedicated Hub worker key may recover this same outstanding claim after a service restart.
 const CLAIM_ID = 'patrick-consultation-service-v1';
 
 export type ConsultationWorkerOptions = {
-  hub: Pick<HubClient, 'postEvent' | 'claim' | 'result'>;
+  hub: Pick<HubClient, 'postEvent' | 'eventOutcome' | 'claim' | 'heartbeat' | 'result'>;
   backend?: ConsultationBackend;
   signal?: AbortSignal;
   intervalMs?: number;
+  heartbeatIntervalMs?: number;
+  executionTimeoutMs?: number;
   onError?: (error: unknown) => void;
 };
 
-export function startConsultationWorker(db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions): void {
+export function startConsultationWorker(
+  db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions, credentials: CredentialStore,
+): void {
   const interval = options.intervalMs ?? 1000;
-  const api = createConsultationApi(db, { now });
-  const hubPort = createConsultationHubPort(db, {
-    async postEvent(body) {
-      const ack = await options.hub.postEvent(body);
-      const stored = db.prepare('SELECT hub_event FROM hub_events WHERE event_id = ?').get(body.id) as { hub_event: number } | undefined;
-      if (!Number.isSafeInteger(ack.event) || ack.event <= 0 || (stored && stored.hub_event !== ack.event)) {
-        throw new Error('CONSULTATION_HUB_RECEIPT_MISMATCH');
-      }
-      return ack;
-    },
-  });
+  const heartbeatInterval = options.heartbeatIntervalMs ?? HEARTBEAT_MS;
+  const executionTimeout = options.executionTimeoutMs ?? EXECUTION_TIMEOUT_MS;
+  if (!Number.isSafeInteger(heartbeatInterval) || heartbeatInterval < 1 || heartbeatInterval > 60_000
+    || !Number.isSafeInteger(executionTimeout) || executionTimeout < 1 || executionTimeout > EXECUTION_TIMEOUT_MS) {
+    throw new Error('CONSULTATION_WORKER_TIMEOUT_INVALID');
+  }
+  const routing = createConsultationRouting(db, options.hub, now);
+  const receipts = createConsultationHubReceipts(db, credentials, options.hub);
   let timeout: NodeJS.Timeout | undefined;
   options.signal?.addEventListener('abort', () => clearTimeout(timeout), { once: true });
 
   async function tick() {
     // Local completion is independent of both the Hub lease and the current send grant.
     recoverConsultationPaidResults(db, now().toISOString(), BATCH);
-    for (const requestId of consultationOutbox(db, BATCH)) {
-      if (options.signal?.aborted) return;
-      try {
-        const result = await api.dispatchConsultation(requestId, hubPort);
-        if (result !== 'missing') acknowledgeConsultationOutbox(db, requestId, result);
-      } catch (error) {
-        report(error);
-      }
-    }
+    await receipts.recover(BATCH, report);
+    await routing.drain(BATCH, options.signal, report);
     const backend = options.backend;
     if (options.signal?.aborted || !backend || !consultationBackendAdmitted(backend)) return;
     const job = await options.hub.claim(CLAIM_ID);
     if (!job || options.signal?.aborted) return;
     if (job.rule.name !== CONSULTATION_RULE) throw new Error('CONSULTATION_WORKER_KEY_SCOPE');
-    const requestId = claimedRequest(job);
+    const requestId = consultationRequestForJob(job);
     if (requestId && consultationAwaitingHubReceipt(db, requestId)) return;
-    const finished = requestId ? await execute(requestId, backend) : false;
-    await options.hub.result(job.run, job.token, finished
-      ? { outcome: 'done', summary: 'consultation answered' }
-      : { outcome: 'nothing', summary: 'no verified consultation result' });
+    const binding = requestId ? receipts.bind(requestId, job) : null;
+    if (!requestId || !binding) {
+      await options.hub.result(job.run, job.token, consultationHubResult(null));
+      return;
+    }
+    const admitted = admittedConsultation(db, requestId);
+    if (admitted && !consultationBackendMatches(backend, { accountId: admitted.principal.account_id, dataDomain: admitted.domain })) {
+      await receipts.deliver(binding, deferConsultationScope(requestId, now()));
+      return;
+    }
+    const finished = await withLease(job, (signal) => execute(requestId, backend, signal));
+    if (options.signal?.aborted) return;
+    await receipts.deliver(binding, consultationHubResult(finished));
   }
 
-  async function execute(requestId: string, backend: ConsultationBackend): Promise<boolean> {
+  async function withLease<T>(job: HubJob, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const stop = new AbortController();
+    const signals = [stop.signal, AbortSignal.timeout(executionTimeout)];
+    if (options.signal) signals.push(options.signal);
+    const signal = AbortSignal.any(signals);
+    void keepLease(job.run, signal, stop).catch((error: unknown) => {
+      if (!signal.aborted) report(error);
+    });
+    try {
+      return await run(signal);
+    } finally {
+      stop.abort();
+    }
+  }
+
+  async function keepLease(run: number, signal: AbortSignal, stop: AbortController): Promise<void> {
+    while (!signal.aborted) {
+      await delay(heartbeatInterval, undefined, { signal, ref: false });
+      try {
+        const cancelled = await options.hub.heartbeat(CLAIM_ID, run, AbortSignal.any([signal, AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS)]));
+        if (cancelled.includes(run)) stop.abort();
+      } catch (error) {
+        // A lost heartbeat does not retry the paid call or mint a new permit.
+        if (!signal.aborted) report(error);
+      }
+    }
+  }
+
+  async function execute(
+    requestId: string, backend: ConsultationBackend, signal: AbortSignal,
+  ): Promise<ConsultationPaidTerminal['status'] | null> {
     const admitted = admittedConsultation(db, requestId);
     if (!admitted) {
-      const finished = db.prepare("SELECT result_version FROM consultations WHERE request_id = ? AND status = 'answered'").get(requestId) as {
+      const finished = db.prepare("SELECT result_version FROM consultations WHERE request_id = ? AND status IN ('answered', 'failed')").get(requestId) as {
         result_version: number;
       } | undefined;
-      return finished ? finalizeConsultationPaidResult(db, requestId, finished.result_version - 1, now().toISOString()) : false;
+      return finished ? finalizeConsultationPaidResult(db, requestId, finished.result_version - 1, now().toISOString()) : null;
     }
     const { principal, domain, text } = admitted;
     const scope = { accountId: principal.account_id, dataDomain: domain };
-    if (!consultationBackendMatches(backend, scope)) return false;
+    if (signal.aborted || !consultationBackendMatches(backend, scope)) return null;
     const delegation = createDelegationApi(db, principal, { now, domain });
     try {
       const attemptId = `attempt:${requestId}`;
       const grant = await delegation.authorizeConsultation(requestId, attemptId);
       const budget = createBudgetApi(db, principal, { now });
       const outcome = await runPaidConsultation({
-        backend, grant, scope, text,
+        backend, grant, scope, text, signal,
         billing: {
           reserveCall: budget.reserveCall,
           claimPaidDispatch: (...args) => budget.claimPaidDispatch(...args,
-            () => !options.signal?.aborted && admittedConsultation(db, requestId) !== null),
+            () => !signal.aborted && admittedConsultation(db, requestId) !== null),
           settleCall: budget.settleCall,
         },
-        settleAnswer: (reservationId, usage, answer) => budget.settleCall(reservationId, usage,
-          (receipt) => persistConsultationPaidResult(db, grant, receipt, usage, answer)),
+        settleResult: (reservationId, usage, result) => budget.settleCall(reservationId, usage,
+          (receipt) => persistConsultationPaidResult(db, grant, receipt, usage, result)),
       });
-      if (outcome.settled !== 'settled') return false;
+      if (outcome.settled !== 'settled') return null;
       return finalizeConsultationPaidResult(db, requestId, grant.result_version, now().toISOString());
     } catch (error) {
-      if (error instanceof Error && ['DENIED', 'NOT_FOUND', 'FORBIDDEN', 'BUDGET_EXHAUSTED'].includes(error.message)) return false;
+      if (error instanceof Error && ['DENIED', 'NOT_FOUND', 'FORBIDDEN', 'BUDGET_EXHAUSTED'].includes(error.message)) return null;
       throw error;
     }
   }
@@ -111,21 +151,4 @@ export function startConsultationWorker(db: SqliteDatabase, now: () => Date, opt
   }
 
   schedule(0);
-}
-
-function claimedRequest(job: HubJob): string | null {
-  const events = job.context.events.filter((item) => item.source === HUB_SOURCE && item.type === 'consultation.requested');
-  if (events.length !== 1) return null;
-  const event = events[0];
-  try {
-    const detail = JSON.parse(event.detail ?? 'null') as {
-      request_id?: string; root?: string; cause?: string; kind?: string; generation?: number; hops?: number;
-    } | null;
-    if (event.id === `consultation.requested:${event.subject}` && detail?.request_id === event.subject
-      && detail.root === event.subject && detail.cause === event.subject && detail.kind === event.type
-      && detail.generation === 0 && detail.hops === 0) return event.subject;
-  } catch {
-    // Malformed Hub job data cannot establish authority to enter a paid lane.
-  }
-  return null;
 }

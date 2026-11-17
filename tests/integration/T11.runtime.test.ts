@@ -6,9 +6,10 @@ import { expect, test } from 'vitest';
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
+import { createBudgetApi } from '../../packages/domain/src/budget.js';
 import { createConsultationApi } from '../../packages/domain/src/consultations.js';
 import { createDelegationApi } from '../../packages/domain/src/delegation.js';
-import type { ConsultationBackend } from '../../packages/executor/src/consultation.js';
+import { fixedConsultationQuoteHash, type ConsultationBackend, type FixedConsultationQuoteTerms } from '../../packages/executor/src/consultation.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { CONSULTATION_RULE, HUB_SOURCE, type HubClient, type HubWireEvent } from '../../packages/integrations/autoloop/client.js';
 import { openDatabase } from '../../packages/storage/src/database.js';
@@ -27,16 +28,28 @@ const admission = {
   evidenceSha256: createHash('sha256').update(observation).digest('hex'),
 };
 
-function backend(send: () => Promise<{ exitCode: number; provedUsage: boolean }>) {
+const quoteTerms = {
+  accountId: owner.account_id, dataDomain: DOMAIN, backend: admission.backend,
+  admissionSha256: admission.evidenceSha256, routeId: 'test-route', chargeMicros: 137, providerQuoteRef: 'runtime-fixture',
+};
+
+function fixedPricing(terms: FixedConsultationQuoteTerms = quoteTerms) {
+  return {
+    kind: 'fixed' as const, terms,
+    evidenceSha256: fixedConsultationQuoteHash(terms),
+  };
+}
+
+function backend(send: (signal: AbortSignal) => Promise<{ exitCode: number; provedUsage: boolean; drained?: boolean; usageAmountMicros?: number }>) {
   return {
     scope: { accountId: owner.account_id, dataDomain: DOMAIN },
-    admission, route, routeId: 'test-route', amountMicros: 137,
-    async send() {
-      const reply = await send();
+    admission, route, routeId: 'test-route', pricing: fixedPricing(),
+    async send(input: Parameters<ConsultationBackend['send']>[0]) {
+      const reply = await send(input.signal);
       return {
-        usage: reply.provedUsage ? { usage_id: 'provider-usage', amount_micros: 137, proof: 'provider-proof' } : null,
+        usage: reply.provedUsage ? { usage_id: 'provider-usage', amount_micros: reply.usageAmountMicros ?? 137, proof: 'provider-proof' } : null,
         terminal: {
-          closed: true, drained: true, exitCode: reply.exitCode, stderr: '',
+          closed: true, drained: reply.drained ?? true, exitCode: reply.exitCode, stderr: '',
           stdout: [
             '{"type":"session","sessionId":"runtime-test"}',
             '{"type":"status","phase":"step_end","usage":{"inputTokens":2,"outputTokens":1}}',
@@ -48,12 +61,16 @@ function backend(send: () => Promise<{ exitCode: number; provedUsage: boolean }>
   };
 }
 
-function hubBoundary(options: { loseFirstAck?: boolean; neverClaim?: boolean } = {}) {
+function hubBoundary(options: { loseFirstAck?: boolean; neverClaim?: boolean; loseFirstHeartbeat?: boolean; runId?: number } = {}) {
+  const runId = options.runId ?? 101;
   const posted: HubWireEvent[] = [];
   const events = new Map<string, HubWireEvent>();
   const settled = new Set<number>();
+  const outcomes: Parameters<HubClient['result']>[2][] = [];
   const claimed: string[] = [];
-  const bridge: Pick<HubClient, 'postEvent' | 'claim' | 'result'> = {
+  let runClaimed = false;
+  const heartbeats: Array<{ claimId: string; run: number }> = [];
+  const bridge: Pick<HubClient, 'postEvent' | 'eventOutcome' | 'claim' | 'heartbeat' | 'result'> = {
     async postEvent(body) {
       posted.push(body);
       const prior = events.has(body.id);
@@ -61,21 +78,37 @@ function hubBoundary(options: { loseFirstAck?: boolean; neverClaim?: boolean } =
       if (options.loseFirstAck && posted.length === 1) throw new Error('lost ACK after hub commit');
       return { event: 101, duplicate: prior, routed: [CONSULTATION_RULE] };
     },
+    async eventOutcome(event) {
+      return {
+        event,
+        runs: event === 101 && events.size ? [{
+          run: runId, rule: CONSULTATION_RULE,
+          state: settled.size ? 'done' : runClaimed ? 'claimed' : 'queued',
+        }] : [],
+      };
+    },
     async claim(claimId) {
       claimed.push(claimId);
       const body = [...events.values()][0];
       if (!body || settled.size || options.neverClaim) return null;
-      return { run: 101, token: 'run-token', rule: { name: CONSULTATION_RULE }, context: {
+      runClaimed = true;
+      return { run: runId, token: `run-token:${runId}`, rule: { name: CONSULTATION_RULE }, context: {
         answers: [],
         events: [{ source: HUB_SOURCE, ...body }],
       } };
     },
-    async result(run) {
+    async heartbeat(claimId, run) {
+      heartbeats.push({ claimId, run });
+      if (options.loseFirstHeartbeat && heartbeats.length === 1) throw new Error('simulated heartbeat loss');
+      return [];
+    },
+    async result(run, _token, outcome) {
       settled.add(run);
+      outcomes.push(outcome);
       return { rejected: [] };
     },
   };
-  return { bridge, posted, settled, claimed };
+  return { bridge, posted, settled, claimed, heartbeats, outcomes };
 }
 
 function fixture() {
@@ -95,13 +128,13 @@ function fixture() {
     db, now, errors, session,
     advance() { current = new Date(EXPIRED); },
     stopWorkers() { for (const abort of controllers) abort.abort(); },
-    start(hub: ReturnType<typeof hubBoundary>, paid: ConsultationBackend | undefined, stopOnError = false) {
+    start(hub: ReturnType<typeof hubBoundary>, paid: ConsultationBackend | undefined, stopOnError = false, executionTimeoutMs?: number) {
       const abort = new AbortController();
       controllers.push(abort);
       return createApp({
         databasePath, credentialDirectory, now,
         consultationWorker: {
-          hub: hub.bridge, backend: paid, signal: abort.signal, intervalMs: 10,
+          hub: hub.bridge, backend: paid, signal: abort.signal, intervalMs: 10, heartbeatIntervalMs: 10, executionTimeoutMs,
           onError(error: unknown) {
             errors.push(error);
             if (stopOnError) abort.abort();
@@ -225,16 +258,17 @@ test('a verified result survives a failed final write and restarts after expiry 
 });
 
 test.each([
-  { label: 'a failed terminal with proved usage', exitCode: 1, provedUsage: true, status: 'settled', spent: 137, held: 0 },
-  { label: 'a completed terminal without proved usage', exitCode: 0, provedUsage: false, status: 'uncertain', spent: 0, held: 137 },
-])('$label remains unanswered and does not send twice', async ({ exitCode, provedUsage, status, spent, held }) => {
+  { label: 'a completed terminal without proved usage', exitCode: 0, provedUsage: false, drained: true, status: 'uncertain', spent: 0, held: 137 },
+  { label: 'an undrained failure despite proved spend', exitCode: 1, provedUsage: true, drained: false, status: 'settled', spent: 137, held: 0 },
+  { label: 'a provider charge different from the fixed quote', exitCode: 0, provedUsage: true, drained: true, usageAmountMicros: 136, status: 'uncertain', spent: 0, held: 137 },
+])('$label remains unanswered and does not send twice', async ({ exitCode, provedUsage, drained, usageAmountMicros, status, spent, held }) => {
   const fx = fixture();
   const hub = hubBoundary();
   let sends = 0;
   try {
     const paid = backend(async () => {
       sends += 1;
-      return { exitCode, provedUsage };
+      return { exitCode, provedUsage, drained, usageAmountMicros };
     });
     const requestId = await createThroughHttp(fx.start(hub, paid), fx);
     await expect.poll(() => hub.settled.size).toBe(1);
@@ -243,8 +277,8 @@ test.each([
     expect(await api.readConsultation(owner, requestId)).toMatchObject({ status: 'pending', final_result: null, result_version: 0 });
 
     fx.stopWorkers();
-    const restart = hubBoundary();
-    restart.posted.push(...hub.posted);
+    // Reprocessing may yield a fresh Hub run, never a fresh paid reservation for this request.
+    const restart = hubBoundary({ runId: 102 });
     await restart.bridge.postEvent(hub.posted[0]);
     fx.start(restart, paid);
     await expect.poll(() => restart.settled.size).toBe(1);
@@ -285,7 +319,10 @@ test('a crash after claiming the paid permit leaves the consultation pending acr
   }
 });
 
-test('a verified paid result arriving after cancellation leaves a scoped receipt and no final message', async () => {
+test.each([
+  { label: 'answer', exitCode: 0, receipt: { status: 'answered', text: ANSWER } },
+  { label: 'failure', exitCode: 1, receipt: { status: 'failed', exit_code: 1 } },
+])('a verified $label arriving after cancellation leaves a scoped receipt and no final message', async ({ exitCode, receipt }) => {
   const fx = fixture();
   const hub = hubBoundary();
   try {
@@ -296,7 +333,7 @@ test('a verified paid result arriving after cancellation leaves a scoped receipt
     const paid = backend(async () => {
       entered();
       await gate;
-      return { exitCode: 0, provedUsage: true };
+      return { exitCode, provedUsage: true };
     });
     const requestId = await createThroughHttp(fx.start(hub, paid), fx);
     await sending;
@@ -312,7 +349,7 @@ test('a verified paid result arriving after cancellation leaves a scoped receipt
       .get(`consultation.paid_result:${requestId}:0`) as { payload: string; account_id: string; data_domain: string };
     expect(late).toMatchObject({ account_id: owner.account_id, data_domain: DOMAIN });
     expect(JSON.parse(late.payload)).toMatchObject({
-      request_id: requestId, result_version: 0, call_id: `consultation:${requestId}`, usage_id: 'provider-usage',
+      request_id: requestId, result_version: 0, call_id: `consultation:${requestId}`, usage_id: 'provider-usage', ...receipt,
     });
     expect(paidLedger(fx, requestId)).toMatchObject({ status: 'settled', spent_micros: 137 });
   } finally {
@@ -372,12 +409,217 @@ test.each([
       sends += 1;
       return { exitCode: 0, provedUsage: true };
     });
-    const app = fx.start(hub, { ...paid, scope });
+    const app = fx.start(hub, { ...paid, scope, pricing: fixedPricing({ ...quoteTerms, ...scope }) });
     const requestId = await createThroughHttp(app, fx);
-    await expect.poll(() => hub.settled.size).toBe(1);
+    await expect.poll(() => hub.outcomes.length).toBe(1);
+    expect(hub.outcomes[0]).toMatchObject({
+      outcome: 'done',
+      later: [{ key: 'patrick-consultation-scope', at: expect.any(String), about: `scope:consultation.requested:${requestId}` }],
+    });
+    expect(await createConsultationApi(fx.db, { now: fx.now }).readConsultation(owner, requestId))
+      .toMatchObject({ status: 'pending', result_version: 0, final_result: null });
     expect(sends).toBe(0);
     expect(paidLedger(fx, requestId)).toBeUndefined();
     expect(fx.db.prepare("SELECT COUNT(*) AS n FROM execution_grants WHERE request_id = ?").get(requestId)).toEqual({ n: 0 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('the leased run sends heartbeats without claiming again, including after one heartbeat fails', async () => {
+  const fx = fixture();
+  const hub = hubBoundary({ loseFirstHeartbeat: true });
+  let sends = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    const paid = backend(async () => {
+      sends += 1;
+      await gate;
+      return { exitCode: 0, provedUsage: true };
+    });
+    const requestId = await createThroughHttp(fx.start(hub, paid), fx);
+    await expect.poll(() => hub.heartbeats.length).toBeGreaterThanOrEqual(2);
+    expect(hub.claimed).toHaveLength(1);
+    expect(hub.heartbeats[1]).toEqual({ claimId: hub.claimed[0], run: 101 });
+    expect(fx.errors.map(String)).toContain('Error: simulated heartbeat loss');
+    release();
+    await expect.poll(() => hub.settled.size).toBe(1);
+    const settledHeartbeats = hub.heartbeats.length;
+    await expect.poll(() => hub.claimed.length).toBeGreaterThan(1);
+    expect(hub.heartbeats).toHaveLength(settledHeartbeats);
+    expect(sends).toBe(1);
+    expect(await createConsultationApi(fx.db, { now: fx.now }).readConsultation(owner, requestId))
+      .toMatchObject({ status: 'answered' });
+  } finally {
+    release();
+    fx.close();
+  }
+});
+
+test('a timed out send stops its lease ticks and never earns a replacement paid call', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  let backendSignal: AbortSignal | undefined;
+  try {
+    const paid = backend((signal) => {
+      sends += 1;
+      backendSignal = signal;
+      return new Promise(() => {}); // Simulate a transport ignoring abort.
+    });
+    const requestId = await createThroughHttp(fx.start(hub, paid, false, 150), fx);
+    await expect.poll(() => hub.settled.size).toBe(1);
+    expect(backendSignal?.aborted).toBe(true);
+    expect(hub.heartbeats.length).toBeGreaterThan(0);
+    const settledHeartbeats = hub.heartbeats.length;
+    await expect.poll(() => hub.claimed.length).toBeGreaterThan(1);
+    expect(hub.heartbeats).toHaveLength(settledHeartbeats);
+    expect(sends).toBe(1);
+    expect(paidLedger(fx, requestId)).toMatchObject({ status: 'uncertain', held_micros: 137, spent_micros: 0 });
+    expect(await createConsultationApi(fx.db, { now: fx.now }).readConsultation(owner, requestId))
+      .toMatchObject({ status: 'pending', result_version: 0, final_result: null });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a verified failure survives a crash before its version update and is recovered without a new send', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    fx.db.exec(`CREATE TRIGGER interrupt_failure BEFORE UPDATE OF status ON consultations WHEN NEW.status = 'failed'
+      BEGIN SELECT RAISE(ABORT, 'simulated process loss before failed CAS'); END`);
+    const paid = backend(async () => {
+      sends += 1;
+      return { exitCode: 1, provedUsage: true };
+    });
+    const requestId = await createThroughHttp(fx.start(hub, paid, true), fx);
+    await expect.poll(() => fx.errors.map(String)).toContain('SqliteError: simulated process loss before failed CAS');
+    const api = createConsultationApi(fx.db, { now: fx.now });
+    const pending = await api.readConsultation(owner, requestId);
+    expect(pending).toMatchObject({ status: 'pending', result_version: 0, final_result: null });
+    expect(paidLedger(fx, requestId)).toMatchObject({ status: 'settled', spent_micros: 137 });
+    const durable = fx.db.prepare('SELECT payload FROM domain_events WHERE event_id = ?')
+      .get(`consultation.paid_result:${requestId}:0`) as { payload: string };
+    expect(JSON.parse(durable.payload)).toMatchObject({
+      status: 'failed', exit_code: 1, request_id: requestId, result_version: 0,
+      call_id: `consultation:${requestId}`, usage_id: 'provider-usage',
+    });
+    fx.db.exec('DROP TRIGGER interrupt_failure');
+    fx.advance();
+    fx.start(hubBoundary({ neverClaim: true }), undefined);
+    await expect.poll(async () => (await api.readConsultation(owner, requestId)).status).toBe('failed');
+    expect(await api.readConsultation(owner, requestId)).toMatchObject({ status: 'failed', result_version: 1, final_result: null });
+    expect(await api.cancelConsultation(owner, requestId, 0)).toBe(false);
+    expect((await api.listMessages(owner, pending.conversation_id)).filter((message) => message.kind === 'final_answer')).toHaveLength(0);
+    expect(sends).toBe(1);
+  } finally {
+    fx.close();
+  }
+});
+
+test('the worker cannot start without an explicit file database', () => {
+  const hub = hubBoundary();
+  const controller = new AbortController();
+  try {
+    expect(() => createApp({ consultationWorker: { hub: hub.bridge, signal: controller.signal } }))
+      .toThrow('CONSULTATION_WORKER_DATABASE_REQUIRED');
+    expect(() => createApp({ databasePath: ':memory:', consultationWorker: { hub: hub.bridge, signal: controller.signal } }))
+      .toThrow('CONSULTATION_WORKER_DATABASE_REQUIRED');
+  } finally {
+    controller.abort();
+  }
+});
+
+test('shutdown aborts the backend and an in-flight heartbeat without submitting a Hub result', async () => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sendSignal: AbortSignal | undefined;
+  let heartbeatSignal: AbortSignal | undefined;
+  hub.bridge.heartbeat = async (_id, _run, signal) => {
+    heartbeatSignal = signal;
+    return new Promise<number[]>((resolve) => signal?.addEventListener('abort', () => resolve([]), { once: true }));
+  };
+  try {
+    const paid = backend((signal) => {
+      sendSignal = signal;
+      return new Promise(() => {});
+    });
+    const requestId = await createThroughHttp(fx.start(hub, paid), fx);
+    await expect.poll(() => heartbeatSignal).toBeDefined();
+    fx.stopWorkers();
+    await expect.poll(() => paidLedger(fx, requestId)).toMatchObject({ status: 'uncertain' });
+    expect(sendSignal?.aborted).toBe(true);
+    expect(heartbeatSignal?.aborted).toBe(true);
+    expect(hub.settled.size).toBe(0);
+    expect(hub.claimed).toHaveLength(1);
+  } finally {
+    fx.close();
+  }
+});
+
+test.each([
+  { label: 'an absent quote', pricing: undefined },
+  { label: 'a variable quote', pricing: { ...fixedPricing(), kind: 'variable' } },
+  { label: 'a quote with a substituted price', pricing: { ...fixedPricing(), terms: { ...quoteTerms, chargeMicros: 21 } } },
+  { label: 'a fixed zero quote', pricing: fixedPricing({ ...quoteTerms, chargeMicros: 0 }) },
+  { label: 'a fixed fractional quote', pricing: fixedPricing({ ...quoteTerms, chargeMicros: 1.5 }) },
+  { label: 'a quote for another account', pricing: fixedPricing({ ...quoteTerms, accountId: 'other-account' }) },
+  { label: 'a quote for another domain', pricing: fixedPricing({ ...quoteTerms, dataDomain: 'personal' }) },
+  { label: 'a quote for another backend', pricing: fixedPricing({ ...quoteTerms, backend: 'grok' }) },
+  { label: 'a quote for another route', pricing: fixedPricing({ ...quoteTerms, routeId: 'other-route' }) },
+  { label: 'a quote without provider provenance', pricing: fixedPricing({ ...quoteTerms, providerQuoteRef: '' }) },
+  { label: 'a quote for other admission evidence', pricing: fixedPricing({ ...quoteTerms, admissionSha256: '0'.repeat(64) }) },
+])('$label cannot obtain a consultation grant or permit', async ({ pricing }) => {
+  const fx = fixture();
+  const hub = hubBoundary();
+  let sends = 0;
+  try {
+    const transport = backend(async () => {
+      sends += 1;
+      return { exitCode: 0, provedUsage: true };
+    });
+    // A JS deployment can supply missing or unrecognized options despite the TS config contract.
+    const configured = { ...transport, pricing } as unknown as ConsultationBackend;
+    const requestId = await createThroughHttp(fx.start(hub, configured), fx);
+    await expect.poll(() => fx.db.prepare('SELECT result FROM outbox WHERE event_id = ?').get(`consultation.requested:${requestId}`))
+      .toEqual({ result: 'accepted' });
+    expect(hub.claimed).toHaveLength(0);
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, requestId)).toBeUndefined();
+    expect(fx.db.prepare("SELECT COUNT(*) AS n FROM execution_grants WHERE request_id = ?").get(requestId)).toEqual({ n: 0 });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a changed fixed quote cannot consume an earlier reservation for a different price', async () => {
+  const fx = fixture();
+  const publisher = hubBoundary({ neverClaim: true });
+  const worker = hubBoundary();
+  let sends = 0;
+  try {
+    const requestId = await createThroughHttp(fx.start(publisher, undefined), fx);
+    await expect.poll(() => fx.db.prepare('SELECT result FROM outbox WHERE event_id = ?').get(`consultation.requested:${requestId}`))
+      .toEqual({ result: 'accepted' });
+    fx.stopWorkers();
+    const grant = await createDelegationApi(fx.db, owner, { now: fx.now, domain: DOMAIN })
+      .authorizeConsultation(requestId, `attempt:${requestId}`);
+    const callId = `consultation:${requestId}`;
+    await createBudgetApi(fx.db, owner, { now: fx.now }).reserveCall({
+      businessId: callId, callId, grantId: grant.grant_id, attemptId: grant.attempt_id,
+      routeId: quoteTerms.routeId, amountMicros: 1,
+    });
+    await worker.bridge.postEvent(publisher.posted[0]);
+    fx.start(worker, backend(async () => {
+      sends += 1;
+      return { exitCode: 0, provedUsage: true };
+    }));
+    await expect.poll(() => worker.settled.size).toBe(1);
+    expect(sends).toBe(0);
+    expect(paidLedger(fx, requestId)).toMatchObject({ status: 'held', dispatched_at: null, held_micros: 1, spent_micros: 0 });
   } finally {
     fx.close();
   }

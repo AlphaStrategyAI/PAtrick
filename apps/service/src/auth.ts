@@ -10,7 +10,7 @@ import {
 } from '@simplewebauthn/server';
 import { COSEALG } from '@simplewebauthn/server/helpers';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
-import { routes } from '@patrick/contracts';
+import { MCP_TOOLS, routes } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { ApiError, errorBody } from './errors.js';
@@ -24,6 +24,19 @@ export const WEB_CALLER = 'web';
 export const OWNER_DOMAIN = 'personal';
 
 const SESSION_COOKIE = 'patrick_session';
+const MCP_TOKEN_PREFIX = 'mcp.';
+
+type McpPermission = (typeof MCP_TOOLS)[number]['permission'];
+type McpSessionBinding = {
+  version: 1;
+  account_id: string;
+  caller_id: string;
+  auth_epoch: number;
+  token_hash: string;
+  domain: string;
+  permissions: McpPermission[];
+};
+type McpPrincipal = Principal & { issuedDomain: string; issuedPermissions: readonly McpPermission[] };
 
 export type Principal = {
   account_id: string;
@@ -59,6 +72,7 @@ type SessionRow = {
   auth_epoch: number;
   expires_at: string;
   authenticated_at: string;
+  credential_ref: string;
   current_epoch: number;
 };
 
@@ -103,15 +117,25 @@ export function issueCallerSession(
 ): { token: string; authorization: string } {
   const account = db.prepare('SELECT auth_epoch FROM accounts WHERE account_id = ?').get(input.accountId) as { auth_epoch: number } | undefined;
   if (!account) throw new Error('ACCOUNT_NOT_FOUND');
-  const token = randomToken();
+  const mcpPermissions = [...new Set(input.permissions.filter(isMcpPermission))];
+  const isMcp = mcpPermissions.length > 0;
+  const token = (isMcp ? MCP_TOKEN_PREFIX : '') + randomToken();
+  const tokenHash = sha256(token);
   const authenticatedAt = now().toISOString();
   const expiresAt = new Date(now().getTime() + SESSION_TTL_MS).toISOString();
-  const credentialRef = credentials.put(crypto.getRandomValues(new Uint8Array(32)), SESSION_TTL_MS);
+  const binding: McpSessionBinding = {
+    version: 1, account_id: input.accountId, caller_id: input.callerId, auth_epoch: account.auth_epoch,
+    token_hash: tokenHash, domain: input.domain, permissions: mcpPermissions,
+  };
+  const credentialRef = credentials.put(
+    isMcp ? Buffer.from(JSON.stringify(binding)) : crypto.getRandomValues(new Uint8Array(32)),
+    SESSION_TTL_MS,
+  );
   withImmediateTransaction(db, () => {
     db.prepare(`INSERT INTO sessions (
       token_hash, account_id, caller_id, auth_epoch, expires_at, authenticated_at, credential_ref
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-      sha256(token),
+      tokenHash,
       input.accountId,
       input.callerId,
       account.auth_epoch,
@@ -135,29 +159,97 @@ export function canConfirm(principal: Principal): boolean {
   return principal.operations.includes('owner');
 }
 
-export async function requireSession(request: Request, options?: { bearerOnly?: boolean }): Promise<Principal> {
-  const token = options?.bearerOnly ? readBearerToken(request) : readPresentedToken(request);
+export async function requireSession(request: Request): Promise<Principal> {
+  const token = readPresentedToken(request);
   if (!token) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
   const { db, now } = authContext();
-  const session = db.prepare(`SELECT s.account_id, s.caller_id, s.auth_epoch, s.expires_at, s.authenticated_at,
-      a.auth_epoch AS current_epoch
-    FROM sessions s
-    JOIN accounts a ON a.account_id = s.account_id
-    WHERE s.token_hash = ?`).get(sha256(token)) as SessionRow | undefined;
-  if (!session || session.expires_at <= now().toISOString() || session.auth_epoch !== session.current_epoch) {
-    throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
-  }
+  const session = loadSession(db, sha256(token), now());
+  if (token.startsWith(MCP_TOKEN_PREFIX)) throw new ApiError(403, 'FORBIDDEN', { reason: 'session_scope' });
   const scopes = db.prepare(`SELECT data_domain, permission FROM caller_scopes
     WHERE account_id = ? AND caller_id = ? AND revoked_at IS NULL
     ORDER BY data_domain, permission`).all(session.account_id, session.caller_id) as { data_domain: string; permission: string }[];
+  return sessionPrincipal(
+    session,
+    [...new Set(scopes.map((scope) => scope.data_domain))],
+    [...new Set(scopes.map((scope) => scope.permission))],
+  );
+}
+
+export function requireMcpSession({ db, now, credentials }: AuthContext, request: Request): McpPrincipal {
+  const token = readBearerToken(request);
+  if (!token) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
+  const tokenHash = sha256(token);
+  const session = loadSession(db, tokenHash, now());
+  // A legacy or Web token cannot gain a tool scope from later caller grants.
+  if (!token.startsWith(MCP_TOKEN_PREFIX)) throw new ApiError(403, 'FORBIDDEN', { reason: 'session_scope' });
+  const binding = readMcpBinding(credentials, session.credential_ref);
+  if (!binding || binding.token_hash !== tokenHash || binding.account_id !== session.account_id
+    || binding.caller_id !== session.caller_id || binding.auth_epoch !== session.auth_epoch) {
+    throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
+  }
+  return {
+    ...sessionPrincipal(session, [binding.domain], binding.permissions),
+    issuedDomain: binding.domain,
+    issuedPermissions: binding.permissions,
+  };
+}
+
+export function assertMcpPermission(
+  db: SqliteDatabase, principal: McpPrincipal, domain: string, permission: McpPermission,
+): void {
+  if (domain !== principal.issuedDomain || !principal.issuedPermissions.includes(permission)) {
+    throw new ApiError(403, 'FORBIDDEN', { reason: 'permission' });
+  }
+  assertDomainPermission(db, principal, domain, permission, false);
+}
+
+function loadSession(db: SqliteDatabase, tokenHash: string, now: Date): SessionRow {
+  const session = db.prepare(`SELECT s.account_id, s.caller_id, s.auth_epoch, s.expires_at, s.authenticated_at,
+      s.credential_ref, a.auth_epoch AS current_epoch
+    FROM sessions s
+    JOIN accounts a ON a.account_id = s.account_id
+    WHERE s.token_hash = ?`).get(tokenHash) as SessionRow | undefined;
+  if (!session || session.expires_at <= now.toISOString() || session.auth_epoch !== session.current_epoch) {
+    throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
+  }
+  return session;
+}
+
+function sessionPrincipal(session: SessionRow, domains: string[], operations: string[]): Principal {
   return {
     account_id: session.account_id,
     caller_id: session.caller_id,
     auth_epoch: session.auth_epoch,
     authenticated_at: session.authenticated_at,
-    domains: [...new Set(scopes.map((scope) => scope.data_domain))],
-    operations: [...new Set(scopes.map((scope) => scope.permission))],
+    domains,
+    operations,
   };
+}
+
+function isMcpPermission(permission: unknown): permission is McpPermission {
+  return MCP_TOOLS.some((tool) => tool.permission === permission);
+}
+
+function readMcpBinding(credentials: CredentialStore, reference: string): McpSessionBinding | null {
+  let parsed: Partial<McpSessionBinding> | null;
+  try {
+    const secret = credentials.resolve(reference);
+    if (!secret) return null;
+    parsed = JSON.parse(Buffer.from(secret).toString('utf8')) as Partial<McpSessionBinding> | null;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.version !== 1
+    || typeof parsed.account_id !== 'string' || !parsed.account_id
+    || typeof parsed.caller_id !== 'string' || !parsed.caller_id
+    || typeof parsed.auth_epoch !== 'number' || !Number.isSafeInteger(parsed.auth_epoch) || parsed.auth_epoch < 1
+    || typeof parsed.token_hash !== 'string' || !/^[0-9a-f]{64}$/.test(parsed.token_hash)
+    || typeof parsed.domain !== 'string' || !parsed.domain
+    || !Array.isArray(parsed.permissions) || parsed.permissions.length === 0
+    || !parsed.permissions.every(isMcpPermission) || new Set(parsed.permissions).size !== parsed.permissions.length) {
+    return null;
+  }
+  return parsed as McpSessionBinding;
 }
 
 export function domainsWithPermission(

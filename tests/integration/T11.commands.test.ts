@@ -247,3 +247,106 @@ test('MCP memory reads the current withdrawal epoch and stays within the authent
     fx.close();
   }
 });
+
+test('each issued MCP bearer keeps its original domain and action grants', async () => {
+  const { createAuthenticatedConsultationMcp } = await import('../../apps/service/src/consultation-mcp.js');
+  const fx = fixture();
+  try {
+    const request = (authorization: string) => new Request('http://localhost', { headers: { authorization } });
+    const first = request(fx.session(primary, ['mcp:memory']));
+    const second = request(fx.session(secondary, ['mcp:memory', 'mcp:consult']));
+    const consult = request(fx.session(primary, ['mcp:consult']));
+    const mcp = createAuthenticatedConsultationMcp(fx.context);
+    const query = (credential: Request, domain: string) => mcp.call('patrick_memory_query', credential, { text: 'memory', domain });
+    const create = (credential: Request, domain: string, id: string) => mcp.call('patrick_consult', credential, {
+      data_domain: domain, parent_work_id: null, client_request_id: id, text: 'Question',
+    });
+    await expect(query(first, primary)).resolves.toEqual({ items: [] });
+    await expect(query(first, secondary)).rejects.toMatchObject({ status: 403 });
+    await expect(create(first, primary, 'wrong-action')).rejects.toMatchObject({ status: 403 });
+    await expect(create(first, secondary, 'wrong-domain-and-action')).rejects.toMatchObject({ status: 403 });
+    await expect(query(second, secondary)).resolves.toEqual({ items: [] });
+    await expect(create(second, secondary, 'allowed-beta')).resolves.toMatchObject({ status: 'pending' });
+    const result = await create(consult, primary, 'allowed-alpha') as { request_id: string };
+    await expect(mcp.call('patrick_consult_result', first, { request_id: result.request_id })).rejects.toMatchObject({ status: 403 });
+    await expect(mcp.call('patrick_consult_result', consult, { request_id: result.request_id })).resolves.toMatchObject(result);
+    fx.db.prepare(`UPDATE caller_scopes SET revoked_at = ?
+      WHERE account_id = ? AND caller_id = ? AND data_domain = ? AND permission = 'mcp:memory'`)
+      .run(now().toISOString(), account, caller, primary);
+    await expect(query(first, primary)).rejects.toMatchObject({ status: 403 });
+    await expect(query(second, secondary)).resolves.toEqual({ items: [] });
+  } finally {
+    fx.close();
+  }
+});
+
+test('MCP does not accept an owner session that gained a live tool grant after issuance', async () => {
+  const { createAuthenticatedConsultationMcp } = await import('../../apps/service/src/consultation-mcp.js');
+  const fx = fixture();
+  try {
+    const owner = fx.session(primary, ['owner']);
+    const mcp = createAuthenticatedConsultationMcp(fx.context);
+    const request = new Request('http://localhost', { headers: { authorization: owner } });
+    const query = () => mcp.call('patrick_memory_query', request, { text: 'memory', domain: primary });
+    await expect(query()).rejects.toMatchObject({ status: 403 });
+    const mcpBearer = fx.session(primary, ['mcp:memory']);
+    await expect(query()).rejects.toMatchObject({ status: 403 });
+    expect((await fx.post(owner, conversationBase, 'web-still-works', { text: 'Allowed Web use' })).status).toBe(202);
+    expect((await fx.post(mcpBearer, conversationBase, 'tool-cannot-write', { text: 'Web use' })).status).toBe(403);
+  } finally {
+    fx.close();
+  }
+});
+
+test.each(['missing', 'invalid JSON', 'unsupported version', 'invalid actions', 'different token'] as const)(
+  'MCP rejects a session with %s protected scope data',
+  async (failure) => {
+    const { createAuthenticatedConsultationMcp } = await import('../../apps/service/src/consultation-mcp.js');
+    const fx = fixture();
+    try {
+      const auth = fx.session(primary, ['mcp:memory']);
+      const tokenHash = createHash('sha256').update(auth.slice('Bearer '.length)).digest('hex');
+      const credentials = fx.context().credentials;
+      const binding = {
+        version: 1, account_id: account, caller_id: caller, domain: primary,
+        auth_epoch: 1, token_hash: tokenHash, permissions: ['mcp:memory'],
+      };
+      const reference = {
+        missing: () => 'cred_nonexistent',
+        'invalid JSON': () => credentials.put(Buffer.from('not JSON'), 60_000),
+        'unsupported version': () => credentials.put(Buffer.from(JSON.stringify({ ...binding, version: 2 })), 60_000),
+        'invalid actions': () => credentials.put(Buffer.from(JSON.stringify({ ...binding, permissions: ['mcp:memory', 'owner'] })), 60_000),
+        'different token': () => credentials.put(Buffer.from(JSON.stringify({ ...binding, token_hash: 'a'.repeat(64) })), 60_000),
+      }[failure]();
+      fx.db.prepare('UPDATE sessions SET credential_ref = ? WHERE token_hash = ?').run(reference, tokenHash);
+      const request = new Request('http://localhost', { headers: { authorization: auth } });
+      await expect(createAuthenticatedConsultationMcp(fx.context).call('patrick_memory_query', request, {
+        text: 'memory', domain: primary,
+      })).rejects.toMatchObject({ status: 401 });
+    } finally {
+      fx.close();
+    }
+  },
+);
+
+test('an unbound legacy MCP session must be reissued', async () => {
+  const { createAuthenticatedConsultationMcp } = await import('../../apps/service/src/consultation-mcp.js');
+  const fx = fixture();
+  try {
+    // The legacy issuer kept the token opaque and wrote a random 32-byte secret without the scope.
+    const inheritedPermissions = fx.session(primary, ['mcp:memory']);
+    const currentHash = createHash('sha256').update(inheritedPermissions.slice('Bearer '.length)).digest('hex');
+    const legacyToken = Buffer.alloc(32, 0x63).toString('base64url');
+    const legacyHash = createHash('sha256').update(legacyToken).digest('hex');
+    const legacyRef = fx.context().credentials.put(Buffer.alloc(32, 0x73), 60_000);
+    fx.db.prepare(`INSERT INTO sessions (token_hash, account_id, caller_id, auth_epoch, expires_at, authenticated_at, credential_ref)
+      SELECT ?, account_id, caller_id, auth_epoch, expires_at, authenticated_at, ? FROM sessions WHERE token_hash = ?`)
+      .run(legacyHash, legacyRef, currentHash);
+    const request = new Request('http://localhost', { headers: { authorization: 'Bearer ' + legacyToken } });
+    await expect(createAuthenticatedConsultationMcp(fx.context).call('patrick_memory_query', request, {
+      text: 'memory', domain: primary,
+    })).rejects.toMatchObject({ status: 403 });
+  } finally {
+    fx.close();
+  }
+});

@@ -84,6 +84,7 @@ process.stdout.write(JSON.stringify({
 `;
 
 export type PinnedHub = {
+  baseUrl: string;
   home: string;
   source: string;
   client: HubClient;
@@ -153,6 +154,7 @@ export async function startPinnedHub(existingHome?: string): Promise<PinnedHub> 
     const url = `http://127.0.0.1:${ready.port}`;
     const client = createHubClient(url, ready);
     return {
+      baseUrl: url,
       home,
       source,
       client,

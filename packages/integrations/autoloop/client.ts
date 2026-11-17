@@ -32,6 +32,14 @@ export type HubEventAck = {
   routed: string[];
 };
 
+export type HubEventOutcome = {
+  event: number;
+  runs: Array<{ run: number; rule: string; state: 'queued' | 'claimed' | 'unknown' | 'done' | 'nothing' | 'cancelled' }>;
+};
+
+type HubTimer = { key: string; about: string; at: string };
+type HubLater = HubTimer | { key: string; cancel: true };
+
 export type HubAnswerView = {
   card: number;
   choice: number | null;
@@ -46,6 +54,7 @@ export type HubJob = {
   context: {
     answers: HubAnswerView[];
     events: Array<HubRunEventView & { id?: string }>;
+    timers?: HubTimer[];
   };
 };
 
@@ -202,22 +211,25 @@ export type HubKeys = { owner: string; worker: string; source: string };
 
 export type HubClient = HubPublisher & {
   health(): Promise<{ ok: boolean; commit: string }>;
+  eventOutcome(event: number): Promise<HubEventOutcome>;
   state(before?: number): Promise<HubStatePage>;
   answer(cardId: number, body: { text: string } | { choice: number }): Promise<{ changed: boolean; state: string }>;
   claim(claimId: string): Promise<HubJob | null>;
+  heartbeat(claimId: string, run: number, signal?: AbortSignal): Promise<number[]>;
   result(run: number, token: string, body: {
     outcome: 'done' | 'nothing' | 'failed';
     summary?: string;
     ask?: unknown[];
-    later?: { key: string; cancel: true }[];
+    later?: HubLater[];
   }): Promise<{ rejected: unknown[] }>;
 };
 
 export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
   const base = baseUrl.replace(/\/$/, '');
-  async function request(method: string, path: string, key: string, body?: unknown): Promise<unknown> {
+  async function request(method: string, path: string, key: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
     const response = await fetch(base + path, {
       method,
+      signal,
       headers: {
         authorization: `Bearer ${key}`,
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -250,6 +262,10 @@ export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
       return { ok: true, commit: parsed.commit };
     },
     postEvent: async (body) => parseAck(await request('POST', '/v1/events', keys.source, body)),
+    eventOutcome: async (event) => {
+      if (!Number.isSafeInteger(event) || event < 1) throw new Error('HUB_EVENT_OUTCOME_INVALID');
+      return parseEventOutcome(await request('GET', `/v1/events/${event}`, keys.source), event);
+    },
     state: async (before) => parseState(await request('GET', before === undefined ? '/v1/state' : `/v1/state?before=${before}`, keys.owner)),
     answer: async (cardId, body) => {
       const parsed = await request('POST', `/v1/cards/${cardId}/answer`, keys.owner, body);
@@ -263,6 +279,15 @@ export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
       if (!isRecord(parsed)) throw new Error('HUB_WORK_INVALID');
       if (parsed.job === null) return null;
       return parseJob(parsed.job);
+    },
+    heartbeat: async (claimId, run, signal) => {
+      const params = new URLSearchParams({ claim: claimId, wait: '0', capacity: '0', running: String(run) });
+      const parsed = await request('GET', `/v1/work?${params}`, keys.worker, undefined, signal);
+      if (!isRecord(parsed) || parsed.job !== null || !Array.isArray(parsed.cancel)
+        || !parsed.cancel.every((id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) {
+        throw new Error('HUB_HEARTBEAT_INVALID');
+      }
+      return parsed.cancel;
     },
     result: async (run, token, body) => {
       const parsed = await request('POST', `/v1/runs/${run}/result`, token, body);
@@ -282,6 +307,19 @@ function parseAck(value: unknown): HubEventAck {
     routed.push(item);
   }
   return { event: value.event, duplicate: value.duplicate, routed };
+}
+
+function parseEventOutcome(value: unknown, event: number): HubEventOutcome {
+  if (!isRecord(value) || value.event !== event || !Array.isArray(value.runs)) throw new Error('HUB_EVENT_OUTCOME_INVALID');
+  const runs = value.runs.map((run: unknown): HubEventOutcome['runs'][number] => {
+    if (!isRecord(run) || typeof run.run !== 'number' || !Number.isSafeInteger(run.run) || run.run < 1 || typeof run.rule !== 'string'
+      || (run.state !== 'queued' && run.state !== 'claimed' && run.state !== 'unknown'
+        && run.state !== 'done' && run.state !== 'nothing' && run.state !== 'cancelled')) {
+      throw new Error('HUB_EVENT_OUTCOME_INVALID');
+    }
+    return { run: run.run, rule: run.rule, state: run.state };
+  });
+  return { event, runs };
 }
 
 function parseState(value: unknown): HubStatePage {
@@ -347,18 +385,27 @@ function parseJob(value: unknown): HubJob {
   if (!isRecord(value) || typeof value.run !== 'number' || typeof value.token !== 'string' || !isRecord(value.rule) || typeof value.rule.name !== 'string' || !isRecord(value.context)) {
     throw new Error('HUB_WORK_INVALID');
   }
-  if (!Array.isArray(value.context.answers) || !Array.isArray(value.context.events)) throw new Error('HUB_WORK_INVALID');
+  if (!Array.isArray(value.context.answers) || !Array.isArray(value.context.events)
+    || (value.context.timers !== undefined && !Array.isArray(value.context.timers))) throw new Error('HUB_WORK_INVALID');
   return {
     run: value.run,
     token: value.token,
     rule: { name: value.rule.name },
     context: {
       answers: value.context.answers.map(parseAnswer),
+      timers: value.context.timers?.map(parseTimer),
       events: value.context.events.map((event: unknown) => ({
         ...parseRunEvent(event), ...(isRecord(event) && typeof event.id === 'string' ? { id: event.id } : {}),
       })),
     },
   };
+}
+
+function parseTimer(value: unknown): HubTimer {
+  if (!isRecord(value) || typeof value.key !== 'string' || typeof value.about !== 'string' || typeof value.at !== 'string') {
+    throw new Error('HUB_WORK_INVALID');
+  }
+  return { key: value.key, about: value.about, at: value.at };
 }
 
 function parseAnswer(value: unknown): HubAnswerView {
