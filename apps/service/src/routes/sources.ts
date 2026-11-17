@@ -4,6 +4,7 @@ import { commandEnvelope, detectHttpSourcePayload, rssHistoryPreviewPayload, typ
 import { commandFingerprint, recordCommand, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { RssHistoryActor, SourceRegistry } from '@patrick/integrations/sources/registry';
 import { assertDomainPermission, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, routeId } from './http.js';
 import { oneValue } from './work.js';
@@ -147,6 +148,7 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
       .get(principal.account_id, principal.caller_id, client_request_id) as StoredCommand | undefined;
     const saved = get();
     if (saved) return c.body(checkStored(saved, fingerprint), 200, { 'content-type': 'application/json' });
+    assertBusinessWrite(db, domain);
     const active = inFlight.get(key);
     if (active) {
       if (active.fingerprint !== fingerprint) conflict();
@@ -159,7 +161,10 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
       let preview;
       try { preview = await registry.detectSource({ accountId: principal.account_id, dataDomain: domain },
         { type: payload.type, target: payload.target }, { signal: c.req.raw.signal,
-          async assertLive() { bindScope(db, await requireSession(c.req.raw), payload.request_scope); } }); }
+          async assertLive() {
+            bindScope(db, await requireSession(c.req.raw), payload.request_scope);
+            assertBusinessWrite(db, domain);
+          } }); }
       catch (cause) {
         if (cause instanceof ApiError || !(cause instanceof Error)) throw cause;
         if (cause.message === 'SOURCE_ROOT_TAKEN') throw new ApiError(409, 'CONFLICT', { reason: 'source_exists' });
@@ -175,10 +180,11 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
         bindScope(db, current, payload.request_scope);
         const same = get();
         if (same) return checkStored(same, fingerprint);
+        const observedAt = now();
+        assertBusinessWrite(db, domain);
         const commandId = 'preview_' + createHash('sha256').update(key).digest('hex');
         recordCommand(db, { account_id: current.account_id, caller_id: current.caller_id, client_request_id,
           command_fingerprint: fingerprint, command_id: commandId });
-        const observedAt = now();
         const result = JSON.stringify(snapshot({ ...current, domains: [domain] }, {
           preview_id: commandId, target: preview.normalizedTarget, type: payload.type, duplicate_source_id: preview.sourceId,
           draft_hash: preview.draftHash, allowed_urls: preview.scope.httpTargets ?? [], samples: preview.samples, expires_at: preview.expiresAt,

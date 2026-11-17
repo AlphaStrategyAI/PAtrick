@@ -4,6 +4,7 @@ import { routes, type Json } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { EditIntentRequest, createVaultApi } from '@patrick/integrations/vault/drafts';
 import { assertDomainPermission, domainsWithPermission, snapshot, type Principal } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { domainPrincipal, learningDomain, queryParameter, vaultRelativePath } from './learning-scope.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
@@ -125,8 +126,8 @@ async function check(c: Context, ready: Ready): Promise<Response> {
     account_id: string; data_domain: string;
   } | undefined;
   if (!row || row.account_id !== principal.account_id) throw new ApiError(403, 'FORBIDDEN');
-  const authorize = () => assertDomainPermission(db, principal, row.data_domain, 'edits.write');
-  authorize();
+  const authorize = () => authorizeEdit(db, principal, editId);
+  assertDomainPermission(db, principal, row.data_domain, 'edits.write');
   const fingerprint = commandFingerprint({ operation: 'checkEdit', resource_id: editId, data_domain: row.data_domain,
     expected_revision: body.expected_revision, payload_hash: body.payload_hash });
   const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
@@ -166,13 +167,21 @@ async function retry(c: Context, ready: Ready): Promise<Response> {
   if (existing) return c.json(accepted(existing, editId), 202);
   await api.retryAdoptedProjection(editId, {
     receiptRevision: body.expected_revision, intentId: body.payload.intent_id, projectionRevision: body.payload.projection_revision,
-  }, () => assertDomainPermission(db, principal, intent.data_domain, 'edits.write'));
+  }, () => authorizeEdit(db, principal, editId));
   const commandId = storeCommand(db, principal, {
     operation: 'retryEditProjection', resourceId: editId, dataDomain: intent.data_domain,
     clientRequestId: body.client_request_id, expectedRevision: body.expected_revision, payloadHash: body.payload_hash,
     permission: 'edits.write', fingerprint,
   });
   return c.json(accepted(commandId, editId), 202);
+}
+
+function authorizeEdit(db: SqliteDatabase, principal: Principal, editId: string): void {
+  const target = db.prepare('SELECT data_domain FROM edit_intents WHERE edit_id=? AND account_id=?')
+    .get(editId, principal.account_id) as { data_domain: string } | undefined;
+  if (!target) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+  assertDomainPermission(db, principal, target.data_domain, 'edits.write');
+  assertBusinessWrite(db, target.data_domain);
 }
 
 function accepted(commandId: string, editId: string) {
@@ -238,6 +247,12 @@ function storeCommand(db: SqliteDatabase, principal: Principal, input: {
       command_id: commandId,
     });
     if (receipt.created) {
+      const target = db.prepare('SELECT data_domain FROM edit_intents WHERE edit_id=? AND account_id=?')
+        .get(input.resourceId, principal.account_id) as { data_domain: string } | undefined;
+      if (!target) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+      assertDomainPermission(db, principal, target.data_domain, input.permission);
+      assertBusinessWrite(db, target.data_domain);
+      if (target.data_domain !== input.dataDomain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
       db.prepare(`INSERT INTO command_records (
         command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(

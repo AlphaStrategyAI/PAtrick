@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { BrowserCreationScope } from '@patrick/contracts';
 import { assertDomainPermission, type Principal } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 
 export type ConsultationReady = () => { db: SqliteDatabase; now: () => Date };
@@ -13,7 +14,7 @@ export function runConsultationCommand<T extends CommandTarget>(
   db: SqliteDatabase,
   now: () => Date,
   principal: Principal,
-  operation: string,
+  operation: 'createConsultation' | 'cancelConsultation' | 'createConversation' | 'postMessage' | 'linkConversationWork',
   permission: string,
   body: CommandEnvelope<unknown>,
   resolve: () => T,
@@ -43,7 +44,17 @@ export function runConsultationCommand<T extends CommandTarget>(
       }
       return { commandId: prior.command_id, resourceId };
     }
+    if (operation !== 'cancelConsultation') assertBusinessWrite(db, target.domain);
     const resourceId = mutate(target);
+    const createdAt = now().toISOString();
+    const query = operation === 'createConsultation' || operation === 'cancelConsultation'
+      ? 'SELECT data_domain FROM consultations WHERE request_id=? AND account_id=? AND caller_id=?'
+      : 'SELECT data_domain FROM conversations WHERE conversation_id=? AND account_id=? AND caller_id=?';
+    const current = db.prepare(query).get(resourceId, principal.account_id, principal.caller_id) as { data_domain: string } | undefined;
+    if (!current) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+    assertDomainPermission(db, principal, current.data_domain, permission);
+    if (operation !== 'cancelConsultation') assertBusinessWrite(db, current.data_domain);
+    if (current.data_domain !== target.domain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
     const receipt = recordCommand(db, {
       account_id: principal.account_id,
       caller_id: principal.caller_id,
@@ -55,7 +66,7 @@ export function runConsultationCommand<T extends CommandTarget>(
       command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
       receipt.command_id, principal.account_id, principal.caller_id,
-      operation, resourceId, target.domain, permission, now().toISOString(),
+      operation, resourceId, target.domain, permission, createdAt,
     );
     return { commandId: receipt.command_id, resourceId };
   });

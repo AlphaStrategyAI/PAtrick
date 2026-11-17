@@ -4,6 +4,7 @@ import { routes } from '@patrick/contracts';
 import { appendDomainEvent, commandFingerprint, recordCommand, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createWorkControlApi, type WorkControlCommand, type WorkControlReceipt, type WorkControlState } from '../../../../packages/domain/src/work-control.js';
 import { assertDomainPermission, domainsWithPermission, requireSession, snapshot } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, routeId } from './http.js';
 import { oneValue } from './work.js';
@@ -98,15 +99,24 @@ async function controlWork(c: Context, ready: Ready, stopAvailable: () => boolea
       if (!stopAvailable()) throw new ApiError(503, 'UNAVAILABLE', { reason: 'stop_supervisor' });
       if (work.control_state !== 'running' && work.control_state !== 'paused') throw new ApiError(409, 'CONFLICT', { reason: 'work_state' });
     }
+    if (body.payload.type === 'resume') assertBusinessWrite(db, work.data_domain);
     // This synchronous port performs no side effect. The durable event and receipt commit together below.
     const localStop = { submit() {}, read: () => ({ process_tree_stopped: false, effects_reconciled: false }) };
     const receipt = createWorkControlApi(db, principal, { now, stopPort: localStop })
       .applyWorkControlNow(principal, { ...body.payload, work_id: workId, expected_revision: work.revision });
+    const createdAt = now().toISOString();
+    if (body.payload.type === 'resume') {
+      const current = db.prepare('SELECT data_domain FROM work_generations WHERE work_id=? AND generation=?')
+        .get(workId, work.generation) as { data_domain: string };
+      assertDomainPermission(db, principal, current.data_domain, 'work.control');
+      assertBusinessWrite(db, current.data_domain);
+      if (current.data_domain !== work.data_domain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
+    }
     const command = recordCommand(db, { account_id: principal.account_id, caller_id: principal.caller_id,
       client_request_id: body.client_request_id, command_fingerprint: fingerprint, command_id: randomUUID() });
     db.prepare(`INSERT INTO command_records(command_id,account_id,caller_id,operation,resource_id,data_domain,permission,created_at)
       VALUES (?,?,?,?,?,?,'work.control',?)`).run(command.command_id, principal.account_id, principal.caller_id, operation, receipt.receipt_id,
-        work.data_domain, now().toISOString());
+        work.data_domain, createdAt);
     if (receipt.type === 'stop') appendDomainEvent(db, {
       eventId: 'work.stop:' + receipt.receipt_id,
       aggregateId: workId, aggregateVersion: work.generation, accountId: principal.account_id, dataDomain: work.data_domain,

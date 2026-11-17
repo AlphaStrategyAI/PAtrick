@@ -192,7 +192,7 @@ export function createSettingsChanges(options: {
   function assertSettingsWrite(draft: SettingsDraft): void {
     // These are explicit owner control operations. Registered server handlers still
     // enforce their own scoped T03 authorization; they confer no business admission.
-    if (['disable_feishu', 'start_backup', 'start_restore'].includes(draft.operation)) return;
+    if (['disable_feishu', 'start_backup', 'start_restore', 'pause_http_source', 'disconnect_http_source'].includes(draft.operation)) return;
     assertBusinessWrite(db, draft.domain);
   }
 
@@ -304,6 +304,8 @@ export function createSettingsChanges(options: {
         const receipt: SettingsChangeReceipt = { change_id: changeId, validation_id: proof.validation_id, operation: draft.operation,
           target_id: draft.target, phase: 'applying', applied_revision: null, verified: false, checked_at: null, issues: [], effects: [] };
         const at = now().toISOString();
+        if (!canApply(proof, binding(principal, draft, handler), new Date(at))) stale();
+        assertSettingsWrite(draft);
         recordCommand(db, { account_id: principal.account_id, caller_id: principal.caller_id, client_request_id: request.requestId,
           command_fingerprint: fingerprint, command_id: changeId });
         db.prepare(`INSERT INTO command_records (command_id,account_id,caller_id,operation,resource_id,data_domain,permission,created_at)
@@ -330,6 +332,7 @@ export function createSettingsChanges(options: {
           assertSettingsWrite(draft);
           if (!permit.proof.valid || permit.proof.expires_at <= current.toISOString()) stale();
           handler.authorize(principal, draft, permit.proof, request.controlReceiptId);
+          assertSettingsWrite(draft);
         } catch (error) {
           if (error instanceof ApiError) throw new SettingsApplyBlocked('confirmation_changed');
           throw error;
@@ -340,6 +343,11 @@ export function createSettingsChanges(options: {
         const at = revalidateAuthorization();
         if (!canApply(permit.proof, binding(principal, draft, handler), new Date(at))) {
           throw new SettingsApplyBlocked('confirmation_changed');
+        }
+        try { assertSettingsWrite(draft); }
+        catch (error) {
+          if (error instanceof ApiError) throw new SettingsApplyBlocked('confirmation_changed');
+          throw error;
         }
         return at;
       };

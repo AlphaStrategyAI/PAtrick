@@ -9,6 +9,7 @@ import {
   type Principal as AnswerPrincipal,
 } from '../../../../packages/domain/src/answer-gate.js';
 import { assertDomainPermission, snapshot, type Principal } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 
@@ -93,6 +94,7 @@ async function postAnswer(c: Context, ready: Ready): Promise<Response> {
   }
   const commandId = storeCommand(db, principal, {
     operation: 'submitAnswer',
+    questionId, questionVersion: body.payload.question_version,
     resourceId: receipt.receipt_id,
     dataDomain: scope.data_domain,
     clientRequestId: body.client_request_id,
@@ -130,6 +132,7 @@ function asAnswerPrincipal(principal: Principal): AnswerPrincipal {
 
 function storeCommand(db: SqliteDatabase, principal: Principal, input: {
   operation: string;
+  questionId: string; questionVersion: number;
   resourceId: string;
   dataDomain: string;
   clientRequestId: string;
@@ -148,6 +151,11 @@ function storeCommand(db: SqliteDatabase, principal: Principal, input: {
       command_id: commandId,
     });
     if (receipt.created) {
+      const question = db.prepare('SELECT data_domain FROM question_bindings WHERE question_id=? AND question_version=?')
+        .get(input.questionId, input.questionVersion) as { data_domain: string };
+      assertDomainPermission(db, principal, question.data_domain, input.permission);
+      assertBusinessWrite(db, question.data_domain);
+      if (question.data_domain !== input.dataDomain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
       db.prepare(`INSERT INTO command_records (
         command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(

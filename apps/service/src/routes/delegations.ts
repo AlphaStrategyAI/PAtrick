@@ -12,6 +12,7 @@ import {
 } from '../../../../packages/domain/src/delegation.js';
 import { assertDomainPermission, authContext, canConfirm, ORIGIN, RP_ID, snapshot, type Principal } from '../auth.js';
 import { stageControlProposal } from '../control.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 import { domainPrincipal, learningDomain, queryParameter } from './learning-scope.js';
@@ -112,6 +113,7 @@ function stage(db: SqliteDatabase, principal: Principal, time: Date, input: Stag
     const proposalId = 'dprop_' + randomUUID();
     const action = 'delegation.' + change.action;
     const proposalHash = proposalDigest(proposalId, principal, domain, mandateId, change, envelope.expected_revision, expected, policyRevision);
+    assertIncreasingWrite(db, principal, domain, change, mandateId);
     stageControlProposal(db, { proposalId, accountId: principal.account_id, proposalHash, challengeId: input.challengeId,
       baseRevision: policyRevision, target: mandateId, action, scope: domain, expiresAt: challenge.expires_at });
     const commandId = storeCommand(db, principal, operation, proposalId, domain, envelope, fingerprint, now);
@@ -192,6 +194,7 @@ async function applyProposal(c: Context, ready: Ready): Promise<Response> {
     }) as { credential_ref: string; authenticated_at: string } | undefined;
     if (!receipt || !isRecent(receipt.authenticated_at, time) || !credentials.resolve(receipt.credential_ref)) forbidden('control_receipt');
     assertMandateScopes(db, principal, change, row.mandate_id);
+    assertIncreasingWrite(db, principal, row.data_domain, change, row.mandate_id);
     const mandate = applyPreparedMandateChange(db, principal, row.data_domain, current, row.mandate_id, change, row.mandate_revision, expected);
     const commandId = storeCommand(db, principal, operation, row.proposal_id, row.data_domain, input, fingerprint, current);
     const update = db.prepare(`UPDATE delegation_control_proposals SET apply_command_id=?,applied_control_receipt_id=?,
@@ -202,6 +205,20 @@ async function applyProposal(c: Context, ready: Ready): Promise<Response> {
     return accepted(commandId, id);
   });
   return c.json(reply, 202);
+}
+
+function assertIncreasingWrite(db: SqliteDatabase, principal: Principal, domain: string, change: MandateChange, mandateId: string): void {
+  if (change.action === 'pause' || change.action === 'stop') return;
+  if (change.action === 'create') {
+    for (const target of change.scope.domains) assertBusinessWrite(db, target);
+  } else {
+    const row = db.prepare('SELECT data_domain,domains_json FROM mandates WHERE mandate_id=? AND account_id=?')
+      .get(mandateId, principal.account_id) as { data_domain: string; domains_json: string } | undefined;
+    if (!row) forbidden('mandate');
+    assertBusinessWrite(db, row.data_domain);
+    for (const target of JSON.parse(row.domains_json) as string[]) assertBusinessWrite(db, target);
+  }
+  assertBusinessWrite(db, domain);
 }
 
 function assertMandateScopes(db: SqliteDatabase, principal: Principal, change: MandateChange, mandateId: string): void {

@@ -5,6 +5,7 @@ import { commandFingerprint, recordCommand, withImmediateTransaction, type Sqlit
 import { createStandardsApi, type StandardsPrincipal } from '../../../../packages/domain/src/standards.js';
 import type { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { assertDomainPermission, snapshot, type Principal } from '../auth.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
 import { domainPrincipal, learningDomain, queryParameter, vaultRelativePath } from './learning-scope.js';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
@@ -123,6 +124,7 @@ async function createCandidate(c: Context, ready: Ready): Promise<Response> {
   });
   const commandId = storeCommand(db, principal, {
     operation: 'createStandardCandidate',
+    resolveDomain: () => openStandardDraft(db, principal, body.payload.draft_key).document.data_domain,
     resourceId: candidate.standard_id,
     dataDomain: opened.document.data_domain,
     clientRequestId: body.client_request_id,
@@ -166,6 +168,7 @@ async function evaluateCandidate(c: Context, ready: Ready): Promise<Response> {
   if (report.dataset_id !== body.payload.dataset_id) throw new ApiError(409, 'CONFLICT', { reason: 'dataset' });
   const commandId = storeCommand(db, principal, {
     operation: 'evaluateStandardCandidate',
+    resolveDomain: () => visibleCandidate(db, principal, candidateId).data_domain,
     resourceId: report.id,
     dataDomain: candidate.data_domain,
     clientRequestId: body.client_request_id,
@@ -197,10 +200,18 @@ async function adoptCandidate(c: Context, ready: Ready): Promise<Response> {
     payload_hash: body.payload_hash,
   });
   const reportId = body.payload.report_id;
-  const authorize = () => assertDomainPermission(db, principal, candidate.data_domain, 'owner', false);
+  const authorize = () => {
+    const current = visibleCandidate(db, principal, candidateId);
+    assertDomainPermission(db, principal, current.data_domain, 'owner', false);
+    assertBusinessWrite(db, current.data_domain);
+  };
   const existing = existingCommand(db, principal, body.client_request_id, fingerprint);
   if (existing) {
-    await api.projectPendingStandardAdoption(candidateId, reportId, authorize);
+    const pending = db.prepare(`SELECT 1 FROM standard_candidates c JOIN edit_receipts r ON r.edit_id=c.edit_id
+      WHERE c.candidate_id=? AND r.result_ref=? AND r.business_state='adopted' AND r.projection_state='pending'
+      AND r.receipt_revision=(SELECT MAX(latest.receipt_revision) FROM edit_receipts latest WHERE latest.edit_id=c.edit_id)`)
+      .get(candidateId, reportId);
+    if (pending) await api.projectPendingStandardAdoption(candidateId, reportId, authorize);
     return c.json(accepted(existing, 'adoptStandardCandidate', commandResource(db, existing)), 202);
   }
   const adopted = await standardsApi(db, principal, now, candidate.data_domain).adoptStandard(candidateId, reportId, body.expected_revision);
@@ -210,6 +221,7 @@ async function adoptCandidate(c: Context, ready: Ready): Promise<Response> {
   }
   const commandId = storeCommand(db, principal, {
     operation: 'adoptStandardCandidate',
+    resolveDomain: () => visibleCandidate(db, principal, candidateId).data_domain,
     resourceId: body.payload.report_id,
     dataDomain: candidate.data_domain,
     clientRequestId: body.client_request_id,
@@ -305,6 +317,7 @@ function commandResource(db: SqliteDatabase, commandId: string): string {
 
 function storeCommand(db: SqliteDatabase, principal: Principal, input: {
   operation: string;
+  resolveDomain: () => string;
   resourceId: string;
   dataDomain: string;
   clientRequestId: string;
@@ -323,6 +336,10 @@ function storeCommand(db: SqliteDatabase, principal: Principal, input: {
       command_id: commandId,
     });
     if (receipt.created) {
+      const domain = input.resolveDomain();
+      assertDomainPermission(db, principal, domain, input.permission);
+      assertBusinessWrite(db, domain);
+      if (domain !== input.dataDomain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
       db.prepare(`INSERT INTO command_records (
         command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(

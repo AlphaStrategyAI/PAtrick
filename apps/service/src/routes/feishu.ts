@@ -86,9 +86,11 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
         throw new ApiError(409, 'CONFLICT', { reason: 'connection_already_exists' });
       }
       const stamped = now().toISOString();
+      assertBusinessWrite(db, domain);
       let credentialRef: string;
       try { credentialRef = feishuCredentials.put(secret, 10 * 60 * 1000); }
       catch { throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_store' }); }
+      assertBusinessWrite(db, domain);
       db.prepare(`INSERT INTO channel_connections (
         connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
         config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id, current_test_id,
@@ -566,6 +568,13 @@ function storeCommand(
       command_id: commandId,
     });
     if (stored.created) {
+      const createdAt = resources.now().toISOString();
+      const target = authorityCommandTarget(resources.db, principal, operation, resourceId);
+      if (target) {
+        assertDomainPermission(resources.db, principal, target.data_domain, 'owner', false);
+        assertBusinessWrite(resources.db, target.data_domain);
+        if (target.data_domain !== domain) throw new ApiError(409, 'CONFLICT', { reason: 'scope' });
+      }
       resources.db.prepare(`INSERT INTO command_records (
         command_id, account_id, caller_id, operation, resource_id, data_domain, permission, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'owner', ?)`).run(
@@ -575,11 +584,32 @@ function storeCommand(
         operation,
         resourceId,
         domain,
-        resources.now().toISOString(),
+        createdAt,
       );
     }
     return stored.command_id;
   });
+}
+
+function authorityCommandTarget(db: SqliteDatabase, principal: Principal, operation: string, resourceId: string) {
+  let query: string;
+  switch (operation) {
+    case 'createFeishuBinding':
+    case 'confirmFeishuBinding':
+      query = 'SELECT c.data_domain FROM channel_pairings p JOIN channel_connections c USING(connection_id) WHERE p.pairing_id=? AND c.account_id=?';
+      break;
+    case 'createFeishuTest':
+    case 'sendFeishuTest':
+      query = 'SELECT c.data_domain FROM channel_tests t JOIN channel_connections c USING(connection_id) WHERE t.test_id=? AND c.account_id=?';
+      break;
+    case 'acceptFeishuInbound':
+      query = 'SELECT data_domain FROM answer_receipts WHERE receipt_id=? AND account_id=?';
+      break;
+    default: return;
+  }
+  const target = db.prepare(query).get(resourceId, principal.account_id) as { data_domain: string } | undefined;
+  if (!target) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
+  return target;
 }
 
 type StoredCommand = { command_id: string; command_fingerprint: string; resource_id: string };
