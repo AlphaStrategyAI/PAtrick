@@ -20,7 +20,7 @@ type ProofRow = Omit<Validation, 'valid'> & {
 };
 export type SettingsEffect = { item: string; outcome: 'applied' | 'unchanged' | 'blocked' | 'uncertain'; revision: number | null };
 type Applied = { revision: number | null; effects: readonly SettingsEffect[] };
-type Check = { verified: boolean; issue?: string };
+type Check = { verified: boolean; issue?: string; assertProjectionCurrent?: () => void };
 export type StoredSettingsChange = {
   changeId: string; accountId: string; callerId: string; domain: string; operation: string; targetId: string;
   validationId: string; controlReceiptId: string; phase: SettingsChangeReceipt['phase'];
@@ -28,10 +28,10 @@ export type StoredSettingsChange = {
 };
 export type SettingsRecoveryOffer =
   | { change_id: string; status: 'unavailable'; reason: string }
-  | { change_id: string; action: 'reconcile_network'; status: 'readback_available' | 'projection_available';
+  | { change_id: string; action: 'reconcile_network' | 'readback_recovery_backup' | 'readback_recovery_drill'; status: 'readback_available' | 'projection_available';
       target: { target: string; device: string; revision: number; input: { change_id: string }; label: string } };
 type RecoveryChecks = Pick<SettingsHandler, 'binding' | 'validate' | 'authorize'> & {
-  operation: 'reconcile_network';
+  operation: 'reconcile_network' | 'readback_recovery_backup' | 'readback_recovery_drill';
   draftFor(principal: Principal, original: StoredSettingsChange): SettingsDraft;
   offer(principal: Principal, original: StoredSettingsChange): SettingsRecoveryOffer;
 };
@@ -52,7 +52,7 @@ export type SettingsHandler = {
   authorize(principal: Principal, draft: SettingsDraft, proof: Validation, controlReceiptId: string): void;
   apply(principal: Principal, draft: SettingsDraft, proof: Validation, beforeWrite: () => string,
     revalidateAuthorization?: () => string): Promise<Applied>;
-  recheck(principal: Principal, draft: SettingsDraft, applied: Applied): Promise<Check>;
+  recheck(principal: Principal, draft: SettingsDraft, applied: Applied, assertCurrent?: () => string): Promise<Check>;
   recovery?: RecoveryChecks;
   recover?: (principal: Principal, original: StoredSettingsChange, recoveryDraft: SettingsDraft, freshProof: Validation,
     freshControlReceiptId: string, assertCurrentReadbackAuthority: () => void) => Promise<SettingsRecoveryOutcome>;
@@ -90,7 +90,7 @@ export function createSettingsChanges(options: {
     if (!handler) continue;
     if (Boolean(handler.recovery) !== Boolean(handler.recover)) throw new Error('SETTINGS_RECOVERY_PAIR_REQUIRED');
     if (handler.recovery) {
-      if (handler.recovery.operation !== 'reconcile_network') throw new Error('SETTINGS_RECOVERY_ACTION_INVALID');
+      if (!['reconcile_network', 'readback_recovery_backup', 'readback_recovery_drill'].includes(handler.recovery.operation)) throw new Error('SETTINGS_RECOVERY_ACTION_INVALID');
       if (Object.hasOwn(handlers, handler.recovery.operation) || recoveryChecks.has(handler.recovery.operation)) {
         throw new Error('SETTINGS_RECOVERY_ACTION_DUPLICATE');
       }
@@ -317,9 +317,11 @@ export function createSettingsChanges(options: {
         return { receipt, proof, fresh: true } as const;
       });
       if (!permit.fresh) return permit.receipt;
-      const write = (receipt: SettingsChangeReceipt, prior: SettingsChangeReceipt['phase']) => withImmediateTransaction(db, () => {
+      const write = (receipt: SettingsChangeReceipt, prior: SettingsChangeReceipt['phase'], assertProjectionCurrent?: () => void) => withImmediateTransaction(db, () => {
+        const at = now().toISOString();
+        assertProjectionCurrent?.();
         const updated = db.prepare('UPDATE settings_changes SET phase=?,receipt=?,updated_at=? WHERE change_id=? AND phase=?')
-          .run(receipt.phase, JSON.stringify(receipt), now().toISOString(), receipt.change_id, prior);
+          .run(receipt.phase, JSON.stringify(receipt), at, receipt.change_id, prior);
         if (updated.changes !== 1) throw new Error('SETTINGS_RECEIPT_STATE_CHANGED');
         return receipt;
       });
@@ -359,10 +361,15 @@ export function createSettingsChanges(options: {
       }
       const receipt = write({ ...permit.receipt, phase: 'applied', applied_revision: applied.revision, effects: applied.effects }, 'applying');
       let checked: Check;
-      try { checked = await handler.recheck(principal, draft, applied); }
+      try { checked = await handler.recheck(principal, draft, applied, beforeWrite); }
       catch { checked = { verified: false, issue: 'recheck_unavailable' }; }
-      return write({ ...receipt, phase: 'observed', checked_at: now().toISOString(), verified: checked.verified,
-        issues: checked.issue ? [checked.issue] : [] }, 'applied');
+      try {
+        return write({ ...receipt, phase: 'observed', checked_at: now().toISOString(), verified: checked.verified,
+          issues: checked.issue ? [checked.issue] : [] }, 'applied', checked.assertProjectionCurrent);
+      } catch (error) {
+        if (!(error instanceof SettingsApplyBlocked)) throw error;
+        return write({ ...receipt, phase: 'observed', checked_at: now().toISOString(), verified: false, issues: [error.issue] }, 'applied');
+      }
     },
     recoveryOffer(principal: Principal, changeId: string): SettingsRecoveryOffer {
       const original = storedChange(principal, changeId);

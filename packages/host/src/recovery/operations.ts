@@ -145,7 +145,7 @@ export function createRecoveryOperations(options: {
     async read(request: RecoveryOperationRequest): Promise<RecoveryOperationStatus> {
       return status((await bind(request)).binding);
     },
-    async run(request: RecoveryOperationRequest): Promise<RecoveryOperationStatus> {
+    async run(request: RecoveryOperationRequest, beforeInvoke?: () => void): Promise<RecoveryOperationStatus> {
       const { binding, target } = await bind(request);
       const command = binding.request;
       const prior = await status(binding);
@@ -154,6 +154,8 @@ export function createRecoveryOperations(options: {
       if (!await publish(binding, 'claim')) return status(binding);
       // Revalidate physical roots and source identity after the awaited durable claim.
       if (canonical((await bind(command)).binding) !== canonical(binding)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+      // A trusted synchronous guard may deny after the final awaited binding check.
+      beforeInvoke?.();
       let outcome: RecoveryOperationOutcome;
       if (command.mode === 'backup') {
         const set = await createRecoveryBackup(target.backup!.options).captureRecoverySet(structuredClone(target.backup!.scope));

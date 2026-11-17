@@ -434,7 +434,7 @@ const settingsTargetSchema = z.strictObject({
 export const settingsRecoveryOfferSchema = z.discriminatedUnion('status', [
   z.strictObject({ change_id: z.string().min(1), status: z.literal('unavailable'), reason: z.string().min(1) }),
   ...(['readback_available', 'projection_available'] as const).map((status) => z.strictObject({
-    change_id: z.string().min(1), action: z.literal('reconcile_network'), status: z.literal(status),
+    change_id: z.string().min(1), action: z.enum(['reconcile_network', 'readback_recovery_backup', 'readback_recovery_drill']), status: z.literal(status),
     target: z.strictObject({ label: z.string().min(1), target: z.string().min(1), device: z.string().min(1),
       revision: z.number().int().nonnegative(), input: z.strictObject({ change_id: z.string().min(1) }) }),
   })),

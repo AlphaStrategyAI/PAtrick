@@ -57,11 +57,13 @@ export function ChangeReceipt({ system = false }: { system?: boolean }) {
       <p role="status">{t(receipt.verified ? 'settings.recheckVerified'
         : receipt.phase === 'observed' ? 'settings.recheckFailed' : receipt.phase === 'uncertain' ? 'settings.applyUncertain' : 'settings.applying')}</p>
       {receipt.applied_revision != null && <p>{t('settings.appliedRevision')}: {receipt.applied_revision}</p>}
-      {receipt.effects.length > 0 && <ul>{receipt.effects.filter(({ item }) => !item.startsWith('network:operation:')).map((effect) => <li key={effect.item}>
+      {receipt.effects.length > 0 && <ul>{receipt.effects.filter(({ item }) => !item.startsWith('network:operation:') && !item.startsWith('recovery:operation:')).map((effect) => <li key={effect.item}>
         {effect.item.startsWith('network:') ? <NetworkEffect item={effect.item} />
           : <>{t(effectKeys[effect.item] ?? 'settings.effect')}: {t(`settings.effect.${effect.outcome}`)}</>}
       </li>)}</ul>}
       {receipt.checked_at && <p>{t('settings.lastChecked')}: {formatDate(locale, receipt.checked_at)}</p>}
+      {['start_backup', 'start_restore'].includes(receipt.operation) && !receipt.verified &&
+        <NetworkRecovery changeId={id} recoveryOperation onChanged={() => { void result.refetch(); }} />}
       {receipt.operation === 'repair_network' && !receipt.verified && (receipt.phase !== 'observed' ||
         receipt.effects.some(({ item }) => ['network:unresolved', 'network:in_progress', 'network:repaired'].includes(item))) &&
         <NetworkRecovery changeId={id} onChanged={() => { void result.refetch(); }} />}
@@ -72,7 +74,7 @@ export function ChangeReceipt({ system = false }: { system?: boolean }) {
   </section>;
 }
 
-function NetworkRecovery({ changeId, onChanged }: { changeId: string; onChanged: () => void }) {
+function NetworkRecovery({ changeId, onChanged, recoveryOperation = false }: { changeId: string; onChanged: () => void; recoveryOperation?: boolean }) {
   const { t } = useLocale();
   const result = useScopedSnapshot('getSettingsRecovery', { id: changeId }, settingsRecoveryOfferSchema.parse);
   const offer = result.data?.data;
@@ -83,13 +85,14 @@ function NetworkRecovery({ changeId, onChanged }: { changeId: string; onChanged:
       network_effect_unsettled: 'network.recoveryUnsettled', network_provenance: 'network.recoveryChanged',
       recovery_unregistered: 'network.recoveryUnavailable',
     };
-    return <p role="status">{t(reasons[offer.reason] ?? 'network.recoveryUnavailable')}</p>;
+    return <p role="status">{t(recoveryOperation ? 'settings.recoveryUnavailable' : reasons[offer.reason] ?? 'network.recoveryUnavailable')}</p>;
   }
+  const recoveryLabel = offer.action === 'reconcile_network' ? 'network.recoveryAction' : 'settings.recoveryAction';
   return <section>
-    <h3>{t('network.recoveryAction')}</h3>
-    <p>{t('network.recoveryReadOnly')}</p>
+    <h3>{t(recoveryLabel)}</h3>
+    <p>{t(offer.action === 'reconcile_network' ? 'network.recoveryReadOnly' : 'settings.recoveryReadOnly')}</p>
     <SettingsChangeWizard operation={offer.action} targets={[offer.target]} recoveryChangeId={changeId}
-      entryLabel="network.recoveryAction" onChanged={() => { onChanged(); void result.refetch(); }} />
+      entryLabel={recoveryLabel} onChanged={() => { onChanged(); void result.refetch(); }} />
   </section>;
 }
 

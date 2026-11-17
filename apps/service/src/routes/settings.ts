@@ -20,15 +20,16 @@ const draftRequest = commandEnvelope(settingsDraftSchema);
 const changeRequest = commandEnvelope(settingsChangePayload);
 const controlRequest = commandEnvelope(settingsControlPayload);
 type Ready = () => { db: SqliteDatabase; now: () => Date; engine: ReturnType<typeof createSettingsChanges>;
+  recoveryTargets?: (principal: Principal, domain: string, operation: string) => readonly unknown[];
   networkTargets?: (principal: Principal, domain: string) => readonly unknown[] };
 
 export function mountSettingsRoutes(app: Hono, ready: Ready): void {
   app.get('/api/v1/settings', (c) => handle(c, async () => {
     const principal = await requireSession(c.req.raw);
-    const { db, now, engine, networkTargets } = ready();
+    const { db, now, engine, networkTargets, recoveryTargets } = ready();
     const domain = getDomain(db, principal, 'settings.read', oneValue(new URL(c.req.url).searchParams, 'domain'));
     const groups = settingsGroups.map(({ id, operations }) => ({ id, operations: operations.map((operation) => ({
-      operation, registered: engine.isRegistered(operation), targets: registeredTargets(db, principal, domain, operation, networkTargets),
+      operation, registered: engine.isRegistered(operation), targets: registeredTargets(db, principal, domain, operation, networkTargets, recoveryTargets),
     })) }));
     return c.json(snapshot({ ...principal, domains: [domain] }, { groups }, now(), db));
   }));
@@ -133,8 +134,10 @@ function getDomain(db: SqliteDatabase, principal: Principal, permission: string,
 }
 
 function registeredTargets(db: SqliteDatabase, principal: Principal, domain: string, operation: string,
-  networkTargets?: (principal: Principal, domain: string) => readonly unknown[]) {
+  networkTargets?: (principal: Principal, domain: string) => readonly unknown[],
+  recoveryTargets?: (principal: Principal, domain: string, operation: string) => readonly unknown[]) {
   if (!domainsWithPermission(db, principal, 'owner', false).includes(domain)) return [];
+  if (operation === 'start_backup' || operation === 'start_restore') return recoveryTargets?.(principal, domain, operation) ?? [];
   if (operation === 'repair_network') return networkTargets?.(principal, domain) ?? [];
   if (operation === 'connect_vault') return db.prepare(`SELECT v.vault_id AS target,c.device_id AS device,
     v.status,v.config_revision AS revision FROM vaults v JOIN vault_clients c ON c.vault_id=v.vault_id

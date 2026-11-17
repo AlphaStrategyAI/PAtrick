@@ -36,6 +36,7 @@ import { mountSettingsRoutes } from './routes/settings.js';
 import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
 import { builtinSettingsHandlers } from './settings/builtin.js';
 import { networkSettingsHandlers, registeredNetworkTargets, type NetworkRepairConfiguration } from './settings/network.js';
+import { recoverySettingsHandlers, registeredRecoveryTargets, type RecoverySettingsConfiguration } from './settings/recovery.js';
 import { parseNetworkPolicy } from '../../../packages/host/src/network/vpn.js';
 import { createHttpCollectionWorker, type HttpCollectionWorkerOptions } from './source-collection.js';
 import { sourceSettingsHandlers } from './settings/sources.js';
@@ -49,6 +50,7 @@ export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 export type CreateAppOptions = {
   databasePath?: string;
   recoveryRuntime?: RecoveryRuntimeConfiguration;
+  recoveryOperations?: RecoverySettingsConfiguration;
   credentialDirectory?: string;
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
@@ -198,9 +200,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     state.settings ??= createSettingsChanges({ ...current,
       handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }),
         ...networkSettingsHandlers({ ...current, networkRepair }),
+        ...recoverySettingsHandlers({ ...current, recoveryOperations: options.recoveryOperations }),
         ...sourceSettingsHandlers(sourceResources()), ...options.settingsHandlers },
     });
     return { ...current, engine: state.settings,
+      recoveryTargets: (principal, domain, operation) => registeredRecoveryTargets(options.recoveryOperations, principal, domain, operation),
       networkTargets: (principal, domain) => registeredNetworkTargets(current.db, networkRepair, principal, domain) };
   });
   mountSourceRoutes(app, sourceResources);
