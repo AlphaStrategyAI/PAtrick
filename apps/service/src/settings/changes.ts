@@ -5,6 +5,7 @@ import { assertDomainPermission, canConfirm, ORIGIN, RP_ID, snapshot, type Princ
 import { ApiError } from '../errors.js';
 import { stageControlProposal } from '../control.js';
 import { settingsControlHash } from './authority.js';
+import { assertBusinessWrite } from '../recovery-runtime.js';
 
 export type SettingsDraft = { operation: string; domain: string; target: string; input: Json };
 type Binding = { revision: number; deviceId: string; identityId: string; scopeHash: string };
@@ -20,6 +21,24 @@ type ProofRow = Omit<Validation, 'valid'> & {
 export type SettingsEffect = { item: string; outcome: 'applied' | 'unchanged' | 'blocked' | 'uncertain'; revision: number | null };
 type Applied = { revision: number | null; effects: readonly SettingsEffect[] };
 type Check = { verified: boolean; issue?: string };
+export type StoredSettingsChange = {
+  changeId: string; accountId: string; callerId: string; domain: string; operation: string; targetId: string;
+  validationId: string; controlReceiptId: string; phase: SettingsChangeReceipt['phase'];
+  receipt: SettingsChangeReceipt; receiptBytes: string; updatedAt: string;
+};
+export type SettingsRecoveryOffer =
+  | { change_id: string; status: 'unavailable'; reason: string }
+  | { change_id: string; action: 'reconcile_network'; status: 'readback_available' | 'projection_available';
+      target: { target: string; device: string; revision: number; input: { change_id: string }; label: string } };
+type RecoveryChecks = Pick<SettingsHandler, 'binding' | 'validate' | 'authorize'> & {
+  operation: 'reconcile_network';
+  draftFor(principal: Principal, original: StoredSettingsChange): SettingsDraft;
+  offer(principal: Principal, original: StoredSettingsChange): SettingsRecoveryOffer;
+};
+export type SettingsRecoveryOutcome = {
+  state: 'settled' | 'unresolved'; applied: Applied; checked: Check; checkedAt: string;
+  assertProjectionCurrent: () => void;
+};
 export class SettingsApplyBlocked extends Error {
   readonly issue: string;
   constructor(issue: string) {
@@ -31,8 +50,12 @@ export type SettingsHandler = {
   binding(principal: Principal, draft: SettingsDraft): Binding;
   validate(principal: Principal, draft: SettingsDraft): Promise<{ valid: boolean }>;
   authorize(principal: Principal, draft: SettingsDraft, proof: Validation, controlReceiptId: string): void;
-  apply(principal: Principal, draft: SettingsDraft, proof: Validation, beforeWrite: () => string): Promise<Applied>;
+  apply(principal: Principal, draft: SettingsDraft, proof: Validation, beforeWrite: () => string,
+    revalidateAuthorization?: () => string): Promise<Applied>;
   recheck(principal: Principal, draft: SettingsDraft, applied: Applied): Promise<Check>;
+  recovery?: RecoveryChecks;
+  recover?: (principal: Principal, original: StoredSettingsChange, recoveryDraft: SettingsDraft, freshProof: Validation,
+    freshControlReceiptId: string, assertCurrentReadbackAuthority: () => void) => Promise<SettingsRecoveryOutcome>;
 };
 type ChangeRequest = { validationId: string; requestId: string; controlReceiptId: string; draft: SettingsDraft;
   expectedRevision?: number | null; assertSession?: () => void };
@@ -62,6 +85,18 @@ export function createSettingsChanges(options: {
   const ttlMs = options.ttlMs ?? 120_000;
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > 300_000) throw new Error('SETTINGS_TTL_INVALID');
   const changeById = db.prepare('SELECT account_id,caller_id,data_domain,receipt FROM settings_changes WHERE change_id=?');
+  const recoveryChecks = new Map<string, RecoveryChecks>();
+  for (const handler of Object.values(handlers)) {
+    if (!handler) continue;
+    if (Boolean(handler.recovery) !== Boolean(handler.recover)) throw new Error('SETTINGS_RECOVERY_PAIR_REQUIRED');
+    if (handler.recovery) {
+      if (handler.recovery.operation !== 'reconcile_network') throw new Error('SETTINGS_RECOVERY_ACTION_INVALID');
+      if (Object.hasOwn(handlers, handler.recovery.operation) || recoveryChecks.has(handler.recovery.operation)) {
+        throw new Error('SETTINGS_RECOVERY_ACTION_DUPLICATE');
+      }
+      recoveryChecks.set(handler.recovery.operation, handler.recovery);
+    }
+  }
 
   function handlerFor(draft: SettingsDraft): SettingsHandler {
     const handler = Object.hasOwn(handlers, draft.operation) ? handlers[draft.operation] : undefined;
@@ -69,7 +104,18 @@ export function createSettingsChanges(options: {
     return handler;
   }
 
-  function binding(principal: Principal, draft: SettingsDraft, handler: SettingsHandler): BoundDraft {
+  function checksFor(draft: SettingsDraft): Pick<SettingsHandler, 'binding' | 'validate' | 'authorize'> {
+    return recoveryChecks.get(draft.operation) ?? handlerFor(draft);
+  }
+
+  function permissionHash(principal: Principal, domain: string): string {
+    const permissions = db.prepare(`SELECT permission FROM caller_scopes
+      WHERE account_id=? AND caller_id=? AND data_domain=? AND revoked_at IS NULL ORDER BY permission`)
+      .all(principal.account_id, principal.caller_id, domain) as { permission: string }[];
+    return sha256(permissions.map(({ permission }) => permission));
+  }
+
+  function binding(principal: Principal, draft: SettingsDraft, handler: Pick<SettingsHandler, 'binding'>): BoundDraft {
     const current = handler.binding(principal, draft);
     if (!Number.isSafeInteger(current.revision) || current.revision < 0 || !current.deviceId || !current.identityId ||
         !/^[a-f0-9]{64}$/.test(current.scopeHash)) throw new Error('SETTINGS_BINDING_INVALID');
@@ -84,6 +130,17 @@ export function createSettingsChanges(options: {
     if (!row || row.account_id !== principal.account_id) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
     assertDomainPermission(db, principal, row.data_domain, 'settings.read');
     return { domain: row.data_domain, receipt: JSON.parse(row.receipt) as SettingsChangeReceipt };
+  }
+
+  function storedChange(principal: Principal, changeId: string): StoredSettingsChange {
+    readScopedChange(principal, changeId);
+    const row = db.prepare('SELECT * FROM settings_changes WHERE change_id=?').get(changeId) as {
+      account_id: string; caller_id: string; data_domain: string; operation: string; target_id: string;
+      validation_id: string; control_receipt_id: string; phase: SettingsChangeReceipt['phase']; receipt: string; updated_at: string;
+    };
+    return { changeId, accountId: row.account_id, callerId: row.caller_id, domain: row.data_domain,
+      operation: row.operation, targetId: row.target_id, validationId: row.validation_id, controlReceiptId: row.control_receipt_id,
+      phase: row.phase, receipt: JSON.parse(row.receipt) as SettingsChangeReceipt, receiptBytes: row.receipt, updatedAt: row.updated_at };
   }
 
   function loadProof(principal: Principal, draft: SettingsDraft, validationId: string, expectedRevision?: number | null): Validation {
@@ -132,6 +189,13 @@ export function createSettingsChanges(options: {
     return body;
   }
 
+  function assertSettingsWrite(draft: SettingsDraft): void {
+    // These are explicit owner control operations. Registered server handlers still
+    // enforce their own scoped T03 authorization; they confer no business admission.
+    if (['disable_feishu', 'start_backup', 'start_restore'].includes(draft.operation)) return;
+    assertBusinessWrite(db, draft.domain);
+  }
+
   const readChange = (principal: Principal, changeId: string) => readScopedChange(principal, changeId).receipt;
   async function validate(principal: Principal, draft: SettingsDraft, expectedRevision?: number | null, requestId?: string) {
     draft = structuredClone(draft);
@@ -140,7 +204,7 @@ export function createSettingsChanges(options: {
     assertDomainPermission(db, principal, draft.domain, command.permission);
     const previous = replayPreflight<Validation>(command);
     if (previous) return previous;
-    const handler = handlerFor(draft);
+    const handler = checksFor(draft);
     const checkedAt = now();
     const checked = binding(principal, draft, handler);
     if (expectedRevision !== undefined && (expectedRevision ?? 0) !== checked.revision) stale();
@@ -185,7 +249,7 @@ export function createSettingsChanges(options: {
         if (replay) return replay;
         const proof = loadProof(principal, draft, validationId, expectedRevision);
         const time = now();
-        if (!canApply(proof, binding(principal, draft, handlerFor(draft)), time)) stale();
+        if (!canApply(proof, binding(principal, draft, checksFor(draft)), time)) stale();
         const account = db.prepare('SELECT policy_revision FROM accounts WHERE account_id=?').get(principal.account_id) as { policy_revision: number };
         const challenge = db.prepare(`SELECT challenge_hash,expires_at FROM auth_challenges WHERE challenge_id=? AND account_id=?
           AND purpose='control' AND consumed_at IS NULL AND expires_at>? AND origin=? AND rp_id=?`)
@@ -229,9 +293,9 @@ export function createSettingsChanges(options: {
           if (previous.command_fingerprint !== fingerprint) throw new ApiError(409, 'CONFLICT', { reason: 'idempotency' });
           return { receipt: readChange(principal, previous.command_id), fresh: false } as const;
         }
+        assertSettingsWrite(draft);
         if (!canApply(proof, binding(principal, draft, handler), now())) stale();
-        if (db.prepare('SELECT 1 FROM settings_changes WHERE validation_id=? OR control_receipt_id=?')
-          .get(proof.validation_id, request.controlReceiptId)) stale();
+        if (proofUsed(proof.validation_id, request.controlReceiptId)) stale();
         const inFlight = db.prepare(`SELECT 1 FROM settings_changes WHERE account_id=? AND data_domain=? AND target_id=?
           AND phase IN ('applying','applied','uncertain') LIMIT 1`).get(principal.account_id, draft.domain, draft.target);
         if (inFlight) throw new ApiError(409, 'CONFLICT', { reason: 'change_in_flight' });
@@ -258,12 +322,13 @@ export function createSettingsChanges(options: {
         return receipt;
       });
       let applied: Applied;
-      const beforeWrite = () => {
+      const revalidateAuthorization = () => {
         const current = now();
         try {
           request.assertSession?.();
           assertDomainPermission(db, principal, draft.domain, 'owner', false);
-          if (!canApply(permit.proof, binding(principal, draft, handler), current)) stale();
+          assertSettingsWrite(draft);
+          if (!permit.proof.valid || permit.proof.expires_at <= current.toISOString()) stale();
           handler.authorize(principal, draft, permit.proof, request.controlReceiptId);
         } catch (error) {
           if (error instanceof ApiError) throw new SettingsApplyBlocked('confirmation_changed');
@@ -271,7 +336,14 @@ export function createSettingsChanges(options: {
         }
         return current.toISOString();
       };
-      try { applied = await handler.apply(principal, draft, permit.proof, beforeWrite); }
+      const beforeWrite = () => {
+        const at = revalidateAuthorization();
+        if (!canApply(permit.proof, binding(principal, draft, handler), new Date(at))) {
+          throw new SettingsApplyBlocked('confirmation_changed');
+        }
+        return at;
+      };
+      try { applied = await handler.apply(principal, draft, permit.proof, beforeWrite, revalidateAuthorization); }
       catch (error) {
         if (error instanceof SettingsApplyBlocked) return write({ ...permit.receipt, phase: 'observed',
           checked_at: now().toISOString(), issues: [error.issue], effects: [{ item: 'settings_target', outcome: 'blocked', revision: null }] }, 'applying');
@@ -284,9 +356,113 @@ export function createSettingsChanges(options: {
       return write({ ...receipt, phase: 'observed', checked_at: now().toISOString(), verified: checked.verified,
         issues: checked.issue ? [checked.issue] : [] }, 'applied');
     },
+    recoveryOffer(principal: Principal, changeId: string): SettingsRecoveryOffer {
+      const original = storedChange(principal, changeId);
+      if (!canConfirm(principal)) return { change_id: changeId, status: 'unavailable', reason: 'owner_required' };
+      try { assertDomainPermission(db, principal, original.domain, 'owner', false); }
+      catch { return { change_id: changeId, status: 'unavailable', reason: 'owner_required' }; }
+      const handler = handlers[original.operation];
+      if (!handler?.recovery) return { change_id: changeId, status: 'unavailable', reason: 'recovery_unregistered' };
+      return handler.recovery.offer(principal, original);
+    },
+    async recoverSettings(principal: Principal, request: ChangeRequest & { changeId: string; expectedRevision: number; assertSession: () => void }) {
+      const draft = structuredClone(request.draft);
+      const original = storedChange(principal, request.changeId);
+      const handler = handlers[original.operation];
+      const checks = handler?.recovery;
+      if (!checks || !handler.recover) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_recovery' });
+      const fingerprint = commandFingerprint({ operation: 'recoverSettingsChange', resource_id: original.changeId,
+        data_domain: original.domain, expected_revision: request.expectedRevision,
+        payload_hash: sha256([draftHash(draft), request.validationId, request.controlReceiptId]) });
+      const assertOwner = () => {
+        request.assertSession();
+        if (!canConfirm(principal)) throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
+        assertDomainPermission(db, principal, original.domain, 'owner', false);
+      };
+      const permit = withImmediateTransaction(db, () => {
+        assertOwner();
+        const prior = db.prepare(`SELECT i.command_id,i.command_fingerprint,r.change_id,r.receipt FROM command_inbox i
+          LEFT JOIN settings_recoveries r USING(command_id) WHERE i.account_id=? AND i.caller_id=? AND i.client_request_id=?`)
+          .get(principal.account_id, principal.caller_id, request.requestId) as
+          { command_id: string; command_fingerprint: string; change_id: string | null; receipt: string | null } | undefined;
+        if (prior && (prior.command_fingerprint !== fingerprint || prior.change_id !== original.changeId)) {
+          throw new ApiError(409, 'CONFLICT', { reason: 'idempotency' });
+        }
+        if (prior?.receipt) return { completed: JSON.parse(prior.receipt) as { recovery_command_id: string; receipt: SettingsChangeReceipt } };
+        const expectedDraft = checks.draftFor(principal, original);
+        if (draftHash(expectedDraft) !== draftHash(draft)) stale();
+        const proof = loadProof(principal, draft, request.validationId, request.expectedRevision);
+        const live = binding(principal, draft, checks);
+        if (!canApply(proof, live, now())) stale();
+        checks.authorize(principal, draft, proof, request.controlReceiptId);
+        if (!prior && proofUsed(proof.validation_id, request.controlReceiptId)) stale();
+        if (prior) {
+          const source = db.prepare('SELECT source_digest FROM settings_recoveries WHERE command_id=?').get(prior.command_id) as { source_digest: string };
+          if (source.source_digest !== live.scopeHash) stale();
+          return { commandId: prior.command_id, proof, permissionHash: permissionHash(principal, original.domain) };
+        }
+        const commandId = `settings_recovery_${randomUUID()}`;
+        const at = now().toISOString();
+        recordCommand(db, { account_id: principal.account_id, caller_id: principal.caller_id, client_request_id: request.requestId,
+          command_fingerprint: fingerprint, command_id: commandId });
+        db.prepare(`INSERT INTO command_records(command_id,account_id,caller_id,operation,resource_id,data_domain,permission,created_at)
+          VALUES (?,?,?,'recoverSettingsChange',?,?,'owner',?)`).run(commandId, principal.account_id, principal.caller_id, original.changeId, original.domain, at);
+        db.prepare(`INSERT INTO settings_recoveries(command_id,change_id,validation_id,control_receipt_id,account_id,caller_id,
+          auth_epoch,expected_revision,source_digest,phase,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)`)
+          .run(commandId, original.changeId, proof.validation_id, request.controlReceiptId, principal.account_id, principal.caller_id,
+            principal.auth_epoch, request.expectedRevision, live.scopeHash, at, at);
+        return { commandId, proof, permissionHash: permissionHash(principal, original.domain) };
+      });
+      if ('completed' in permit) return permit.completed;
+      const assertFreshRecoveryControl = () => {
+        assertOwner();
+        const proof = loadProof(principal, draft, request.validationId, request.expectedRevision);
+        if (!proof.valid || proof.expires_at <= now().toISOString() ||
+            proof.draft_hash !== draftHash(draft) || permissionHash(principal, original.domain) !== permit.permissionHash) stale();
+        checks.authorize(principal, draft, proof, request.controlReceiptId);
+      };
+      const assertReadbackSourceCurrent = () => {
+        assertFreshRecoveryControl();
+        if (!canApply(permit.proof, binding(principal, draft, checks), now())) stale();
+      };
+      let outcome: SettingsRecoveryOutcome;
+      try {
+        assertReadbackSourceCurrent();
+        outcome = await handler.recover(principal, original, draft, permit.proof, request.controlReceiptId, assertReadbackSourceCurrent);
+      } catch (error) {
+        withImmediateTransaction(db, () => {
+          db.prepare("UPDATE settings_recoveries SET phase='unresolved',updated_at=? WHERE command_id=? AND receipt IS NULL")
+            .run(now().toISOString(), permit.commandId);
+        });
+        throw error;
+      }
+      return withImmediateTransaction(db, () => {
+        assertFreshRecoveryControl();
+        outcome.assertProjectionCurrent();
+        const receipt: SettingsChangeReceipt = { ...original.receipt,
+          phase: outcome.state === 'settled' ? 'observed' : 'uncertain', applied_revision: outcome.applied.revision,
+          effects: outcome.applied.effects, verified: outcome.state === 'settled' && outcome.checked.verified,
+          checked_at: outcome.checkedAt, issues: outcome.checked.issue ? [outcome.checked.issue] : [] };
+        const edited = db.prepare(`UPDATE settings_changes SET phase=?,receipt=?,updated_at=?
+          WHERE change_id=? AND phase=? AND receipt=? AND updated_at=?`)
+          .run(receipt.phase, JSON.stringify(receipt), now().toISOString(), original.changeId, original.phase, original.receiptBytes, original.updatedAt);
+        const result = { recovery_command_id: permit.commandId,
+          receipt: edited.changes === 1 ? receipt : readChange(principal, original.changeId) };
+        db.prepare('UPDATE settings_recoveries SET phase=?,receipt=?,updated_at=? WHERE command_id=? AND receipt IS NULL')
+          .run(edited.changes === 1 ? outcome.state === 'settled' ? 'observed' : 'unresolved' : 'superseded',
+            JSON.stringify(result), now().toISOString(), permit.commandId);
+        return result;
+      });
+    },
     readChange,
     readScopedChange,
   };
+
+  function proofUsed(validationId: string, receiptId: string): boolean {
+    return Boolean(db.prepare(`SELECT 1 FROM settings_changes WHERE validation_id=? OR control_receipt_id=?
+      UNION ALL SELECT 1 FROM settings_recoveries WHERE validation_id=? OR control_receipt_id=? LIMIT 1`)
+      .get(validationId, receiptId, validationId, receiptId));
+  }
 }
 
 export function draftHash(value: SettingsDraft): string {

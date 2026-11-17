@@ -12,6 +12,7 @@ import { registerFeishuSettings } from '../../apps/service/src/routes/feishu.js'
 import { clearSettingsOperations, runSettingsOperation, settingsOperations } from '../../apps/service/src/settings/registry.js';
 import {
   createAnswerGate,
+  channelPermit,
   type AnswerCommand,
   type AnswerGate,
   type BindQuestionInput,
@@ -35,6 +36,7 @@ import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '../../pa
 import { requiresChannelReconciliation } from '../../packages/integrations/feishu/channel-gate.js';
 import { createFeishuChannel, openSupervisedSocket, PAIRING_TTL_MS } from '../../packages/integrations/feishu/connection.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { createRecoveryRuntimeGate } from '@patrick/storage';
 
 const NOW = '2026-11-17T02:00:00.000Z';
 const DOMAIN = 'product';
@@ -53,6 +55,97 @@ const feishuPrincipal: Principal = {
   ...webPrincipal,
   caller_id: 'feishu',
 };
+
+function closeAnswerDomain(db: SqliteDatabase) {
+  createRecoveryRuntimeGate(db);
+}
+
+test('recovery admission prevents binding a new answer card', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    closeAnswerDomain(scene.db);
+    await expect(scene.bind(questionInput('Q-recovery-bind', 18, proceedOptions(), []))).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM question_bindings').get()).toEqual({ n: 0 });
+  } finally { scene.close(); }
+});
+
+test('recovery admission prevents answer intents and channel permits', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const binding = await scene.bind(questionInput('Q-recovery-submit', 18, proceedOptions(), []));
+    closeAnswerDomain(scene.db);
+    const command = scene.command(webPrincipal, 'closed-answer', binding, { kind: 'option', option_id: 'A' });
+    await expect(scene.web.submitAnswer(webPrincipal, command)).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM answer_intents').get()).toEqual({ n: 0 });
+    expect(() => channelPermit(scene.db, 'conn-017', 'closed-inbound', binding.question_id, NOW)).toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM channel_permits').get()).toEqual({ n: 0 });
+    expect(await scene.hub.read(binding.question_id)).toBeNull();
+  } finally { scene.close(); }
+});
+
+test('recovery admission prevents channel send permits', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const binding = await scene.bind(questionInput('Q-recovery-permit', 18, proceedOptions(), []));
+    closeAnswerDomain(scene.db);
+    expect(() => channelPermit(scene.db, 'conn-017', 'closed-inbound', binding.question_id, NOW)).toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM channel_permits').get()).toEqual({ n: 0 });
+  } finally { scene.close(); }
+});
+
+test('answer checks recovery admission after encoding and immediately before Hub handoff', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  try {
+    const binding = await scene.bind(questionInput('Q-recovery-handoff', 18, proceedOptions(), []));
+    const gate = createAnswerGate(scene.db, {
+      domain: DOMAIN, now: scene.now, hub: scene.hub,
+      encode(answer) { closeAnswerDomain(scene.db); return encodeHubAnswer(answer); },
+    });
+    const command = scene.command(webPrincipal, 'closed-handoff', binding, { kind: 'option', option_id: 'A' });
+    await expect(gate.submitAnswer(webPrincipal, command)).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(await scene.hub.read(binding.question_id)).toBeNull();
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM resume_intents').get()).toEqual({ n: 0 });
+  } finally { scene.close(); }
+});
+
+test('accepted answer readback while recovery is closed cannot grant a continuation', async () => {
+  const scene = await openScene({ crashAfterAccept: true });
+  try {
+    const binding = await scene.bind(questionInput('Q-recovery-readback', 18, proceedOptions(), []));
+    const command = scene.command(webPrincipal, 'accepted-before-close', binding, { kind: 'option', option_id: 'A' });
+    await expect(scene.web.submitAnswer(webPrincipal, command)).rejects.toThrow('RECEIPT_LOST');
+    const intent = scene.db.prepare('SELECT intent_id FROM answer_intents').get() as { intent_id: string };
+    closeAnswerDomain(scene.db);
+    const receipt = await scene.web.recoverAnswer(intent.intent_id);
+    expect(receipt.validity).toBe('audit_only');
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM resume_intents').get()).toEqual({ n: 0 });
+    expect(scene.db.prepare("SELECT COUNT(*) AS n FROM domain_events WHERE json_extract(payload,'$.type') = 'answer.verified'").get()).toEqual({ n: 0 });
+  } finally { scene.close(); }
+});
+
+test('recovery denial is a nonretryable answer API conflict', async () => {
+  const scene = await openScene({ crashAfterAccept: false });
+  const credentials = mkdtempSync(join(tmpdir(), 'patrick-t10-recovery-auth-'));
+  try {
+    const binding = await scene.bind(questionInput('Q-recovery-api', 18, proceedOptions(), []));
+    const store = createCredentialStore(credentials, scene.now);
+    issueBootstrapTicket(scene.db, { accountId: 'owner' }, scene.now);
+    const session = issueCallerSession(scene.db, { accountId: 'owner', callerId: 'web', domain: DOMAIN,
+      permissions: ['owner'] }, scene.now, store);
+    const app = createApp({ databasePath: scene.db.name, credentialDirectory: credentials,
+      now: scene.now, recoveryRuntime: { attach() {} } });
+    const { client_request_id, expected_revision, payload_hash, payload } = scene.command(webPrincipal,
+      'closed-answer-api', binding, { kind: 'option', option_id: 'A' });
+    const response = await app.request(`/api/v1/questions/${binding.question_id}/answers`, {
+      method: 'POST', headers: { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ client_request_id, expected_revision, payload_hash, payload }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'CONFLICT', params: { reason: 'recovery_write_blocked' }, retryable: false });
+    expect(scene.db.prepare('SELECT COUNT(*) AS n FROM answer_intents').get()).toEqual({ n: 0 });
+  } finally { scene.close(); rmSync(credentials, { recursive: true, force: true }); }
+});
+
 
 test('answer-once', async () => {
   const scene = await openScene({ crashAfterAccept: true });

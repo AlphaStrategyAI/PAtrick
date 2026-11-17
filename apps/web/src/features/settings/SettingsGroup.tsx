@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router';
-import { settingsDashboardSchema, settingsReceiptSchema } from '@patrick/contracts/resources';
+import { settingsDashboardSchema, settingsReceiptSchema, settingsRecoveryOfferSchema } from '@patrick/contracts/resources';
 import { asClientError, useScopedSnapshot } from '../../api/query.js';
 import { LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
@@ -13,7 +13,7 @@ const effectKeys: Record<string, MessageKey> = {
 };
 const operationKeys: Record<string, MessageKey> = {
   configure_source: 'settings.configureSource', connect_vault: 'settings.connectVault', change_vault: 'settings.changeVault',
-  inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', start_backup: 'settings.startBackup',
+  inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', repair_network: 'settings.repairNetwork', start_backup: 'settings.startBackup',
   start_restore: 'settings.startRestore', enable_feishu: 'settings.enableFeishu', disable_feishu: 'settings.disableFeishu',
 };
 
@@ -57,12 +57,72 @@ export function ChangeReceipt({ system = false }: { system?: boolean }) {
       <p role="status">{t(receipt.verified ? 'settings.recheckVerified'
         : receipt.phase === 'observed' ? 'settings.recheckFailed' : receipt.phase === 'uncertain' ? 'settings.applyUncertain' : 'settings.applying')}</p>
       {receipt.applied_revision != null && <p>{t('settings.appliedRevision')}: {receipt.applied_revision}</p>}
-      {receipt.effects.length > 0 && <ul>{receipt.effects.map((effect) => <li key={effect.item}>
-        {t(effectKeys[effect.item] ?? 'settings.effect')}: {t(`settings.effect.${effect.outcome}`)}
+      {receipt.effects.length > 0 && <ul>{receipt.effects.filter(({ item }) => !item.startsWith('network:operation:')).map((effect) => <li key={effect.item}>
+        {effect.item.startsWith('network:') ? <NetworkEffect item={effect.item} />
+          : <>{t(effectKeys[effect.item] ?? 'settings.effect')}: {t(`settings.effect.${effect.outcome}`)}</>}
       </li>)}</ul>}
       {receipt.checked_at && <p>{t('settings.lastChecked')}: {formatDate(locale, receipt.checked_at)}</p>}
-      {system ? <Link to={`/settings/${receipt.operation.includes('vault') ? 'materials' : 'interaction'}?change=${id}`}>{t('nav.settings')}</Link>
+      {receipt.operation === 'repair_network' && !receipt.verified && (receipt.phase !== 'observed' ||
+        receipt.effects.some(({ item }) => ['network:unresolved', 'network:in_progress', 'network:repaired'].includes(item))) &&
+        <NetworkRecovery changeId={id} onChanged={() => { void result.refetch(); }} />}
+      {system ? <Link to={`/settings/${receipt.operation.includes('vault') ? 'materials'
+        : ['repair_network', 'inspect_host', 'start_backup', 'start_restore'].includes(receipt.operation) ? 'operation' : 'interaction'}?change=${id}`}>{t('nav.settings')}</Link>
         : <Link to={`/system?change=${id}`}>{t('nav.system')}</Link>}
     </>}
   </section>;
+}
+
+function NetworkRecovery({ changeId, onChanged }: { changeId: string; onChanged: () => void }) {
+  const { t } = useLocale();
+  const result = useScopedSnapshot('getSettingsRecovery', { id: changeId }, settingsRecoveryOfferSchema.parse);
+  const offer = result.data?.data;
+  if (!offer) return result.error ? <LocalizedError code={asClientError(result.error).code} onRetry={() => { void result.refetch(); }} /> : null;
+  if (offer.status === 'unavailable') {
+    const reasons: Record<string, MessageKey> = {
+      owner_required: 'network.recoveryOwner', network_intent_unavailable: 'network.recoveryIntent',
+      network_effect_unsettled: 'network.recoveryUnsettled', network_provenance: 'network.recoveryChanged',
+      recovery_unregistered: 'network.recoveryUnavailable',
+    };
+    return <p role="status">{t(reasons[offer.reason] ?? 'network.recoveryUnavailable')}</p>;
+  }
+  return <section>
+    <h3>{t('network.recoveryAction')}</h3>
+    <p>{t('network.recoveryReadOnly')}</p>
+    <SettingsChangeWizard operation={offer.action} targets={[offer.target]} recoveryChangeId={changeId}
+      entryLabel="network.recoveryAction" onChanged={() => { onChanged(); void result.refetch(); }} />
+  </section>;
+}
+
+const networkStates: Record<string, MessageKey> = {
+  repaired: 'network.repaired', already_healthy: 'network.healthy', needs_login: 'network.login',
+  mfa_required: 'network.mfa', needs_permission: 'network.permission', rate_limited: 'network.backoff',
+  unavailable: 'network.unavailable', unresolved: 'network.unresolved', deadline: 'network.deadline',
+  reverted: 'network.reverted', not_repaired: 'network.notRepaired', not_applicable: 'network.notApplicable',
+  peer_unavailable: 'network.peerUnavailable', busy: 'network.busy', in_progress: 'network.busy',
+  stale_epoch: 'network.changed', superseded: 'network.changed', not_confirmed: 'network.notConfirmed',
+};
+const networkProblems: Record<string, MessageKey> = {
+  healthy: 'network.healthy', interface: 'network.interface', route: 'network.route', dns: 'network.dns',
+  proxy: 'network.proxy', tcp: 'network.tcp', tls: 'network.tls', identity: 'network.login',
+  rate_limit: 'network.backoff', target: 'network.target', peer: 'network.peerUnavailable',
+  permission: 'network.permission', mfa: 'network.mfa', unknown: 'status.unknown',
+};
+
+function NetworkEffect({ item }: { item: string }) {
+  const { locale, t } = useLocale();
+  const parts = item.split(':');
+  if ((parts[1] === 'verify' || parts[1] === 'rollback') && parts.length === 4) {
+    return <>{t(parts[1] === 'verify' ? 'network.verification' : 'network.rollback')}: {parts[2]}
+      {' · '}{t(networkProblems[parts[3]] ?? 'status.unknown')}</>;
+  }
+  if (parts[1] === 'retry_at' && parts.length === 3) {
+    const timestamp = Number(parts[2]);
+    return <>{t('network.retryAt')}: {Number.isSafeInteger(timestamp) && timestamp > 0 &&
+      timestamp <= 8_640_000_000_000_000 ? formatDate(locale, new Date(timestamp).toISOString()) : t('status.unknown')}</>;
+  }
+  if (parts[1] === 'question' && parts.length === 3 && /^[a-f0-9-]{36}$/u.test(parts[2])) {
+    return <>{t('network.question')}: {parts[2]}{' · '}
+      <Link to={'/settings/operation?network_question=' + encodeURIComponent(parts[2])}>{t('network.mfaAction')}</Link></>;
+  }
+  return <>{t(networkStates[parts[1]] ?? 'status.unknown')}</>;
 }

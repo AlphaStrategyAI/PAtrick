@@ -14,6 +14,8 @@ import {
 } from '../../packages/domain/src/budget.js';
 import {
   createDelegationApi,
+  dispatchAllowed,
+  workResumeAllowed,
   type AdmissionPrincipal,
   type ExecutionGrant,
 } from '../../packages/domain/src/delegation.js';
@@ -22,6 +24,7 @@ import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN, RP_ID } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { createRecoveryRuntimeGate } from '../../packages/storage/src/recovery-gate.js';
 
 const NOW = '2026-11-16T12:00:00.000Z';
 const DOMAIN = 'product';
@@ -1062,6 +1065,10 @@ test('the admission migration appends without changing earlier files', () => {
     '0018_delegation_control.sql',
     '0019_stats.sql',
     '0020_http_sources.sql',
+    '0021_notifications.sql',
+    '0022_network.sql',
+    '0023_recovery.sql',
+    '0024_settings_recoveries.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);
@@ -1143,3 +1150,76 @@ function envelope(operation: string, resourceId: string, expectedRevision: numbe
     payload,
   };
 }
+
+
+test('T22 closes existing dispatch and paid handoff while preserving grant revocation', async () => {
+  const fx = temporaryDatabase();
+  try {
+    const { delegation, budget, grant } = await admitRunningWork(fx.db);
+    const reservation = await budget.reserveCall(callFor(grant, 'route-recovery', 'call-recovery', 1000));
+    fx.db.prepare(`INSERT INTO recovery_domain_gates VALUES (?, 'epoch-copied', 'open', 'copied', 'witness-1', NULL, NULL, ?)`)
+      .run(DOMAIN, NOW);
+    expect(dispatchAllowed(fx.db, principal, NOW, { grantId: grant.grant_id, attemptId: grant.attempt_id, businessId: 'work:work-1' })).toBe(false);
+    expect(workResumeAllowed(fx.db, principal, NOW, 'work-1', 2)).toBe(false);
+    expect(await budget.claimPaidDispatch(reservation.reservation_id, grant.grant_id, grant.attempt_id, 'route-recovery')).toBe('denied');
+    await delegation.revokeGrant(grant.grant_id);
+    expect(fx.db.prepare('SELECT revoked_at FROM execution_grants WHERE grant_id=?').get(grant.grant_id)).toEqual({ revoked_at: NOW });
+  } finally { fx.close(); }
+});
+
+test('T22 denies new delegation authority on a blocked domain while owner pause remains available', async () => {
+  const fx = temporaryDatabase();
+  try {
+    const { delegation, mandate } = await admitRunningWork(fx.db);
+    fx.db.prepare(`INSERT INTO recovery_domain_gates VALUES (?, 'epoch-a', 'blocked', NULL, NULL, NULL, 'recovery', ?)`)
+      .run(DOMAIN, NOW);
+    await expect(delegation.openWork({ work_id: 'forbidden-work', generation: 1, mandate_id: mandate.mandate_id,
+      phase: 'judgment', next_action: 'judge', budget_micros: 1000 })).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    await expect(delegation.authorizeAction({ work_id: 'work-1', generation: 2, attempt_id: 'attempt-1', phase: 'judgment',
+      next_action: 'judge', allowed_effects: [], expires_at: '2026-11-17T00:00:00.000Z' })).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    await delegation.pauseMandate(mandate.mandate_id);
+    await expect(delegation.resumeMandate(mandate.mandate_id)).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(fx.db.prepare('SELECT status FROM mandates WHERE mandate_id=?').get(mandate.mandate_id)).toEqual({ status: 'paused' });
+    expect(fx.db.prepare("SELECT 1 FROM work_generations WHERE work_id='forbidden-work'").get()).toBeUndefined();
+  } finally { fx.close(); }
+});
+
+function admitRecoveryDomain(db: SqliteDatabase, domain: string) {
+  const admission = { domain, writerEpoch: `epoch-${domain}`, activationId: `activation-${domain}`, witnessRevision: `witness-${domain}` };
+  db.prepare(`INSERT INTO recovery_domain_gates VALUES (?, ?, 'open', ?, ?, NULL, NULL, ?)`)
+    .run(domain, admission.writerEpoch, admission.activationId, admission.witnessRevision, NOW);
+  createRecoveryRuntimeGate(db).admit(admission);
+}
+
+test('T22 checks the target work domain when another visible domain is admitted', async () => {
+  const fx = temporaryDatabase();
+  try {
+    await admitRunningWork(fx.db);
+    const other = 'company';
+    fx.db.prepare('UPDATE work_generations SET data_domain=? WHERE work_id=?').run(other, 'work-1');
+    admitRecoveryDomain(fx.db, DOMAIN);
+    fx.db.prepare(`INSERT INTO recovery_domain_gates VALUES (?, 'epoch-b', 'blocked', NULL, NULL, NULL, 'recovery', ?)`)
+      .run(other, NOW);
+    const delegation = createDelegationApi(fx.db, { ...principal, domains: [DOMAIN, other] }, { domain: DOMAIN, now: () => new Date(NOW) });
+    await expect(delegation.setWorkGate('work-1', 2, { evidence_ready: true })).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(fx.db.prepare('SELECT evidence_ready FROM work_generations WHERE work_id=?').get('work-1')).toEqual({ evidence_ready: 0 });
+  } finally { fx.close(); }
+});
+
+test('T22 rechecks every consultation domain after acquiring the write transaction', async () => {
+  const fx = temporaryDatabase();
+  try {
+    admitRecoveryDomain(fx.db, DOMAIN);
+    const other = 'company';
+    admitRecoveryDomain(fx.db, other);
+    const delegation = createDelegationApi(fx.db, { ...principal, domains: [DOMAIN, other] }, { domain: DOMAIN, now: () => {
+      fx.db.prepare("UPDATE recovery_domain_gates SET status='blocked' WHERE data_domain=?").run(other);
+      return new Date(NOW);
+    } });
+    await expect(delegation.openConsultation({ request_id: 'race-consultation', caller_id: 'web', parent_work_id: null,
+      result_version: 1, domains: [DOMAIN, other], tools: [], deadline_at: '2026-11-20T00:00:00.000Z',
+      budget_micros: 1000, permission_revision: 1 })).rejects.toThrow('RECOVERY_WRITE_BLOCKED');
+    expect(fx.db.prepare('SELECT 1 FROM consultations WHERE request_id=?').get('race-consultation')).toBeUndefined();
+    expect(fx.db.prepare('SELECT 1 FROM business_budgets WHERE business_id=?').get('consultation:race-consultation')).toBeUndefined();
+  } finally { fx.close(); }
+});

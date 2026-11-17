@@ -12,3 +12,5 @@ export { acceptCommand, commandFingerprint, recordCommand } from './commands.js'
 export type { AcceptedCommand, CommandReceipt, InboxCommand } from './commands.js';
 export { ackOutbox, appendDomainEvent } from './outbox.js';
 export type { DomainEventInput } from './outbox.js';
+export { assertRecoveryWriteAllowed, createRecoveryRuntimeGate, recoveryWriteAllowed } from './recovery-gate.js';
+export type { RecoveryRuntimeAdmission } from './recovery-gate.js';

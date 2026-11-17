@@ -1,8 +1,7 @@
-import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { StatsPage } from '../features/stats/StatsPage.js';
-import { KnowledgePage } from '../features/knowledge/KnowledgePage.js';
-import { StandardsPage } from '../features/standards/StandardsPage.js';
-import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
+import { NotificationPanel } from '../features/system/NotificationPanel.js';
+import { DiagnosticsPanel } from '../features/system/DiagnosticsPanel.js';
+import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
 import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
@@ -14,6 +13,9 @@ import type { RouteObject } from 'react-router';
 import type { ReactNode } from 'react';
 import { useService, asClientError } from '../api/query.js';
 import { LocalizedError, SafeMarkdown, ScopePreview, StatusEvidence } from '../components/shared.js';
+import { KnowledgePage } from '../features/knowledge/KnowledgePage.js';
+import { StandardsPage } from '../features/standards/StandardsPage.js';
+import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
 import { useLocale } from '../i18n/LocaleProvider.js';
 import type { MessageKey } from '../i18n/locale.js';
 import { AppShell, LanguageSelect, NavigationLink } from './AppShell.js';
@@ -97,6 +99,9 @@ function SystemPage() {
           {t(health.isFetching ? 'status.refreshing' : 'button.refreshStatus')}
         </button>
         <ChangeReceipt system />
+        <NotificationPanel />
+        <DiagnosticsPanel writeAttachment={(api, request, signal) =>
+          api.writeAttachment('exportDiagnostics', {}, request, { signal })} />
       </>}
     </section>
   </Authenticated></PageFrame>;

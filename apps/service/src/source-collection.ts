@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { SourceRegistry } from '@patrick/integrations/sources/registry';
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 
-type Candidate = { source_id: string; config_revision: number; frequency: string };
+type Candidate = {
+  source_id: string; config_revision: number; frequency: string; account_id: string; data_domain: string;
+  connector_type: string; normalized_target: string; physical_root: string; scope_json: string;
+};
 type Claim = Candidate & { token: string };
 const leaseMs = 45_000;
 const min = 60_000;
@@ -21,13 +24,18 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
     const at = now();
     const stamp = at.toISOString();
     return withImmediateTransaction(db, () => {
-      const row = db.prepare(`SELECT c.source_id,c.config_revision,c.frequency FROM source_configs c
+      const candidates = db.prepare(`SELECT c.source_id,c.config_revision,c.frequency,c.account_id,c.data_domain,
+        c.connector_type,c.normalized_target,c.physical_root,c.scope_json FROM source_configs c
         LEFT JOIN http_source_schedule s USING(source_id)
         WHERE c.connector_type IN ('rss','webpage') AND c.enabled=1 AND c.status='enabled'
         AND (s.lease_until IS NULL OR s.lease_until<=?)
         AND (s.source_id IS NULL OR s.config_revision<>c.config_revision OR s.next_at<=?)
-        ORDER BY CASE WHEN s.config_revision=c.config_revision THEN s.next_at ELSE c.updated_at END,c.source_id LIMIT 1`)
-        .get(stamp, stamp) as Candidate | undefined;
+        ORDER BY CASE WHEN s.config_revision=c.config_revision THEN s.next_at ELSE c.updated_at END,c.source_id`)
+        .iterate(stamp, stamp) as IterableIterator<Candidate>;
+      let row: Candidate | undefined;
+      for (const candidate of candidates) {
+        if (recoveryWriteAllowed(db, candidate.data_domain)) { row = candidate; break; }
+      }
       if (!row) return;
       const token = randomUUID();
       db.prepare(`INSERT INTO http_source_schedule(source_id,config_revision,lease_token,lease_until,next_at)
@@ -44,9 +52,19 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
     try {
       const work = claim();
       if (!work) return false;
-      const isLive = () => !signal.aborted && !!db.prepare(`SELECT 1 FROM http_source_schedule
-        WHERE source_id=? AND config_revision=? AND lease_token=? AND lease_until>?`)
-        .get(work.source_id, work.config_revision, work.token, now().toISOString());
+      const isLive = () => {
+        if (signal.aborted) return false;
+        const current = db.prepare(`SELECT c.data_domain FROM http_source_schedule s
+          JOIN source_configs c USING(source_id)
+          WHERE s.source_id=? AND s.config_revision=? AND s.lease_token=? AND s.lease_until>?
+            AND c.config_revision=s.config_revision AND c.enabled=1 AND c.status='enabled'
+            AND c.account_id=? AND c.data_domain=? AND c.connector_type=? AND c.normalized_target=?
+            AND c.physical_root=? AND c.scope_json=? AND c.frequency=?`)
+          .get(work.source_id, work.config_revision, work.token, now().toISOString(),
+            work.account_id, work.data_domain, work.connector_type, work.normalized_target,
+            work.physical_root, work.scope_json, work.frequency) as { data_domain: string } | undefined;
+        return Boolean(current && recoveryWriteAllowed(db, current.data_domain));
+      };
       try {
         await registry.collectSource(work.source_id, work.config_revision, { isLive, signal });
       } finally {

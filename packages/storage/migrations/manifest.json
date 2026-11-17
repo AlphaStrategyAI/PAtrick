@@ -58,5 +58,21 @@
   {
     "file": "0020_http_sources.sql",
     "sha256": "c7ef66ba19c6fceabbe3f9b9108471dab634b09b4381db2f01b44a60395512f1"
+  },
+  {
+    "file": "0021_notifications.sql",
+    "sha256": "bfa45aaed7deaaea3c5fe04911774ebb2f593ccdab1ec0b49e1c208fb9ceefcc"
+  },
+  {
+    "file": "0022_network.sql",
+    "sha256": "238106799eba976ae30ca3d00b391bf56ea383c2361feabf592d32129123aa94"
+  },
+  {
+    "file": "0023_recovery.sql",
+    "sha256": "180e72b7b4c1a8ef3a580850b827104a3e5e290ed68dbc784cb339b657e819f2"
+  },
+  {
+    "file": "0024_settings_recoveries.sql",
+    "sha256": "a2e4c46c207056d3b4beb484c1431f3ebdaf553b2aab3caa483f594a5151a667"
   }
 ]

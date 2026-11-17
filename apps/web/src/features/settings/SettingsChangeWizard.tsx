@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Json } from '@patrick/contracts/envelope';
-import { settingsControlSchema, settingsValidationSchema } from '@patrick/contracts/resources';
+import { settingsControlSchema, settingsRecoveryReceiptSchema, settingsValidationSchema } from '@patrick/contracts/resources';
 import { asClientError, useService } from '../../api/query.js';
 import { ConnectionWizard, LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
@@ -13,12 +14,14 @@ type Proof = ReturnType<typeof settingsValidationSchema.parse>;
 type Proposal = ReturnType<typeof settingsControlSchema.parse> & { challengeId: string };
 const steps = ['settings.stepTarget', 'settings.stepValidation', 'settings.stepConfirmation'] as const satisfies readonly MessageKey[];
 
-export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged, receiptQuery }: {
+export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged, receiptQuery, recoveryChangeId }: {
   operation: string; targets: Target[]; entryLabel: MessageKey; onChanged: () => void; receiptQuery?: Readonly<Record<string, string>>;
+  recoveryChangeId?: string;
 }) {
   const { api, scope, accessGeneration } = useService();
   const { t, locale } = useLocale();
   const [, setSearch] = useSearchParams();
+  const queries = useQueryClient();
   const [step, setStep] = useState(0);
   const [selectedId, setSelectedId] = useState('');
   const [proof, setProof] = useState<Proof>();
@@ -92,15 +95,23 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
     const receiptId = confirmation.data && typeof confirmation.data === 'object' && 'control_receipt_id' in confirmation.data
       ? confirmation.data.control_receipt_id : undefined;
     if (typeof receiptId !== 'string') throw new Error('Malformed control receipt');
-    const change = await api.command('applySettingsChanges', {}, {
-      client_request_id: ids.apply, expected_revision: proposal.object_revision,
-      payload: { draft, validation_id: proof.validation_id, control_receipt_id: receiptId },
-    }, { signal });
+    const changePayload = { draft, validation_id: proof.validation_id, control_receipt_id: receiptId };
+    let changeId: string;
+    if (recoveryChangeId) {
+      const recovered = await api.write('recoverSettingsChange', { id: recoveryChangeId },
+        await safeEnvelope(changePayload, proposal.object_revision, ids.apply), { signal }) as { data: unknown };
+      changeId = settingsRecoveryReceiptSchema.parse(recovered.data).receipt.change_id;
+    } else {
+      const change = await api.command('applySettingsChanges', {}, {
+        client_request_id: ids.apply, expected_revision: proposal.object_revision, payload: changePayload,
+      }, { signal });
+      changeId = change.command_id;
+    }
     signal.throwIfAborted();
     setSearch((previous) => {
       const next = new URLSearchParams(previous);
       for (const [key, value] of Object.entries(receiptQuery ?? {})) next.set(key, value);
-      next.set('change', change.command_id);
+      next.set('change', changeId);
       return next;
     });
     finalIds.current = undefined;
@@ -108,6 +119,8 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
     setSelectedId('');
     setProof(undefined);
     setProposal(undefined);
+    void queries.invalidateQueries({ predicate: ({ queryKey }) =>
+      queryKey.some((item) => ['getSettings', 'getSettingsChange', 'getSystemIncident', 'getSettingsRecovery'].includes(String(item))) });
     onChanged();
   }
 
@@ -136,10 +149,11 @@ export function SettingsChangeWizard({ operation, targets, entryLabel, onChanged
       <p>{t('settings.reviewExactChange')}</p>
       <p><code>{proposal.proposal_hash}</code></p>
       <button type="button" className="primary" disabled={busy || !selected} onClick={() => { void run(confirm); }}>
-        {t('settings.confirmApply')}
+        {t(recoveryChangeId ? 'network.confirmRecovery' : 'settings.confirmApply')}
       </button>
     </>}
   </ConnectionWizard>;
 }
 
-const targetKey = ({ target, device }: Target) => JSON.stringify([target, device]);
+const targetKey = ({ target, device, input }: Target) =>
+  JSON.stringify(input === undefined ? [target, device] : [target, device, input]);

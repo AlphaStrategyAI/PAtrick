@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/credentials.ts"
+    ".": "./src/credentials.ts",
+    "./recovery": "./src/recovery/index.ts"
   }
 }

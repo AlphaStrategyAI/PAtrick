@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { canonicalPayload } from '@patrick/contracts';
-import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
+import { appendDomainEvent, assertRecoveryWriteAllowed, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { listSamples, samplePath, scanDirectory, stabilityDecision, type StabilitySample } from './directory.js';
 import { readRegisteredHttp, sourceUrl, type HttpReadPort, type RegisteredHttpSource } from './http-read.js';
 import { parseFeed } from './rss.js';
@@ -230,7 +230,8 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     return row;
   }
 
-  function rejected(source: Pick<SourceRecord, 'source_id' | 'config_revision'> | undefined, sourceId: string, configRevision: number, cursor: string, reason: string): CollectionReceipt {
+  function rejected(source: Pick<SourceRecord, 'source_id' | 'config_revision'> | undefined, sourceId: string, configRevision: number, cursor: string, reason: string,
+    observedAt = clock()): CollectionReceipt {
     return {
       eventId: '',
       sourceId: source?.source_id ?? sourceId,
@@ -239,7 +240,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       cursor,
       count: 0,
       evidenceRef: null,
-      observedAt: clock(),
+      observedAt,
       accepted: false,
       reason,
     };
@@ -299,10 +300,27 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
   function gate(sourceId: string, configRevision: number): { source: SourceRecord; cursor: CursorRecord } | CollectionReceipt {
     const source = load(sourceId);
     if (!source) throw new Error('SOURCE_NOT_FOUND');
+    assertRecoveryWriteAllowed(db, source.data_domain);
     const cursor = loadCursor(sourceId);
     if (source.status !== 'enabled') return rejected(source, sourceId, configRevision, cursor.cursor, statusReason(source.status));
     if (source.config_revision !== configRevision) return rejected(source, sourceId, configRevision, cursor.cursor, 'STALE_REVISION');
     return { source, cursor };
+  }
+
+  function finalCollection(source: SourceRecord, configRevision: number, observedAt: string): { source: SourceRecord; cursor: CursorRecord } | CollectionReceipt {
+    const current = load(source.source_id);
+    const cursor = loadCursor(source.source_id);
+    if (!current || current.status !== 'enabled') {
+      return rejected(current, source.source_id, configRevision, cursor.cursor, statusReason(current?.status), observedAt);
+    }
+    assertRecoveryWriteAllowed(db, current.data_domain);
+    if (current.config_revision !== configRevision) {
+      return rejected(current, source.source_id, configRevision, cursor.cursor, 'STALE_REVISION', observedAt);
+    }
+    if (canonicalPayload(current) !== canonicalPayload(source)) {
+      return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_IDENTITY_CHANGED', observedAt);
+    }
+    return { source: current, cursor };
   }
 
   function isReceipt(value: { source: SourceRecord; cursor: CursorRecord } | CollectionReceipt): value is CollectionReceipt {
@@ -520,6 +538,12 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     return row?.content_hash ?? null;
   }
 
+  function assertSourceWrite(sourceId: string): void {
+    const source = load(sourceId);
+    if (!source) throw new Error('SOURCE_NOT_FOUND');
+    assertRecoveryWriteAllowed(db, source.data_domain);
+  }
+
   async function stage(sourceId: string, files: Array<{ locator: string; stable: boolean; bytes?: Uint8Array }>): Promise<{
     changed: PendingObject[];
     onDisk: Set<string>;
@@ -540,6 +564,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         file.locator,
       ) as { tombstone: number } | undefined;
       if ((!existing || existing.tombstone === 0) && latestHash(sourceId, file.locator) === hash) continue;
+      assertSourceWrite(sourceId);
       await options.blobs.putBlob(file.bytes);
       changed.push({ locator: file.locator, bytes: file.bytes, hash });
     }
@@ -560,25 +585,25 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
   }): CollectionReceipt {
     return withImmediateTransaction(db, () => {
       options.beforeCursorCommit?.();
-      const current = load(input.source.source_id);
-      const cursor = loadCursor(input.source.source_id);
-      if (!current || current.status !== 'enabled') {
-        return rejected(current, input.source.source_id, input.configRevision, cursor.cursor, statusReason(current?.status));
+      const prepared = load(input.source.source_id);
+      if (input.httpEvidence && prepared?.status === 'enabled' && prepared.config_revision === input.configRevision) {
+        if (!isHttpConnector(prepared.connector_type)) throw new Error('SOURCE_TYPE_INVALID');
+        checkHttpScope({ accountId: prepared.account_id, dataDomain: prepared.data_domain },
+          prepared.normalized_target, prepared.connector_type, parseScope(prepared.scope_json));
       }
-      if (current.config_revision !== input.configRevision) {
-        return rejected(current, input.source.source_id, input.configRevision, cursor.cursor, 'STALE_REVISION');
-      }
-      if (input.guard && !input.guard.isLive()) {
-        return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_LEASE_CHANGED');
+      const observedAt = clock();
+      const leaseLive = !input.guard || (input.guard.isLive() && !input.guard.signal.aborted);
+      const live = finalCollection(input.source, input.configRevision, observedAt);
+      if (isReceipt(live)) return live;
+      const { source: current, cursor } = live;
+      if (!leaseLive) {
+        return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_LEASE_CHANGED', observedAt);
       }
       let baseline: Map<string, string> | null = null;
       if (input.httpEvidence) {
-        if (!isHttpConnector(current.connector_type)) throw new Error('SOURCE_TYPE_INVALID');
-        checkHttpScope({ accountId: current.account_id, dataDomain: current.data_domain },
-          current.normalized_target, current.connector_type, parseScope(current.scope_json));
         baseline = httpBaselineFor(current.source_id);
         if (!input.httpEvidence.baselineAlreadyObserved && baseline) {
-          return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_BASELINE_CHANGED');
+          return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_BASELINE_CHANGED', observedAt);
         }
         if (!baseline) {
           db.prepare('INSERT INTO http_source_baselines(source_id,entries) VALUES (?,?)')
@@ -588,9 +613,8 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       }
       if (input.deliveryId) {
         const duplicate = db.prepare('SELECT 1 AS ok FROM webhook_deliveries WHERE event_id = ?').get(input.deliveryId);
-        if (duplicate) return rejected(current, input.source.source_id, input.configRevision, cursor.cursor, 'DUPLICATE_EVENT');
+        if (duplicate) return rejected(current, input.source.source_id, input.configRevision, cursor.cursor, 'DUPLICATE_EVENT', observedAt);
       }
-      const observedAt = clock();
       let count = 0;
       for (const object of input.changed) {
         if (baseline && !eligibleHttpItem(current.source_id, baseline, object.locator, object.hash)) continue;
@@ -773,13 +797,13 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
 
   function recordIgnored(source: SourceRecord, deliveryId: string, reason: string): CollectionReceipt {
     return withImmediateTransaction(db, () => {
-      const current = load(source.source_id);
-      const cursor = loadCursor(source.source_id);
-      if (!current || current.status !== 'enabled') return rejected(current, source.source_id, source.config_revision, cursor.cursor, statusReason(current?.status));
       const duplicate = db.prepare('SELECT 1 AS ok FROM webhook_deliveries WHERE event_id = ?').get(deliveryId);
-      if (duplicate) return rejected(current, source.source_id, current.config_revision, cursor.cursor, 'DUPLICATE_EVENT');
-      rememberDelivery(current.source_id, deliveryId, clock());
-      return rejected(current, source.source_id, current.config_revision, cursor.cursor, reason);
+      if (duplicate) return rejected(source, source.source_id, source.config_revision, loadCursor(source.source_id).cursor, 'DUPLICATE_EVENT');
+      const observedAt = clock();
+      const live = finalCollection(source, source.config_revision, observedAt);
+      if (isReceipt(live)) return live;
+      rememberDelivery(live.source.source_id, deliveryId, observedAt);
+      return rejected(live.source, source.source_id, live.source.config_revision, live.cursor.cursor, reason, observedAt);
     });
   }
 
@@ -804,11 +828,15 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     catch (error) {
       const reason = error instanceof Error && sourceReadFailures.has(error.message) ? error.message : 'SOURCE_HTTP_UNAVAILABLE';
       return withImmediateTransaction(db, () => {
-        const live = gate(source.source_id, configRevision);
+        const observedAt = clock();
+        const leaseLive = !guard || (guard.isLive() && !guard.signal.aborted);
+        const live = finalCollection(source, configRevision, observedAt);
         if (isReceipt(live)) return live;
-        if (guard && !guard.isLive()) return rejected(live.source, source.source_id, configRevision, live.cursor.cursor, 'SOURCE_LEASE_CHANGED');
+        if (!leaseLive) {
+          return rejected(live.source, source.source_id, configRevision, live.cursor.cursor, 'SOURCE_LEASE_CHANGED', observedAt);
+        }
         const prior = db.prepare('SELECT COUNT(*) AS n FROM collection_receipts WHERE source_id=?').get(source.source_id) as { n: number };
-        const failed = { ...rejected(live.source, source.source_id, configRevision, live.cursor.cursor, reason),
+        const failed = { ...rejected(live.source, source.source_id, configRevision, live.cursor.cursor, reason, observedAt),
           eventId: `collect:${source.source_id}:${configRevision}:failure:${prior.n + 1}` };
         insertReceipt(db, failed);
         return failed;
@@ -823,6 +851,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     const previous = frozenBaseline ?? new Map(fingerprints);
     const items = read.items.filter(({ locator, bytes }) => eligibleHttpItem(source.source_id, previous, locator, sha256(bytes)));
     const staged = await stage(source.source_id, items);
+    assertSourceWrite(source.source_id);
     const hash = await options.blobs.putBlob(read.raw.bytes);
     return commitSweep({ source, configRevision, ...staged, guard, confirmDeletes: false, evidenceRef: hash,
       httpEvidence: { hash, length: read.raw.bytes.byteLength, url: read.raw.url, contentType: read.contentType, baseline: fingerprints, baselineAlreadyObserved: frozenBaseline !== null } });
@@ -870,10 +899,15 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     });
   }
 
-  function rssSource(actor: RssHistoryActor, sourceId: string, revision: number) {
+  function rssSourceRow(actor: RssHistoryActor, sourceId: string, revision: number) {
     const row = scopedHttp(actor, sourceId);
     if (row.connector_type !== 'rss') throw new Error('SOURCE_HISTORY_INVALID');
     if (row.config_revision !== revision || row.status !== 'enabled') throw new Error('SOURCE_HISTORY_STALE');
+    return row;
+  }
+
+  function rssSource(actor: RssHistoryActor, sourceId: string, revision: number) {
+    const row = rssSourceRow(actor, sourceId, revision);
     return { row, scope: { sourceId, accountId: actor.accountId, dataDomain: actor.dataDomain,
       target: row.normalized_target, allowedUrls: checkHttpScope(actor, row.normalized_target, 'rss', parseScope(row.scope_json)) } };
   }
@@ -919,18 +953,26 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       FROM http_source_history_receipts WHERE plan_id=?`).get(planId) as RssHistoryReceipt | undefined ?? null;
   }
 
-  function requireHistory(actor: RssHistoryActor, planId: string, planHash: string) {
+  function loadHistory(actor: RssHistoryActor, planId: string, planHash: string, observedAt: string) {
     const plan = historyRow(actor, planId);
     verifiedHistorySummary(plan);
-    if (plan.plan_hash !== planHash || plan.expires_at <= clock()) {
+    if (plan.plan_hash !== planHash || plan.expires_at <= observedAt) {
       throw new Error('SOURCE_HISTORY_STALE');
     }
-    const source = rssSource(actor, plan.source_id, plan.config_revision);
+    const row = rssSourceRow(actor, plan.source_id, plan.config_revision);
     const evidence = rssEvidence(plan.source_id, plan.config_revision, plan.evidence_event_id);
-    if (plan.response_hash !== evidence.response_hash || !source.scope.allowedUrls.includes(evidence.response_url)) {
+    if (plan.response_hash !== evidence.response_hash || !parseScope(row.scope_json).httpTargets?.includes(evidence.response_url)) {
       throw new Error('SOURCE_HISTORY_STALE');
     }
-    return { plan, ...source, evidence };
+    return { plan, row, evidence };
+  }
+
+  function requireHistory(actor: RssHistoryActor, planId: string, planHash: string) {
+    const current = loadHistory(actor, planId, planHash, clock());
+    const { row } = current;
+    const scope = { sourceId: row.source_id, accountId: actor.accountId, dataDomain: actor.dataDomain,
+      target: row.normalized_target, allowedUrls: checkHttpScope(actor, row.normalized_target, 'rss', parseScope(row.scope_json)) };
+    return { ...current, scope };
   }
 
   async function verifyFrozenHistory({ plan, scope, evidence }: ReturnType<typeof requireHistory>) {
@@ -969,7 +1011,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       // The route writes its command and freezes the plan in the same transaction.
       if (!db.inTransaction) throw new Error('SOURCE_HISTORY_WRITE_FENCE');
       const { sourceId, configRevision, selection } = prepared;
-      const { scope } = rssSource(actor, sourceId, configRevision);
+      const { row, scope } = rssSource(actor, sourceId, configRevision);
       const evidence = latestRssEvidence(sourceId, configRevision);
       const plan = selection.plan;
       if (evidence.event_id !== prepared.evidence.event_id || evidence.response_hash !== plan.responseHash ||
@@ -982,6 +1024,12 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       const planHash = historyPlanDigest({ plan_id: planId, caller_id: actor.callerId, auth_epoch: actor.authEpoch,
         config_revision: configRevision, evidence_event_id: evidence.event_id, expires_at: expiresAt, selection_hash: selection.planHash }, displayed);
       const summary: HistorySummary = { ...displayed, plan_hash: planHash };
+      const current = rssSourceRow(actor, sourceId, configRevision);
+      const currentEvidence = latestRssEvidence(sourceId, configRevision);
+      if (canonicalPayload(current) !== canonicalPayload(row) || canonicalPayload(currentEvidence) !== canonicalPayload(evidence)) {
+        throw new Error('SOURCE_HISTORY_STALE');
+      }
+      assertRecoveryWriteAllowed(db, current.data_domain);
       db.prepare(`INSERT INTO http_source_history_plans (plan_id,source_id,account_id,data_domain,caller_id,auth_epoch,
         config_revision,evidence_event_id,response_hash,selection_hash,plan_hash,summary,expires_at,created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(planId, sourceId, actor.accountId, actor.dataDomain, actor.callerId, actor.authEpoch,
@@ -1014,6 +1062,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         beforeWrite();
         return { receipt: prior, created: false };
       });
+      assertRecoveryWriteAllowed(db, checked.row.data_domain);
       const selection = await verifyFrozenHistory(checked);
       const staged: PendingObject[] = [];
       const existing = db.prepare('SELECT 1 FROM source_objects WHERE source_id=? AND locator=?');
@@ -1021,6 +1070,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         // Any current entry takes precedence over the frozen historical copy.
         if (existing.get(plan.source_id, object.key)) continue;
         const bytes = Buffer.from(object.payload);
+        assertSourceWrite(plan.source_id);
         const hash = await options.blobs.putBlob(bytes);
         if (hash !== selection.plan.items[index].contentHash) throw new Error('SOURCE_HISTORY_EVIDENCE_REQUIRED');
         staged.push({ locator: object.key, bytes, hash });
@@ -1035,9 +1085,20 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         const appliedAt = beforeWrite();
         const receipt = historyReceipt(planId);
         if (receipt) return { receipt, created: false };
+        checkHttpScope(actor, checked.row.normalized_target, 'rss', parseScope(checked.row.scope_json));
+        const observedAt = clock();
+        const completed = historyReceipt(planId);
+        if (completed) return { receipt: completed, created: false };
+        const live = loadHistory(actor, planId, planHash, observedAt);
+        if (canonicalPayload(live.plan) !== canonicalPayload(current.plan) ||
+            canonicalPayload(live.row) !== canonicalPayload(checked.row) ||
+            canonicalPayload(live.evidence) !== canonicalPayload(checked.evidence)) {
+          throw new Error('SOURCE_HISTORY_STALE');
+        }
+        assertRecoveryWriteAllowed(db, live.row.data_domain);
         let imported = 0;
         for (const object of staged) {
-          if (!existing.get(plan.source_id, object.locator) && applyContent(current.row, object, appliedAt, false)) imported++;
+          if (!existing.get(live.plan.source_id, object.locator) && applyContent(live.row, object, appliedAt, false)) imported++;
         }
         const record: RssHistoryReceipt = { receipt_id: 'receipt_' + planId, applied_at: appliedAt,
           selected_objects: selection.objects.length, imported_objects: imported, existing_objects: selection.objects.length - imported };
@@ -1074,20 +1135,26 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
 
     changeHttpSource(principal, sourceId, operation, expectedRevision, frequency, beforeWrite) {
       return withImmediateTransaction(db, () => {
-        const row = scopedHttp(principal, sourceId);
-        if (row.config_revision !== expectedRevision) throw new Error('SOURCE_REVISION_CONFLICT');
-        if (row.status === 'disconnected') throw new Error('SOURCE_DISCONNECTED');
+        const prepared = scopedHttp(principal, sourceId);
+        if (prepared.config_revision !== expectedRevision) throw new Error('SOURCE_REVISION_CONFLICT');
+        if (prepared.status === 'disconnected') throw new Error('SOURCE_DISCONNECTED');
         if (operation === 'modify') {
           if (!httpFrequencies.some((option) => option === frequency)) throw new Error('SOURCE_FREQUENCY_INVALID');
         } else if (frequency !== undefined || !['pause', 'resume', 'disconnect'].includes(operation)) {
           throw new Error('SOURCE_HTTP_SCOPE_INVALID');
         }
-        const nextStatus = operation === 'modify' ? row.status : operation === 'pause' ? 'paused' :
-          operation === 'resume' ? 'enabled' : 'disconnected';
         if (operation === 'resume' || operation === 'modify') {
-          checkHttpScope(principal, row.normalized_target, row.connector_type, parseScope(row.scope_json));
+          checkHttpScope(principal, prepared.normalized_target, prepared.connector_type, parseScope(prepared.scope_json));
         }
         const observedAt = beforeWrite();
+        if (operation === 'resume' || operation === 'modify') {
+          checkHttpScope(principal, prepared.normalized_target, prepared.connector_type, parseScope(prepared.scope_json));
+        }
+        const row = scopedHttp(principal, sourceId);
+        if (canonicalPayload(row) !== canonicalPayload(prepared)) throw new Error('SOURCE_REVISION_CONFLICT');
+        if (operation === 'resume' || operation === 'modify') assertRecoveryWriteAllowed(db, row.data_domain);
+        const nextStatus = operation === 'modify' ? row.status : operation === 'pause' ? 'paused' :
+          operation === 'resume' ? 'enabled' : 'disconnected';
         const nextFrequency = frequency ?? row.frequency;
         if (row.status === nextStatus && row.frequency === nextFrequency) {
           return { changed: false, revision: row.config_revision, status: row.status };
@@ -1117,6 +1184,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         const observedAt = guard?.beforeWrite() ?? clock();
         const existing = sameRoot(principal, normalized);
         if (existing) return receiptForExisting(existing);
+        assertRecoveryWriteAllowed(db, principal.dataDomain);
         if (overlaps(normalized.physicalRoot)) throw new Error('SOURCE_ROOT_TAKEN');
         const sourceId = `src_${sha256(Buffer.from(`${principal.accountId}\0${principal.dataDomain}\0${normalized.physicalRoot}`)).slice(0, 24)}`;
         const baseline = `baseline:${draftHash}`;
@@ -1227,6 +1295,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       } catch {
         return rejected(source, input.sourceId, input.configRevision, cursor.cursor, 'GITHUB_PAYLOAD_INVALID');
       }
+      assertRecoveryWriteAllowed(db, source.data_domain);
       const classified = classifyGithubPayload(payload);
       if (classified.origin !== 'source') return recordIgnored(source, input.deliveryId, 'IGNORED_ORIGIN');
       if (source.status !== 'enabled' || source.config_revision !== input.configRevision) {
@@ -1262,6 +1331,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     async wakeDirectory(sourceId, relativePath) {
       const source = load(sourceId);
       if (!source || source.connector_type !== 'directory') throw new Error('SOURCE_NOT_FOUND');
+      assertRecoveryWriteAllowed(db, source.data_domain);
       if (source.status !== 'enabled') return { read: false, receipt: null };
       const root = parseScope(source.scope_json).root;
       if (!root) throw new Error('SOURCE_SCOPE_INVALID');

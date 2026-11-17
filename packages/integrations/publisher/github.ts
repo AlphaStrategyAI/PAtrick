@@ -32,11 +32,11 @@ function validTreeMode(type: unknown, mode: unknown) {
     || (type === 'tree' && mode === '040000') || (type === 'commit' && mode === '160000');
 }
 
-export function createGitHubClient({ fetch: fetchPort = globalThis.fetch, authorization, writeAuthorization, requireWriteAuthorization = false, branchAuthority: configuredAuthority }: {
+export function createGitHubClient({ fetch: fetchPort = globalThis.fetch, authorization, writeAuthorization, assertWriteAllowed, branchAuthority: configuredAuthority }: {
   fetch?: typeof globalThis.fetch;
   authorization?: () => string | Promise<string>;
   writeAuthorization?: () => string | Promise<string>;
-  requireWriteAuthorization?: boolean;
+  assertWriteAllowed?: () => void;
   branchAuthority?: BranchWriteAuthority;
 } = {}) {
   const authority = configuredAuthority ? { ...configuredAuthority } : null;
@@ -46,14 +46,15 @@ export function createGitHubClient({ fetch: fetchPort = globalThis.fetch, author
 
   async function request(path: string, method = 'GET', body?: JsonRecord, allowMissing = false) {
     const headers = new Headers({ accept: 'application/vnd.github+json', 'x-github-api-version': apiVersion });
-    const credential = method === 'GET' ? authorization : writeAuthorization ?? (requireWriteAuthorization ? undefined : authorization);
-    if (method !== 'GET' && requireWriteAuthorization && !credential) throw new Error('PUBLICATION_WRITES_DISABLED');
+    const credential = method === 'GET' ? authorization : writeAuthorization;
+    if (method !== 'GET' && (!credential || !assertWriteAllowed)) throw new Error('PUBLICATION_WRITES_DISABLED');
     if (credential) {
       const secret = await credential();
       if (!secret.trim()) throw new Error('GITHUB_CREDENTIAL_REQUIRED');
       headers.set('authorization', `Bearer ${secret}`);
     }
     if (body) headers.set('content-type', 'application/json');
+    if (method !== 'GET') assertWriteAllowed!();
     const response = await fetchPort(origin + path, {
       method, headers, body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(15_000),
     });

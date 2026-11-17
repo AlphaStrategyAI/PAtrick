@@ -79,7 +79,7 @@ test('a drained exit 0 with one final is the only completed run', () => {
 
 test('a final message followed by exit 1 is not success', async () => {
   await withDir(async (dir) => {
-    const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 1)), workGrant());
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 1)));
     expect(receipt.classification).toBe('technical_failure');
     expect(readJson(receipt.persisted_path).classification).toBe('technical_failure');
     expect(existsSync(join(dir, 'policy_wait', 'attempt-1.json'))).toBe(false);
@@ -88,7 +88,7 @@ test('a final message followed by exit 1 is not success', async () => {
 
 test('a final message without process exit is not success', async () => {
   await withDir(async (dir) => {
-    const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, null, false)), workGrant());
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, null, false)));
     expect(receipt.classification).toBe('technical_failure');
     expect(receipt.exit_code).toBeNull();
   });
@@ -97,7 +97,7 @@ test('a final message without process exit is not success', async () => {
 test('a missing bundle is not success and does not send', async () => {
   await withDir(async (dir) => {
     const paid = blockingPaid();
-    const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { bundle_present: false, paid: paid.dispatch }), workGrant());
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { bundle_present: false, paid: paid.dispatch }));
     expect(receipt.classification).toBe('technical_failure');
     expect(paid.sends).toEqual([]);
     expect(bundleFingerprint(join(dir, 'missing-bundle')).present).toBe(false);
@@ -111,7 +111,7 @@ test('empty usage is not success', async () => {
       '{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}',
       '{"type":"turn.completed","usage":{}}',
     ].join('\n');
-    const receipt = await runAttempt(workSnapshot(dir, observed(stdout, 0)), workGrant());
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(stdout, 0)));
     expect(receipt.classification).toBe('technical_failure');
     expect(receipt.usage).toBeNull();
   });
@@ -120,10 +120,10 @@ test('empty usage is not success', async () => {
 test('unsupported resume is not success and does not send', async () => {
   await withDir(async (dir) => {
     const paid = blockingPaid();
-    const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0), {
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0), {
       resume: resumeProbe({ supported: false }),
       paid: paid.dispatch,
-    }), workGrant());
+    }));
     expect(receipt.classification).toBe('technical_failure');
     expect(paid.sends).toEqual([]);
     expect(resumeAllowed(workSnapshot(dir, null), workGrant(), resumeProbe({ supported: false }))).toBe(false);
@@ -132,7 +132,7 @@ test('unsupported resume is not success and does not send', async () => {
 
 test('controller policy_wait is stored apart from success', async () => {
   await withDir(async (dir) => {
-    const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { controller: 'policy_wait' }), workGrant());
+    const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { controller: 'policy_wait' }));
     expect(receipt.classification).toBe('policy_wait');
     expect(receipt.policy_wait_path).toBe(receipt.persisted_path);
     expect(readJson(receipt.persisted_path)).toMatchObject({ classification: 'policy_wait', origin: 'controller' });
@@ -142,28 +142,28 @@ test('controller policy_wait is stored apart from success', async () => {
 
 test('codex, grok, and dsh each accept only their own successful terminal', async () => {
   await withDir(async (dir) => {
-    const codex = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0)), workGrant());
+    const codex = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0)));
     expect(codex.classification).toBe('agent_completed');
     expect(codex.session_id).toBe('thread-fixture');
     const doubled = `${CODEX_OK}\n{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1,"cached_input_tokens":0}}`;
-    expect((await runAttempt(workSnapshot(dir, observed(doubled, 0), { ledger_dir: dir }), workGrant({ attempt_id: 'attempt-2' }))).classification).toBe('technical_failure');
+    expect((await runWorkAttempt(workSnapshot(dir, observed(doubled, 0), { ledger_dir: dir }), 'attempt-2')).classification).toBe('technical_failure');
 
-    const grok = await runAttempt(workSnapshot(dir, observed(GROK_OK, 0), { backend: 'grok' }), workGrant({ attempt_id: 'attempt-g' }));
+    const grok = await runWorkAttempt(workSnapshot(dir, observed(GROK_OK, 0), { backend: 'grok' }), 'attempt-g');
     expect(grok.classification).toBe('agent_completed');
     expect(grok.session_id).toBe('grok-fixture');
-    const grokExit = await runAttempt(workSnapshot(dir, observed(GROK_OK, 1), { backend: 'grok' }), workGrant({ attempt_id: 'attempt-gx' }));
+    const grokExit = await runWorkAttempt(workSnapshot(dir, observed(GROK_OK, 1), { backend: 'grok' }), 'attempt-gx');
     expect(grokExit.classification).toBe('technical_failure');
     const grokStop = GROK_OK.replace('end_turn', 'max_tokens');
-    expect((await runAttempt(workSnapshot(dir, observed(grokStop, 0), { backend: 'grok' }), workGrant({ attempt_id: 'attempt-gs' }))).classification).toBe('technical_failure');
+    expect((await runWorkAttempt(workSnapshot(dir, observed(grokStop, 0), { backend: 'grok' }), 'attempt-gs')).classification).toBe('technical_failure');
     const stream = '{"type":"end","stopReason":"end_turn","sessionId":"grok-fixture","usage":{"input_tokens":3,"output_tokens":1}}';
-    expect((await runAttempt(workSnapshot(dir, observed(stream, 0), { backend: 'grok' }), workGrant({ attempt_id: 'attempt-gst' }))).classification).toBe('agent_completed');
+    expect((await runWorkAttempt(workSnapshot(dir, observed(stream, 0), { backend: 'grok' }), 'attempt-gst')).classification).toBe('agent_completed');
 
-    const dsh = await runAttempt(workSnapshot(dir, observed(DSH_OK, 0), { backend: 'dsh' }), workGrant({ attempt_id: 'attempt-d' }));
+    const dsh = await runWorkAttempt(workSnapshot(dir, observed(DSH_OK, 0), { backend: 'dsh' }), 'attempt-d');
     expect(dsh.classification).toBe('agent_completed');
     expect(dsh.session_id).toBe('session-fixture');
     const aborted = DSH_OK.replace('"kind":"completed"', '"kind":"aborted"');
-    expect((await runAttempt(workSnapshot(dir, observed(aborted, 0), { backend: 'dsh' }), workGrant({ attempt_id: 'attempt-da' }))).classification).toBe('technical_failure');
-    expect((await runAttempt(workSnapshot(dir, observed(DSH_OK, 1), { backend: 'dsh' }), workGrant({ attempt_id: 'attempt-dx' }))).classification).toBe('technical_failure');
+    expect((await runWorkAttempt(workSnapshot(dir, observed(aborted, 0), { backend: 'dsh' }), 'attempt-da')).classification).toBe('technical_failure');
+    expect((await runWorkAttempt(workSnapshot(dir, observed(DSH_OK, 1), { backend: 'dsh' }), 'attempt-dx')).classification).toBe('technical_failure');
     expect(existsSync(join(dir, 'policy_wait', 'attempt-d.json'))).toBe(false);
   });
 });
@@ -283,7 +283,7 @@ test('a present backend is drained before the terminal is classified', async () 
   await withDir(async (dir) => {
     const codex = writeBackendStub(dir, 'codex', CODEX_OK, 0);
     await withBackendPath(codex.bin, async () => {
-      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1)), workGrant({ attempt_id: 'attempt-live' }));
+      const receipt = await runWorkAttempt(workSnapshot(dir, observed('not-live', 1)), 'attempt-live');
       expect(receipt.classification).toBe('agent_completed');
       expect(receipt.exit_code).toBe(0);
       expect(receipt.session_id).toBe('thread-fixture');
@@ -292,20 +292,20 @@ test('a present backend is drained before the terminal is classified', async () 
       ]);
       expect(readFileSync(`${codex.args}.codex`, 'utf8')).toBe(HOME);
       writeFileSync(codex.args, 'not-run\n');
-      const waited = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { controller: 'policy_wait' }), workGrant({ attempt_id: 'attempt-pw' }));
+      const waited = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0), { controller: 'policy_wait' }), 'attempt-pw');
       expect(waited.classification).toBe('policy_wait');
       expect(readFileSync(codex.args, 'utf8')).toBe('not-run\n');
     });
     const failed = writeBackendStub(dir, 'codex', CODEX_OK, 1);
     await withBackendPath(failed.bin, async () => {
-      const receipt = await runAttempt(workSnapshot(dir, observed(CODEX_OK, 0)), workGrant({ attempt_id: 'attempt-live-exit' }));
+      const receipt = await runWorkAttempt(workSnapshot(dir, observed(CODEX_OK, 0)), 'attempt-live-exit');
       expect(receipt.classification).toBe('technical_failure');
       expect(receipt.exit_code).toBe(1);
     });
     const dsh = writeBackendStub(dir, 'dsh', DSH_OK, 0);
     const dshHome = join(dir, 'dsh-home');
     await withBackendPath(dsh.bin, async () => {
-      const receipt = await runAttempt(workSnapshot(dir, observed('not-live', 1), { backend: 'dsh', home: dshHome }), workGrant({ attempt_id: 'attempt-dsh-live' }));
+      const receipt = await runWorkAttempt(workSnapshot(dir, observed('not-live', 1), { backend: 'dsh', home: dshHome }), 'attempt-dsh-live');
       expect(receipt.classification).toBe('agent_completed');
       expect(receipt.session_id).toBe('session-fixture');
       const argv = readFileSync(dsh.args, 'utf8').trim().split('\n');
@@ -528,7 +528,7 @@ test('a consultation send uses its own request and still requires one acquired c
           route: PI_AI,
           network,
         },
-      }), consultation);
+      }), consultation, { db: fx.db, principal, now });
       expect(receipt.classification).toBe('agent_completed');
       expect(network.sends).toHaveLength(1);
       expect(receipt.reservation_id).toBe(network.sends[0]?.reservationId);
@@ -759,6 +759,7 @@ async function waitUntil(ready: () => boolean) {
 function temporaryDatabase(): { db: SqliteDatabase; close: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t09-db-'));
   const db = openDatabase(join(dir, 'patrick.sqlite'));
+  db.prepare("INSERT INTO accounts VALUES ('owner',1,1,?)").run('2026-11-16T12:00:00.000Z');
   return {
     db,
     close() {
@@ -768,7 +769,22 @@ function temporaryDatabase(): { db: SqliteDatabase; close: () => void } {
   };
 }
 
-async function admitRunningWork(db: SqliteDatabase, now: () => Date) {
+async function runWorkAttempt(snapshot: FrozenRun, attemptId = 'attempt-1') {
+  const fx = temporaryDatabase();
+  const now = () => new Date('2026-11-16T12:00:00.000Z');
+  try {
+    const { grant } = await admitRunningWork(fx.db, now, attemptId);
+    if (snapshot.subject.kind !== 'work') throw new Error('expected work snapshot');
+    return await runAttempt({
+      ...snapshot,
+      subject: { ...snapshot.subject, judgment_basis: { ...snapshot.subject.judgment_basis, hash: grant.basis_hash } },
+    }, grant, { db: fx.db, principal, now });
+  } finally {
+    fx.close();
+  }
+}
+
+async function admitRunningWork(db: SqliteDatabase, now: () => Date, attemptId = 'attempt-1') {
   const delegation = createDelegationApi(db, principal, { now, domain: DOMAIN });
   const budget = createBudgetApi(db, principal, { now });
   await delegation.registerMandateType({
@@ -814,7 +830,7 @@ async function admitRunningWork(db: SqliteDatabase, now: () => Date) {
   const grant = await delegation.authorizeAction({
     work_id: 'work-1',
     generation: 2,
-    attempt_id: 'attempt-1',
+    attempt_id: attemptId,
     phase: 'judgment',
     next_action: 'judge',
     allowed_effects: [],

@@ -864,6 +864,10 @@ test('the auth migration appends after the untouched core schema', () => {
     { file: '0018_delegation_control.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0018_delegation_control.sql'))).digest('hex') },
     { file: '0019_stats.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0019_stats.sql'))).digest('hex') },
     { file: '0020_http_sources.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0020_http_sources.sql'))).digest('hex') },
+    { file: '0021_notifications.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0021_notifications.sql'))).digest('hex') },
+    { file: '0022_network.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0022_network.sql'))).digest('hex') },
+    { file: '0023_recovery.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0023_recovery.sql'))).digest('hex') },
+    { file: '0024_settings_recoveries.sql', sha256: 'a2e4c46c207056d3b4beb484c1431f3ebdaf553b2aab3caa483f594a5151a667' },
   ]);
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);

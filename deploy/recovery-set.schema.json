@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:patrick:recovery-set:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest", "signature", "keyId"],
+  "properties": {
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "signature": { "type": "string", "minLength": 1 },
+    "keyId": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$" },
+    "watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "hash"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 0 },
+        "hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "writerEpoch", "withdrawal"],
+      "properties": {
+        "domain": { "$ref": "#/$defs/name" },
+        "writerEpoch": { "type": "string", "minLength": 1 },
+        "withdrawal": { "$ref": "#/$defs/watermark" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hubSeq", "domainSeq", "schemaHistory"],
+      "properties": {
+        "hubSeq": { "type": "integer", "minimum": 0 },
+        "domainSeq": { "type": "integer", "minimum": 0 },
+        "schemaHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "sha256"],
+            "properties": {
+              "file": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+\\.sql$" },
+              "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "hash", "bytes", "kind", "domain"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)(?!.*\\\\).+$" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["database", "vault", "blob", "handoff", "vault_kit", "version_lock"] },
+        "domain": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }] }
+      }
+    },
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vaultId", "accountId", "sourceId", "domain", "physicalRoot", "canonicalRoot", "rootIdentity", "scopeHash", "resourcePrefix"],
+      "properties": {
+        "vaultId": { "type": "string", "minLength": 1 },
+        "accountId": { "type": "string", "minLength": 1 },
+        "sourceId": { "type": "string", "minLength": 1 },
+        "domain": { "$ref": "#/$defs/name" },
+        "physicalRoot": { "type": "string", "minLength": 1 },
+        "canonicalRoot": { "type": ["string", "null"], "minLength": 1 },
+        "rootIdentity": { "type": "string", "minLength": 1 },
+        "scopeHash": { "$ref": "#/$defs/hash" },
+        "resourcePrefix": { "type": ["string", "null"], "pattern": "^resources/[0-9]+$" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "setId", "createdAt", "cutId", "domains", "versionLocks", "databases", "artifacts", "vaults", "completeness", "protection"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "setId": { "$ref": "#/$defs/name" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "cutId": { "type": "string", "minLength": 1 },
+        "domains": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/domain" } },
+        "versionLocks": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "databases": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service", "hub"],
+          "properties": {
+            "service": { "$ref": "#/$defs/database" },
+            "hub": { "$ref": "#/$defs/database" }
+          }
+        },
+        "artifacts": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/artifact" } },
+        "vaults": { "type": "array", "items": { "$ref": "#/$defs/vault" } },
+        "completeness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recoverable", "gaps"],
+          "properties": {
+            "recoverable": { "type": "boolean" },
+            "gaps": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          },
+          "allOf": [
+            { "if": { "properties": { "recoverable": { "const": true } } }, "then": { "properties": { "gaps": { "maxItems": 0 } } } }
+          ]
+        },
+        "protection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "targetId", "snapshotId", "recoveryCredentialRef", "verifiedAt"],
+          "properties": {
+            "status": { "enum": ["local_only", "off_host_verified"] },
+            "targetId": { "type": ["string", "null"] },
+            "snapshotId": { "type": ["string", "null"] },
+            "recoveryCredentialRef": { "type": ["string", "null"] },
+            "verifiedAt": { "type": ["string", "null"], "format": "date-time" }
+          }
+        }
+      }
+    }
+  }
+}

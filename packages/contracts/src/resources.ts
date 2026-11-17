@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { diagnosticsExportRequest, diagnosticsPreviewRequest, diagnosticsPreviewSchema, diagnosticsReportSchema } from './diagnostics.js';
 import { statsSnapshotSchema } from './stats.js';
 import {
   ALLOWED_SCHEMA_MAJORS,
@@ -77,6 +78,16 @@ const pageQuerySchema = z.strictObject({
 export const browserCreationScopeSchema = scopeSchema.extend({ caller_id: z.string().min(1) });
 export type BrowserCreationScope = z.infer<typeof browserCreationScopeSchema>;
 const domainSchema = z.strictObject({ domain: z.string().min(1).optional() });
+const noticeCount = z.number().int().nonnegative();
+export const notificationSummarySchema = z.strictObject({
+  pending: noticeCount, quiet: noticeCount, digest: noticeCount, checking: noticeCount, retrying: noticeCount, blocked: noticeCount,
+});
+export const notificationPreviewSchema = z.strictObject({
+  decision: noticeCount, blocker: noticeCount, delivered: noticeCount, progress: noticeCount,
+});
+const feishuTestSendPayload = z.strictObject({
+  test_id: z.string().min(1), preview_hash: z.string().min(1), destination: z.string().min(1),
+});
 const scopedIdSchema = idSchema.extend(domainSchema.shape);
 const learningPageQuery = pageQuerySchema.extend(domainSchema.shape);
 export const detectHttpSourcePayload = z.strictObject({
@@ -417,7 +428,19 @@ export const settingsReceiptSchema = z.strictObject({
 });
 
 const settingsTargetSchema = z.strictObject({
+  label: z.string().min(1).optional(), input: z.json().optional(),
   target: z.string().min(1), device: z.string().min(1).nullable(), status: z.string().min(1), revision: z.number().int().nonnegative(),
+});
+export const settingsRecoveryOfferSchema = z.discriminatedUnion('status', [
+  z.strictObject({ change_id: z.string().min(1), status: z.literal('unavailable'), reason: z.string().min(1) }),
+  ...(['readback_available', 'projection_available'] as const).map((status) => z.strictObject({
+    change_id: z.string().min(1), action: z.literal('reconcile_network'), status: z.literal(status),
+    target: z.strictObject({ label: z.string().min(1), target: z.string().min(1), device: z.string().min(1),
+      revision: z.number().int().nonnegative(), input: z.strictObject({ change_id: z.string().min(1) }) }),
+  })),
+]);
+export const settingsRecoveryReceiptSchema = z.strictObject({
+  recovery_command_id: z.string().min(1), receipt: settingsReceiptSchema,
 });
 export const settingsDashboardSchema = z.strictObject({ groups: z.array(z.strictObject({
   id: z.string(), operations: z.array(z.strictObject({
@@ -558,6 +581,9 @@ export const routes: RouteDefinition[] = [
   write('applySettingsChanges', 'POST', '/settings/changes', 'owner', commandEnvelope(settingsChangePayload),
     commandAcceptedSchema, [...writeErrors, 'VALIDATION_STALE']),
   read('getSettingsChange', '/settings/changes/:id', 'settings.read', idSchema, settingsReceiptSchema),
+  read('getSettingsRecovery', '/settings/changes/:id/recovery', 'settings.read', idSchema, settingsRecoveryOfferSchema),
+  write('recoverSettingsChange', 'POST', '/settings/changes/:id/recovery', 'owner', commandEnvelope(settingsChangePayload),
+    snapshotEnvelope(settingsRecoveryReceiptSchema), [...writeErrors, 'VALIDATION_STALE']),
   read('getFeishuChannel', '/channels/feishu', 'channels.read', emptySchema, feishuConnectionSchema),
   command('inspectFeishu', '/channels/feishu/inspections', 'channels.inspect', emptySchema),
   command('validateFeishu', '/channels/feishu/validations', 'channels.validate', emptySchema),
@@ -577,11 +603,7 @@ export const routes: RouteDefinition[] = [
     'sendFeishuTest',
     '/channels/feishu/tests/:id/send',
     'owner',
-    z.strictObject({
-      test_id: z.string().min(1),
-      preview_hash: z.string().min(1),
-      destination: z.string().min(1),
-    }),
+    feishuTestSendPayload,
   ),
   read('getFeishuTest', '/channels/feishu/tests/:id', 'channels.read', idSchema, channelTestSchema),
   read('getPreferences', '/preferences', 'session', emptySchema, storedPreferences),
@@ -593,10 +615,14 @@ export const routes: RouteDefinition[] = [
   read('getControlReceipt', '/control-receipts/:id', 'owner', idSchema, z.unknown()),
   { ...read('getStats', '/stats', 'stats.read', statsQuerySchema, statsSnapshotSchema),
     scopePermissions: ['work.read'], errors: [...readErrors, 'UNPROCESSABLE'] },
-  command('previewNotification', '/notifications/preview', 'owner', z.strictObject({ intent: z.string().min(1) })),
-  command('testNotification', '/notifications/test', 'owner', z.strictObject({ destination: z.string().min(1), intent: z.string().min(1) })),
-  command('previewDiagnostics', '/diagnostics/preview', 'owner', emptySchema),
-  command('exportDiagnostics', '/diagnostics/export', 'owner', emptySchema),
+  { ...read('getNotificationSummary', '/notifications/summary', 'owner', domainSchema, notificationSummarySchema),
+    errors: [...readErrors, 'UNPROCESSABLE'] },
+  write('previewNotification', 'POST', '/notifications/preview', 'owner',
+    commandEnvelope(z.strictObject({ request_scope: browserCreationScopeSchema })).extend({ expected_revision: z.null() }),
+    snapshotEnvelope(notificationPreviewSchema)),
+  command('testNotification', '/notifications/test', 'owner', feishuTestSendPayload),
+  write('previewDiagnostics', 'POST', '/diagnostics/preview', 'owner', diagnosticsPreviewRequest, diagnosticsPreviewSchema),
+  write('exportDiagnostics', 'POST', '/diagnostics/export', 'owner', diagnosticsExportRequest, diagnosticsReportSchema),
   { operationId: 'listEvents', method: 'GET', path: '/events', permission: 'events.read', kind: 'read',
     scopePermissions: ['work.read'],
     request: z.strictObject({ after: z.string().min(1).optional(), ...domainSchema.shape }), response: sseEventSchema,

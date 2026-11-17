@@ -11,6 +11,7 @@ export type CommandOptions = {
   pipeStdin?: boolean;
   stdinText?: string;
   timeoutMs?: number;
+  beforeSpawn?: () => void;
 };
 
 export function findExecutable(command: string, pathEnv = process.env.PATH ?? ''): string | null {
@@ -45,6 +46,7 @@ export function runClosed(
       clearTimeout(timer);
       resolve(result);
     };
+    options.beforeSpawn?.();
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,

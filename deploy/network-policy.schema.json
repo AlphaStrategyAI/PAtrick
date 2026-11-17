@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PAtrick registered network policy",
+  "description": "Trusted device policy; the runtime also verifies unique IDs, references, and combined retry bounds. This file does not grant permission to change network settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "device_id",
+    "revision",
+    "targets",
+    "vpn_paths",
+    "repairs",
+    "limits",
+    "fallback"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "device_id": {
+      "$ref": "#/$defs/id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "role": {
+            "enum": [
+              "hub",
+              "target",
+              "peer"
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "const": "hub"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "const": "peer"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "vpn_paths": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "client",
+          "targets"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "client": {
+            "enum": [
+              "tunnelblick",
+              "openvpn",
+              "shadowrocket"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      }
+    },
+    "repairs": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "kind": {
+                "const": "refresh_dns"
+              },
+              "target": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "kind": {
+                "const": "refresh_proxy"
+              },
+              "target": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "target",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "kind": {
+                "const": "reconnect_vpn"
+              },
+              "target": {
+                "$ref": "#/$defs/id"
+              },
+              "path": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_attempts",
+        "cooldown_ms",
+        "deadline_ms"
+      ],
+      "properties": {
+        "maximum_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "cooldown_ms": {
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 600000
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 900000
+        }
+      }
+    },
+    "fallback": {
+      "enum": [
+        "none",
+        "device_split",
+        "controlled_rotation"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "fallback": {
+            "enum": [
+              "device_split",
+              "controlled_rotation"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "vpn_paths": {
+            "minItems": 2
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { assertBusinessWrite, recoveryWriteCredential } from './recovery-runtime.js';
 import type { BlobStore, SqliteDatabase } from '@patrick/storage';
 import { createPrBuildVerifier } from '@patrick/integrations/publisher/build';
 import { createGitHubClient, createPrPublisher, type BranchWriteAuthority } from '@patrick/integrations/publisher/github';
@@ -39,8 +40,9 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
   const github = createGitHubClient({
     fetch: options.fetch,
     authorization: options.authorization,
-    writeAuthorization: allowWrites ? options.writeAuthorization : undefined,
-    requireWriteAuthorization: true,
+    writeAuthorization: allowWrites && options.writeAuthorization
+      ? recoveryWriteCredential(db, options.domain, options.writeAuthorization) : undefined,
+    assertWriteAllowed: () => assertBusinessWrite(db, options.domain),
     branchAuthority: allowWrites ? options.branchAuthority : undefined,
   });
   const target = { ...options.target };

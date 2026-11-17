@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { attachRecoveryRuntime, type RecoveryRuntimeConfiguration } from './recovery-runtime.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Hono } from 'hono';
@@ -7,6 +8,7 @@ import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
 import { startConsultationWorker, type ConsultationWorkerOptions } from '@patrick/integrations/autoloop/consultation-runtime';
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
+import type { FeishuTestOutbound } from '../../../packages/integrations/feishu/outbound.js';
 import { createSourceRegistry, type RegistryOptions } from '@patrick/integrations/sources/registry';
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
@@ -26,10 +28,15 @@ import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
 import { startWorkStopObserver, type WorkStopSupervisor } from './work-stop.js';
 import { mountPreferenceRoutes } from './routes/preferences.js';
+import { createNotificationMaintenance, type NotificationMaintenanceOptions } from './notification-maintenance.js';
+import { mountNotificationRoutes } from './routes/notifications.js';
+import { mountDiagnosticsRoutes } from './routes/diagnostics.js';
 import { mountSourceRoutes } from './routes/sources.js';
 import { mountSettingsRoutes } from './routes/settings.js';
 import { createSettingsChanges, type SettingsHandler } from './settings/changes.js';
 import { builtinSettingsHandlers } from './settings/builtin.js';
+import { networkSettingsHandlers, registeredNetworkTargets, type NetworkRepairConfiguration } from './settings/network.js';
+import { parseNetworkPolicy } from '../../../packages/host/src/network/vpn.js';
 import { createHttpCollectionWorker, type HttpCollectionWorkerOptions } from './source-collection.js';
 import { sourceSettingsHandlers } from './settings/sources.js';
 import { createProductViewService, startProductViewHubObserver, type ProductViewHub } from './product-views.js';
@@ -41,10 +48,15 @@ export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
 export type CreateAppOptions = {
   databasePath?: string;
+  recoveryRuntime?: RecoveryRuntimeConfiguration;
   credentialDirectory?: string;
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
   productViewHub?: ProductViewHub;
+  notificationMaintenance?: NotificationMaintenanceOptions;
+  networkRepair?: NetworkRepairConfiguration;
+  feishuCredentials?: CredentialStore;
+  feishuTestOutbound?: FeishuTestOutbound;
   workStopSupervisor?: WorkStopSupervisor;
   httpSources?: RegistryOptions['http'];
   httpSourceWorker?: HttpCollectionWorkerOptions;
@@ -53,6 +65,17 @@ export type CreateAppOptions = {
 };
 
 export function createApp(options: CreateAppOptions = {}): Hono {
+  if (options.networkRepair && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('NETWORK_SUPERVISOR_DURABLE_POLICY_REQUIRED');
+  }
+  if (options.networkRepair && !options.credentialDirectory?.trim()) {
+    throw new Error('NETWORK_SUPERVISOR_CREDENTIAL_DIRECTORY_REQUIRED');
+  }
+  const networkRepair = options.networkRepair && Object.freeze({ ...options.networkRepair,
+    policy: parseNetworkPolicy(options.networkRepair.policy) });
+  if (networkRepair && networkRepair.localDeviceId !== networkRepair.policy.device_id) {
+    throw new Error('NETWORK_DEVICE_NOT_REGISTERED');
+  }
   if (options.consultationWorker && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
     throw new Error('CONSULTATION_WORKER_DATABASE_REQUIRED');
   }
@@ -71,6 +94,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.httpSourceWorker && (!options.databasePath || options.databasePath === ':memory:' || !options.httpSources)) {
     throw new Error('HTTP_SOURCE_WORKER_DURABLE_POLICY_REQUIRED');
   }
+  if (options.notificationMaintenance && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('NOTIFICATION_MAINTENANCE_DATABASE_REQUIRED');
+  }
+  if (options.feishuTestOutbound && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('FEISHU_TEST_DATABASE_REQUIRED');
+  }
+  if (options.feishuTestOutbound && !options.feishuCredentials) {
+    throw new Error('FEISHU_TEST_CREDENTIAL_PROVIDER_REQUIRED');
+  }
   const now = options.now ?? (() => new Date());
   const state: {
     db?: SqliteDatabase;
@@ -87,7 +119,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       const databasePath = options.databasePath ?? join(tmpdir(), `patrick-${randomUUID()}.sqlite`);
       const credentialDirectory = options.credentialDirectory ?? join(tmpdir(), `patrick-credentials-${randomUUID()}`);
       state.databasePath = databasePath;
-      state.db = openDatabase(databasePath);
+      const database = openDatabase(databasePath);
+      try {
+        if (options.recoveryRuntime) attachRecoveryRuntime(database, options.recoveryRuntime);
+      } catch (error) {
+        database.close();
+        throw error;
+      }
+      state.db = database;
       state.credentials = createCredentialStore(credentialDirectory, now);
     }
     return { db: state.db, credentials: state.credentials, now };
@@ -143,6 +182,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const { db, registry } = sourceResources();
     createHttpCollectionWorker(db, registry, now, options.httpSourceWorker).start();
   }
+  if (options.notificationMaintenance) createNotificationMaintenance(context().db, now, options.notificationMaintenance).start();
   const app = new Hono();
   app.use('/api/v1/*', async (_c, next) => {
     await runWithAuth(context(), async () => {
@@ -157,11 +197,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const current = context();
     state.settings ??= createSettingsChanges({ ...current,
       handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }),
+        ...networkSettingsHandlers({ ...current, networkRepair }),
         ...sourceSettingsHandlers(sourceResources()), ...options.settingsHandlers },
     });
-    return { ...current, engine: state.settings };
+    return { ...current, engine: state.settings,
+      networkTargets: (principal, domain) => registeredNetworkTargets(current.db, networkRepair, principal, domain) };
   });
   mountSourceRoutes(app, sourceResources);
+  mountDiagnosticsRoutes(app, context);
+  mountNotificationRoutes(app, context);
   mountControlRoutes(app);
   mountAnswerRoutes(app, () => {
     const current = context();
@@ -174,7 +218,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
   mountFeishuRoutes(app, () => {
     const current = context();
-    return { db: current.db, now, credentials: current.credentials, hub: durableHub() };
+    return { db: current.db, now, hub: durableHub(), feishuCredentials: options.feishuCredentials,
+      feishuTestOutbound: options.feishuTestOutbound };
   });
   const resources = () => ({ db: context().db, api: vaultApi(), now });
   mountVaultRoutes(app, resources);

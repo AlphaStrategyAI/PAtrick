@@ -66,6 +66,8 @@ export type HubPublisher = {
 export const SOURCE_CHANGE_RULE = '来源变化';
 export const CONSULTATION_RULE = '咨询';
 export const RESUME_RULE = '阶段恢复';
+export const NOTIFICATION_RULE = '通知维护';
+export const NOTIFICATION_WORKER = 'patrick-notifications';
 export const CONSULTATION_GROUP = 'consultation';
 export const CONSULTATION_WORKER = 'patrick-consultation';
 export const CONSULTATION_PARALLEL = 4;
@@ -97,7 +99,7 @@ export function deriveResumeEvent(
   };
 }
 
-export function hubRules(command: readonly string[]) {
+export function hubRules(command: readonly string[], options: { notifications?: boolean } = {}) {
   return {
     timezone: 'Asia/Shanghai',
     sources: { patrick: { name: 'PAtrick' } },
@@ -116,6 +118,11 @@ export function hubRules(command: readonly string[]) {
         access: 'read' as const,
         command: [...command],
       },
+      ...(options.notifications ? { notifications: {
+        name: 'Notifications', worker: NOTIFICATION_WORKER, use: 'command', access: 'read' as const,
+        // The dedicated service claims this rule. A generic command runner cannot deliver notifications.
+        command: ['node', '-e', 'process.exit(1)'],
+      } } : {}),
     },
     channels: {},
     rules: [
@@ -145,6 +152,10 @@ export function hubRules(command: readonly string[]) {
         prompt: '继续同一件工作。',
         group: RESUME_RULE,
       },
+      ...(options.notifications ? [{
+        name: NOTIFICATION_RULE, when: { cron: '* * * * *' }, to: 'notifications', cwd: '/tmp',
+        prompt: '检查当前通知并核对原投递。', group: NOTIFICATION_WORKER, parallel: 1,
+      }] : []),
     ],
     elsewhere: [],
   };

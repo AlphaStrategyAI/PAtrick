@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload } from '@patrick/contracts';
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createStandardsApi, type JudgmentBasis } from './standards.js';
 
 export type AdmissionPrincipal = {
@@ -252,12 +252,24 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     if (!principal.domains.includes(domain)) throw new Error('FORBIDDEN');
   }
 
+  function assertWritableDomain(): void {
+    assertDomain();
+    assertRecoveryWriteAllowed(db, domain);
+  }
+
+  function withDomainWrite<T>(run: () => T): T {
+    return withImmediateTransaction(db, () => {
+      assertWritableDomain();
+      return run();
+    });
+  }
+
   return {
     async registerMandateType(input: MandateTypeInput): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       assertMicros(input.budget_micros);
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         const existing = db.prepare('SELECT * FROM mandate_types WHERE type_id = ?').get(input.type_id) as {
           account_id: string;
           data_domain: string;
@@ -295,14 +307,14 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async openMandate(input: MandateInput): Promise<DelegationView> {
-      assertDomain();
+      assertWritableDomain();
       return openMandate(db, principal, domain, stamp(), input);
     },
 
     async setCapability(input: CapabilityInput): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         const current = db.prepare('SELECT profile_id FROM capability_profiles WHERE account_id = ? AND data_domain = ?').get(
           principal.account_id,
           domain,
@@ -336,9 +348,9 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async ensureJudgmentPolicy(): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         const existing = db.prepare('SELECT policy_id FROM evaluation_policies WHERE data_domain = ? LIMIT 1').get(domain);
         if (existing) return;
         db.prepare(`INSERT INTO evaluation_policies (
@@ -353,10 +365,10 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async openWork(input: WorkInput): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       assertMicros(input.budget_micros);
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         const mandate = requireMandate(db, input.mandate_id);
         if (mandate.account_id !== principal.account_id || mandate.data_domain !== domain) throw new Error('FORBIDDEN');
         if (input.budget_micros > mandate.budget_micros) throw new Error('UNPROCESSABLE');
@@ -395,10 +407,11 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async setWorkGate(workId: string, generation: number, gate: WorkGate): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         const work = requireVisibleWork(db, principal, workId, generation);
+        assertRecoveryWriteAllowed(db, work.data_domain);
         db.prepare(`UPDATE work_generations SET
           phase = ?, next_action = ?, awaiting_answer = ?, evidence_ready = ?, collection_id = ?, updated_at = ?
           WHERE work_id = ? AND generation = ?`).run(
@@ -427,11 +440,12 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async openConsultation(input: ConsultationInput): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       assertMicros(input.budget_micros);
       if (!input.domains.includes(domain) || input.domains.some((item) => !principal.domains.includes(item))) throw new Error('FORBIDDEN');
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
+        for (const requestedDomain of input.domains) assertRecoveryWriteAllowed(db, requestedDomain);
         db.prepare(`INSERT INTO consultations (
           request_id, account_id, caller_id, data_domain, parent_work_id, result_version, status, domains_json, tools_json,
           deadline_at, budget_micros, permission_revision, cancelled_at, schema_version, created_at, updated_at
@@ -465,8 +479,8 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async setConsultationPermission(requestId: string, permissionRevision: number): Promise<void> {
-      assertDomain();
-      withImmediateTransaction(db, () => {
+      assertWritableDomain();
+      withDomainWrite(() => {
         const info = db.prepare(`UPDATE consultations SET permission_revision = ?, updated_at = ?
           WHERE request_id = ? AND account_id = ? AND data_domain = ?`).run(
           permissionRevision,
@@ -496,12 +510,12 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async openMaintenance(input: MaintenanceInput): Promise<void> {
-      assertDomain();
+      assertWritableDomain();
       assertMicros(input.budget_micros);
       if (!isMaintenanceKind(input.kind)) throw new Error('UNPROCESSABLE');
       if (input.owner_id !== principal.account_id) throw new Error('FORBIDDEN');
       const stamped = stamp();
-      withImmediateTransaction(db, () => {
+      withDomainWrite(() => {
         db.prepare(`INSERT INTO maintenance_jobs (
           job_id, owner_id, account_id, data_domain, kind, status, budget_micros, result_ref, expires_at, cancelled_at,
           schema_version, created_at, updated_at
@@ -548,19 +562,20 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async authorizeAction(request: ActionRequest): Promise<ExecutionGrant> {
-      assertDomain();
+      assertWritableDomain();
       requireVisibleWork(db, principal, request.work_id, request.generation);
       const basis = await standards.freezeJudgmentBasis(request.work_id, request.generation);
       return withImmediateTransaction(db, () => issueWorkGrant(db, principal, domain, stamp(), request, basis));
     },
 
     async authorizeConsultation(requestId: string, attemptId: string): Promise<ConsultationGrant> {
-      assertDomain();
+      assertWritableDomain();
       const stamped = stamp();
-      return withImmediateTransaction(db, () => {
+      return withDomainWrite(() => {
         const row = loadConsultation(db, requestId);
         if (!row || row.account_id !== principal.account_id || row.data_domain !== domain) throw new Error('NOT_FOUND');
         if (row.caller_id !== principal.caller_id) throw new Error('FORBIDDEN');
+        for (const requestedDomain of parseList(row.domains_json)) assertRecoveryWriteAllowed(db, requestedDomain);
         if (row.status !== 'pending' || row.cancelled_at || row.deadline_at <= stamped) throw new Error('DENIED');
         const existing = activeConsultationGrant(db, requestId);
         if (existing) {
@@ -599,10 +614,10 @@ export function createDelegationApi(db: SqliteDatabase, principal: AdmissionPrin
     },
 
     async authorizeMaintenance(ownerId: string, jobId: string, attemptId: string): Promise<MaintenanceGrant> {
-      assertDomain();
+      assertWritableDomain();
       if (ownerId !== principal.account_id) throw new Error('FORBIDDEN');
       const stamped = stamp();
-      return withImmediateTransaction(db, () => {
+      return withDomainWrite(() => {
         const job = db.prepare('SELECT * FROM maintenance_jobs WHERE job_id = ?').get(jobId) as {
           owner_id: string;
           account_id: string;
@@ -722,6 +737,8 @@ export function dispatchAllowed(
 ): boolean {
   const grant = db.prepare('SELECT * FROM execution_grants WHERE grant_id = ?').get(input.grantId) as GrantRow | undefined;
   if (!grant || grant.account_id !== principal.account_id || !principal.domains.includes(grant.data_domain)) return false;
+  if (!recoveryWriteAllowed(db, grant.data_domain) || (grant.subject_kind === 'consultation'
+    && parseList(grant.allowed_domains_json).some((domain) => !recoveryWriteAllowed(db, domain)))) return false;
   if (grant.revoked_at || grant.expires_at <= nowIso || grant.attempt_id !== input.attemptId) return false;
   if (businessOf(grant) !== input.businessId) return false;
   if (grant.subject_kind === 'work') return workStillDispatchable(db, principal, nowIso, grant);
@@ -738,12 +755,20 @@ export function workResumeAllowed(
 ): boolean {
   const work = loadWork(db, workId, generation);
   if (!work || work.account_id !== principal.account_id || !principal.domains.includes(work.data_domain)) return false;
+  if (!recoveryWriteAllowed(db, work.data_domain)) return false;
   const grant = activeWorkGrant(db, workId, generation);
   if (!grant) return false;
   return workStillDispatchable(db, principal, nowIso, grant, { allowPaused: true });
 }
 
 export function issueWorkGrant(
+  db: SqliteDatabase, principal: AdmissionPrincipal, domain: string, stamped: string,
+  request: ActionRequest, basis: JudgmentBasis,
+): ExecutionGrant {
+  return withImmediateTransaction(db, () => issueWorkGrantInTransaction(db, principal, domain, stamped, request, basis));
+}
+
+function issueWorkGrantInTransaction(
   db: SqliteDatabase,
   principal: AdmissionPrincipal,
   domain: string,
@@ -751,6 +776,7 @@ export function issueWorkGrant(
   request: ActionRequest,
   basis: JudgmentBasis,
 ): ExecutionGrant {
+  assertRecoveryWriteAllowed(db, domain);
   const work = requireVisibleWork(db, principal, request.work_id, request.generation);
   if (work.data_domain !== domain) throw new Error('FORBIDDEN');
   const mandate = requireMandate(db, work.mandate_id);
@@ -979,6 +1005,7 @@ function openMandate(
 ): DelegationView {
   assertMicros(input.budget_micros);
   return withImmediateTransaction(db, () => {
+    assertRecoveryWriteAllowed(db, domain);
     const type = requireType(db, principal, domain, input.type_id);
     assertInsideType(input, type);
     if (input.expires_at <= stamped) throw new Error('UNPROCESSABLE');
@@ -1030,6 +1057,7 @@ function changeMandate(
     if (action === 'pause') {
       db.prepare(`UPDATE mandates SET status = 'paused', revision = revision + 1, updated_at = ? WHERE mandate_id = ?`).run(stamped, mandateId);
     } else if (action === 'resume') {
+      assertRecoveryWriteAllowed(db, domain);
       if (mandate.status === 'stopped' || mandate.expires_at <= stamped) throw new Error('DENIED');
       db.prepare(`UPDATE mandates SET status = 'active', revision = revision + 1, updated_at = ? WHERE mandate_id = ?`).run(stamped, mandateId);
     } else {

@@ -165,6 +165,22 @@ export class ApiClient {
     return this.call(route, path(route, parameters), options, route.method === 'DELETE' ? undefined : checked.data);
   }
 
+  async writeAttachment(name: 'exportDiagnostics', parameters: QueryValues, body: unknown, options?: RequestOptions):
+    Promise<{ response: Response; signal: AbortSignal }> {
+    const route = operation(name, 'write');
+    const checked = route.request.safeParse(body);
+    if (!checked.success) throw new ClientError('INVALID_REQUEST');
+    if (!this.scope) throw new ClientError('UNAUTHENTICATED', 401);
+    const signal = this.accessSignal(options);
+    signal.throwIfAborted();
+    const response = await this.send(path(route, parameters), {
+      method: route.method, signal, headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(checked.data),
+    });
+    signal.throwIfAborted();
+    return { response, signal };
+  }
+
   async command(name: string, parameters: QueryValues, intent: Intent, options?: RequestOptions): Promise<Receipt> {
     const route = operation(name, 'write');
     if (route.response !== commandAcceptedSchema) throw new ClientError('INVALID_REQUEST');

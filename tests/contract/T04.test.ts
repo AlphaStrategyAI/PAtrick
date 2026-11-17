@@ -20,6 +20,8 @@ import {
   CONSULTATION_PARALLEL,
   CONSULTATION_RULE,
   PINNED_HUB_COMMIT,
+  NOTIFICATION_RULE,
+  NOTIFICATION_WORKER,
   RESUME_RULE,
   SOURCE_CHANGE_RULE,
   deriveResumeEvent,
@@ -316,7 +318,7 @@ test('the same event id is one authoritative row, and a gap refetches the whole 
 
 test('manifest appends the hub migration without changing the earlier files', () => {
   const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { file: string; sha256: string }[];
-  expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql', '0011_conversations.sql', '0012_effects_outcomes.sql', '0013_views.sql','0017_settings.sql', '0018_delegation_control.sql', '0019_stats.sql', '0020_http_sources.sql']);
+  expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql', '0011_conversations.sql', '0012_effects_outcomes.sql', '0013_views.sql','0017_settings.sql', '0018_delegation_control.sql', '0019_stats.sql', '0020_http_sources.sql', '0021_notifications.sql', '0022_network.sql', '0023_recovery.sql', '0024_settings_recoveries.sql']);
   expect(manifest[0]?.sha256).toBe('6e82bac75d455f28dc498874b61d0d778e1552b4bc5a8d1b5d7f5dfddfc06233');
   expect(manifest[1]?.sha256).toBe('3767d19a3f6c65f5ddae4f5f7d65a057082bfc978fec2d7e7a7a347f4cf2487f');
   expect(manifest[2]?.sha256).toBe('bcd83075a607244bf5e5ee89efc621d0dd7670e42ace2b5884874ee8047dbcbe');
@@ -632,3 +634,18 @@ function viewRun(id: number, subject: string): HubRunView {
     events: [{ source: 'patrick', type: 'source.changed', subject, summary: subject }],
   };
 }
+
+
+test('fixed notification maintenance reaches its dedicated worker through the pinned Hub cron', async () => {
+  const isolated = await startPinnedHub(undefined, { notifications: true });
+  try {
+    expect(await isolated.client.claim('regular-worker')).toBeNull();
+    const job = await isolated.notificationClient.claim(NOTIFICATION_WORKER);
+    expect(job).toMatchObject({ rule: { name: NOTIFICATION_RULE },
+      context: { answers: [], events: [{ source: 'schedule', type: 'schedule.tick', id: expect.stringMatching(new RegExp('^' + NOTIFICATION_RULE + '@')) }] } });
+    expect(await isolated.notificationClient.result(job!.run, job!.token, { outcome: 'done' })).toEqual({ rejected: [] });
+  } finally {
+    await isolated.stop();
+    rmSync(isolated.home, { recursive: true, force: true });
+  }
+});

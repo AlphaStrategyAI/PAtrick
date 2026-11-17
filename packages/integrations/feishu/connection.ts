@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { appendDomainEvent, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { appendDomainEvent, assertRecoveryWriteAllowed, recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
   channelPermit,
   createAnswerGate,
@@ -117,12 +117,17 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
   const stamp = () => options.now().toISOString();
   let releaseHold: (() => void) | null = null;
   let pending: Promise<AnswerReceipt> | null = null;
+  const writableConnection = () => {
+    const connection = requireConnection(db, connectionId);
+    assertRecoveryWriteAllowed(db, connection.data_domain);
+    return connection;
+  };
 
   return {
     async prepareSentTest() {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         db.prepare(`INSERT INTO channel_bindings (
           binding_id, connection_id, pairing_id, account_id, data_domain, owner_open_id, chat_id, app_id, tenant_key,
           config_revision, credential_version, binding_revision, incarnation, epoch, schema_version, created_at
@@ -214,7 +219,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     async applyTrustedEnable(proof: EnableProof, authorization?: { beforeWrite: () => string }) {
       withImmediateTransaction(db, () => {
         const stamped = authorization?.beforeWrite() ?? stamp();
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         if (connection.status !== 'needs_enable' || connection.data_domain !== options.domain) throw new Error('BINDING_STALE');
         if (proof.connection_id !== connection.connection_id || proof.account_id !== connection.account_id) throw new Error('BINDING_STALE');
         if (proof.test_id !== connection.current_test_id) throw new Error('BINDING_STALE');
@@ -335,7 +340,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
           question_id: string;
           epoch: number;
         } | undefined;
-        const current = callback.epoch === connection.connection_epoch
+        const current = recoveryWriteAllowed(db, connection.data_domain) && callback.epoch === connection.connection_epoch
           && permitted
           && callback.inbound_id === permitted.inbound_id
           && callback.question_id === permitted.question_id;
@@ -415,6 +420,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     configure() {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
+        writableConnection();
         db.prepare(`UPDATE channel_connections SET status = 'needs_binding', transport_mode = 'probe',
           owner_open_id = NULL, chat_id = NULL, current_pairing_id = NULL, current_test_id = NULL, updated_at = ?
           WHERE connection_id = ?`).run(stamped, connectionId);
@@ -427,7 +433,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       const pairingId = `pair_${randomBytes(8).toString('hex')}`;
       const expires = new Date(options.now().getTime() + PAIRING_TTL_MS).toISOString();
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         db.prepare(`UPDATE channel_pairings SET status = 'expired' WHERE connection_id = ? AND status IN ('open', 'candidate')`).run(connectionId);
         db.prepare(`INSERT INTO channel_pairings (
           pairing_id, connection_id, account_id, data_domain, code_hash, expires_at, consumed_at, candidate_open_id,
@@ -461,7 +467,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     async receivePairingMessage(input: { code: string; open_id: string; chat_id: string }) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         const pairing = db.prepare(`SELECT * FROM channel_pairings WHERE connection_id = ? AND code_hash = ? AND status = 'open'`).get(
           connectionId,
           sha256(input.code),
@@ -479,7 +485,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     confirmPairing(principal: Principal, pairingId: string) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         const pairing = db.prepare('SELECT * FROM channel_pairings WHERE pairing_id = ?').get(pairingId) as PairingRow | undefined;
         if (!pairing || pairing.connection_id !== connectionId) throw new Error('NOT_FOUND');
         if (principal.account_id !== pairing.account_id || principal.caller_id !== 'web' || !principal.operations.includes('owner')) {
@@ -527,7 +533,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       const previewHash = sha256(preview);
       const testId = `test_${randomBytes(6).toString('hex')}`;
       withImmediateTransaction(db, () => {
-        const connection = requireConnection(db, connectionId);
+        const connection = writableConnection();
         if (connection.owner_open_id !== destination) throw new Error('BINDING_STALE');
         db.prepare(`UPDATE channel_tests SET status = 'expired', reason_code = 'TEST_REPLACED', updated_at = ?
           WHERE connection_id = ? AND status NOT IN ('expired', 'verified')`).run(stamped, connectionId);
@@ -564,17 +570,21 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     sendTest(input: TestPreview) {
       const stamped = stamp();
       withImmediateTransaction(db, () => {
+        writableConnection();
         assertTestPreview(db, connectionId, input);
         db.prepare(`UPDATE channel_tests SET status = 'sent', updated_at = ? WHERE test_id = ?`).run(stamped, input.test_id);
       });
     },
 
     setConfigRevision(revision: number) {
-      db.prepare('UPDATE channel_connections SET config_revision = ?, updated_at = ? WHERE connection_id = ?').run(
-        revision,
-        stamp(),
-        connectionId,
-      );
+      withImmediateTransaction(db, () => {
+        writableConnection();
+        db.prepare('UPDATE channel_connections SET config_revision = ?, updated_at = ? WHERE connection_id = ?').run(
+          revision,
+          stamp(),
+          connectionId,
+        );
+      });
     },
   };
 }

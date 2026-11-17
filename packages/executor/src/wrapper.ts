@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
+import { existsSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { RunGrant } from '../../domain/src/delegation.js';
 import { codexInvocation, parseCodexTerminal } from './backends/codex.js';
 import { dshInvocation, installDshProfile, parseDshTerminal } from './backends/dsh.js';
 import { grokInvocation, parseGrokTerminal } from './backends/grok.js';
 import { dispatchPaidNext, type PaidDispatch } from '../harness/patrick-bridge.js';
+import { assertRunAdmission, type ExecutorRuntime } from './admission.js';
 import { findExecutable, runClosed } from './command.js';
 import { ensureLedgerDirectory, ledgerPath, persistRecord, readExactFile, syncDirectory } from './ledger.js';
 import { assertDeliveryBinding, createDeliveryRequest, planLimit, sealDeliveryMarkdown, type DeliveryArtifact, type DeliveryBinding, type DeliverySource } from './delivery-artifact.js';
@@ -19,6 +20,8 @@ import type {
   TerminalParse,
   WorkSubject,
 } from './types.js';
+
+export type { ExecutorRuntime } from './admission.js';
 
 export type FrozenRun = {
   backend: BackendId;
@@ -66,7 +69,8 @@ export function resumeAllowed(snapshot: FrozenRun, grant: RunGrant, probe: Resum
   return !snapshot.subject.admitted_evidence.some((evidenceId) => probe.withdrawnEvidence.includes(evidenceId));
 }
 
-export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<RunReceipt> {
+export async function runAttempt(snapshot: FrozenRun, grant: RunGrant, runtime: ExecutorRuntime): Promise<RunReceipt> {
+  if (!runtime?.db || !runtime.principal || typeof runtime.now !== 'function') return unavailableReceipt(grant);
   const delivery = (snapshot.subject.kind === 'work' && snapshot.subject.next_action === 'publish_pr')
     || (grant.subject_kind === 'work' && grant.next_action === 'publish_pr');
   if ((!delivery || snapshot.controller !== 'run') && existsSync(ledgerPath(snapshot.ledger_dir, 'execution_claim', grant.attempt_id))) {
@@ -76,17 +80,32 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
   if (delivery && snapshot.controller === 'run') {
     try {
       execution = await prepareDelivery(snapshot, grant);
-      const replay = claimDelivery(execution, snapshot, grant);
+      const replay = claimDelivery(execution, snapshot, grant, runtime);
       if (replay) return replay;
     } catch {
       return unavailableReceipt(grant);
     }
   }
+  try {
+    assertRunAdmission(runtime, grant);
+  } catch {
+    return unavailableReceipt(grant);
+  }
   const finish = (
     classification: 'agent_completed' | 'technical_failure', exitCode: number | null, parsed: TerminalParse | null,
     reservationId: string | null, artifact?: DeliveryArtifact,
-  ) => storeTerminal(execution ? { ...snapshot, ledger_dir: execution.ledgerRoot } : snapshot, grant, classification,
-    exitCode, parsed, reservationId, artifact, execution?.bindingHash);
+  ) => {
+    if (classification === 'agent_completed') {
+      try {
+        assertRunAdmission(runtime, grant);
+      } catch {
+        classification = 'technical_failure';
+        artifact = undefined;
+      }
+    }
+    return storeTerminal(execution ? { ...snapshot, ledger_dir: execution.ledgerRoot } : snapshot, grant, classification,
+      exitCode, parsed, reservationId, artifact, execution?.bindingHash);
+  };
   if (snapshot.controller === 'policy_wait') {
     if (!sameSubject(snapshot, grant)) return delivery ? unavailableReceipt(grant) : finish('technical_failure', null, null, null);
     const path = persistRecord(snapshot.ledger_dir, 'policy_wait', grant.attempt_id, {
@@ -103,13 +122,14 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
   if (!snapshot.bundle_present) {
     return finish('technical_failure', snapshot.terminal?.exitCode ?? null, null, null);
   }
-  const terminal = execution ? await observeTerminal(snapshot, execution).catch(() => null) : await observeTerminal(snapshot);
+  const terminal = await observeTerminal(snapshot, grant, runtime, execution).catch(() => null);
   if (!terminal) {
     return finish('technical_failure', null, null, null);
   }
   let reservationId: string | null = null;
   if (snapshot.paid) {
     try {
+      assertRunAdmission(runtime, grant);
       const paid = await dispatchPaidNext(snapshot.paid);
       reservationId = paid.reservationId;
       if (!paid.sent || paid.settled !== 'settled') {
@@ -132,7 +152,7 @@ export async function runAttempt(snapshot: FrozenRun, grant: RunGrant): Promise<
   const classification = finished && parsed.usage !== null ? 'agent_completed' : 'technical_failure';
   if (execution && classification === 'agent_completed') {
     try {
-      const output = await sealPlan(execution, parsed.answerText);
+      const output = sealPlan(execution, parsed.answerText, grant, runtime);
       return finish(classification, terminal.exitCode, parsed, reservationId, output);
     } catch {
       return finish('technical_failure', terminal.exitCode, parsed, reservationId);
@@ -178,13 +198,14 @@ async function prepareDelivery(snapshot: FrozenRun, grant: RunGrant): Promise<De
   return { outputRoot, ledgerRoot, binding, request, bindingHash };
 }
 
-function claimDelivery(execution: DeliveryExecution, snapshot: FrozenRun, grant: RunGrant): RunReceipt | null {
+function claimDelivery(execution: DeliveryExecution, snapshot: FrozenRun, grant: RunGrant, runtime: ExecutorRuntime): RunReceipt | null {
   const path = ledgerPath(execution.ledgerRoot, 'terminal', grant.attempt_id);
   const claimPath = ledgerPath(execution.ledgerRoot, 'execution_claim', grant.attempt_id);
   const key = { binding: execution.bindingHash, attempt_id: grant.attempt_id, grant_id: grant.grant_id,
     request_sha256: execution.request.sha256 };
   if (!existsSync(path)) {
     try {
+      assertRunAdmission(runtime, grant);
       persistRecord(execution.ledgerRoot, 'execution_claim', grant.attempt_id, key);
       if (!existsSync(path)) return null;
       throw new Error('DELIVERY_TERMINAL_PREEXISTED');
@@ -217,33 +238,35 @@ function claimDelivery(execution: DeliveryExecution, snapshot: FrozenRun, grant:
     terminal.usage, terminal.reservation_id);
 }
 
-async function observeTerminal(snapshot: FrozenRun, execution?: DeliveryExecution): Promise<ObservedProcess | null> {
+async function observeTerminal(
+  snapshot: FrozenRun, grant: RunGrant, runtime: ExecutorRuntime, execution?: DeliveryExecution,
+): Promise<ObservedProcess | null> {
+  assertRunAdmission(runtime, grant);
   // Grok's file prompt lives in an executor-writable workspace; it cannot attest a delivery input.
   if (execution && snapshot.backend === 'grok') return null;
   const prompt = execution?.request.text;
   const invocation = backendInvocation(snapshot);
   const binary = findExecutable(invocation.command);
   if (!binary) return execution ? null : snapshot.terminal;
-  if (snapshot.backend === 'dsh') installDshProfile(snapshot.home);
+  if (snapshot.backend === 'dsh') {
+    assertRunAdmission(runtime, grant);
+    installDshProfile(snapshot.home);
+  }
   const args = prompt && snapshot.backend === 'codex' ? [...invocation.args, '-'] : invocation.args;
   return runClosed(binary, args, {
     cwd: execution?.outputRoot,
     env: { ...process.env, ...invocation.env },
     pipeStdin: invocation.stdin,
     stdinText: invocation.stdin ? prompt : undefined,
+    beforeSpawn: () => assertRunAdmission(runtime, grant),
   });
 }
 
-async function sealPlan(execution: DeliveryExecution, markdown: string | undefined): Promise<DeliveryArtifact> {
+function sealPlan(execution: DeliveryExecution, markdown: string | undefined, grant: RunGrant, runtime: ExecutorRuntime): DeliveryArtifact {
   if (markdown === undefined) throw new Error('DELIVERY_PLAN_MISSING');
   const { bytes, artifact } = sealDeliveryMarkdown(markdown, execution.binding, execution.request.sha256);
-  const output = await open(join(execution.outputRoot, 'plan.md'), 'wx', 0o600);
-  try {
-    await output.writeFile(bytes);
-    await output.sync();
-  } finally {
-    await output.close();
-  }
+  assertRunAdmission(runtime, grant);
+  writeFileSync(join(execution.outputRoot, 'plan.md'), bytes, { flag: 'wx', mode: 0o600, flush: true });
   syncDirectory(execution.outputRoot);
   return artifact;
 }

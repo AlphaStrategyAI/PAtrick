@@ -12,22 +12,23 @@ export const settingsGroups = [
   { id: 'collection', operations: ['configure_source'] },
   { id: 'materials', operations: ['connect_vault', 'change_vault'] },
   { id: 'execution', operations: ['inspect_executor'] },
-  { id: 'operation', operations: ['inspect_host', 'start_backup', 'start_restore'] },
+  { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
   { id: 'interaction', operations: ['enable_feishu', 'disable_feishu'] },
   { id: 'preferences', operations: [] },
 ] as const;
 const draftRequest = commandEnvelope(settingsDraftSchema);
 const changeRequest = commandEnvelope(settingsChangePayload);
 const controlRequest = commandEnvelope(settingsControlPayload);
-type Ready = () => { db: SqliteDatabase; now: () => Date; engine: ReturnType<typeof createSettingsChanges> };
+type Ready = () => { db: SqliteDatabase; now: () => Date; engine: ReturnType<typeof createSettingsChanges>;
+  networkTargets?: (principal: Principal, domain: string) => readonly unknown[] };
 
 export function mountSettingsRoutes(app: Hono, ready: Ready): void {
   app.get('/api/v1/settings', (c) => handle(c, async () => {
     const principal = await requireSession(c.req.raw);
-    const { db, now, engine } = ready();
+    const { db, now, engine, networkTargets } = ready();
     const domain = getDomain(db, principal, 'settings.read', oneValue(new URL(c.req.url).searchParams, 'domain'));
     const groups = settingsGroups.map(({ id, operations }) => ({ id, operations: operations.map((operation) => ({
-      operation, registered: engine.isRegistered(operation), targets: registeredTargets(db, principal, domain, operation),
+      operation, registered: engine.isRegistered(operation), targets: registeredTargets(db, principal, domain, operation, networkTargets),
     })) }));
     return c.json(snapshot({ ...principal, domains: [domain] }, { groups }, now(), db));
   }));
@@ -78,6 +79,42 @@ export function mountSettingsRoutes(app: Hono, ready: Ready): void {
     return c.json({ command_id: receipt.change_id, state: 'received', receipt_url: '/api/v1/settings/changes/' + receipt.change_id }, 202);
   }));
 
+  app.get('/api/v1/settings/changes/:id/recovery', (c) => handle(c, async () => {
+    const principal = await requireSession(c.req.raw);
+    const { db, now, engine } = ready();
+    const changeId = routeId(c.req.param('id'));
+    const original = engine.readScopedChange(principal, changeId);
+    return c.json(snapshot({ ...principal, domains: [original.domain] }, engine.recoveryOffer(principal, changeId), now(), db));
+  }));
+
+  app.post('/api/v1/settings/changes/:id/recovery', (c) => handle(c, async () => {
+    assertWriteOrigin(c.req.raw);
+    const parsed = changeRequest.safeParse(await readJson(c.req.raw));
+    if (!parsed.success || parsed.data.expected_revision === null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_recovery' });
+    const { payload, payload_hash, expected_revision, client_request_id } = parsed.data;
+    assertPayloadHash(payload, payload_hash);
+    const principal = await requireSession(c.req.raw);
+    const { db, now, engine } = ready();
+    const changeId = routeId(c.req.param('id'));
+    const original = engine.readScopedChange(principal, changeId);
+    if (!payload.draft.input || typeof payload.draft.input !== 'object' || Array.isArray(payload.draft.input) ||
+        payload.draft.input.change_id !== changeId) throw new ApiError(409, 'VALIDATION_STALE', { reason: 'change_binding' });
+    const token = readPresentedToken(c.req.raw);
+    if (!token) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const result = await engine.recoverSettings(principal, { changeId, draft: payload.draft, validationId: payload.validation_id,
+      controlReceiptId: payload.control_receipt_id, requestId: client_request_id, expectedRevision: expected_revision,
+      assertSession() {
+        const live = db.prepare(`SELECT 1 FROM sessions s JOIN accounts a USING(account_id)
+          WHERE s.token_hash=? AND s.account_id=? AND s.caller_id=? AND s.auth_epoch=?
+            AND a.auth_epoch=s.auth_epoch AND s.expires_at>?`)
+          .get(tokenHash, principal.account_id, principal.caller_id, principal.auth_epoch, now().toISOString());
+        if (!live) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'session' });
+      },
+    });
+    return c.json(snapshot({ ...principal, domains: [original.domain] }, result, now(), db));
+  }));
+
   for (const prefix of ['/api/v1/settings/changes', '/api/v1/system/incidents']) {
     app.get(prefix + '/:id', (c) => handle(c, async () => {
       const principal = await requireSession(c.req.raw);
@@ -95,8 +132,10 @@ function getDomain(db: SqliteDatabase, principal: Principal, permission: string,
   return chosen;
 }
 
-function registeredTargets(db: SqliteDatabase, principal: Principal, domain: string, operation: string) {
+function registeredTargets(db: SqliteDatabase, principal: Principal, domain: string, operation: string,
+  networkTargets?: (principal: Principal, domain: string) => readonly unknown[]) {
   if (!domainsWithPermission(db, principal, 'owner', false).includes(domain)) return [];
+  if (operation === 'repair_network') return networkTargets?.(principal, domain) ?? [];
   if (operation === 'connect_vault') return db.prepare(`SELECT v.vault_id AS target,c.device_id AS device,
     v.status,v.config_revision AS revision FROM vaults v JOIN vault_clients c ON c.vault_id=v.vault_id
     WHERE v.account_id=? AND v.data_domain=? AND v.status='awaiting_confirmation'

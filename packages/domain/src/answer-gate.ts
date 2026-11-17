@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload, type Json } from '@patrick/contracts';
-import { appendDomainEvent, commandFingerprint, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { appendDomainEvent, assertRecoveryWriteAllowed, commandFingerprint, recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { AdmissionPrincipal } from './delegation.js';
 import { INSERT_RESUME_SQL } from './work-continuation.js';
 
@@ -203,6 +203,7 @@ export function createAnswerGate(db: SqliteDatabase, options: AnswerGateOptions)
         return withImmediateTransaction(db, () => finishLocal(db, principal, options.domain, prepared, stamp()));
       }
       const dispatch = withImmediateTransaction(db, () => {
+        assertRecoveryWriteAllowed(db, options.domain);
         const sentAt = stamp();
         const { intent, binding, decision } = prepared;
         if (!takeSendLock(db, intent.intent_id, binding.question_id, sentAt)) {
@@ -220,6 +221,7 @@ export function createAnswerGate(db: SqliteDatabase, options: AnswerGateOptions)
       });
       if (dispatch.receipt) return dispatch.receipt;
       const { body } = dispatch;
+      assertRecoveryWriteAllowed(db, options.domain);
       const accepted = await options.hub.accept(prepared.binding.question_id, prepared.binding.hub_card_id, body);
       if (!accepted.changed) {
         const current = await options.hub.read(prepared.binding.question_id);
@@ -279,6 +281,7 @@ function bindQuestion(
     if (existing.options_hash !== optionsHash || existing.work_id !== input.work_id) throw new Error('CONFLICT');
     return viewBinding(existing, input);
   }
+  assertRecoveryWriteAllowed(db, domain);
   const watermark = currentWatermark(db, domain);
   const material = input.options.find((option) => option.expected_material)?.expected_material ?? null;
   const collectionId = input.options.find((option) => option.collection_id)?.collection_id ?? null;
@@ -355,6 +358,7 @@ function beginSubmit(
     if (!receipt) throw new Error('CONFLICT');
     return { done: true, receipt };
   }
+  assertRecoveryWriteAllowed(db, domain);
   const decision = classify(binding, command.payload.answer);
   if (
     command.expected_revision !== binding.proposal_revision
@@ -399,6 +403,7 @@ function finishLocal(
   prepared: Extract<Prepared, { done: false }>,
   stamped: string,
 ): AnswerReceipt {
+  assertRecoveryWriteAllowed(db, domain);
   const held = takeSendLock(db, prepared.intent.intent_id, prepared.binding.question_id, stamped);
   if (!held) return writeReceipt(db, prepared.intent, 'conflict', prepared.decision, null, stamped);
   if (prepared.decision.reason_code === 'OUT_OF_SCOPE') {
@@ -710,9 +715,10 @@ export function channelPermit(
   stamped: string,
 ): ChannelPermit {
   return withImmediateTransaction(db, () => {
-    const connection = db.prepare(`SELECT account_id, status, transport_mode, channel_incarnation, connection_epoch,
+    const connection = db.prepare(`SELECT account_id, data_domain, status, transport_mode, channel_incarnation, connection_epoch,
       config_revision, binding_revision FROM channel_connections WHERE connection_id = ?`).get(connectionId) as {
       account_id: string;
+      data_domain: string;
       status: string;
       transport_mode: string;
       channel_incarnation: number;
@@ -721,6 +727,7 @@ export function channelPermit(
       binding_revision: number;
     } | undefined;
     if (!connection) throw new Error('FORBIDDEN');
+    assertRecoveryWriteAllowed(db, connection.data_domain);
     if (connection.status !== 'ready' || connection.transport_mode !== 'active') throw new Error('CHANNEL_DENIED');
     const permitId = `permit_${sha256(`${connectionId}\0${inboundId}`).slice(0, 24)}`;
     db.prepare(`INSERT INTO channel_permits (
@@ -806,6 +813,7 @@ function hasRecoverableDispatch(db: SqliteDatabase, intentId: string): boolean {
 }
 
 function recoveryAllowed(db: SqliteDatabase, intent: IntentRow, stamped: string): boolean {
+  if (!recoveryWriteAllowed(db, intent.data_domain)) return false;
   if (intent.entry === 'feishu' && !hasRecoverableDispatch(db, intent.intent_id)) return false;
   const work = db.prepare('SELECT mandate_id, account_id, data_domain FROM work_generations WHERE work_id = ? AND generation = ?').get(
     intent.work_id,

@@ -50,6 +50,7 @@ export function routeId(value: string | undefined): string {
 function asApiError(error: unknown): unknown {
   if (error instanceof ApiError) return error;
   if (error instanceof Error) {
+    if (error.message === 'RECOVERY_WRITE_BLOCKED') return new ApiError(409, 'CONFLICT', { reason: 'recovery_write_blocked' });
     if (error.message === 'CONFLICT' || error.message === 'VAULT_ROOT_TAKEN' || error.message === 'IDEMPOTENCY_CONFLICT') {
       return new ApiError(409, 'CONFLICT', { reason: error.message === 'IDEMPOTENCY_CONFLICT' ? 'idempotency' : 'revision' });
     }

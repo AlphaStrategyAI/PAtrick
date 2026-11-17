@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONSULTATION_WORKER, createHubClient, hubRules, PINNED_HUB_COMMIT, type HubClient, type HubKeys } from '../../packages/integrations/autoloop/client.js';
+import { CONSULTATION_WORKER, NOTIFICATION_WORKER, createHubClient, hubRules, PINNED_HUB_COMMIT, type HubClient, type HubKeys } from '../../packages/integrations/autoloop/client.js';
 
 const REMOTE = 'https://github.com/KKKKhazix/agent-autoloop.git';
 
@@ -32,9 +32,16 @@ else {
     owner: runtime.addKey('owner', 'owner'),
     worker: runtime.addKey('worker', 'w1'),
     consultationWorker: runtime.addKey('worker', '${CONSULTATION_WORKER}'),
+    notificationWorker: runtime.addKey('worker', '${NOTIFICATION_WORKER}'),
     source: runtime.addKey('source', 'patrick'),
   };
   writeFileSync(keysPath, JSON.stringify(keys));
+}
+if (process.env.PATRICK_PROBE_NOTIFICATION_CRON === '1') {
+  // Advance only the pinned test kernel. The network and wall clock are untouched.
+  runtime.reloadRules();
+  runtime.execute('tick', [], Date.now() - 65_000);
+  runtime.execute('tick', [], Date.now());
 }
 const server = http.serve(0, '127.0.0.1', { commit: pin });
 await new Promise((resolve, reject) => {
@@ -89,6 +96,7 @@ export type PinnedHub = {
   source: string;
   client: HubClient;
   consultationClient: HubClient;
+  notificationClient: HubClient;
   keys: HubKeys;
   stop: () => Promise<void>;
 };
@@ -127,14 +135,14 @@ export function pinnedAutoloopSource(): string {
   return cachedSource = dir;
 }
 
-export async function startPinnedHub(existingHome?: string): Promise<PinnedHub> {
+export async function startPinnedHub(existingHome?: string, options: { notifications?: boolean } = {}): Promise<PinnedHub> {
   const source = pinnedAutoloopSource();
   const home = existingHome ?? mkdtempSync(join(tmpdir(), 'patrick-t04-hub-'));
   mkdirSync(home, { recursive: true });
   const script = join(home, 'probe-agent.mjs');
   if (!existingHome) {
     writeFileSync(script, PROBE_AGENT);
-    writeFileSync(join(home, 'rules.json'), `${JSON.stringify(hubRules([process.execPath, script]), null, 2)}\n`);
+    writeFileSync(join(home, 'rules.json'), `${JSON.stringify(hubRules([process.execPath, script], options), null, 2)}\n`);
     writeFileSync(join(home, 'boot.mjs'), BOOT);
     writeFileSync(join(home, 'command-runner.mjs'), COMMAND_RUNNER);
   }
@@ -146,11 +154,12 @@ export async function startPinnedHub(existingHome?: string): Promise<PinnedHub> 
       PATRICK_AUTOLOOP_ROOT: source,
       PATRICK_AUTOLOOP_COMMIT: PINNED_HUB_COMMIT,
       PATRICK_PROBE_SCRIPT: script,
+      PATRICK_PROBE_NOTIFICATION_CRON: options.notifications ? '1' : '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
-    const ready = JSON.parse(await readStdoutLine(child, command)) as { port: number; consultationWorker: string } & HubKeys;
+    const ready = JSON.parse(await readStdoutLine(child, command)) as { port: number; consultationWorker: string; notificationWorker: string } & HubKeys;
     const url = `http://127.0.0.1:${ready.port}`;
     const client = createHubClient(url, ready);
     return {
@@ -159,6 +168,7 @@ export async function startPinnedHub(existingHome?: string): Promise<PinnedHub> 
       source,
       client,
       consultationClient: createHubClient(url, { ...ready, worker: ready.consultationWorker }),
+      notificationClient: createHubClient(url, { ...ready, worker: ready.notificationWorker }),
       keys: { owner: ready.owner, worker: ready.worker, source: ready.source },
       stop: () => stopChild(child),
     };

@@ -287,7 +287,7 @@ async function scene(phase: 'delivery' | 'judgment' = 'delivery', resource = RES
     if (phase === 'delivery' && resource === RESOURCE && prepareExisting) await prepare(granted);
     return granted;
   }
-  const remote = createGitHubClient({ fetch: github.fetch, branchAuthority: AUTHORITY });
+  const remote = createGitHubClient({ fetch: github.fetch, branchAuthority: AUTHORITY, writeAuthorization: () => 'fixture-write-credential', assertWriteAllowed() {} });
   const artifactsRoot = join(dir, 'jobs');
   const receiptsRoot = join(dir, 'receipts');
   const repository = () => createEffectRepository(db, principal, { ...options, target: TARGET,
@@ -347,7 +347,7 @@ process.stdout.write(${JSON.stringify(JSON.stringify({ result: contents, stop_re
         home: job, config_hash: configHash, cwd: job, session_id: null, bundle_present: true, controller: 'run',
         terminal: null, resume: null, ledger_dir: buildWorkspace(receiptsRoot, context), paid: null,
         deliveryPlan: { source_revision: sourceRevision, source_sha256: sourceHash, sourceBytes },
-      }, grant);
+      }, grant, { db, principal, now: NOW_FN });
       return { receipt, contents, job, sourceRevision, sourceHash, starts, received };
     } finally { vi.unstubAllEnvs(); }
   }
