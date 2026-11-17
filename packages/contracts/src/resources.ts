@@ -26,6 +26,7 @@ export type RouteDefinition = {
   method: HttpMethod;
   path: string;
   permission: string;
+  scopePermissions?: readonly string[];
   kind: 'read' | 'write';
   request: z.ZodType;
   response: z.ZodType;
@@ -38,6 +39,7 @@ export type SdkMethod = {
   method: HttpMethod;
   path: string;
   permission: string;
+  scopePermissions?: readonly string[];
   errors: string[];
 };
 
@@ -417,6 +419,7 @@ export const routes: RouteDefinition[] = [
   command('previewDiagnostics', '/diagnostics/preview', 'owner', emptySchema),
   command('exportDiagnostics', '/diagnostics/export', 'owner', emptySchema),
   { operationId: 'listEvents', method: 'GET', path: '/events', permission: 'events.read', kind: 'read',
+    scopePermissions: ['work.read'],
     request: z.strictObject({ after: z.string().min(1).optional(), ...domainSchema.shape }), response: sseEventSchema,
     responseMediaType: 'text/event-stream', errors: [...readErrors, 'UNPROCESSABLE'] },
   read('getCommand', '/commands/:id', 'commands.read', idSchema, z.unknown()),
@@ -482,6 +485,7 @@ export function generateOpenApi(): OpenApiDocument {
     const operation: Record<string, unknown> = {
       operationId: route.operationId,
       'x-permission': route.permission,
+      ...(route.scopePermissions ? { 'x-additional-scope-permissions': route.scopePermissions } : {}),
       parameters: [
         ...pathParams(route.path).map((name) => ({
           name,
@@ -544,6 +548,7 @@ export function generateSdk(): SdkMethod[] {
     method: route.method,
     path: route.path,
     permission: route.permission,
+    ...(route.scopePermissions ? { scopePermissions: route.scopePermissions } : {}),
     errors: [...route.errors],
   }));
 }

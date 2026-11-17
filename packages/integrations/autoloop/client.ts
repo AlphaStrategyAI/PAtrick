@@ -213,7 +213,7 @@ export type HubKeys = { owner: string; worker: string; source: string };
 export type HubClient = HubPublisher & {
   health(): Promise<{ ok: boolean; commit: string }>;
   eventOutcome(event: number, signal?: AbortSignal): Promise<HubEventOutcome>;
-  state(before?: number): Promise<HubStatePage>;
+  state(before?: number, signal?: AbortSignal): Promise<HubStatePage>;
   answer(cardId: number, body: { text: string } | { choice: number }): Promise<{ changed: boolean; state: string }>;
   claim(claimId: string, signal?: AbortSignal): Promise<HubJob | null>;
   heartbeat(claimId: string, run: number, signal?: AbortSignal): Promise<number[]>;
@@ -267,7 +267,7 @@ export function createHubClient(baseUrl: string, keys: HubKeys): HubClient {
       if (!Number.isSafeInteger(event) || event < 1) throw new Error('HUB_EVENT_OUTCOME_INVALID');
       return parseEventOutcome(await request('GET', `/v1/events/${event}`, keys.source, undefined, signal), event);
     },
-    state: async (before) => parseState(await request('GET', before === undefined ? '/v1/state' : `/v1/state?before=${before}`, keys.owner)),
+    state: async (before, signal) => parseState(await request('GET', before === undefined ? '/v1/state' : `/v1/state?before=${before}`, keys.owner, undefined, signal)),
     answer: async (cardId, body) => {
       const parsed = await request('POST', `/v1/cards/${cardId}/answer`, keys.owner, body);
       if (!isRecord(parsed) || typeof parsed.changed !== 'boolean' || typeof parsed.state !== 'string') {
@@ -337,6 +337,8 @@ function parseState(value: unknown): HubStatePage {
     nextBefore: nullableNumber(value.nextBefore, 'HUB_STATE_INVALID'),
     runs: value.runs.map(parseRun),
     cards: value.cards.map(parseCard),
+    recentCardStates: Array.isArray(value.recentCards) ? value.recentCards.flatMap((card: unknown) =>
+      isRecord(card) && typeof card.id === 'number' && typeof card.state === 'string' ? [{ id: card.id, state: card.state }] : []) : undefined,
     lines: value.lines.map(parseLine),
   };
 }

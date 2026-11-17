@@ -23,6 +23,9 @@ import { mountKnowledgeRoutes } from './routes/knowledge.js';
 import { mountStandardRoutes } from './routes/standards.js';
 import { mountVaultRoutes } from './routes/vaults.js';
 import { mountWorkControlRoutes } from './routes/work-controls.js';
+import { createProductViewService, startProductViewHubObserver, type ProductViewHub } from './product-views.js';
+import { mountWorkProjectionRoutes } from './routes/work.js';
+import { mountProjectionEventRoutes } from './routes/events.js';
 
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
@@ -31,6 +34,7 @@ export type CreateAppOptions = {
   credentialDirectory?: string;
   now?: () => Date;
   consultationWorker?: ConsultationWorkerOptions;
+  productViewHub?: ProductViewHub;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
 };
 
@@ -44,6 +48,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.prDeliveryWorker && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
     throw new Error('PUBLISHER_DATABASE_REQUIRED');
   }
+  if (options.productViewHub && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
+    throw new Error('PRODUCT_VIEW_DATABASE_REQUIRED');
+  }
   const now = options.now ?? (() => new Date());
   const state: {
     db?: SqliteDatabase;
@@ -51,6 +58,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     databasePath?: string;
     vault?: ReturnType<typeof createVaultApi>;
     hub?: LocalHubPort;
+    productViews?: ReturnType<typeof createProductViewService>;
   } = {};
   function context(): AuthContext {
     if (!state.db || !state.credentials || !state.databasePath) {
@@ -92,34 +100,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }).start();
   }
 
+  if (options.productViewHub) {
+    const { db } = context();
+    state.productViews = createProductViewService(db, now);
+    startProductViewHubObserver(db, now, options.productViewHub, state.productViews.recordHubObservation);
+    state.productViews.start({ signal: options.productViewHub.signal, onError: options.productViewHub.onError });
+  }
+
   const app = new Hono();
-  app.use('/api/v1/*', async (c, next) => {
-    if (c.req.path === '/api/v1/system/health') {
-      await next();
-      return;
-    }
+  app.use('/api/v1/*', async (_c, next) => {
     await runWithAuth(context(), async () => {
       await next();
     });
   });
   app.get('/api/openapi.json', (c) => c.json(generateOpenApi()));
-  app.get('/api/v1/system/health', (c) => {
-    const asOf = new Date().toISOString();
-    return c.json({
-      schema_version: '1.0',
-      scope: { account_id: 'bootstrap', data_domain: 'system', permission_epoch: 0 },
-      as_of: asOf,
-      watermark: { hub_seq: 0, domain_seq: 0 },
-      freshness: 'unknown',
-      data: {
-        service: 'unknown',
-        freshness: 'unknown',
-        impact: 'bootstrapping',
-        next_step: null,
-        as_of: asOf,
-      },
-    });
-  });
+  app.get('/healthz', (c) => c.json({ ok: true }));
   mountAuthRoutes(app);
   mountControlRoutes(app);
   mountAnswerRoutes(app, () => {
@@ -144,6 +139,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountWorkControlRoutes(app, resources);
   mountConversationRoutes(app, () => ({ db: context().db, now }));
   mountConsultationRoutes(app, () => ({ db: context().db, now }));
+  const viewResources = () => {
+    const current = context();
+    state.productViews ??= createProductViewService(current.db, now);
+    return { ...current, ...state.productViews };
+  };
+  mountWorkProjectionRoutes(app, viewResources);
+  mountProjectionEventRoutes(app, viewResources);
   return app;
 }
 

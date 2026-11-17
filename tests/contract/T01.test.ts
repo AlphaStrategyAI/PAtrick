@@ -367,12 +367,10 @@ test('quality-fix-command-openapi-query-and-versions', () => {
   expect(domainEventSchema.safeParse({ ...eventBase, schema_version: '2.0' }).success).toBe(false);
 });
 
-test('quality-fix-system-health-snapshot', async () => {
-  const healthRoute = routes.find((route) => route.operationId === 'getSystemHealth');
-  const response = await createApp().request('/api/v1/system/health');
-  const body: unknown = await response.json();
-  expect(healthRoute?.response.safeParse(body).success).toBe(true);
-  const snapshot = healthRoute?.response.parse(body) as { data: { service: string; impact: string } };
-  expect(snapshot.data.service).toBe('unknown');
-  expect(snapshot.data.impact).toBe('bootstrapping');
+test('system health requires a session; the process exposes liveness separately', async () => {
+  const app = createApp();
+  const response = await app.request('/api/v1/system/health');
+  expect(response.status).toBe(401);
+  expect(await response.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
+  expect(await (await app.request('/healthz')).json()).toEqual({ ok: true });
 });

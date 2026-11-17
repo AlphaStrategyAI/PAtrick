@@ -38,5 +38,9 @@
   {
     "file": "0012_effects_outcomes.sql",
     "sha256": "5a04aff8c3fef40000d7c0862a0c3ac9c0eb27b69845805df63fa5ce6fbc9b44"
+  },
+  {
+    "file": "0013_views.sql",
+    "sha256": "3e9f0f1fea8ed4c4e3a3f6bfe9b06fd8c59169b2bf0fe0eb66fd6060434bfe35"
   }
 ]

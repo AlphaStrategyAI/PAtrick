@@ -37,6 +37,7 @@ export type HubStatePage = {
   seq: number;
   runs: HubRunView[];
   cards: HubCardView[];
+  recentCardStates?: Pick<HubCardView, 'id' | 'state'>[];
   lines: HubRuleLine[];
   hasMore: boolean;
   nextBefore: number | null;
@@ -49,25 +50,31 @@ export type HubSnapshot = {
 };
 
 export type HubStateReader = {
-  state(before?: number): Promise<HubStatePage>;
+  state(before?: number, signal?: AbortSignal): Promise<HubStatePage>;
 };
 
-export async function readConsistentHubSnapshot(hub: HubStateReader): Promise<HubSnapshot> {
+export async function readConsistentHubSnapshot(hub: HubStateReader, signal?: AbortSignal): Promise<HubSnapshot> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const first = await hub.state();
+    signal?.throwIfAborted();
+    const first = await hub.state(undefined, signal);
     const pages = [first];
     const seen = new Set<number>();
     let before = nextPage(first);
     while (before !== null) {
       if (seen.has(before)) throw new Error('HUB_PAGE_INVALID');
       seen.add(before);
-      const page = await hub.state(before);
+      signal?.throwIfAborted();
+      const page = await hub.state(before, signal);
       pages.push(page);
       before = nextPage(page);
     }
-    const followed = await hub.state();
+    signal?.throwIfAborted();
+    const followed = await hub.state(undefined, signal);
     if (followed.seq === first.seq) {
-      return { hub_seq: followed.seq, runs: mergeRuns(pages), cards: first.cards };
+      const cards = new Map<number, HubCardView>();
+      for (const card of first.recentCardStates ?? []) cards.set(card.id, { ...card, title: '', choice: null, answer: null });
+      for (const card of first.cards) cards.set(card.id, card);
+      return { hub_seq: followed.seq, runs: mergeRuns(pages), cards: [...cards.values()] };
     }
   }
   throw new Error('HUB_SNAPSHOT_GAP');
@@ -83,9 +90,17 @@ export async function rebuildHubView(
   return { hub_seq: view.hub_seq };
 }
 
-export function storeHubView(db: SqliteDatabase, view: HubSnapshot, now: string): void {
+export function storeHubView(db: SqliteDatabase, view: HubSnapshot, now: string): 'changed' | 'observation' {
   const snapshot = JSON.stringify({ runs: view.runs, cards: view.cards });
-  withImmediateTransaction(db, () => {
+  return withImmediateTransaction(db, () => {
+    const prior = db.prepare(`SELECT s.hub_seq,s.snapshot,c.hub_seq AS cursor_seq FROM hub_snapshots s
+      LEFT JOIN projection_cursors c ON c.name=s.cursor_name WHERE s.cursor_name=?`).get(HUB_CURSOR) as {
+      hub_seq: number; snapshot: string; cursor_seq: number | null;
+    } | undefined;
+    if (prior?.hub_seq === view.hub_seq && prior.cursor_seq === view.hub_seq && prior.snapshot === snapshot) {
+      db.prepare('UPDATE hub_snapshots SET imported_at=? WHERE cursor_name=? AND imported_at<?').run(now, HUB_CURSOR, now);
+      return 'observation';
+    }
     db.prepare(`INSERT INTO hub_snapshots (cursor_name, hub_seq, snapshot, imported_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(cursor_name) DO UPDATE SET
@@ -97,6 +112,7 @@ export function storeHubView(db: SqliteDatabase, view: HubSnapshot, now: string)
       ON CONFLICT(name) DO UPDATE SET
         hub_seq = excluded.hub_seq,
         updated_at = excluded.updated_at`).run(HUB_CURSOR, view.hub_seq, now);
+    return 'changed';
   });
 }
 
