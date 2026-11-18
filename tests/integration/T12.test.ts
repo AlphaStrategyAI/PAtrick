@@ -19,6 +19,12 @@ import {
   claimContinuation, confirmCollectedEvidence, INSERT_RESUME_SQL, recordCollectionRound, type ResumeKey,
 } from '../../packages/domain/src/work-continuation.js';
 
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
+
 const NOW = '2026-11-16T12:00:00.000Z';
 const UPDATE = '2026-11-16T14:00:00.000Z';
 const NOW_FN = () => new Date(NOW);

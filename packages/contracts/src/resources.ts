@@ -98,6 +98,9 @@ export const sourceEntrySchema = z.strictObject({
   normalized_target: z.string().min(1), frequency: z.string().min(1),
   config_revision: z.number().int().positive(), status: z.string().min(1), updated_at: z.iso.datetime(),
 });
+export const sourceReaderCapabilitiesSchema = z.strictObject({
+  directory: z.strictObject({ state: z.literal('blocked'), reason: z.literal('DIRECTORY_READER_UNAVAILABLE') }),
+});
 export const sourcePreviewSchema = z.strictObject({
   preview_id: z.string().min(1), target: z.string().min(1), type: detectHttpSourcePayload.shape.type,
   duplicate_source_id: z.string().min(1).nullable(), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -562,6 +565,7 @@ export const routes: RouteDefinition[] = [
     z.strictObject({ items: z.array(sourceEntrySchema), next_cursor: z.string().nullable() })),
   errors: [...readErrors, 'UNPROCESSABLE'] },
   read('getSource', '/sources/:id', 'sources.read', scopedIdSchema, sourceEntrySchema),
+  read('getSourceReaderCapabilities', '/source-reader-capabilities', 'sources.read', domainSchema, sourceReaderCapabilitiesSchema),
   read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', scopedIdSchema,
     z.strictObject({ items: z.array(sourceReceiptSchema) })),
   write('detectSources', 'POST', '/sources/detect', 'sources.detect', commandEnvelope(detectHttpSourcePayload),

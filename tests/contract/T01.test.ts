@@ -118,6 +118,7 @@ test('openapi-sdk-no-drift', () => {
     'GET /api/v1/settings',
     'GET /api/v1/settings/changes/{id}',
     'GET /api/v1/settings/changes/{id}/recovery',
+    'GET /api/v1/source-reader-capabilities',
     'GET /api/v1/sources',
     'GET /api/v1/sources/{id}',
     'GET /api/v1/sources/{id}/history/{planId}',

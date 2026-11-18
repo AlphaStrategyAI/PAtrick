@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import { createProductViewService } from '../../apps/service/src/product-views.js';
 import { mountStatsRoutes } from '../../apps/service/src/routes/stats.js';
@@ -16,6 +16,12 @@ import type { FactKind } from '../../packages/storage/src/views/stats-source.js'
 import { createProjectionCursorCodec } from '../../packages/storage/src/views/cursors.js';
 import { createWorkProjection } from '../../packages/storage/src/views/work.js';
 import type { WorkFact } from '../../packages/storage/src/views/work.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const now = new Date('2025-03-10T12:00:00.000Z');
 const at = now.toISOString();

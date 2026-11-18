@@ -15,11 +15,17 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { GITHUB_LIVE_NETWORK, verifyGithubSignature } from '../../packages/integrations/sources/github.js';
 import { admitChange, createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 import { createBlobStore, type BlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const NOW = '2026-11-16T12:00:00.000Z';
 const EXPIRES = '2026-11-16T12:15:00.000Z';

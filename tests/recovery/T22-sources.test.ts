@@ -7,6 +7,12 @@ import { createRecoveryRuntimeGate, createBlobStore, openDatabase } from '@patri
 import { createHttpCollectionWorker } from '../../apps/service/src/source-collection.js';
 import { createSourceRegistry, type RegistryOptions } from '../../packages/integrations/sources/registry.js';
 
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
+
 const principal = { accountId: 'owner', dataDomain: 'personal' };
 const at = '2026-11-17T06:00:00.000Z';
 

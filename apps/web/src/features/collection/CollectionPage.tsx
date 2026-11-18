@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { sourceEntrySchema, sourcePreviewSchema, sourceReceiptSchema } from '@patrick/contracts/resources';
+import { useQuery } from '@tanstack/react-query';
+import { sourceEntrySchema, sourcePreviewSchema, sourceReaderCapabilitiesSchema, sourceReceiptSchema } from '@patrick/contracts/resources';
 import type { Snapshot } from '@patrick/contracts/envelope';
 import { z } from 'zod';
-import { ClientError } from '../../api/client.js';
+import { ClientError, scopedQueryKey } from '../../api/client.js';
 import { sameScope } from '../../api/events.js';
 import { asClientError, useScopedSnapshot, useService } from '../../api/query.js';
 import { LocalizedError } from '../../components/shared.js';
@@ -27,6 +28,90 @@ const labels: Record<string, MessageKey> = {
 type Source = z.infer<typeof sourceEntrySchema>;
 type Preview = z.infer<typeof sourcePreviewSchema>;
 type Edit = 'modify' | 'pause' | 'resume' | 'disconnect';
+const readerLifetimeMs = 30_000;
+const readerRefreshMs = 10_000;
+
+/** A capability response is current only for a bounded interval from request start. */
+function useDirectoryReader(enabled: boolean) {
+  const { api, scope, accessGeneration } = useService();
+  const generation = useRef(0);
+  const instance = useRef(Symbol('directory-reader'));
+  const [requiredGeneration, setRequiredGeneration] = useState(0);
+  const query = useQuery({
+    queryKey: scope ? [...scopedQueryKey(scope, 'getSourceReaderCapabilities', {}), accessGeneration]
+      : ['patrick:locked', 'getSourceReaderCapabilities'],
+    enabled: !!scope && enabled,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: readerRefreshMs,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    queryFn: async ({ signal }) => {
+      const startedAt = Date.now();
+      const startedMonotonic = performance.now();
+      const requestGeneration = generation.current;
+      const result = await api.read('getSourceReaderCapabilities', {}, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(readerLifetimeMs)]),
+      });
+      const elapsed = Date.now() - startedAt;
+      const monotonicElapsed = performance.now() - startedMonotonic;
+      if (elapsed < 0 || monotonicElapsed < 0 || elapsed >= readerLifetimeMs || monotonicElapsed >= readerLifetimeMs) {
+        throw new ClientError('UNAVAILABLE');
+      }
+      return { data: sourceReaderCapabilitiesSchema.parse(result.data), startedAt, startedMonotonic,
+        generation: requestGeneration, instance: instance.current };
+    },
+  });
+  const [visible, setVisible] = useState(() => document.visibilityState === 'visible');
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [, checkExpiry] = useState(0);
+  const refetch = query.refetch;
+
+  useEffect(() => {
+    function invalidate() {
+      const next = ++generation.current;
+      setRequiredGeneration(next);
+    }
+    function revalidate() {
+      invalidate();
+      if (!enabled || !navigator.onLine || document.visibilityState !== 'visible') return;
+      void refetch();
+    }
+    function visibilityChanged() {
+      const next = document.visibilityState === 'visible';
+      setVisible(next);
+      if (next) revalidate();
+      else invalidate();
+    }
+    function wentOffline() { setOnline(false); invalidate(); }
+    function wentOnline() { setOnline(true); revalidate(); }
+    document.addEventListener('visibilitychange', visibilityChanged);
+    window.addEventListener('offline', wentOffline);
+    window.addEventListener('online', wentOnline);
+    return () => {
+      generation.current++;
+      document.removeEventListener('visibilitychange', visibilityChanged);
+      window.removeEventListener('offline', wentOffline);
+      window.removeEventListener('online', wentOnline);
+    };
+  }, [enabled, refetch]);
+
+  useEffect(() => {
+    if (!query.data) return;
+    const remaining = Math.min(readerLifetimeMs - (Date.now() - query.data.startedAt),
+      readerLifetimeMs - (performance.now() - query.data.startedMonotonic));
+    if (remaining <= 0) { checkExpiry((n) => n + 1); return; }
+    const timer = window.setTimeout(() => checkExpiry((n) => n + 1), remaining);
+    return () => window.clearTimeout(timer);
+  }, [query.data]);
+
+  const wallAge = query.data ? Date.now() - query.data.startedAt : -1;
+  const monotonicAge = query.data ? performance.now() - query.data.startedMonotonic : -1;
+  const fresh = visible && online && !query.error && query.data?.instance === instance.current
+    && query.data.generation >= requiredGeneration && wallAge >= 0 && wallAge < readerLifetimeMs
+    && monotonicAge >= 0 && monotonicAge < readerLifetimeMs;
+  return { ...query, fresh };
+}
 
 export function CollectionPage() {
   const { scope, callerId, accessGeneration, scopeOperations } = useService();
@@ -56,6 +141,9 @@ function ScopedCollection() {
   const sources = useScopedSnapshot('listSources', { cursor }, sourcePage.parse);
   const detail = useScopedSnapshot('getSource', { id: selectedId }, sourceEntrySchema.parse, { enabled: !!selectedId });
   const source = detail.data?.data;
+  const hasDirectory = !!source && source.connector_type === 'directory'
+    || !!sources.data?.data.items.some((item) => item.connector_type === 'directory');
+  const reader = useDirectoryReader(hasDirectory);
   const log = useScopedSnapshot('getSourceReceipts', { id: source?.source_id }, receipts.parse,
     { enabled: !!source, refetchInterval: 10_000 });
 
@@ -90,9 +178,13 @@ function ScopedCollection() {
     }
   }
 
-  function refresh() { void sources.refetch(); if (selectedId) void detail.refetch(); if (source) void log.refetch(); }
+  function refresh() { void sources.refetch(); if (selectedId) void detail.refetch(); if (source) void log.refetch(); if (hasDirectory) void reader.refetch(); }
   function page(next: string | undefined) { setCursor(next); select(undefined); edit(undefined); }
   function sourceLabel(row: Source) { return t(labels[row.status] ?? 'status.unknown'); }
+  function directoryReaderLabel() {
+    return reader.fresh && reader.data?.data.directory.state === 'blocked'
+      ? t('collection.directoryReaderBlocked') : t('collection.directoryReaderUnknown');
+  }
   return <>
     {canPreview && <section className="card">
       <h2>{t('collection.add')}</h2>
@@ -144,6 +236,7 @@ function ScopedCollection() {
           <button type="button" onClick={() => { select(row.source_id); edit(undefined); }} aria-pressed={selectedId === row.source_id}>
             {row.normalized_target}
           </button>{' · '}{t(labels[row.connector_type] ?? 'status.unknown')}{' · '}{sourceLabel(row)}
+          {row.connector_type === 'directory' && <> · <span role="status">{directoryReaderLabel()}</span></>}
         </li>)}</ul> : null}
       {!!cursor && <button type="button" onClick={() => page(undefined)}>{t('collection.firstPage')}</button>}
       {sources.data?.data.next_cursor && <button type="button" onClick={() => page(sources.data!.data.next_cursor!)}>{t('collection.nextPage')}</button>}
@@ -154,6 +247,9 @@ function ScopedCollection() {
       <h2>{t('collection.details')}</h2>
       <p><code>{source.normalized_target}</code></p>
       <p>{sourceLabel(source)} · {t('collection.frequency')}: {source.frequency}</p>
+      {source.connector_type === 'directory' && <p role="status">{directoryReaderLabel()}
+        {reader.fresh && reader.data?.data.directory.state === 'blocked' && <> {t('collection.directoryReaderNext')}</>}
+      </p>}
       {owner && ['rss', 'webpage'].includes(source.connector_type) && source.status !== 'disconnected' &&
         <div>{(['modify', source.status === 'enabled' ? 'pause' : 'resume', 'disconnect'] as const).map((action) =>
           <button key={action} type="button" onClick={() => { chooseFrequency(source.frequency); edit(action); }}

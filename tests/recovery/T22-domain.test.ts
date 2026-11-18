@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { createRecoveryRuntimeGate, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { acknowledgeConsultationOutbox, admittedConsultation, createConsultationApi } from '../../packages/domain/src/consultations.js';
 import { recordKnowledge, reindexKnowledge, withdrawEvidence } from '../../packages/domain/src/evidence.js';
@@ -12,6 +12,12 @@ import { claimContinuation, confirmCollectedEvidence, recordCollectionRound, emi
 import { createEffectRepository } from '../../packages/domain/src/effects.js';
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const at = '2026-11-16T12:00:00.000Z';
 const now = () => new Date(at);

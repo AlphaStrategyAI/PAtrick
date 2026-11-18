@@ -4,6 +4,9 @@ import { resolve, sep } from 'node:path';
 import { canonicalPayload } from '@patrick/contracts';
 import { appendDomainEvent, assertRecoveryWriteAllowed, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { listSamples, samplePath, scanDirectory, stabilityDecision, type StabilitySample } from './directory.js';
+import { assertDirectoryReaderAvailable } from './directory-capability.js';
+import { listSamples as listGithubFixtureSamples, scanDirectory as scanGithubFixture } from './github-fixture-directory.js';
+export { directoryReaderCapability } from './directory-capability.js';
 import { readRegisteredHttp, sourceUrl, type HttpReadPort, type RegisteredHttpSource } from './http-read.js';
 import { parseFeed } from './rss.js';
 import { planRssHistory, type RssHistoryLimits, type RssHistorySelection } from './http-history.js';
@@ -357,6 +360,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
   }
 
   async function normalize(principal: Principal, draft: SourceDraft): Promise<NormalizedDraft> {
+    if (draft.type === 'directory') assertDirectoryReaderAvailable();
     if (!principal.accountId || !principal.dataDomain) throw new Error('SOURCE_PRINCIPAL_INVALID');
     assertNoCredential(draft.target);
     if (draft.credentialRef) assertNoCredential(draft.credentialRef);
@@ -502,7 +506,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     }
     const scope = githubScope(draft.scope);
     const root = githubRoot(scope);
-    return (await listSamples(root, draft.excludes)).map((sample) => ({
+    return (await listGithubFixtureSamples(root, draft.excludes)).map((sample) => ({
       locator: `${scope.path}/${sample.relativePath}`,
       byteLength: sample.byteLength,
     }));
@@ -912,7 +916,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     if (isHttpConnector(source.connector_type)) return collectHttp(source, configRevision, source.connector_type, scope);
     if (source.connector_type === 'github') {
       const github = githubScope(scope);
-      const scan = await scanDirectory(githubRoot(github), excludes);
+      const scan = await scanGithubFixture(githubRoot(github), excludes);
       if (scan.state === 'offline') return setStatus(source.source_id, 'offline');
       if (scan.state === 'placeholder') return setStatus(source.source_id, 'placeholder');
       const staged = await stage(source.source_id, scan.files.map((file) => ({
@@ -1161,6 +1165,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     },
 
     async detectSource(principal, draft, guard) {
+      if (draft.type === 'directory') {
+        if (!principal.accountId || !principal.dataDomain) throw new Error('SOURCE_PRINCIPAL_INVALID');
+        assertRecoveryWriteAllowed(db, principal.dataDomain);
+        assertDirectoryReaderAvailable();
+      }
       const normalized = await normalize(principal, draft);
       const existing = sameRoot(principal, normalized);
       const preview = previewFor(principal, normalized, existing?.source_id ?? null);
@@ -1227,6 +1236,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
 
     async enableSource(principal, draft, guard) {
       const frozen = structuredClone(draft);
+      if (frozen.type === 'directory') {
+        if (!principal.accountId || !principal.dataDomain) throw new Error('SOURCE_PRINCIPAL_INVALID');
+        assertRecoveryWriteAllowed(db, principal.dataDomain);
+        assertDirectoryReaderAvailable();
+      }
       const prepared = await normalize(principal, frozen);
       if (prepared.connectorType === 'github' && !sameRoot(principal, prepared)) await stat(githubRoot(githubScope(prepared.scope)));
       return withImmediateTransaction(db, () => {
@@ -1321,6 +1335,10 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     },
 
     async collectSource(sourceId, configRevision, guard) {
+      const source = load(sourceId);
+      if (!source) throw new Error('SOURCE_NOT_FOUND');
+      assertRecoveryWriteAllowed(db, source.data_domain);
+      if (source.connector_type === 'directory') assertDirectoryReaderAvailable();
       const opened = gate(sourceId, configRevision);
       if (isReceipt(opened)) return opened;
       if (guard) {
@@ -1384,6 +1402,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       const source = load(sourceId);
       if (!source || source.connector_type !== 'directory') throw new Error('SOURCE_NOT_FOUND');
       assertRecoveryWriteAllowed(db, source.data_domain);
+      assertDirectoryReaderAvailable();
       if (source.status !== 'enabled') return { read: false, receipt: null };
       const directory = directorySnapshot(source, source.config_revision);
       if (isReceipt(directory)) return { read: false, receipt: directory };

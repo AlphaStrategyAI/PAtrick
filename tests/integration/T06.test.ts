@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
 import { editReceiptSchema } from '../../packages/contracts/src/resources.js';
 import { createVaultApi, type VaultApiOptions, type VaultPrincipal } from '../../packages/integrations/vault/drafts.js';
@@ -17,6 +17,12 @@ import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/da
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const NOW = '2026-11-16T12:00:00.000Z';
 const MIGRATIONS = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
@@ -989,6 +995,8 @@ test('the vault migration appends without changing earlier files', () => {
     '0022_network.sql',
     '0023_recovery.sql',
     '0024_settings_recoveries.sql',
+    '0025_source_revision_provenance.sql',
+    '0026_directory_commit_generations.sql',
   ]);
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Hono } from 'hono';
 import { commandEnvelope, detectHttpSourcePayload, rssHistoryPreviewPayload, type Json, type BrowserCreationScope } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import type { RssHistoryActor, SourceRegistry } from '@patrick/integrations/sources/registry';
+import { directoryReaderCapability, type RssHistoryActor, type SourceRegistry } from '@patrick/integrations/sources/registry';
 import { assertDomainPermission, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
 import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
@@ -21,6 +21,13 @@ const historyPayload = commandEnvelope(rssHistoryPreviewPayload);
 
 export function mountSourceRoutes(app: Hono, ready: Ready) {
   const inFlight = new Map<string, { fingerprint: string; reply: Promise<string> }>();
+  app.get('/api/v1/source-reader-capabilities', (c) => handle(c, async () => {
+    c.header('Cache-Control', 'no-store');
+    const principal = await requireSession(c.req.raw);
+    const { db, now } = ready();
+    const domain = sourceDomain(db, principal, oneValue(new URL(c.req.url).searchParams, 'domain'));
+    return c.json(snapshot({ ...principal, domains: [domain] }, { directory: directoryReaderCapability }, now(), db));
+  }));
   app.get('/api/v1/sources', (c) => handle(c, async () => {
     const principal = await requireSession(c.req.raw);
     const { db, now } = ready();

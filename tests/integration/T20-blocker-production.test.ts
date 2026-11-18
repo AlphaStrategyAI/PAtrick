@@ -16,6 +16,12 @@ import { createNotificationMaintenance } from '../../apps/service/src/notificati
 import { notificationObservations, recordOwnerBlockerRequirement } from '../../apps/service/src/notification-source.js';
 import { createNotifications, type NotificationPort } from '../../packages/domain/src/notifications.js';
 
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
+
 const stamp = '2026-11-17T04:00:00.000Z';
 const accountId = 'owner';
 const domain = 'product';

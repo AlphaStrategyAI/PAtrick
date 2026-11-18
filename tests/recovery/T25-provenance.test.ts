@@ -3,11 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase, type MigrationEntry } from '../../packages/storage/src/database.js';
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 import { quarantineRestoredAuthority } from '../../packages/host/src/recovery/restore.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const migrations = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
 const manifest = JSON.parse(readFileSync(join(migrations, 'manifest.json'), 'utf8')) as MigrationEntry[];

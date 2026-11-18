@@ -33,6 +33,12 @@ vi.mock('../../packages/integrations/sources/directory.js', async (load) => {
 
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });

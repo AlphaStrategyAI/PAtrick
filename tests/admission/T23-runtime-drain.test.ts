@@ -5,6 +5,12 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { openDatabase } from '@patrick/storage';
 import { createNotificationMaintenance } from '../../apps/service/src/notification-maintenance.js';
 
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;

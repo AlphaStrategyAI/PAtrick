@@ -2,10 +2,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { openDatabase, type MigrationEntry } from '../../packages/storage/src/database.js';
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 const manifestFile = fileURLToPath(new URL('../../packages/storage/migrations/manifest.json', import.meta.url));
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as MigrationEntry[];

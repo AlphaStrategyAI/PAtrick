@@ -2,10 +2,16 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { openDatabase } from '../../packages/storage/src/database.js';
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
+
+// Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
+vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
+  const actual = await load<typeof import('../../packages/integrations/sources/directory-capability.js')>();
+  return { ...actual, assertDirectoryReaderAvailable: () => {} };
+});
 
 test('a newer wake commit rejects an older full scan and keeps the latest revision', async () => {
  const root = mkdtempSync(join(tmpdir(), 'patrick-dir-race-'));
