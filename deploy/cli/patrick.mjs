@@ -44,6 +44,19 @@ function response(request, status, code, nextStep, extra = {}) {
 }
 const errorCodes = new Set(['HOST_IDENTITY_MISMATCH', 'RECOVERY_OPERATION_RECORD_INVALID', 'RECOVERY_OPERATION_BINDING_MISMATCH',
   'RECOVERY_SIGNATURE_INVALID', 'RECOVERY_MANIFEST_HASH_MISMATCH', 'RECOVERY_OPERATION_UNAVAILABLE', 'RECOVERY_SYMLINK_FORBIDDEN']);
+
+function projectRecovery(request, context, operation, validate, result) {
+  try { validate(); } catch {
+    return response(request, result.status === 'running_or_uncertain' ? 'uncertain' : 'blocked', 'HOST_IDENTITY_MISMATCH',
+      'Reconcile the current registration and read the same signed operation without repeating effects.', context);
+  }
+  if (result.status === 'completed') return response(request, 'completed', 'RECOVERY_COMPLETED', 'Retain the signed operation and RecoverySet records.', {
+    ...context, manifestHash: result.outcome.manifestHash, mode: operation.mode,
+    ...(operation.mode === 'drill' && result.outcome.receipt ? { externalWrites: result.outcome.receipt.external_writes } : {}),
+  });
+  if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'RECOVERY_OUTCOME_UNCERTAIN', 'Read back this operation ID without repeating its effects.', context);
+  return response(request, result.status, 'RECOVERY_' + result.status.toUpperCase(), 'Use the same operation ID for the next authorized execute or readback.', context);
+}
 /** Fixed adapter for the trusted lifecycle controller. The CLI never promotes a kit receipt to host enrollment. */
 export function createVaultKitAdapter(host) {
   return { async install(vaultId) {
@@ -80,8 +93,16 @@ export function createVaultKitAdapter(host) {
     return { vaultId: receipt.vaultId, configRevision: receipt.configRevision, scopeHash: receipt.scopeHash, manifestSha256: receipt.manifestSha256 };
   } };
 }
-export function createPatrickCli(host) {
+export function createPatrickCli(host, checkLiveStorage) {
   async function runCommand(request) {
+    const enrolledReadback = request.command === 'backup' && request.action === 'readback' && request.target
+      ? host?.backupReadback : undefined;
+    const readbackTargets = enrolledReadback?.targets;
+    const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
+    if (!coldTargetSelected) {
+      const blocked = checkLiveStorage?.();
+      if (blocked) return blocked;
+    }
     if (!host) return response(request, 'unavailable', 'HOST_REGISTRATION_REQUIRED',
       'Provision an independently registered host bootstrap with trusted runtime and authority ports.',
       request.command === 'doctor' ? await doctor() : {});
@@ -132,6 +153,33 @@ export function createPatrickCli(host) {
         request.action === 'preview' ? 'VAULT_INITIALIZATION_PREVIEW' : 'LIFECYCLE_RUNTIME_REQUIRED',
         'Use the registered lifecycle controller to install the shared T27 Vault kit and complete trusted enrollment with durable readback.', report);
     }
+    if (coldTargetSelected) {
+      const readbackBinding = bindRegistration(() => {
+        if (host.backupReadback !== enrolledReadback || enrolledReadback.targets !== readbackTargets) throw new Error('HOST_IDENTITY_MISMATCH');
+        return enrolledReadback;
+      });
+      const readback = readbackBinding.value;
+      const readbackTarget = Object.hasOwn(readback.targets, request.target) ? readback.targets[request.target] : undefined;
+      const validate = () => { hostBinding.validate(); readbackBinding.validate(); };
+      if (!sameIdentity(identity, readbackTarget?.identity)) return response(request, 'blocked', 'HOST_IDENTITY_MISMATCH',
+        'Reconcile the registered backup readback identity and revision.', context);
+      const createReader = hostBinding.value.runtime?.createRecoveryBackupReader;
+      if (typeof createReader !== 'function') return response(request, 'unavailable', 'RECOVERY_RUNTIME_REQUIRED',
+        'Install the verification-only backup readback runtime.', context);
+      const operation = { operationId: request.operation, targetId: request.target, mode: 'backup' };
+      try {
+        validate();
+        const reader = createReader(readback);
+        validate();
+        const result = await reader.read(operation);
+        return projectRecovery(request, context, operation, validate, result);
+      } catch (error) {
+        const message = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value;
+        let code = message === 'RECOVERY_OFF_HOST_UNCONFIRMED' || errorCodes.has(message) ? message : 'RECOVERY_OPERATION_FAILED';
+        try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
+        return response(request, 'blocked', code, 'Inspect the signed backup records through the trusted host controller.', context);
+      }
+    }
     if (['backup', 'restore'].includes(request.command)) {
       const recoveryBinding = bindRegistration(() => host.recovery);
       const recovery = recoveryBinding.value;
@@ -152,18 +200,7 @@ export function createPatrickCli(host) {
         request.command === 'restore' ? 'Execute an isolated restore drill with a stable operation ID.' : 'Execute the registered backup with a stable operation ID.',
         { ...context, mode: operation.mode, target: request.target });
       let operations;
-      const project = (result) => {
-        try { validate(); } catch {
-          return response(request, result.status === 'running_or_uncertain' ? 'uncertain' : 'blocked', 'HOST_IDENTITY_MISMATCH',
-            'Reconcile the current registration and read the same signed operation without repeating effects.', context);
-        }
-        if (result.status === 'completed') return response(request, 'completed', 'RECOVERY_COMPLETED', 'Retain the signed operation and RecoverySet records.', {
-          ...context, manifestHash: result.outcome.manifestHash, mode: operation.mode,
-          ...(result.outcome.receipt ? { externalWrites: result.outcome.receipt.external_writes } : {}),
-        });
-        if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'RECOVERY_OUTCOME_UNCERTAIN', 'Read back this operation ID without repeating its effects.', context);
-        return response(request, result.status, 'RECOVERY_' + result.status.toUpperCase(), 'Use the same operation ID for the next authorized execute or readback.', context);
-      };
+      const project = (result) => projectRecovery(request, context, operation, validate, result);
       try {
         validate();
         operations = hostBinding.value.runtime.createRecoveryOperations(recovery);
@@ -197,7 +234,7 @@ export function createPatrickCli(host) {
   return { async run(argv) {
     let request;
     try { request = parseArguments(argv); }
-    catch { return { status: 'invalid', code: 'CLI_ARGUMENT_INVALID', exitCode: 2 }; }
+    catch { return checkLiveStorage?.() ?? { status: 'invalid', code: 'CLI_ARGUMENT_INVALID', exitCode: 2 }; }
     try { return await runCommand(request); }
     catch (error) {
       // Recovery handles signed claims inside runCommand before this public boundary.

@@ -12,7 +12,7 @@ import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type 
 import { validateBrowserAuthority } from '../../apps/service/src/auth.js';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
-import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
+import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { assertDatabaseIntegrity, verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
 import { assertName, canonical, containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
 import type { RecoveryDatabaseReader, RecoveryFreezePort, RecoveryManifestAuthority, RecoveryOffHostPort, RecoveryScope } from '../../packages/host/src/recovery/types.js';
@@ -110,6 +110,7 @@ function validateNestedIdentities(host: HostCapabilities | undefined, identity: 
   const candidates: HostIdentity[] = [];
   if (host?.network?.identity) candidates.push(host.network.identity);
   for (const target of Object.values(host?.recovery?.targets ?? {})) candidates.push(target.identity);
+  for (const target of Object.values(host?.backupReadback?.targets ?? {})) candidates.push(target.identity);
   for (const vault of Object.values(host?.vaults ?? {})) candidates.push(vault.identity);
   for (const release of Object.values(host?.releases ?? {})) candidates.push(release.identity);
   for (const readiness of Object.values(host?.readiness ?? {})) {
@@ -957,6 +958,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
     rpId: registrationData.rpId,
     runtime: Object.freeze({
       createRecoveryOperations(configuration: RecoveryConfiguration) { return createRecoveryOperations(bindRecoveryTargets(configuration)); },
+      createRecoveryBackupReader,
       createNetworkInspector,
       createNodeNetworkProbePorts,
       createObsidianDoctor,
@@ -1014,21 +1016,18 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
 
 export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const { assertCliRecoveryCurrent } = requireRuntimeProvisioning(provisioning);
-  validateNestedIdentities(provisioning.host, provisioning.registration.identity);
-  assertCliRecoveryCurrent();
-  const cli = createPatrickCli(provisioning.host);
-  return {
-    async run(argv: readonly string[]): Promise<CliResult> {
-      try { assertCliRecoveryCurrent(); }
-      catch {
-        return {
-          status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH', exitCode: 5,
-          nextStep: 'Provision a fresh controller binding for the current service database.',
-        };
-      }
-      return cli.run(argv);
-    },
-  };
+  const { host } = provisioning;
+  validateNestedIdentities(host, provisioning.registration.identity);
+  if (!host.backupReadback) assertCliRecoveryCurrent();
+  return createPatrickCli(host, (): CliResult | undefined => {
+    try { assertCliRecoveryCurrent(); }
+    catch {
+      return {
+        status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH', exitCode: 5,
+        nextStep: 'Provision a fresh controller binding for the current service database.',
+      };
+    }
+  });
 }
 
 export function createProvisionedServiceRuntime(provisioning: RuntimeProvisioning) {

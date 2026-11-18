@@ -13,7 +13,8 @@ export type CliResult = {
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };
 export function parseArguments(argv: readonly string[]): CliRequest;
-export function createPatrickCli(host?: RegisteredHost): {
+/** The installed live-storage check applies to all requests except enrolled backup readback. */
+export function createPatrickCli(host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined): {
   run(argv: readonly string[]): Promise<CliResult>;
 };
 

@@ -1,4 +1,4 @@
-import type { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
+import type { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import type { createNetworkInspector } from '../../packages/host/src/network/probes.js';
 import type { createNodeNetworkProbePorts } from '../../packages/host/src/network/node-probes.js';
 import type { createObsidianDoctor } from '../obsidian/doctor.mjs';
@@ -22,12 +22,14 @@ export type RegisteredHost = {
   dataRoot: string; minimumFreeBytes: number;
   runtime?: {
     createRecoveryOperations?: typeof createRecoveryOperations;
+    createRecoveryBackupReader?: typeof createRecoveryBackupReader;
     createNetworkInspector?: typeof createNetworkInspector;
     createNodeNetworkProbePorts?: typeof createNodeNetworkProbePorts;
     createObsidianDoctor?: typeof createObsidianDoctor;
     createVaultKitInstaller?: typeof createVaultKitInstaller;
   };
   recovery?: Parameters<typeof createRecoveryOperations>[0];
+  backupReadback?: Parameters<typeof createRecoveryBackupReader>[0];
   recoveryReadbacks?: readonly { targetId: string; backupOperationId: string; drillOperationId: string; manifestHash: string }[];
   network?: {
     identity: HostIdentity; policy: Parameters<typeof createNetworkInspector>[0];

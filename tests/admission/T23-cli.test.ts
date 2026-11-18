@@ -23,12 +23,16 @@ test('importing executable is side effect free', () => {
 });
 
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, readdirSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
 import { openDatabase } from '@patrick/storage';
-import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
+import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
+import { readRecoveryDatabase } from '../../packages/host/src/recovery/backup.js';
+import { canonical } from '../../packages/host/src/recovery/files.js';
+import { createRuntimeCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import type { RegisteredHost } from '../../deploy/lib/doctor.mjs';
 import { createNetworkInspector } from '../../packages/host/src/network/probes.js';
 import { createObsidianDoctor, createObsidianInspector } from '../../deploy/obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../../deploy/obsidian/install.mjs';
@@ -39,7 +43,8 @@ function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 't23-cli-'));
   const service = openDatabase(join(root, 'service.sqlite'));
   const hub = openDatabase(join(root, 'hub.sqlite'));
-  cleanup.push(() => { service.close(); hub.close(); rmSync(root, { recursive: true, force: true }); });
+  const closeSources = () => { if (service.open) service.close(); if (hub.open) hub.close(); };
+  cleanup.push(() => { closeSources(); rmSync(root, { recursive: true, force: true }); });
   for (const db of [service, hub]) db.prepare("INSERT INTO hub_snapshots VALUES ('hub',0,'{}',?)").run(new Date().toISOString());
   for (const directory of ['operations', 'sets', 'isolated']) mkdirSync(join(root, directory));
   const keys = generateKeyPairSync('ed25519');
@@ -60,7 +65,7 @@ function fixture() {
   const host = { identity, captureHost: hostname(), serviceUid: process.geteuid!(), profile: root,
     dataRoot: root, minimumFreeBytes: 1, runtime: { createRecoveryOperations, createNetworkInspector, createObsidianDoctor, createVaultKitInstaller },
     recovery: { root: join(root, 'operations'), authority, targets: { target } } };
-  return { root, target, host, captures: () => captures, interrupt: () => { interrupt = true; }, cli: () => createPatrickCli(host) };
+  return { root, target, host, closeSources, captures: () => captures, interrupt: () => { interrupt = true; }, cli: () => createPatrickCli(host) };
 }
 test.each([
   ['backup', '--execute', '--operation', 'backup', '--target', 'target', '--root', 'secret'],
@@ -93,6 +98,179 @@ test('unknown effect stays uncertain on same-command replay and readback without
   expect(readdirSync(join(f.root, 'operations'))).toEqual(before);
   expect(f.captures()).toBe(1);
 });
+function verificationOnlyHost(f: ReturnType<typeof fixture>) {
+  const operationRoot = f.host.recovery.root;
+  const info = statSync(operationRoot);
+  const { keyId, verify } = f.host.recovery.authority;
+  const authority = { keyId, verify };
+  return {
+    ...f.host,
+    recovery: undefined,
+    runtime: { createRecoveryBackupReader },
+    backupReadback: {
+      root: { path: operationRoot, device: info.dev, inode: info.ino },
+      authority,
+      targets: { target: { identity: { ...f.target.identity }, scope: f.target.backup.scope,
+        root: f.target.backup.options.root, authority, protection: { kind: 'local_only' as const } } },
+    },
+  };
+}
+
+const backupReadCommand = ['backup', '--target', 'target', '--readback', '--operation', 'backup'];
+
+test('verification-only CLI reads an authenticated completed backup after both source connections close', async () => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const host = verificationOnlyHost(f);
+  f.closeSources();
+  const result = await createPatrickCli(host).run(backupReadCommand);
+  expect(result).toMatchObject({ status: 'completed', mode: 'backup', manifestHash: completed.manifestHash });
+  expect(JSON.stringify(result)).not.toContain(f.root);
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only CLI projects only backup fields from an authenticated extended terminal', async () => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const host = verificationOnlyHost(f);
+  const path = join(host.backupReadback.root.path, 'backup.terminal.json');
+  const record = JSON.parse(readFileSync(path, 'utf8'));
+  record.payload.outcome.receipt = { external_writes: { privatePath: f.root } };
+  record.signature = await f.host.recovery.authority.sign(Buffer.from(canonical(record.payload)));
+  writeFileSync(path, canonical(record));
+  f.closeSources();
+  const result = await createPatrickCli(host).run(backupReadCommand);
+  expect(result).toEqual({
+    command: 'backup', action: 'readback', status: 'completed', code: 'RECOVERY_COMPLETED',
+    nextStep: 'Retain the signed operation and RecoverySet records.', identity: f.host.identity,
+    manifestHash: completed.manifestHash, mode: 'backup', exitCode: 0,
+  });
+});
+
+test('off-host evidence refusal is public only for verification-only readback', async () => {
+  const f = fixture();
+  const refuse = async () => { throw new Error('RECOVERY_OFF_HOST_UNCONFIRMED'); };
+  const liveCli = createPatrickCli({
+    ...f.host, runtime: { ...f.host.runtime, createRecoveryOperations: () => ({ read: refuse, reserve: refuse, run: refuse }) },
+  });
+  const cold = verificationOnlyHost(f);
+  const coldCli = createPatrickCli({
+    ...cold, runtime: { createRecoveryBackupReader: () => ({ read: refuse }) },
+  });
+  expect(await coldCli.run(backupReadCommand)).toMatchObject({ status: 'blocked', code: 'RECOVERY_OFF_HOST_UNCONFIRMED' });
+  expect(await liveCli.run(backupReadCommand)).toMatchObject({ status: 'blocked', code: 'RECOVERY_OPERATION_FAILED' });
+});
+
+test('verification-only CLI preserves a signed claim without a terminal and cannot run effects', async () => {
+  const f = fixture();
+  f.interrupt();
+  expect(await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup'])).toMatchObject({ status: 'uncertain' });
+  const host = verificationOnlyHost(f);
+  f.closeSources();
+  const cli = createPatrickCli(host);
+  const before = readdirSync(host.backupReadback.root.path).sort();
+  expect(await cli.run(backupReadCommand)).toMatchObject({ status: 'uncertain', exitCode: 4 });
+  expect(await cli.run(['backup', '--target', 'target', '--execute', '--operation', 'backup'])).toMatchObject({ status: 'unavailable' });
+  expect(readdirSync(host.backupReadback.root.path).sort()).toEqual(before);
+  expect(f.captures()).toBe(1);
+});
+
+function installedBackupProvisioning(f: ReturnType<typeof fixture>, backupReadback: NonNullable<RegisteredHost['backupReadback']>) {
+  Object.assign(f.target.backup.options, { readDatabase: readRecoveryDatabase });
+  return createRuntimeProvisioning({
+    registration: {
+      identity: f.host.identity, captureHost: f.host.captureHost, serviceUid: f.host.serviceUid,
+      dataRoot: f.root, minimumFreeBytes: 1, profile: 'test', origin: 'http://localhost', rpId: 'localhost',
+      listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' },
+    },
+    hostCapabilities: { recovery: f.host.recovery, backupReadback },
+    operationalRecoveryHub: {
+      identity: f.host.identity, database: f.target.backup.options.databases.hub,
+      physicalPath: join(f.root, 'hub.sqlite'), readDatabase: readRecoveryDatabase,
+    },
+    service: {
+      databasePath: join(f.root, 'service.sqlite'), credentialDirectory: f.root,
+      recoveryRuntime: { attach() { throw new Error('Unexpected live startup'); } },
+      bindRecoveryOperations() { return f.host.recovery; },
+    },
+  });
+}
+
+test('installed CLI keeps cold readback usable when its original live recovery binding has closed', async () => {
+  const f = fixture();
+  const provisioning = installedBackupProvisioning(f, verificationOnlyHost(f).backupReadback);
+  const execute = ['backup', '--target', 'target', '--execute', '--operation', 'backup'];
+  const invalid = ['backup', '--readback', '--target', 'target'];
+  const installed = createRuntimeCli(provisioning);
+  expect(await installed.run(invalid)).toMatchObject({ status: 'invalid', code: 'CLI_ARGUMENT_INVALID' });
+  const prior = await installed.run(execute);
+  expect(prior.status).toBe('completed');
+  f.closeSources();
+  const restarted = createRuntimeCli(provisioning);
+  expect(await restarted.run(backupReadCommand)).toMatchObject({ status: 'completed', manifestHash: prior.manifestHash });
+  expect(await restarted.run(execute)).toMatchObject({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+  expect.soft(await restarted.run(invalid)).toMatchObject({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+  let iterations = 0;
+  const changingArgv = new Proxy(backupReadCommand, {
+    get(target, property, receiver) {
+      if (property === Symbol.iterator) {
+        const argv = ++iterations === 1 ? target : execute;
+        return argv[Symbol.iterator].bind(argv);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  expect.soft(await restarted.run(changingArgv)).toMatchObject({ action: 'readback', status: 'completed', manifestHash: prior.manifestHash });
+  expect.soft(iterations).toBe(1);
+  expect(f.captures()).toBe(1);
+});
+
+test('a live-only backup target ignores unrelated cold configuration before checking live storage', async () => {
+  const f = fixture();
+  const { backupReadback: cold } = verificationOnlyHost(f);
+  const provisioning = installedBackupProvisioning(f, {
+    ...cold,
+    authority: { get keyId() { return cold.authority.keyId; }, verify: cold.authority.verify },
+    targets: { unrelated: cold.targets.target },
+  });
+  const cli = createRuntimeCli(provisioning);
+  const completed = await cli.run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  expect.soft(await cli.run(backupReadCommand)).toMatchObject({ status: 'completed', manifestHash: completed.manifestHash });
+  f.closeSources();
+  expect.soft(await cli.run(backupReadCommand)).toMatchObject({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+  expect(await cli.run(['backup', '--target', 'unrelated', '--readback', '--operation', 'backup']))
+    .toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only CLI treats the enrolled reader as authoritative if a signed record was damaged', async () => {
+  const f = fixture();
+  await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  const cold = verificationOnlyHost(f);
+  writeFileSync(join(cold.backupReadback.root.path, 'backup.terminal.json'), JSON.stringify({ path: f.root }));
+  let liveLookups = 0;
+  const cli = createPatrickCli({
+    ...cold, recovery: f.host.recovery,
+    runtime: { ...cold.runtime, createRecoveryOperations(config) { liveLookups++; return createRecoveryOperations(config); } },
+  });
+  const result = await cli.run(backupReadCommand);
+  expect(result).toMatchObject({ status: 'blocked', code: 'RECOVERY_OPERATION_RECORD_INVALID' });
+  expect(JSON.stringify(result)).not.toContain(f.root);
+  expect(liveLookups).toBe(0);
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only CLI rejects a registered identifier from a different revision', async () => {
+  const f = fixture();
+  const host = verificationOnlyHost(f);
+  host.backupReadback.targets.target.identity.configRevision = '2';
+  expect(await createPatrickCli(host).run(backupReadCommand)).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+  expect(f.captures()).toBe(0);
+});
+
 test('trusted target identity mismatch rejects before effects', async () => {
   const f = fixture(); f.target.identity.configRevision = '2';
   expect(await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup'])).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
