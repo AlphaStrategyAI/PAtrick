@@ -1,5 +1,6 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -7,7 +8,7 @@ import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
-import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
 import { deploymentPaths, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -301,8 +302,49 @@ async function publishFixture(label: string) {
   return { scope: { staging, releasesRoot }, installed, checked, stage };
 }
 
-test('authenticates the published deployment after relocation in a fresh process', async () => {
-  const { scope, installed, checked, stage } = await publishFixture('published');
+// The fixture host serializes every lease under its private temporary root.
+async function promotionHost(label: string) {
+  const owner = join(dir, label);
+  await mkdir(owner, { mode: 0o700 });
+  const stagingRoot = join(owner, 'staging');
+  const releasesRoot = join(owner, 'releases');
+  const archive = join(owner, 'archive');
+  await mkdir(stagingRoot);
+  await mkdir(releasesRoot);
+  await cp(complete.packagePath, archive);
+  const hooks: { before?: () => Promise<void>; after?: () => Promise<void> } = {};
+  const port = {
+    publication: Object.freeze({ stagingRoot, releasesRoot }),
+    withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) {
+      return staging.withExclusiveReadRoot(async () => {
+        await hooks.before?.();
+        const result = await read(owner);
+        await hooks.after?.();
+        return result;
+      });
+    },
+  };
+  const pins = { expected: complete.expected, policy: complete.policy };
+  const checked = await verifyEmittedRuntimeCandidate(archive, { staging: port, ...pins });
+  const destination = join(stagingRoot, 'first');
+  const stage = await stageVerifiedEmittedRuntime(checked, { staging: port, destination });
+  return { port, hooks, checked, stage, destination, installed: join(releasesRoot, checked.packageSha256),
+    archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
+}
+
+test('publishes the exact staged deployment and authenticates its new slot in a fresh process', async () => {
+  const { scope, installed, checked, stage, destination, archive } = await promotionHost('promotion');
+  const pathsToCheck = ['', ...checked.materials.map(row => row.path)];
+  const identities = async (directory: string) => Promise.all(pathsToCheck.map(async path => {
+    const info = await lstat(join(directory, path), { bigint: true });
+    return [info.dev, info.ino, info.birthtimeNs, info.mode];
+  }));
+  const before = await identities(destination);
+  expect(typeof publishStagedDeployment).toBe('function');
+  await expect(publishStagedDeployment(checked, stage)).resolves.toEqual({ path: installed, packageSha256: checked.packageSha256 });
+  expect(await identities(installed)).toEqual(before);
+  await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(publishStagedDeployment(checked, stage)).rejects.toThrow();
   let staleCalls = 0;
   await expect(withStagedDeployment(checked, stage, async () => ++staleCalls)).rejects.toThrow();
   expect(staleCalls).toBe(0);
@@ -332,12 +374,192 @@ test('authenticates the published deployment after relocation in a fresh process
     });
     console.log(JSON.stringify(observed));
   `;
-  const observed = JSON.parse(child(['--input-type=module', '-e', probe, temporary, scope.releasesRoot, complete.packagePath,
+  const observed = JSON.parse(child(['--input-type=module', '-e', probe, dirname(archive), scope.releasesRoot, archive,
     JSON.stringify({ expected: complete.expected, policy: complete.policy })]));
   expect(observed).toMatchObject({ root: installed, profile: 'deployment-complete', runtime: checked.runtime,
     packageSha256: checked.packageSha256, materialSha256: checked.materialSha256, inventorySha256: checked.inventorySha256 });
   const paths = [...entries, ...Object.values(deploymentPaths)];
   expect(observed.files).toEqual(paths.map(path => ({ path: join(installed, path), sha256: checked.materials.find(row => row.path === path)?.sha256 })));
+}, 120_000);
+
+test('refuses publication before rename on a foreign token, store, archive or occupied slot', async () => {
+  const { port, stage, checked, destination, archive, installed, scope, pins, stagingRoot, hooks } = await promotionHost('promotion-refusals');
+  const untrustedKey = generateKeyPairSync('ed25519').publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  await expect(verifyEmittedRuntimeCandidate(archive, {
+    staging: port, ...pins, policy: { ...pins.policy, keys: [{ id: 'fixture', publicKey: untrustedKey }] },
+  })).rejects.toThrow(/signature/);
+  const again = await verifyEmittedRuntimeCandidate(archive, { staging: port, ...pins });
+  const secondary = join(stagingRoot, 'secondary');
+  const other = await stageVerifiedEmittedRuntime(again, { staging: port, destination: secondary });
+  const runtimeOnly = await verify();
+  const runtimeToken = await stageVerifiedEmittedRuntime(runtimeOnly, { staging, destination: join(dir, 'promotion-runtime') });
+  await expect(publishStagedDeployment(runtimeOnly, runtimeToken)).rejects.toThrow();
+  await expect(publishStagedDeployment({ ...checked }, stage)).rejects.toThrow();
+  await expect(publishStagedDeployment(again, stage)).rejects.toThrow();
+  await expect(publishStagedDeployment(checked, other)).rejects.toThrow();
+  await expect(publishStagedDeployment(checked, { ...stage })).rejects.toThrow();
+  await expect(stageVerifiedEmittedRuntime(checked, { staging: { ...port }, destination: secondary + '-cross' })).rejects.toThrow();
+  const unregistered = await verifyEmittedRuntimeCandidate(archive, { staging, ...pins });
+  const unset = await stageVerifiedEmittedRuntime(unregistered, { staging, destination: join(stagingRoot, 'unenrolled') });
+  await expect(publishStagedDeployment(unregistered, unset)).rejects.toThrow();
+  const original = await lstat(destination, { bigint: true });
+  const unchanged = async () => expect((await lstat(destination, { bigint: true })).ino).toBe(original.ino);
+  for (const create of [
+    () => mkdir(installed),
+    () => writeFile(installed, 'foreign'),
+    () => symlink(destination, installed),
+  ]) {
+    await create();
+    const existing = await lstat(installed, { bigint: true });
+    await expect(publishStagedDeployment(checked, stage)).rejects.toThrow(/occupied/);
+    expect((await lstat(installed, { bigint: true })).ino).toBe(existing.ino);
+    await unchanged();
+    await rm(installed, { recursive: true });
+  }
+  const alias = join(dirname(archive), 'alias');
+  await symlink(scope.releasesRoot, alias);
+  const badScopes = [
+    { releasesRoot: stagingRoot, stagingRoot },
+    { releasesRoot: dirname(archive), stagingRoot },
+    { releasesRoot: scope.releasesRoot, stagingRoot: scope.releasesRoot + '/.' },
+    { releasesRoot: alias, stagingRoot },
+    { releasesRoot: temporary, stagingRoot },
+    { releasesRoot: scope.releasesRoot, stagingRoot: dirname(archive) },
+  ];
+  for (const publication of badScopes) {
+    const invalid = { ...port, publication };
+    await expect(verifyEmittedRuntimeCandidate(archive, { staging: invalid, ...pins })).rejects.toThrow();
+  }
+  const wrongDestination = join(scope.releasesRoot, 'not-a-stage');
+  await expect(stageVerifiedEmittedRuntime(checked, { staging: port, destination: wrongDestination })).rejects.toThrow();
+  await expect(lstat(wrongDestination)).rejects.toMatchObject({ code: 'ENOENT' });
+  await chmod(scope.releasesRoot, 0o777);
+  try { await expect(publishStagedDeployment(checked, stage)).rejects.toThrow(); }
+  finally { await chmod(scope.releasesRoot, 0o755); }
+  hooks.before = async () => {
+    await rename(scope.releasesRoot, scope.releasesRoot + '-old');
+    await mkdir(scope.releasesRoot);
+  };
+  await expect(publishStagedDeployment(checked, stage)).rejects.toThrow(/identity/);
+  delete hooks.before;
+  await rm(scope.releasesRoot, { recursive: true });
+  await rename(scope.releasesRoot + '-old', scope.releasesRoot);
+  const file = join(secondary, deploymentPaths.caddy);
+  await cp(file, file + '.replacement');
+  await rename(file + '.replacement', file);
+  await expect(publishStagedDeployment(again, other)).rejects.toThrow(/identity/);
+  await rename(archive, archive + '-signed');
+  await cp(archive + '-signed', archive);
+  await expect(publishStagedDeployment(checked, stage)).rejects.toThrow(/identity/);
+  await unchanged();
+  await expect(lstat(installed)).rejects.toMatchObject({ code: 'ENOENT' });
+}, 120_000);
+
+test('preserves a published slot and refuses replay after lost lease completion', async () => {
+  const { stage, checked, port, stagingRoot, hooks, destination, installed, scope } = await promotionHost('promotion-uncertain');
+  const otherPath = join(stagingRoot, 'second');
+  const other = await stageVerifiedEmittedRuntime(checked, { staging: port, destination: otherPath });
+  hooks.after = async () => {
+    expect((await lstat(installed)).isDirectory()).toBe(true);
+    throw new Error('fixture lost completion');
+  };
+  await expect(publishStagedDeployment(checked, stage)).rejects.toMatchObject({
+    code: 'EMITTED_PUBLICATION_UNCERTAIN', path: installed, packageSha256: checked.packageSha256,
+  });
+  delete hooks.after;
+  await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(publishStagedDeployment(checked, stage)).rejects.toThrow();
+  await expect(publishStagedDeployment(checked, other)).rejects.toThrow(/occupied/);
+  await expect(withStagedDeployment(checked, stage, async () => true)).rejects.toThrow();
+  await expect(withPublishedDeployment(checked, scope, async release => release.root)).resolves.toBe(installed);
+  expect((await lstat(otherPath)).isDirectory()).toBe(true);
+}, 120_000);
+
+test('reports a post-rename physical substitution during publication readback as uncertain', async () => {
+  const { checked, stage, destination, installed, scope } = await promotionHost('promotion-substitution');
+  const copy = join(dirname(scope.releasesRoot), 'replacement');
+  const original = join(destination, deploymentPaths.caddy);
+  const target = join(installed, deploymentPaths.caddy);
+  await cp(original, copy);
+  const replacement = await lstat(copy, { bigint: true });
+  // Deliberately violate fixture ownership during readback. A same-byte
+  // substitution must fail the stage identity check even when all digests match.
+  let exchange: Promise<void> | undefined;
+  const watcher = watch(scope.releasesRoot, (_event, name) => {
+    if (name === checked.packageSha256 && !exchange) {
+      exchange = rename(copy, target);
+      exchange.catch(() => {});
+    }
+  });
+  try {
+    await expect(publishStagedDeployment(checked, stage)).rejects.toMatchObject({ code: 'EMITTED_PUBLICATION_UNCERTAIN' });
+    expect(exchange).toBeDefined();
+    await exchange;
+  } finally { watcher.close(); }
+  expect((await lstat(target, { bigint: true })).ino).toBe(replacement.ino);
+  await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(publishStagedDeployment(checked, stage)).rejects.toThrow();
+  await expect(withPublishedDeployment(checked, scope, async release => release.root)).resolves.toBe(installed);
+}, 120_000);
+
+test('checks device identity and syncs both rename parents, preserving uncertainty on sync failure', async () => {
+  const { scope, archive, stagingRoot, pins } = await promotionHost('promotion-durability');
+  const verifier = pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { dirname, join } from 'node:path';
+    const [archive, stagingRoot, releasesRoot, pins, fault] = process.argv.slice(1);
+    const owner = dirname(archive);
+    const source = join(stagingRoot, fault);
+    const storeId = fs.statSync(releasesRoot, { bigint: true }).ino;
+    const sourceParentId = fs.statSync(stagingRoot, { bigint: true }).ino;
+    const { lstatSync, renameSync, fsyncSync } = fs;
+    let renamed = false;
+    const synced = [];
+    // Model a second device without mounting a host volume. All bytes, names,
+    // descriptor syncs and the following same-volume rename are actual OS I/O.
+    fs.lstatSync = function(path, options) {
+      const info = lstatSync(path, options);
+      if (fault === 'volume' && path === releasesRoot && options?.bigint) info.dev += 1n;
+      return info;
+    };
+    fs.renameSync = function(from, to) {
+      renameSync(from, to);
+      renamed = true;
+    };
+    fs.fsyncSync = function(fd) {
+      fsyncSync(fd);
+      if (renamed) {
+        const id = fs.fstatSync(fd, { bigint: true }).ino;
+        synced.push(id);
+        if (id === storeId) throw new Error('fixture lost store sync acknowledgement');
+      }
+    };
+    syncBuiltinESMExports();
+    const { verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment } = await import(${JSON.stringify(verifier)});
+    let held = false;
+    const staging = { publication: { stagingRoot, releasesRoot }, async withExclusiveReadRoot(work) {
+      assert(!held);
+      held = true;
+      try { return await work(owner); } finally { held = false; }
+    } };
+    const receipt = await verifyEmittedRuntimeCandidate(archive, { staging, ...JSON.parse(pins) });
+    const token = await stageVerifiedEmittedRuntime(receipt, { staging, destination: source });
+    const slot = join(releasesRoot, receipt.packageSha256);
+    if (fault === 'volume') {
+      await assert.rejects(publishStagedDeployment(receipt, token), /same-volume/);
+      assert(!renamed && fs.existsSync(source) && !fs.existsSync(slot));
+    } else {
+      await assert.rejects(publishStagedDeployment(receipt, token), { code: 'EMITTED_PUBLICATION_UNCERTAIN' });
+      assert(renamed && !fs.existsSync(source) && fs.existsSync(slot));
+      assert.deepEqual(synced.sort(), [sourceParentId, storeId].sort());
+      await assert.rejects(publishStagedDeployment(receipt, token), /claimed/);
+    }
+  `;
+  for (const fault of ['volume', 'sync']) child(['--input-type=module', '-e', probe, archive, stagingRoot,
+    scope.releasesRoot, JSON.stringify(pins), fault]);
 }, 120_000);
 
 test('refuses unbound published deployment receipts, locations and material before use', async () => {

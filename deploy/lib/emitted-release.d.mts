@@ -22,6 +22,9 @@ export type EmittedMaterialIdentity = Readonly<{
   { format: 'patrick-emitted-runtime-material-identity-v2'; profile: 'deployment-complete' })>;
 /** Provisioned by the trusted host. Writers are excluded through callback completion, including awaited use. */
 export interface ExclusiveRuntimeStaging {
+  /** Optional trusted registration. Both canonical directories must exist apart from
+   * the archive under this owner, which excludes all competing writes and renames. */
+  readonly publication?: Readonly<{ stagingRoot: string; releasesRoot: string }>;
   withExclusiveReadRoot<T>(read: (physicalRoot: string) => Promise<T>): Promise<T>;
 }
 export type EmittedReleaseExpectation = Readonly<{
@@ -76,3 +79,13 @@ export function stageVerifiedEmittedRuntime(receipt: VerifiedEmittedRuntimeCandi
 /** Entry paths may be consumed inside the awaited callback while the host lease is held. */
 export function withStagedEmittedRuntime<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
   use: (runtime: AdmittedEmittedRuntime) => Promise<T>): Promise<T>;
+
+export type EmittedPublicationUncertain = Readonly<Error & {
+  code: 'EMITTED_PUBLICATION_UNCERTAIN'; path: string; packageSha256: string;
+}>;
+/** Atomically publishes a genuine paired stage to its owner's enrolled digest slot.
+ * Requires a same-volume, exclusively controlled store. Once rename is attempted,
+ * any failure (including lease completion loss) is EmittedPublicationUncertain.
+ * Reconcile read-only with withPublishedDeployment before any later lifecycle decision. */
+export function publishStagedDeployment(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime):
+  Promise<Readonly<{ path: string; packageSha256: string }>>;

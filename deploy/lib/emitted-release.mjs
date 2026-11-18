@@ -1,5 +1,5 @@
 import { createPublicKey, randomUUID, verify } from 'node:crypto';
-import { lstatSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, renameSync } from 'node:fs';
 import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
@@ -494,17 +494,50 @@ function decodePackage(data, expected, policy) {
   equal(m.artifacts, artifactTable(files, identity, logs), 'signed descriptor mismatch');
   return { files, identity, manifestSha256: sha256(manifestBytes), packageSha256, materialSha256: actual.materialSha256 };
 }
+// Enrollment comes from the trusted owner itself. A command cannot select a
+// destination at publication time. Keep the physical bindings from admission.
+function capturePublication(lease, registration, archive) {
+  if (registration === undefined) return undefined;
+  check(lease.root !== sep, 'non-root physical owner required');
+  const { stagingRoot, releasesRoot } = registration;
+  const roots = [stagingRoot, releasesRoot];
+  const boundary = new Map();
+  for (const root of roots) {
+    inside(lease.root, root);
+    for (const [path, id] of ancestry(root, lease.root)) boundary.set(path, id);
+    check(realpathSync.native(root) === root, 'noncanonical publication root');
+  }
+  check(realpathSync.native(archive) === archive, 'noncanonical archive');
+  const names = [...roots, archive];
+  for (const name of names) {
+    check(names.filter(other => other === name || other.startsWith(name + sep)).length === 1, 'overlapping publication paths');
+  }
+  return { stagingRoot, releasesRoot, boundary };
+}
+
+function checkPublication(lease, record) {
+  checkLeaf(lease, record.path, record.binding);
+  const { stagingRoot, releasesRoot, boundary } = record.publication;
+  const registration = record.staging.publication;
+  check(registration?.stagingRoot === stagingRoot && registration.releasesRoot === releasesRoot, 'publication enrollment changed');
+  recheck(boundary);
+  for (const path of [stagingRoot, releasesRoot, record.path]) {
+    check(realpathSync.native(path) === path, 'noncanonical publication path');
+  }
+}
+
 export async function verifyEmittedRuntimeCandidate(path, { staging, expected, policy }) {
   const pins = structuredClone({ expected, policy });
-  const { projection, binding } = await leased(staging, async lease => {
+  const { projection, binding, publication } = await leased(staging, async lease => {
     const { data, binding } = await readLeased(lease, path, limits.packageBytes);
     const { identity, manifestSha256, packageSha256, materialSha256 } = decodePackage(data, pins.expected, pins.policy);
     const { version, source, target, schema, runtime, inventorySha256, toolchainSha256, materials } = identity;
-    return { binding, projection: { kind: 'emitted-runtime-candidate', profile: releaseProfile(identity.profile), version, source, target, schema, runtime, packageSha256,
+    const publication = capturePublication(lease, staging.publication, path);
+    return { binding, publication, projection: { kind: 'emitted-runtime-candidate', profile: releaseProfile(identity.profile), version, source, target, schema, runtime, packageSha256,
       manifestSha256, materialSha256, inventorySha256, toolchainSha256, nativeSha256: runtime.native.sha256, materials } };
   });
   const receipt = freeze(projection);
-  verified.set(receipt, { path, staging, binding, pins });
+  verified.set(receipt, { path, staging, binding, pins, publication });
   return receipt;
 }
 const failedWrites = new WeakMap();
@@ -694,6 +727,11 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
   const record = verified.get(receipt);
   check(record && record.staging === staging, 'genuine verified receipt and bound staging required');
   const capture = await writeUnderLease(staging, 'stage', destination, receipt.packageSha256, async (lease, journal) => {
+    if (record.publication) {
+      checkPublication(lease, record);
+      inside(record.publication.stagingRoot, destination);
+      check(realpathSync.native(dirname(destination)) === dirname(destination), 'noncanonical stage parent');
+    }
     checkLeaf(lease, record.path, record.binding);
     const { data } = await readLeased(lease, record.path, limits.packageBytes);
     const { files } = decodePackage(data, record.pins.expected, record.pins.policy);
@@ -708,19 +746,23 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
   return token;
 }
 
+async function verifiedTreeCapture(lease, record, receipt, root, expected) {
+  checkLeaf(lease, record.path, record.binding);
+  const { data } = await readLeased(lease, record.path, limits.packageBytes);
+  check(sha256(data) === receipt.packageSha256, 'staging package changed');
+  const tree = await readTree(lease, root, expected);
+  compareTree(tree, receipt.materials);
+  checkLeaf(lease, record.path, record.binding);
+  return { nodes: tree.nodes, boundary: tree.boundary };
+}
+
 async function useVerifiedTree(lease, record, receipt, root, use, stageCapture) {
-  async function readback(expected) {
-    checkLeaf(lease, record.path, record.binding);
-    const { data } = await readLeased(lease, record.path, limits.packageBytes);
-    check(sha256(data) === receipt.packageSha256, 'staging package changed');
-    const tree = await readTree(lease, root, expected);
-    compareTree(tree, receipt.materials);
-    // A published slot must have the registered spelling even on case-insensitive
-    // volumes. The physical walk has already checked every ancestor for symlinks.
+  const readback = async expected => {
+    const capture = await verifiedTreeCapture(lease, record, receipt, root, expected);
+    // On case-insensitive volumes the digest slot must still use its enrolled spelling.
     if (!stageCapture) check(realpathSync.native(root) === root, 'noncanonical published release path');
-    checkLeaf(lease, record.path, record.binding);
-    return { nodes: tree.nodes, boundary: tree.boundary };
-  }
+    return capture;
+  };
   const capture = await readback(stageCapture);
   try {
     const deployment = receipt.profile === 'deployment-complete' ? {
@@ -736,7 +778,7 @@ export async function withStagedEmittedRuntime(receipt, token, use) {
   const stage = staged.get(token);
   check(record && stage?.receipt === receipt && typeof use === 'function', 'matching genuine stage and verified receipt required');
   return leased(record.staging, lease => {
-    check(lease.root === stage.capture.leaseRoot, 'staging root changed');
+    check(!stage.claimed && lease.root === stage.capture.leaseRoot, 'staging root changed or already claimed');
     return useVerifiedTree(lease, record, receipt, stage.destination, use, stage.capture);
   });
 }
@@ -755,6 +797,83 @@ export async function withPublishedDeployment(receipt, { staging, releasesRoot }
   return leased(staging, lease => {
     check(lease.root !== sep, 'non-root physical owner required');
     inside(lease.root, releasesRoot);
+    if (record.publication) {
+      check(releasesRoot === record.publication.releasesRoot, 'registered release store required');
+      checkPublication(lease, record);
+    }
     return useVerifiedTree(lease, record, receipt, join(releasesRoot, receipt.packageSha256), use);
   });
+}
+
+function syncDirectory(path, id, fingerprint = physical) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    check(fingerprint(fstatSync(fd, { bigint: true })) === id, 'directory sync identity changed');
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+}
+
+export async function publishStagedDeployment(receipt, token) {
+  const record = verified.get(receipt);
+  const stage = staged.get(token);
+  check(record?.publication && stage?.receipt === receipt && receipt.profile === 'deployment-complete',
+    'bound complete deployment receipt, stage and publication enrollment required');
+  const { releasesRoot, stagingRoot } = record.publication;
+  const path = join(releasesRoot, receipt.packageSha256);
+  const source = inside(stagingRoot, stage.destination);
+  const parent = dirname(source);
+  const result = Object.freeze({ path, packageSha256: receipt.packageSha256 });
+  let attempted = false;
+  try {
+    await leased(record.staging, async lease => {
+      check(!stage.claimed && lease.root === stage.capture.leaseRoot, 'stage already claimed or owner changed');
+      checkPublication(lease, record);
+      check(realpathSync.native(source) === source, 'noncanonical stage');
+      const parents = ancestry(parent, lease.root);
+      const sourceInfo = stat(source);
+      const volume = stat(releasesRoot).dev;
+      check(sourceInfo.dev === volume && stat(parent).dev === volume, 'same-volume publication required');
+      check(!namedInfo(path), 'occupied release slot');
+      const capture = await verifiedTreeCapture(lease, record, receipt, source, stage.capture);
+      // Material files were synced at staging. Flush the directory entries from
+      // leaves to root before the rename makes them reachable in the store.
+      for (const local of runtimeDirectories(receipt.materials).reverse()) {
+        const dir = join(source, local);
+        syncDirectory(dir, capture.nodes.get(dir), stable);
+      }
+      checkPublication(lease, record);
+      recheck(capture.boundary);
+      recheck(capture.nodes, stable);
+      check(realpathSync.native(source) === source, 'noncanonical stage');
+      check(!namedInfo(path), 'occupied release slot');
+      // Node has no Darwin RENAME_EXCL. Only the registered host's exclusion
+      // of all competing writers makes the absence check and rename no-clobber.
+      stage.claimed = true;
+      attempted = true;
+      renameSync(source, path);
+      recheck(parents);
+      recheck(record.publication.boundary);
+      syncDirectory(parent, parents.get(parent));
+      syncDirectory(releasesRoot, record.publication.boundary.get(releasesRoot));
+      check(!namedInfo(source) && realpathSync.native(path) === path, 'relocation names changed');
+      // A rename can update the moved directory's ctime. Pin its original
+      // physical object and mode, and keep every descendant's full stage stamp.
+      const moved = stat(path);
+      check(objectId(moved) === objectId(sourceInfo) && physical(moved) === physical(sourceInfo), 'relocated root identity changed');
+      const nodes = new Map();
+      for (const [name, identity] of capture.nodes) {
+        nodes.set(join(path, relative(source, name)), name === source ? stable(moved) : identity);
+      }
+      await verifiedTreeCapture(lease, record, receipt, path, { boundary: ancestry(path, lease.root), nodes });
+      checkPublication(lease, record);
+      recheck(parents);
+      check(!namedInfo(source), 'stage name reappeared');
+    }, true);
+    return result;
+  } catch (error) {
+    if (!attempted) throw error;
+    throw Object.freeze(Object.assign(new Error('EMITTED_PUBLICATION_UNCERTAIN'), {
+      code: 'EMITTED_PUBLICATION_UNCERTAIN', ...result,
+    }));
+  }
 }
