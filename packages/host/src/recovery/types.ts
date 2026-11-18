@@ -19,6 +19,7 @@ export type RecoveryDatabases = { service: SqliteDatabase; hub: SqliteDatabase }
 export type RecoveryDatabaseState = {
   hubSeq: number; domainSeq: number; schemaHistory: Array<{ file: string; sha256: string }>;
 };
+export type RecoveryDatabaseQuery = { prepare(sql: string): { get(): unknown; all(): unknown[] } };
 export type RecoveryDatabaseReader = (db: SqliteDatabase, role: 'service' | 'hub') => RecoveryDatabaseState;
 export type RecoveryArtifact = {
   path: string; hash: string; bytes: number; kind: 'database' | RecoveryResource['kind']; domain: string | null;

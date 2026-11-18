@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SqliteDatabase } from '@patrick/storage';
 import { canonical, containedPath, digest } from './files.js';
-import type { RecoveryScope, RecoveryVault } from './types.js';
+import type { RecoveryDatabaseQuery, RecoveryScope, RecoveryVault } from './types.js';
 
 type VaultRow = {
   vault_id: string; source_id: string; account_id: string; data_domain: string;
@@ -94,7 +94,7 @@ export async function readVaultFile(binding: BoundVaultRoot, path: string): Prom
   });
 }
 
-export function registeredVaults(database: SqliteDatabase): VaultRow[] {
+export function registeredVaults(database: RecoveryDatabaseQuery): VaultRow[] {
   return database.prepare(`SELECT vault_id,source_id,account_id,data_domain,physical_root,root_path,root_identity,scope_hash
     FROM vaults ORDER BY vault_id`).all() as VaultRow[];
 }
@@ -144,7 +144,7 @@ export function captureVaults(database: SqliteDatabase, scope: RecoveryScope): {
   return { vaults, gaps, roots };
 }
 
-export function verifyVaultRegistrations(database: SqliteDatabase, vaults: RecoveryVault[]): void {
+export function verifyVaultRegistrations(database: RecoveryDatabaseQuery, vaults: RecoveryVault[]): void {
   const expected = registeredVaults(database).map((row) => ({
     vaultId: row.vault_id, accountId: row.account_id, sourceId: row.source_id, domain: row.data_domain,
     physicalRoot: row.physical_root, rootIdentity: row.root_identity, scopeHash: row.scope_hash,

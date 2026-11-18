@@ -1,20 +1,38 @@
 import { generateKeyPairSync, sign, verify, createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, readFileSync, writeFileSync, realpathSync, renameSync, symlinkSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, readFileSync, writeFileSync, realpathSync, renameSync, symlinkSync, existsSync, truncateSync, statSync, chmodSync, unlinkSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, expect, test } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { buildSync } from 'esbuild';
+import { afterEach, expect, test, vi } from 'vitest';
 import { openDatabase, createRecoveryRuntimeGate, recoveryWriteAllowed } from '@patrick/storage';
 import { verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
 import { canonical } from '../../packages/host/src/recovery/files.js';
 import { createRecoveryRestorer } from '../../packages/host/src/recovery/restore.js';
+import type { RecoveryScope } from '../../packages/host/src/recovery/types.js';
+import type { RecoveryBackupReadbackTarget, RecoveryJournalRoot } from '../../packages/host/src/recovery/operations.js';
+
+const recordBoundary = vi.hoisted(() => ({ afterOpen: undefined as ((path: string) => void) | undefined }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, async open(...args: Parameters<typeof fs.open>) {
+    const handle = await fs.open(...args);
+    try { recordBoundary.afterOpen?.(String(args[0])); }
+    catch (error) { await handle.close(); throw error; }
+    return handle;
+  } };
+});
 
 const cleanups: Array<() => void> = [];
-afterEach(() => { for (const close of cleanups.splice(0)) close(); });
+afterEach(() => { recordBoundary.afterOpen = undefined; for (const close of cleanups.splice(0)) close(); });
 async function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 't22-operations-'));
   const service = openDatabase(join(root, 'service.sqlite'));
   const hub = openDatabase(join(root, 'hub.sqlite'));
-  cleanups.push(() => { service.close(); hub.close(); rmSync(root, { recursive: true, force: true }); });
+  const closeSources = () => { if (service.open) service.close(); if (hub.open) hub.close(); };
+  cleanups.push(() => { closeSources(); rmSync(root, { recursive: true, force: true }); });
   for (const db of [service, hub]) db.prepare("INSERT INTO hub_snapshots VALUES ('hub',0,'{}',?)").run(new Date().toISOString());
   for (const path of ['operations', 'sets', 'isolated']) mkdirSync(join(root, path));
   const keys = generateKeyPairSync('ed25519');
@@ -22,7 +40,7 @@ async function fixture() {
     async verify(bytes: Uint8Array, signature: string, keyId: string) { return keyId === 'test' && verify(null, bytes, keys.publicKey, Buffer.from(signature, 'base64')); } };
   let captures = 0;
   let interrupt = false;
-  const scope = { setId: 'set', domains: [{ domain: 'personal', writerEpoch: 'epoch', withdrawal: { seq: 0, hash: createHash('sha256').update('').digest('hex') } }], resources: [], versionLocks: { app: '1' } };
+  const scope: RecoveryScope = { setId: 'set', domains: [{ domain: 'personal', writerEpoch: 'epoch', withdrawal: { seq: 0, hash: createHash('sha256').update('').digest('hex') } }], resources: [], versionLocks: { app: '1' } };
   const backup = { root: join(root, 'sets'), databases: { service, hub }, authority, freeze: { async acquire() {
     captures++;
     if (interrupt) throw new Error('interrupted');
@@ -39,9 +57,188 @@ async function fixture() {
     return authority.sign(bytes);
   } };
   const create = () => module!.createRecoveryOperations({ root: join(root, 'operations'), authority: operationAuthority, targets: { target } });
-  return { root, service, target, create, captures: () => captures, interrupt: () => { interrupt = true; }, failTerminal: () => { failTerminal = true; } };
+  const verifier = { keyId: authority.keyId, verify: authority.verify };
+  const operationRoot = join(root, 'operations');
+  const journalStat = statSync(operationRoot);
+  const journalRoot: RecoveryJournalRoot = { path: operationRoot, device: journalStat.dev, inode: journalStat.ino };
+  const journal = { root: journalRoot, authority: verifier };
+  const readback = (overrides: Partial<RecoveryBackupReadbackTarget> = {}) => {
+    const readTarget: RecoveryBackupReadbackTarget = {
+      identity: target.identity, scope, root: backup.root, authority: verifier, protection: { kind: 'local_only' }, ...overrides,
+    };
+    expect(module?.createRecoveryBackupReader, 'a restarted reader needs no signer, freeze or live databases').toBeTypeOf('function');
+    return module!.createRecoveryBackupReader({ root: journalRoot, get authority() { return journal.authority; },
+      targets: { target: readTarget } });
+  };
+  const publicKey = keys.publicKey.export({ format: 'pem', type: 'spki' });
+  return { root, service, target, create, readback, closeSources, publicKey, journal, captures: () => captures, interrupt: () => { interrupt = true; }, failTerminal: () => { failTerminal = true; } };
 }
 const request = { operationId: 'backup', targetId: 'target', mode: 'backup' as const };
+
+test('verification-only backup readback survives the loss of the live sources', async () => {
+  const f = await fixture();
+  expect(await f.readback().read(request)).toEqual({ status: 'absent' });
+  await f.create().reserve(request);
+  expect(await f.readback().read(request)).toEqual({ status: 'reserved' });
+  const completed = await f.create().run(request);
+  expect(completed.status).toBe('completed');
+  f.closeSources();
+  renameSync(join(f.root, 'service.sqlite'), join(f.root, 'service-retired.sqlite'));
+  renameSync(join(f.root, 'hub.sqlite'), join(f.root, 'hub-retired.sqlite'));
+  const reader = f.readback();
+  expect(Object.keys(reader)).toEqual(['read']);
+  expect(await reader.read(request)).toEqual(completed);
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only readback keeps a published set uncertain without a signed terminal', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  f.failTerminal();
+  await expect(f.create().run(request)).rejects.toThrow('terminal interrupted');
+  expect(readdirSync(join(f.root, 'sets'))).toEqual(['set']);
+  f.closeSources();
+  expect(await f.readback().read(request)).toEqual({ status: 'running_or_uncertain' });
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only readback binds signed records to the current registered directory identity', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  await f.create().run(request);
+  f.closeSources();
+  const old = join(f.root, 'old-operations');
+  const operations = join(f.root, 'operations');
+  renameSync(operations, old);
+  mkdirSync(operations);
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+  for (const name of readdirSync(old)) writeFileSync(join(operations, name), readFileSync(join(old, name)));
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+});
+
+test('verification-only readback still requires the captured resource directory identity', async () => {
+  const f = await fixture();
+  const handoff = join(f.root, 'handoff');
+  mkdirSync(handoff);
+  writeFileSync(join(handoff, 'snapshot'), 'handoff');
+  f.target.backup.scope.resources.push({ kind: 'handoff', root: handoff });
+  await f.create().reserve(request);
+  const completed = await f.create().run(request);
+  f.closeSources();
+  expect(await f.readback().read(request)).toEqual(completed);
+
+  renameSync(handoff, join(f.root, 'old-handoff'));
+  mkdirSync(handoff);
+  writeFileSync(join(handoff, 'snapshot'), 'handoff');
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+});
+
+test('verification-only reader returns the authenticated terminal in a fresh process without filesystem writes', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  const completed = await f.create().run(request);
+  expect(completed.status).toBe('completed');
+  f.closeSources();
+  const retired = mkdtempSync(join(realpathSync(tmpdir()), 't22-retired-sources-'));
+  cleanups.push(() => rmSync(retired, { recursive: true, force: true }));
+  for (const name of ['service.sqlite', 'hub.sqlite']) renameSync(join(f.root, name), join(retired, name));
+
+  const copied = join(f.root, 'sets', 'set', 'databases');
+  for (const name of readdirSync(copied).filter((name) => name.endsWith('-wal') || name.endsWith('-shm'))) {
+    unlinkSync(join(copied, name));
+  }
+  const inventory = ['hub.sqlite', 'service.sqlite'];
+  expect(readdirSync(copied).sort()).toEqual(inventory);
+  const digests = () => inventory.map((name) => createHash('sha256').update(readFileSync(join(copied, name))).digest('hex'));
+  const priorDigests = digests();
+  for (const name of inventory) chmodSync(join(copied, name), 0o400);
+  chmodSync(copied, 0o500);
+  cleanups.unshift(() => chmodSync(copied, 0o700));
+
+  const source = fileURLToPath(new URL('../../packages/host/src/recovery/operations.ts', import.meta.url));
+  const sqlite = createRequire(import.meta.url).resolve('better-sqlite3');
+  const moduleRoot = fileURLToPath(new URL('../../node_modules', import.meta.url));
+  const runner = join(f.root, 'verification.mjs');
+  buildSync({
+    bundle: true, platform: 'node', format: 'esm', target: 'node24',
+    alias: { 'better-sqlite3': sqlite }, external: [sqlite], outfile: runner,
+    stdin: { resolveDir: dirname(source), contents: `
+      import { createPublicKey, verify } from 'node:crypto';
+      import { createRecoveryBackupReader } from './operations.ts';
+      const { publicKey, operationRoot, retired, target, request } = JSON.parse(process.argv[2]);
+      if (process.permission.has('fs.write', operationRoot.path)
+        || process.permission.has('fs.read', retired + '/service.sqlite')
+        || process.permission.has('fs.read', retired + '/hub.sqlite')) {
+        throw new Error('Unexpected readback process permissions');
+      }
+      const key = createPublicKey(publicKey);
+      const authority = { keyId: 'test', async verify(bytes, signature, keyId) {
+        return keyId === 'test' && verify(null, bytes, key, Buffer.from(signature, 'base64'));
+      } };
+      const reader = createRecoveryBackupReader({
+        root: operationRoot, authority, targets: { target: { ...target, authority } },
+      });
+      const read = await reader.read(request);
+      process.stdout.write(JSON.stringify(read));
+    ` },
+  });
+  const result = spawnSync(process.execPath, [
+    '--permission', '--allow-fs-read=' + f.root, '--allow-fs-read=' + moduleRoot,
+    runner, JSON.stringify({ publicKey: f.publicKey, operationRoot: f.journal.root, retired, request,
+      target: { identity: f.target.identity, root: f.target.backup.options.root, scope: f.target.backup.scope, protection: { kind: 'local_only' } } }),
+  ], { encoding: 'utf8', timeout: 20_000 });
+  expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual(completed);
+  expect(readdirSync(copied).sort()).toEqual(inventory);
+  expect(digests()).toEqual(priorDigests);
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only readback refuses changed bindings and signed-set bytes', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  await f.create().run(request);
+  f.closeSources();
+  await expect(f.readback({ identity: { ...f.target.identity, configRevision: '2' } }).read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+  await expect(f.readback().read({ ...request, mode: 'drill' })).rejects.toThrow('RECOVERY_OPERATION_UNAVAILABLE');
+  const journal = join(f.root, 'operations', 'backup.terminal.json');
+  const record = readFileSync(journal);
+  const terminal = JSON.parse(record.toString('utf8'));
+  terminal.payload.outcome.manifestHash = '0'.repeat(64);
+  writeFileSync(journal, JSON.stringify(terminal));
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_RECORD_INVALID');
+  writeFileSync(journal, record);
+  truncateSync(journal, 4 * 1024 * 1024 + 1);
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_RECORD_INVALID');
+  writeFileSync(journal, record);
+  const manifest = join(f.root, 'sets', 'set', 'manifest.json');
+  const envelope = JSON.parse(readFileSync(manifest, 'utf8'));
+  envelope.manifest.cutId = 'wrong-cut';
+  writeFileSync(manifest, JSON.stringify(envelope));
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_SIGNATURE_INVALID');
+  expect(f.captures()).toBe(1);
+});
+test('verification-only readback accepts large authentic v1 bindings while bounding extra record data', async () => {
+  const f = await fixture();
+  f.target.backup.scope.versionLocks.app = 'x'.repeat(4 * 1024 * 1024 + 1);
+  await f.create().reserve(request);
+  expect(await f.readback().read(request)).toEqual({ status: 'reserved' });
+  expect(f.captures()).toBe(0);
+});
+
+test('verification-only readback refuses a claim that disappears after its initial open', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  f.interrupt();
+  await expect(f.create().run(request)).rejects.toThrow('interrupted');
+  const claim = join(f.root, 'operations', 'backup.claim.json');
+  recordBoundary.afterOpen = (path) => {
+    if (path === claim) unlinkSync(path);
+  };
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_RECORD_INVALID');
+  expect(existsSync(claim)).toBe(false);
+});
+
 test('actual backup and default drill survive lost responses and fresh instances without duplicate effects', async () => {
   const f = await fixture();
   expect(await f.create().read(request)).toEqual({ status: 'absent' });
@@ -247,4 +444,46 @@ test('actual configured off-host protection is handed off once across terminal r
   expect(f.captures()).toBe(1); expect(protections).toBe(1);
   const manifest = JSON.parse(readFileSync(join(f.root, 'sets/set/manifest.json'), 'utf8'));
   expect(manifest.manifest.protection.status).toBe('local_only');
+});
+
+test('verification-only readback requires independent proof for an off-host binding', async () => {
+  const f = await fixture();
+  let copiedHash: string | undefined;
+  Object.assign(f.target.backup.options, { offHost: { async protect(set: { manifestHash: string }) {
+    copiedHash = set.manifestHash;
+    return { encrypted: true, offHost: true, verified: true, domains: ['personal'], targetId: 'synthetic-offhost',
+      snapshotId: 'snapshot', recoveryCredentialRef: 'synthetic-reference', verifiedAt: new Date().toISOString(), manifestHash: copiedHash };
+  } } });
+  await f.create().reserve(request);
+  const reader = f.readback({ protection: { kind: 'off_host', async verify(set) {
+    return copiedHash === set.manifestHash;
+  } } });
+  expect(await reader.read(request)).toEqual({ status: 'reserved' });
+  const completed = await f.create().run(request);
+  expect(completed.status).toBe('completed');
+  f.closeSources();
+  await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+  const refusing = f.readback({ protection: { kind: 'off_host', async verify() { return false; } } });
+  await expect(refusing.read(request)).rejects.toThrow('RECOVERY_OFF_HOST_UNCONFIRMED');
+  expect(await reader.read(request)).toEqual(completed);
+  expect(f.captures()).toBe(1);
+});
+
+test.each(['journal', 'off-host'])('verification-only readback refuses %s verifier rotation before return', async (which) => {
+  const f = await fixture();
+  Object.assign(f.target.backup.options, { offHost: { async protect(set: { manifestHash: string }) {
+    return { encrypted: true, offHost: true, verified: true, domains: ['personal'], targetId: 'synthetic-offhost',
+      snapshotId: 'snapshot', recoveryCredentialRef: 'synthetic-reference', verifiedAt: new Date().toISOString(), manifestHash: set.manifestHash };
+  } } });
+  await f.create().reserve(request);
+  expect((await f.create().run(request)).status).toBe('completed');
+  f.closeSources();
+  const protection = { kind: 'off_host' as const, async verify() {
+    await Promise.resolve();
+    if (which === 'journal') f.journal.authority = { ...f.journal.authority, async verify() { return false; } };
+    else protection.verify = async () => false;
+    return true;
+  } };
+  await expect(f.readback({ protection }).read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
+  expect(f.captures()).toBe(1);
 });

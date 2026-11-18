@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { assertName, assertRelative, canonical, containedPath, digest, durableJson, durableWrite, fileHash, publishDirectory, walkFiles } from './files.js';
 import { verifyWithdrawalChain } from './witness.js';
 import { assertVaultRoot, captureVaults, readVaultFile, verifyVaultRegistrations, withVaultRoot } from './vaults.js';
 import type {
-  RecoveryArtifact, RecoveryDatabaseReader, RecoveryDatabases, RecoveryDatabaseState, RecoveryFreezeLease,
+  RecoveryArtifact, RecoveryDatabaseQuery, RecoveryDatabaseReader, RecoveryDatabases, RecoveryDatabaseState, RecoveryFreezeLease,
   RecoveryFreezePort, RecoveryManifest, RecoveryManifestAuthority, RecoveryOffHostPort, RecoveryScope, RecoverySet, WithdrawalEntry,
 } from './types.js';
 
@@ -16,7 +17,7 @@ export type RecoveryBackupOptions = {
   freeze?: RecoveryFreezePort; readDatabase?: RecoveryDatabaseReader; offHost?: RecoveryOffHostPort; now?: () => Date;
 };
 
-export function readRecoveryDatabase(db: SqliteDatabase): RecoveryDatabaseState {
+export function readRecoveryDatabase(db: RecoveryDatabaseQuery): RecoveryDatabaseState {
   const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='hub_snapshots'").get();
   if (!table) throw new Error('RECOVERY_HUB_READER_REQUIRED');
   const hub = db.prepare('SELECT COALESCE(MAX(hub_seq),0) AS seq FROM hub_snapshots').get() as { seq: number };
@@ -193,8 +194,52 @@ function assertDatabaseDomains(db: SqliteDatabase, domains: string[]): void {
 }
 
 export async function verifyRecoverySet(
-  directory: string, authority: RecoveryManifestAuthority, versionLocks: Record<string, string>,
+  directory: string, authority: Pick<RecoveryManifestAuthority, 'verify'>, versionLocks: Record<string, string>,
   readDatabase: RecoveryDatabaseReader = readRecoveryDatabase,
+): Promise<RecoverySet> {
+  return verifySet(directory, authority, versionLocks, (path, role, manifest) => {
+    const db = new Database(path, { readonly: true });
+    try {
+      assertDatabaseIntegrity(db);
+      assertCopiedDatabase(db, role, manifest, readDatabase);
+    } finally { db.close(); }
+  });
+}
+
+/** The signed copy is a standalone backup. Open only its main file under
+ * an immutable SQLite URI and keep temporary query state in memory. */
+export async function verifyImmutableRecoverySet(
+  directory: string, authority: Pick<RecoveryManifestAuthority, 'verify'>, versionLocks: Record<string, string>,
+  readDatabase: (db: RecoveryDatabaseQuery, role: 'service' | 'hub') => RecoveryDatabaseState = readRecoveryDatabase,
+): Promise<RecoverySet> {
+  const { DatabaseSync } = await import('node:sqlite');
+  return verifySet(directory, authority, versionLocks, async (path, role, manifest) => {
+    const uri = pathToFileURL(path);
+    uri.searchParams.set('immutable', '1');
+    const db = new DatabaseSync(uri.href, { readOnly: true });
+    try {
+      db.exec('PRAGMA temp_store = MEMORY');
+      const integrity = db.prepare('PRAGMA integrity_check').get();
+      if (integrity?.integrity_check !== 'ok' || db.prepare('PRAGMA foreign_key_check').all().length) {
+        throw new Error('RECOVERY_DATABASE_INTEGRITY_FAILED');
+      }
+      assertCopiedDatabase(db, role, manifest, readDatabase);
+    } finally { db.close(); }
+    const artifact = manifest.artifacts.find((entry) => entry.path === 'databases/' + role + '.sqlite')!;
+    const observed = await fileHash(path);
+    if (observed.hash !== artifact.hash || observed.bytes !== artifact.bytes) throw new Error('RECOVERY_ARTIFACT_HASH_MISMATCH');
+  });
+}
+
+function assertCopiedDatabase<T extends RecoveryDatabaseQuery>(db: T, role: 'service' | 'hub', manifest: RecoveryManifest,
+  readDatabase: (db: T, role: 'service' | 'hub') => RecoveryDatabaseState) {
+  if (canonical(readDatabase(db, role)) !== canonical(manifest.databases[role])) throw new Error('RECOVERY_DATABASE_CUT_MISMATCH');
+  if (role === 'service') verifyVaultRegistrations(db, manifest.vaults);
+}
+
+async function verifySet(directory: string, authority: Pick<RecoveryManifestAuthority, 'verify'>,
+  versionLocks: Record<string, string>,
+  inspectDatabase: (path: string, role: 'service' | 'hub', manifest: RecoveryManifest) => void | Promise<void>,
 ): Promise<RecoverySet> {
   const manifestPath = await containedPath(directory, 'manifest.json');
   const envelopeBytes = await readFile(manifestPath, 'utf8');
@@ -212,12 +257,7 @@ export async function verifyRecoverySet(
     if (actual.hash !== artifact.hash || actual.bytes !== artifact.bytes) throw new Error('RECOVERY_ARTIFACT_HASH_MISMATCH');
   }
   for (const role of ['service', 'hub'] as const) {
-    const db = new Database(await containedPath(directory, `databases/${role}.sqlite`), { readonly: true });
-    try {
-      assertDatabaseIntegrity(db);
-      if (canonical(readDatabase(db, role)) !== canonical(manifest.databases[role])) throw new Error('RECOVERY_DATABASE_CUT_MISMATCH');
-      if (role === 'service') verifyVaultRegistrations(db, manifest.vaults);
-    } finally { db.close(); }
+    await inspectDatabase(await containedPath(directory, 'databases/' + role + '.sqlite'), role, manifest);
   }
   if (manifest.databases.service.hubSeq !== manifest.databases.hub.hubSeq) throw new Error('RECOVERY_DATABASE_CUT_MISMATCH');
   return retainSetEvidence({ directory, manifest, manifestHash: digest(bytes) }, envelopeBytes);

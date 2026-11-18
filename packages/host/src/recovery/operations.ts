@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { link, lstat, readFile, realpath, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { link, lstat, open, readFile, realpath, unlink } from 'node:fs/promises';
 import { join, parse, resolve, sep } from 'node:path';
-import { createRecoveryBackup, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
+import { createRecoveryBackup, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
 import { createRecoveryRestorer, type RecoveryRestoreOptions } from './restore.js';
 import { assertName, canonical, containedPath, durableJson, syncDirectory } from './files.js';
-import type { RecoveryManifestAuthority, RecoveryRestoreReceipt, RecoveryScope } from './types.js';
+import type { RecoveryDatabaseQuery, RecoveryDatabaseState, RecoveryManifestAuthority, RecoveryRestoreReceipt, RecoveryScope, RecoverySet } from './types.js';
 
 export type RecoveryOperationRequest = { operationId: string; targetId: string; mode: 'backup' | 'drill'; manifestHash?: string };
 export type RecoveryOperationTarget = {
@@ -15,11 +16,22 @@ export type RecoveryOperationTarget = {
 export type RecoveryOperationOutcome = { manifestHash: string; receipt?: RecoveryRestoreReceipt };
 export type RecoveryOperationStatus = { status: 'absent' | 'reserved' | 'running_or_uncertain' }
   | { status: 'completed'; outcome: RecoveryOperationOutcome };
-type Binding = { protocol: 'patrick-recovery-operation-v1'; request: RecoveryOperationRequest; configuration: unknown; roots: unknown };
+type Binding = { protocol: 'patrick-recovery-operation-v1'; request: RecoveryOperationRequest; configuration: unknown; roots: RecoveryDirectoryIdentity[] };
 type RecordPayload = { kind: 'reservation' | 'claim' | 'terminal'; binding: Binding; outcome?: RecoveryOperationOutcome };
+type RecoveryVerifier = Pick<RecoveryManifestAuthority, 'keyId' | 'verify'>;
+export type RecoveryJournalRoot = Readonly<{ path: string; device: number; inode: number }>;
+type RecoveryDirectoryIdentity = RecoveryJournalRoot & { physical: string };
+export type RecoveryBackupReadbackTarget = {
+  identity: RecoveryOperationTarget['identity'];
+  root: string;
+  scope: RecoveryScope;
+  authority: RecoveryVerifier;
+  readDatabase?: (db: RecoveryDatabaseQuery, role: 'service' | 'hub') => RecoveryDatabaseState;
+  protection: { kind: 'local_only' } | { kind: 'off_host'; verify(set: RecoverySet): Promise<boolean> };
+};
 
 // Every root must already be provisioned by the host. Retain both spelling and physical identity.
-async function rootIdentity(path: string) {
+async function rootIdentity(path: string): Promise<RecoveryDirectoryIdentity> {
   const absolute = resolve(path);
   let cursor = parse(absolute).root;
   for (const part of absolute.slice(cursor.length).split(sep).filter(Boolean)) {
@@ -31,6 +43,187 @@ async function rootIdentity(path: string) {
   return { path: absolute, physical: await realpath(absolute), device: stat.dev, inode: stat.ino };
 }
 
+function checkedRequest(requested: RecoveryOperationRequest) {
+  const request = structuredClone(requested);
+  assertName(request.operationId); assertName(request.targetId);
+  if (!['backup', 'drill'].includes(request.mode) || Object.keys(request).some((key) => !['operationId', 'targetId', 'mode', 'manifestHash'].includes(key))) {
+    throw new Error('RECOVERY_OPERATION_REQUEST_INVALID');
+  }
+  return request;
+}
+
+function checkedIdentity(requested: RecoveryOperationTarget['identity']) {
+  const identity = structuredClone(requested);
+  if (!identity || !identity.accountId || !identity.scopeId || !identity.deviceId || !identity.configRevision || !identity.domains.length
+    || identity.domains.some((domain) => !domain) || new Set(identity.domains).size !== identity.domains.length) {
+    throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
+  }
+  return identity;
+}
+
+async function backupBinding(request: RecoveryOperationRequest, root: string, identity: RecoveryOperationTarget['identity'],
+  target: { root: string; scope: RecoveryScope; authority: RecoveryVerifier; offHost: boolean }): Promise<Binding> {
+  const scope = structuredClone(target.scope);
+  assertName(scope.setId);
+  if (canonical(scope.domains.map(({ domain }) => domain).sort()) !== canonical([...identity.domains].sort())) {
+    throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+  }
+  const roots = [await rootIdentity(root), await rootIdentity(target.root)];
+  for (const resource of scope.resources) roots.push(await rootIdentity(resource.root));
+  return { protocol: 'patrick-recovery-operation-v1', request, roots,
+    configuration: { identity, scope, authority: target.authority.keyId, offHost: target.offHost } };
+}
+
+async function recordPath(root: string, binding: Binding, kind: RecordPayload['kind']) {
+  return containedPath(root, `${binding.request.operationId}.${kind}.json`);
+}
+
+// Restart readback has no live owner to trust journal size. Limit the read even
+// if an entry grows after stat; never wait for a special file to produce bytes.
+async function readBoundedRecord(path: string, maxBytes: number) {
+  let handle;
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > maxBytes) throw new Error('RECOVERY_OPERATION_RECORD_INVALID');
+    const buffer = Buffer.alloc(before.size + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    const named = await lstat(path).catch(() => { throw new Error('RECOVERY_OPERATION_RECORD_INVALID'); });
+    if (length !== before.size || [after, named].some((entry) => !entry.isFile() || entry.dev !== before.dev
+      || entry.ino !== before.ino || entry.size !== before.size || entry.mtimeMs !== before.mtimeMs)) {
+      throw new Error('RECOVERY_OPERATION_RECORD_INVALID');
+    }
+    return buffer.toString('utf8', 0, length);
+  } finally { await handle.close(); }
+}
+
+async function readRecord(root: string, authority: RecoveryVerifier, binding: Binding, kind: RecordPayload['kind'], maxBytes?: number) {
+  const path = await recordPath(root, binding, kind);
+  const text = maxBytes === undefined
+    ? await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    })
+    : await readBoundedRecord(path, maxBytes);
+  if (text === undefined) return undefined;
+  let record: { payload: RecordPayload; keyId: string; signature: string };
+  try {
+    record = JSON.parse(text) as typeof record;
+    if (Object.keys(record).sort().join(',') !== 'keyId,payload,signature' || record.keyId !== authority.keyId
+      || !await authority.verify(Buffer.from(canonical(record.payload)), record.signature, authority.keyId)
+      || record.payload.kind !== kind || record.payload.binding.protocol !== 'patrick-recovery-operation-v1'
+      || (kind === 'terminal' && !record.payload.outcome)) throw new Error('invalid');
+  } catch { throw new Error('RECOVERY_OPERATION_RECORD_INVALID'); }
+  if (canonical(record.payload.binding) !== canonical(binding)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+  return record.payload;
+}
+
+async function readStatus(root: string, authority: RecoveryVerifier, binding: Binding,
+  verifyOutcome: (outcome: RecoveryOperationOutcome) => Promise<void>, maxBytes?: number): Promise<RecoveryOperationStatus> {
+  // Read newest publication first so concurrent forward progress cannot look like a missing predecessor.
+  const terminal = await readRecord(root, authority, binding, 'terminal', maxBytes);
+  const claim = await readRecord(root, authority, binding, 'claim', maxBytes);
+  const reservation = await readRecord(root, authority, binding, 'reservation', maxBytes);
+  if ((!reservation && (claim || terminal)) || (terminal && !claim)) throw new Error('RECOVERY_OPERATION_RECORD_INVALID');
+  if (terminal) {
+    await verifyOutcome(terminal.outcome!);
+    return { status: 'completed', outcome: terminal.outcome! };
+  }
+  if (claim) return { status: 'running_or_uncertain' };
+  return { status: reservation ? 'reserved' : 'absent' };
+}
+
+function verifyBackupOutcome(set: RecoverySet, scope: RecoveryScope, outcome: RecoveryOperationOutcome) {
+  if (set.manifest.setId !== scope.setId || set.manifestHash !== outcome.manifestHash) {
+    throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+  }
+}
+
+/** Reads an existing backup on independently enrolled, host-controlled storage.
+ * An absent record is not permission to repeat an operation.
+ */
+export function createRecoveryBackupReader(options: {
+  root: RecoveryJournalRoot; authority: RecoveryVerifier; targets: Record<string, RecoveryBackupReadbackTarget>;
+}) {
+  function plan(request: RecoveryOperationRequest) {
+    const registered = Object.hasOwn(options.targets, request.targetId) ? options.targets[request.targetId] : undefined;
+    const targetAuthority = registered?.authority;
+    const journalAuthority = options.authority;
+    if (!targetAuthority?.keyId || typeof targetAuthority.verify !== 'function'
+      || !journalAuthority?.keyId || typeof journalAuthority.verify !== 'function') throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
+    const protection = registered!.protection;
+    if (protection?.kind !== 'local_only' && (protection?.kind !== 'off_host' || typeof protection.verify !== 'function')) {
+      throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
+    }
+    return {
+      root: registered!.root, scope: structuredClone(registered!.scope), identity: checkedIdentity(registered!.identity),
+      journalRoot: structuredClone(options.root), readDatabase: registered!.readDatabase, offHost: protection.kind === 'off_host',
+      journalAuthority, journalKeyId: journalAuthority.keyId, verifyJournal: journalAuthority.verify,
+      targetAuthority, authority: { keyId: targetAuthority.keyId, verify: targetAuthority.verify },
+      protection, verifyProtection: protection.kind === 'off_host' ? protection.verify : undefined,
+    };
+  }
+
+  async function observeBinding(request: RecoveryOperationRequest, target: ReturnType<typeof plan>) {
+    const expected = target.journalRoot;
+    const binding = await backupBinding(request, expected.path, target.identity, target);
+    const [root] = binding.roots;
+    if (root.path !== expected.path || root.physical !== expected.path || root.device !== expected.device || root.inode !== expected.inode) {
+      throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+    }
+    return binding;
+  }
+
+  return {
+    async read(requested: RecoveryOperationRequest): Promise<RecoveryOperationStatus> {
+      const request = checkedRequest(requested);
+      if (request.mode !== 'backup' || request.manifestHash !== undefined) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
+      const target = plan(request);
+      const binding = await observeBinding(request, target);
+      const journal = { keyId: target.journalKeyId, verify: target.verifyJournal.bind(target.journalAuthority) };
+      // A trusted v1 binding may itself be large. Restrict the envelope overhead
+      // independently of its known canonical size, including the trusted key ID.
+      const maxBytes = Buffer.byteLength(canonical(binding)) + Buffer.byteLength(JSON.stringify(journal.keyId)) + 1024 * 1024;
+      const result = await readStatus(target.journalRoot.path, journal, binding, async (outcome) => {
+        const authority = { async verify(bytes: Uint8Array, signature: string, keyId: string) {
+          return keyId === target.authority.keyId && target.authority.verify.call(target.targetAuthority, bytes, signature, keyId);
+        } };
+        const path = await containedPath(target.root, target.scope.setId);
+        const set = await verifyImmutableRecoverySet(path, authority, target.scope.versionLocks, target.readDatabase);
+        verifyBackupOutcome(set, target.scope, outcome);
+        if (canonical(set.manifest.domains) !== canonical(target.scope.domains)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+        if (target.verifyProtection && !await target.verifyProtection.call(target.protection, set)) {
+          throw new Error('RECOVERY_OFF_HOST_UNCONFIRMED');
+        }
+      }, maxBytes);
+
+      const currentBinding = await observeBinding(request, target);
+      const enrolled = plan(request);
+      if (canonical(currentBinding) !== canonical(binding)
+        || canonical(enrolled.journalRoot) !== canonical(target.journalRoot)
+        || enrolled.journalAuthority !== target.journalAuthority || enrolled.journalKeyId !== target.journalKeyId
+        || enrolled.verifyJournal !== target.verifyJournal || enrolled.targetAuthority !== target.targetAuthority
+        || enrolled.authority.keyId !== target.authority.keyId || enrolled.authority.verify !== target.authority.verify
+        || enrolled.protection !== target.protection || enrolled.verifyProtection !== target.verifyProtection
+        || enrolled.readDatabase !== target.readDatabase || enrolled.root !== target.root || enrolled.offHost !== target.offHost
+        || canonical(enrolled.scope) !== canonical(target.scope) || canonical(enrolled.identity) !== canonical(target.identity)) {
+        throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+      }
+      return result;
+    },
+  };
+}
+
 /** Durable control records only. Completion never grants runtime writer admission.
  * A crash after claim, including after library return but before terminal publication,
  * remains uncertain indefinitely. No automatic reconciliation or second invocation exists.
@@ -39,61 +232,31 @@ export function createRecoveryOperations(options: {
   root: string; authority: RecoveryManifestAuthority; targets: Record<string, RecoveryOperationTarget>;
 }) {
   async function bind(requested: RecoveryOperationRequest) {
-    const request = structuredClone(requested);
-    assertName(request.operationId); assertName(request.targetId);
-    if (!['backup', 'drill'].includes(request.mode) || Object.keys(request).some((key) => !['operationId', 'targetId', 'mode', 'manifestHash'].includes(key))) {
-      throw new Error('RECOVERY_OPERATION_REQUEST_INVALID');
-    }
+    const request = checkedRequest(requested);
     const target = Object.hasOwn(options.targets, request.targetId) ? options.targets[request.targetId] : undefined;
     if (!target || !options.authority?.keyId || typeof options.authority.sign !== 'function' || typeof options.authority.verify !== 'function') {
       throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
     }
-    const identity = structuredClone(target.identity);
-    if (!identity || !identity.accountId || !identity.scopeId || !identity.deviceId || !identity.configRevision || !identity.domains.length
-      || identity.domains.some((domain) => !domain) || new Set(identity.domains).size !== identity.domains.length) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
-    const roots = [await rootIdentity(options.root)];
+    const identity = checkedIdentity(target.identity);
     const backup = target.backup;
     const drill = target.drill;
-    let configuration: unknown;
     if (request.mode === 'backup') {
       if (!backup?.options.freeze || request.manifestHash !== undefined) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
-      const scope = structuredClone(backup.scope);
-      assertName(scope.setId);
-      if (canonical(scope.domains.map((domain) => domain.domain).sort()) !== canonical([...identity.domains].sort())) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
-      roots.push(await rootIdentity(backup.options.root));
-      for (const resource of scope.resources) roots.push(await rootIdentity(resource.root));
-      configuration = { identity, scope, authority: backup.options.authority.keyId, offHost: Boolean(backup.options.offHost) };
-    } else {
-      if (!drill || !backup || !/^[a-f0-9]{64}$/.test(request.manifestHash ?? '')) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
-      roots.push(await rootIdentity(drill.recoveryRoot), await rootIdentity(drill.isolationRoot));
-      for (const survivor of drill.survivors ?? []) roots.push(await rootIdentity(survivor.root));
-      const set = await verifyRecoverySet(await containedPath(drill.recoveryRoot, backup.scope.setId), drill.authority, drill.versionLocks, drill.readDatabase);
-      if (set.manifest.setId !== backup.scope.setId || set.manifestHash !== request.manifestHash
-        || canonical(set.manifest.domains.map((domain) => domain.domain).sort()) !== canonical([...identity.domains].sort())) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
-      configuration = { identity, setId: set.manifest.setId, manifestHash: set.manifestHash, versionLocks: drill.versionLocks,
-        authority: drill.authority.keyId, survivors: drill.survivors ?? [], witness: Boolean(drill.witness), replay: Boolean(drill.replay),
-        fence: Boolean(drill.fence), withdrawalLog: Boolean(drill.withdrawalLog) };
+      const binding = await backupBinding(request, options.root, identity, { root: backup.options.root, scope: backup.scope,
+        authority: backup.options.authority, offHost: Boolean(backup.options.offHost) });
+      return { binding, target };
     }
+    if (!drill || !backup || !/^[a-f0-9]{64}$/.test(request.manifestHash ?? '')) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
+    const roots = [await rootIdentity(options.root), await rootIdentity(drill.recoveryRoot), await rootIdentity(drill.isolationRoot)];
+    for (const survivor of drill.survivors ?? []) roots.push(await rootIdentity(survivor.root));
+    const set = await verifyRecoverySet(await containedPath(drill.recoveryRoot, backup.scope.setId), drill.authority, drill.versionLocks, drill.readDatabase);
+    if (set.manifest.setId !== backup.scope.setId || set.manifestHash !== request.manifestHash
+      || canonical(set.manifest.domains.map((domain) => domain.domain).sort()) !== canonical([...identity.domains].sort())) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
+    const configuration = { identity, setId: set.manifest.setId, manifestHash: set.manifestHash, versionLocks: drill.versionLocks,
+      authority: drill.authority.keyId, survivors: drill.survivors ?? [], witness: Boolean(drill.witness), replay: Boolean(drill.replay),
+      fence: Boolean(drill.fence), withdrawalLog: Boolean(drill.withdrawalLog) };
     const binding: Binding = { protocol: 'patrick-recovery-operation-v1', request, configuration, roots };
     return { binding, target };
-  }
-  async function path(binding: Binding, kind: RecordPayload['kind']) {
-    return containedPath(options.root, `${binding.request.operationId}.${kind}.json`);
-  }
-  async function readRecord(binding: Binding, kind: RecordPayload['kind']): Promise<RecordPayload | undefined> {
-    let text: string;
-    try { text = await readFile(await path(binding, kind), 'utf8'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
-    let record: { payload: RecordPayload; keyId: string; signature: string };
-    try {
-      record = JSON.parse(text) as typeof record;
-      if (Object.keys(record).sort().join(',') !== 'keyId,payload,signature' || record.keyId !== options.authority.keyId
-        || !await options.authority.verify(Buffer.from(canonical(record.payload)), record.signature, options.authority.keyId)
-        || record.payload.kind !== kind || record.payload.binding.protocol !== 'patrick-recovery-operation-v1'
-        || (kind === 'terminal' && !record.payload.outcome)) throw new Error('invalid');
-    } catch { throw new Error('RECOVERY_OPERATION_RECORD_INVALID'); }
-    if (canonical(record.payload.binding) !== canonical(binding)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
-    return record.payload;
   }
   async function publish(binding: Binding, kind: RecordPayload['kind'], outcome?: RecoveryOperationOutcome) {
     const payload: RecordPayload = { kind, binding, ...(outcome ? { outcome } : {}) };
@@ -102,38 +265,27 @@ export function createRecoveryOperations(options: {
     const temporary = await containedPath(options.root, `.operation-${randomUUID()}`);
     await durableJson(temporary, { payload, keyId: options.authority.keyId, signature });
     try {
-      try { await link(temporary, await path(binding, kind)); }
+      try { await link(temporary, await recordPath(options.root, binding, kind)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
       await syncDirectory(options.root);
       return true;
     } finally { await unlink(temporary); }
   }
-  async function status(binding: Binding): Promise<RecoveryOperationStatus> {
-    // Read newest publication first so concurrent forward progress cannot look like a missing predecessor.
-    const terminal = await readRecord(binding, 'terminal');
-    const claim = await readRecord(binding, 'claim');
-    const reservation = await readRecord(binding, 'reservation');
-    if ((!reservation && (claim || terminal)) || (terminal && !claim)) throw new Error('RECOVERY_OPERATION_RECORD_INVALID');
-    if (terminal) {
+  function status(binding: Binding): Promise<RecoveryOperationStatus> {
+    return readStatus(options.root, options.authority, binding, async (outcome) => {
       if (binding.request.mode === 'backup') {
         const backup = options.targets[binding.request.targetId].backup!;
         const set = await verifyRecoverySet(await containedPath(backup.options.root, backup.scope.setId),
           backup.options.authority, backup.scope.versionLocks, backup.options.readDatabase);
-        if (set.manifest.setId !== backup.scope.setId || set.manifestHash !== terminal.outcome!.manifestHash) {
-          throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
-        }
+        verifyBackupOutcome(set, backup.scope, outcome);
       } else {
-        const outcome = terminal.outcome!;
         const receipt = outcome.receipt;
         if (outcome.manifestHash !== binding.request.manifestHash || receipt?.manifestHash !== outcome.manifestHash
           || receipt?.setId !== options.targets[binding.request.targetId].backup!.scope.setId || receipt?.mode !== 'drill') {
           throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
         }
       }
-      return { status: 'completed', outcome: terminal.outcome! };
-    }
-    if (claim) return { status: 'running_or_uncertain' };
-    return { status: reservation ? 'reserved' : 'absent' };
+    });
   }
   return {
     async reserve(request: RecoveryOperationRequest): Promise<RecoveryOperationStatus> {

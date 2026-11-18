@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign, verify } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, renameSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, renameSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { test, expect, vi, afterEach } from 'vitest';
@@ -290,7 +290,7 @@ test.each([
     filesystemBoundary.afterOpen = (path) => {
       if (boundary !== 'transient' || path !== join(inside, 'draft.md')) return;
       filesystemBoundary.afterOpen = undefined;
-      rmSync(inside);
+      unlinkSync(inside);
       renameSync(saved, inside);
     };
     const action = operation === 'capture' ? capture(local).then((set) => ({
