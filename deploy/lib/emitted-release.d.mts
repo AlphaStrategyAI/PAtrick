@@ -48,6 +48,14 @@ export type AdmittedDeployment = Readonly<StagedRuntimePaths & { profile: 'deplo
 export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntimePaths & { profile: 'runtime-only' }>;
 export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
   use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
+/**
+ * The host registers the canonical releasesRoot and the same exclusive owner used
+ * to verify the separate package. Both locations must be below that physical owner.
+ * Paths are valid during awaited use. A late rejection can follow an executed callback.
+ */
+export function withPublishedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, options: {
+  staging: ExclusiveRuntimeStaging; releasesRoot: string;
+}, use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
   staging: ExclusiveRuntimeStaging; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
 }): Promise<VerifiedEmittedRuntimeCandidate>;

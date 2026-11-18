@@ -7,7 +7,7 @@ import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
-import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
 import { deploymentPaths, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -287,6 +287,124 @@ test('requires an independent complete profile pin and the genuine deployment st
   // A separately provisioned consumer can re-open this explicit pin set and
   // the fixture public key in a fresh process without retaining signing keys.
   await writeFile(join(dir, 'fixture-pins.json'), bytes({ expected: complete.expected, policy: complete.policy }));
+}, 120_000);
+
+async function publishFixture(label: string) {
+  const releasesRoot = join(dir, label);
+  await mkdir(releasesRoot, { mode: 0o700 });
+  const options = { staging, expected: complete.expected, policy: complete.policy };
+  const checked = await verifyEmittedRuntimeCandidate(complete.packagePath, options);
+  const destination = join(dir, label + '-stage');
+  const stage = await stageVerifiedEmittedRuntime(checked, { staging, destination });
+  const installed = join(releasesRoot, checked.packageSha256);
+  await rename(destination, installed);
+  return { scope: { staging, releasesRoot }, installed, checked, stage };
+}
+
+test('authenticates the published deployment after relocation in a fresh process', async () => {
+  const { scope, installed, checked, stage } = await publishFixture('published');
+  let staleCalls = 0;
+  await expect(withStagedDeployment(checked, stage, async () => ++staleCalls)).rejects.toThrow();
+  expect(staleCalls).toBe(0);
+  expect(typeof withPublishedDeployment).toBe('function');
+  // Only the test host supplies the repository, registered locations, independent pins and public key.
+  const verifier = pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href;
+  const probe = `
+    import { readFile } from 'node:fs/promises';
+    import { createHash } from 'node:crypto';
+    import { withPublishedDeployment, verifyEmittedRuntimeCandidate } from ${JSON.stringify(verifier)};
+    const [owner, releasesRoot, archive, pins] = process.argv.slice(1);
+    let held = false;
+    const staging = { async withExclusiveReadRoot(read) {
+      if (held) throw Error('nested lease');
+      held = true;
+      try { return await read(owner); } finally { held = false; }
+    } };
+    const receipt = await verifyEmittedRuntimeCandidate(archive, { staging, ...JSON.parse(pins) });
+    const observed = await withPublishedDeployment(receipt, { staging, releasesRoot }, async deployment => {
+      const files = [];
+      for (const path of [...Object.values(deployment.entrypoints), ...Object.values(deployment.templates)]) {
+        const data = await readFile(path);
+        if (!held) throw Error('lease ended during use');
+        files.push({ path, sha256: createHash('sha256').update(data).digest('hex') });
+      }
+      return { ...deployment, files };
+    });
+    console.log(JSON.stringify(observed));
+  `;
+  const observed = JSON.parse(child(['--input-type=module', '-e', probe, temporary, scope.releasesRoot, complete.packagePath,
+    JSON.stringify({ expected: complete.expected, policy: complete.policy })]));
+  expect(observed).toMatchObject({ root: installed, profile: 'deployment-complete', runtime: checked.runtime,
+    packageSha256: checked.packageSha256, materialSha256: checked.materialSha256, inventorySha256: checked.inventorySha256 });
+  const paths = [...entries, ...Object.values(deploymentPaths)];
+  expect(observed.files).toEqual(paths.map(path => ({ path: join(installed, path), sha256: checked.materials.find(row => row.path === path)?.sha256 })));
+}, 120_000);
+
+test('refuses unbound published deployment receipts, locations and material before use', async () => {
+  const { scope, installed, checked } = await publishFixture('published-controls');
+  let calls = 0;
+  const use = async () => ++calls;
+  const open = (releasesRoot: string) => withPublishedDeployment(checked, { staging, releasesRoot }, use);
+  await expect(withPublishedDeployment({ ...checked }, scope, use)).rejects.toThrow();
+  await expect(withPublishedDeployment(await verify(), scope, use)).rejects.toThrow();
+  await expect(withPublishedDeployment(checked, { ...scope, staging: { ...staging } }, use)).rejects.toThrow();
+  for (const path of [dirname(temporary), temporary, scope.releasesRoot + '/.']) await expect(open(path)).rejects.toThrow();
+  const alias = join(dir, 'store-alias');
+  await symlink(scope.releasesRoot, alias);
+  await expect(open(alias)).rejects.toThrow();
+  await chmod(scope.releasesRoot, 0o777);
+  try { await expect(open(scope.releasesRoot)).rejects.toThrow(); }
+  finally { await chmod(scope.releasesRoot, 0o700); }
+
+  const wrongSlot = join(scope.releasesRoot, 'another-generation');
+  await rename(installed, wrongSlot);
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await symlink(wrongSlot, installed);
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await unlink(installed);
+  const upperSlot = join(scope.releasesRoot, checked.packageSha256.toUpperCase());
+  await rename(wrongSlot, upperSlot);
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await rename(upperSlot, installed);
+
+  const template = join(installed, deploymentPaths.caddy);
+  const original = await readFile(template);
+  await chmod(template, 0o755);
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await chmod(template, 0o644);
+  await writeFile(template, Buffer.alloc(original.length));
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await unlink(template);
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  await writeFile(template, original, { mode: 0o644 });
+  await writeFile(join(installed, 'unsigned'), 'extra bytes');
+  await expect(open(scope.releasesRoot)).rejects.toThrow();
+  expect(calls).toBe(0);
+}, 120_000);
+
+test('rechecks the published deployment and signed archive through callback settlement', async () => {
+  const { scope, installed } = await publishFixture('published-change');
+  const archive = join(dir, 'published-archive');
+  await cp(complete.packagePath, archive);
+  const checked = await verifyEmittedRuntimeCandidate(archive, { staging, expected: complete.expected, policy: complete.policy });
+  let calls = 0;
+  const use = (change: () => Promise<void>) => withPublishedDeployment(checked, scope, async () => { calls++; await change(); });
+  const repaint = async (path: string) => {
+    const copy = path + '.new';
+    await cp(path, copy);
+    await rename(copy, path);
+  };
+  await expect(use(() => repaint(join(installed, deploymentPaths.caddy)))).rejects.toThrow(/identity|changed/);
+  await expect(use(async () => {
+    const oldStore = scope.releasesRoot + '-old';
+    await rename(scope.releasesRoot, oldStore);
+    await mkdir(scope.releasesRoot);
+    await rename(join(oldStore, checked.packageSha256), installed);
+    throw Error('callback failure');
+  })).rejects.toThrow(/identity|changed/);
+  await expect(use(() => repaint(archive))).rejects.toThrow(/identity|changed/);
+  await expect(use(async () => {})).rejects.toThrow(/identity|changed/);
+  expect(calls).toBe(3);
 }, 120_000);
 
 test('refuses independently re-signed incomplete, aliased or substituted templates', async () => {

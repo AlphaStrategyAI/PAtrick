@@ -1,5 +1,5 @@
 import { createPublicKey, randomUUID, verify } from 'node:crypto';
-import { lstatSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
@@ -708,28 +708,36 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
   return token;
 }
 
+async function useVerifiedTree(lease, record, receipt, root, use, stageCapture) {
+  async function readback(expected) {
+    checkLeaf(lease, record.path, record.binding);
+    const { data } = await readLeased(lease, record.path, limits.packageBytes);
+    check(sha256(data) === receipt.packageSha256, 'staging package changed');
+    const tree = await readTree(lease, root, expected);
+    compareTree(tree, receipt.materials);
+    // A published slot must have the registered spelling even on case-insensitive
+    // volumes. The physical walk has already checked every ancestor for symlinks.
+    if (!stageCapture) check(realpathSync.native(root) === root, 'noncanonical published release path');
+    checkLeaf(lease, record.path, record.binding);
+    return { nodes: tree.nodes, boundary: tree.boundary };
+  }
+  const capture = await readback(stageCapture);
+  try {
+    const deployment = receipt.profile === 'deployment-complete' ? {
+      templates: Object.fromEntries(Object.entries(deploymentPaths).map(([key, path]) => [key, join(root, path)])),
+    } : {};
+    return await use(freeze({ root, profile: receipt.profile, ...deployment, entrypoints: Object.fromEntries(entryNames.map(name => [name, join(root, 'runtime', name + '.mjs')])),
+      runtime: receipt.runtime, packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256, inventorySha256: receipt.inventorySha256 }));
+  } finally { await readback(capture); }
+}
+
 export async function withStagedEmittedRuntime(receipt, token, use) {
   const record = verified.get(receipt);
   const stage = staged.get(token);
   check(record && stage?.receipt === receipt && typeof use === 'function', 'matching genuine stage and verified receipt required');
-  return leased(record.staging, async lease => {
+  return leased(record.staging, lease => {
     check(lease.root === stage.capture.leaseRoot, 'staging root changed');
-    async function readback() {
-      checkLeaf(lease, record.path, record.binding);
-      const { data } = await readLeased(lease, record.path, limits.packageBytes);
-      check(sha256(data) === receipt.packageSha256, 'staging package changed');
-      compareTree(await readTree(lease, stage.destination, stage.capture), receipt.materials);
-      checkLeaf(lease, record.path, record.binding);
-    }
-    await readback();
-    const root = stage.destination;
-    try {
-      const deployment = receipt.profile === 'deployment-complete' ? {
-        templates: Object.fromEntries(Object.entries(deploymentPaths).map(([key, path]) => [key, join(root, path)])),
-      } : {};
-      return await use(freeze({ root, profile: receipt.profile, ...deployment, entrypoints: Object.fromEntries(entryNames.map(name => [name, join(root, 'runtime', name + '.mjs')])),
-        runtime: receipt.runtime, packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256, inventorySha256: receipt.inventorySha256 }));
-    } finally { await readback(); }
+    return useVerifiedTree(lease, record, receipt, stage.destination, use, stage.capture);
   });
 }
 
@@ -738,4 +746,15 @@ export async function withStagedEmittedRuntime(receipt, token, use) {
 export async function withStagedDeployment(receipt, token, use) {
   check(verified.has(receipt) && receipt.profile === 'deployment-complete', 'complete deployment profile required');
   return withStagedEmittedRuntime(receipt, token, use);
+}
+
+export async function withPublishedDeployment(receipt, { staging, releasesRoot }, use) {
+  const record = verified.get(receipt);
+  check(record && record.staging === staging && receipt.profile === 'deployment-complete' && typeof use === 'function',
+    'genuine complete deployment receipt and bound staging required');
+  return leased(staging, lease => {
+    check(lease.root !== sep, 'non-root physical owner required');
+    inside(lease.root, releasesRoot);
+    return useVerifiedTree(lease, record, receipt, join(releasesRoot, receipt.packageSha256), use);
+  });
 }
