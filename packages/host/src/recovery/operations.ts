@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, lstat, open, readFile, realpath, unlink } from 'node:fs/promises';
-import { join, parse, resolve, sep } from 'node:path';
+import { dirname, join, parse, resolve, sep } from 'node:path';
 import { createRecoveryBackup, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
 import { createRecoveryRestorer, type RecoveryRestoreOptions } from './restore.js';
 import { assertName, canonical, containedPath, durableJson, syncDirectory } from './files.js';
@@ -30,17 +30,41 @@ export type RecoveryBackupReadbackTarget = {
   protection: { kind: 'local_only' } | { kind: 'off_host'; verify(set: RecoverySet): Promise<boolean> };
 };
 
-// Every root must already be provisioned by the host. Retain both spelling and physical identity.
-async function rootIdentity(path: string): Promise<RecoveryDirectoryIdentity> {
-  const absolute = resolve(path);
-  let cursor = parse(absolute).root;
-  for (const part of absolute.slice(cursor.length).split(sep).filter(Boolean)) {
+async function assertDirectoryAncestry(absolute: string, ancestor: string) {
+  let cursor = ancestor;
+  for (const part of absolute.slice(ancestor.length).split(sep).filter(Boolean)) {
     cursor = join(cursor, part);
     if ((await lstat(cursor)).isSymbolicLink()) throw new Error('RECOVERY_SYMLINK_FORBIDDEN');
   }
+}
+
+// Every root must already be provisioned by the host. Retain both spelling and physical identity.
+async function rootIdentity(path: string): Promise<RecoveryDirectoryIdentity> {
+  const absolute = resolve(path);
+  await assertDirectoryAncestry(absolute, parse(absolute).root);
+  return directoryIdentity(absolute);
+}
+
+async function directoryIdentity(absolute: string): Promise<RecoveryDirectoryIdentity> {
   const stat = await lstat(absolute);
+  if (stat.isSymbolicLink()) throw new Error('RECOVERY_SYMLINK_FORBIDDEN');
   if (!stat.isDirectory()) throw new Error('RECOVERY_PATH_INVALID');
   return { path: absolute, physical: await realpath(absolute), device: stat.dev, inode: stat.ino };
+}
+
+async function readbackRootIdentity(path: string): Promise<RecoveryDirectoryIdentity> {
+  const identity = await directoryIdentity(resolve(path));
+  if (dirname(identity.path) === dirname(identity.physical)) return identity;
+
+  // Native realpath already establishes the common canonical prefix. Only the
+  // suffix needs lstat to distinguish case normalization from a symlink.
+  const root = parse(identity.path).root;
+  const requested = identity.path.slice(root.length).split(sep);
+  const physical = identity.physical.startsWith(root) ? identity.physical.slice(root.length).split(sep) : [];
+  let matched = 0;
+  while (matched < requested.length && requested[matched] === physical[matched]) matched += 1;
+  await assertDirectoryAncestry(identity.path, join(root, ...requested.slice(0, matched)));
+  return identity;
 }
 
 function checkedRequest(requested: RecoveryOperationRequest) {
@@ -62,14 +86,15 @@ function checkedIdentity(requested: RecoveryOperationTarget['identity']) {
 }
 
 async function backupBinding(request: RecoveryOperationRequest, root: string, identity: RecoveryOperationTarget['identity'],
-  target: { root: string; scope: RecoveryScope; authority: RecoveryVerifier; offHost: boolean }): Promise<Binding> {
+  target: { root: string; scope: RecoveryScope; authority: RecoveryVerifier; offHost: boolean },
+  identifyRoot = rootIdentity): Promise<Binding> {
   const scope = structuredClone(target.scope);
   assertName(scope.setId);
   if (canonical(scope.domains.map(({ domain }) => domain).sort()) !== canonical([...identity.domains].sort())) {
     throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
   }
-  const roots = [await rootIdentity(root), await rootIdentity(target.root)];
-  for (const resource of scope.resources) roots.push(await rootIdentity(resource.root));
+  const roots = [await identifyRoot(root), await identifyRoot(target.root)];
+  for (const resource of scope.resources) roots.push(await identifyRoot(resource.root));
   return { protocol: 'patrick-recovery-operation-v1', request, roots,
     configuration: { identity, scope, authority: target.authority.keyId, offHost: target.offHost } };
 }
@@ -176,7 +201,7 @@ export function createRecoveryBackupReader(options: {
 
   async function observeBinding(request: RecoveryOperationRequest, target: ReturnType<typeof plan>) {
     const expected = target.journalRoot;
-    const binding = await backupBinding(request, expected.path, target.identity, target);
+    const binding = await backupBinding(request, expected.path, target.identity, target, readbackRootIdentity);
     const [root] = binding.roots;
     if (root.path !== expected.path || root.physical !== expected.path || root.device !== expected.device || root.inode !== expected.inode) {
       throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');

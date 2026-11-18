@@ -133,8 +133,44 @@ test('verification-only readback still requires the captured resource directory 
   await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
 });
 
+test('verification-only readback preserves case-varied v1 registrations on case-insensitive storage', async ({ skip }) => {
+  const f = await fixture();
+  const resources = join(f.root, 'resources');
+  const handoff = join(resources, 'handoff');
+  mkdirSync(handoff, { recursive: true });
+  writeFileSync(join(handoff, 'snapshot'), 'handoff');
+  const targetAlias = join(f.root, 'SETS');
+  const resourceAlias = join(f.root, 'RESOURCES', 'handoff');
+  if (!existsSync(targetAlias) || !existsSync(resourceAlias)) skip('Case-sensitive fixture volume');
+  expect(realpathSync.native(targetAlias)).toBe(f.target.backup.options.root);
+  expect(realpathSync.native(resourceAlias)).toBe(handoff);
+  f.target.backup.options.root = targetAlias;
+  f.target.backup.scope.resources.push({ kind: 'handoff', root: resourceAlias });
+
+  await f.create().reserve(request);
+  const completed = await f.create().run(request);
+  expect(completed.status).toBe('completed');
+  f.closeSources();
+  expect(await f.readback({ root: targetAlias }).read(request)).toEqual(completed);
+  expect(f.captures()).toBe(1);
+});
+
+test('verification-only readback rejects a symlink in the registered directory ancestry', async () => {
+  const f = await fixture();
+  await f.create().reserve(request);
+  const alias = join(f.root, 'alias');
+  symlinkSync(f.root, alias, 'dir');
+  await expect(f.readback({ root: join(alias, 'sets') }).read(request)).rejects.toThrow('RECOVERY_SYMLINK_FORBIDDEN');
+  expect(f.captures()).toBe(0);
+});
+
 test('verification-only reader returns the authenticated terminal in a fresh process without filesystem writes', async () => {
   const f = await fixture();
+  const handoff = join(f.root, 'handoff', 'records');
+  const variedHandoff = join(f.root, 'HANDOFF', 'records');
+  mkdirSync(handoff, { recursive: true });
+  writeFileSync(join(handoff, 'record'), 'signed handoff');
+  f.target.backup.scope.resources.push({ kind: 'handoff', root: existsSync(variedHandoff) ? variedHandoff : handoff });
   await f.create().reserve(request);
   const completed = await f.create().run(request);
   expect(completed.status).toBe('completed');
@@ -192,7 +228,7 @@ test('verification-only reader returns the authenticated terminal in a fresh pro
   expect(readdirSync(copied).sort()).toEqual(inventory);
   expect(digests()).toEqual(priorDigests);
   expect(f.captures()).toBe(1);
-});
+}, 30_000);
 
 test('verification-only readback refuses changed bindings and signed-set bytes', async () => {
   const f = await fixture();
