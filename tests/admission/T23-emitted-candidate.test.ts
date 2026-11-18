@@ -1,0 +1,897 @@
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { createRequire, registerHooks } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
+import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
+import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import type { EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
+import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
+import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
+
+const test = runTest;
+let hook: ReturnType<typeof registerHooks>;
+let candidateLoads = 0;
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const ids = ['relocated-node-import', 'service-cli-drain', 'sqlite-migrate-reopen', 'worker-role-readback'];
+const entries = ['cli', 'composition', 'service', 'worker'].map(name => 'runtime/' + name + '.mjs');
+const keys = generateKeyPairSync('ed25519');
+const publicKey = keys.publicKey.export({ format: 'pem', type: 'spki' }).toString();
+let temporary: string;
+let input: EmittedMaterialInput;
+let evidence: ExplicitEvidenceInput;
+let policy: EmittedReleaseTrustPolicy;
+let expected: EmittedReleaseExpectation;
+let prepared: PreparedEmittedRuntimeCandidate;
+let receipt: VerifiedEmittedRuntimeCandidate;
+let packagePath: string;
+let material: Awaited<ReturnType<typeof inspectEmittedRuntimeMaterial>>;
+let artifact: string;
+let nextRead = Promise.resolve();
+const staging: ExclusiveRuntimeStaging = { withExclusiveReadRoot(read) {
+  const result = nextRead.then(() => read(temporary));
+  nextRead = result.then(() => {}, () => {});
+  return result;
+} };
+const bytes = (value: unknown) => Buffer.from(canonicalize(value));
+const signature = (data: Buffer) => ({ keyId: 'fixture', signature: sign(null, data, keys.privateKey).toString('base64') });
+const verify = (changes = {}, trust = policy) => verifyEmittedRuntimeCandidate(packagePath, { staging, expected: { ...expected, ...changes }, policy: trust });
+
+function child(argv: string[], cwd = root, executable = process.execPath) {
+  const result = spawnSync(executable, argv, { cwd, encoding: 'utf8', timeout: 90_000,
+    env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, NODE_PATH: '', NODE_OPTIONS: '' } });
+  expect(result.status, String(result.error ?? result.stderr)).toBe(0);
+  return result.stdout;
+}
+
+async function observe(path: string) {
+  const physical = await realpath(path);
+  const data = await readFile(physical);
+  return { path: physical, sha256: sha256(data), bytes: data.length };
+}
+
+async function observePackage(path: string) {
+  return { ...await observe(path), version: JSON.parse(await readFile(path, 'utf8')).version };
+}
+
+describe.skipIf(process.platform !== 'darwin')('Darwin runtime admission', () => {
+beforeAll(async () => {
+  temporary = await mkdtemp(join(await realpath(tmpdir()), 'emitted-admission-'));
+  artifact = join(temporary, 'relocated');
+  const prefix = pathToFileURL(temporary).href + '/';
+  hook = registerHooks({ load(url, context, next) {
+    if (url.startsWith(prefix)) { candidateLoads++; throw new Error('candidate module execution during admission'); }
+    return next(url, context);
+  } });
+  const git = '/usr/bin/git';
+  const commit = child(['--no-replace-objects', 'rev-parse', 'HEAD'], root, git).trim();
+  const source = ['--source-root', root, '--source-commit', commit];
+  const build = join(root, 'scripts/build-runtime.mjs');
+  const snapshot = JSON.parse(child([build, 'snapshot', ...source]));
+  const built = join(temporary, 'original');
+  child([build, 'build', ...source, '--output-root', built, ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
+  await cp(built, artifact, { recursive: true });
+  const metadata = 'metadata/runtime-materials.json';
+  const inventory = JSON.parse(await readFile(join(artifact, metadata), 'utf8'));
+  type Record = { role: string; bytes: number; path: string };
+  const files: Record[] = inventory.files;
+  const totals: { [role: string]: { files: number; bytes: number } } = {};
+  for (const file of files) {
+    totals[file.role] ??= { files: 0, bytes: 0 };
+    totals[file.role].files++;
+    totals[file.role].bytes += file.bytes;
+  }
+  const vite = join(root, 'apps/web/node_modules/vite/package.json');
+  const fromVite = createRequire(vite);
+  const npm = await observe(join(dirname(process.execPath), 'npm'));
+  const toolchain = {
+    observed: inventory.observed, source: inventory.source,
+    node: await observe(process.execPath), npm: { ...npm, version: child([npm.path, '--global', '--version'], temporary).trim() },
+    git: { path: git, version: child(['--version'], root, git).trim() },
+    esbuild: await observePackage(join(root, 'node_modules/esbuild/package.json')),
+    esbuildBinary: await observe(join(root, 'node_modules/@esbuild', process.platform + '-' + process.arch, 'bin/esbuild')),
+    vite: await observePackage(vite), viteEsbuild: await observePackage(fromVite.resolve('esbuild/package.json')),
+    viteRollup: await observePackage(fromVite.resolve('rollup/package.json')),
+    inventory: await observe(join(artifact, metadata)), repeatInventory: await observe(join(built, metadata)), totals,
+    largestRecord: [...files].sort((a, b) => b.bytes - a.bytes)[0],
+    native: { ...inventory.native, fileMode: '755', binaryDescription: child(['-b', join(artifact, inventory.native.path)], root, '/usr/bin/file').trim() },
+    packages: inventory.packages, packageFiles: files.filter(f => f.path.startsWith('node_modules/')), runtimeFiles: files.filter(f => f.path.startsWith('runtime/')),
+  };
+  const toolchainPath = join(temporary, 'toolchain.json');
+  await writeFile(toolchainPath, bytes(toolchain));
+  const lockPath = join(temporary, 'package-lock.json');
+  await cp(join(root, 'package-lock.json'), lockPath);
+  input = { staging, artifactRoot: artifact, version: JSON.parse(await readFile(lockPath, 'utf8')).version,
+    target: { os: 'darwin', arch: inventory.observed.arch }, schema: { min: 1, max: 2 },
+    expectedSource: inventory.source, expectedInventorySha256: toolchain.inventory.sha256, lockPath,
+    toolchain: { path: toolchainPath, sha256: sha256(bytes(toolchain)) } };
+  material = await inspectEmittedRuntimeMaterial(input);
+  const runner = join(temporary, 'scenario.mjs');
+  await writeFile(runner, scenarioRunner);
+  const scenarios = [];
+  const logs = [];
+  for (const id of ids) {
+    const path = join(temporary, id + '.log');
+    const argv = ['--permission', '--allow-addons', '--allow-fs-read=' + temporary + '/*', '--allow-fs-write=' + temporary + '/*',
+      ...(process.allowedNodeEnvironmentFlags.has('--allow-net') ? ['--allow-net'] : []), runner, id, artifact, material.materialSha256, root];
+    const startedUtc = new Date().toISOString();
+    const transcript = child(argv, temporary);
+    const endedUtc = new Date().toISOString();
+    await writeFile(path, transcript);
+    const hash = sha256(Buffer.from(transcript));
+    scenarios.push({ id, argv: [process.execPath, ...argv], cwd: temporary, startedUtc, endedUtc, exitCode: 0, status: 'passed', evidenceSha256: hash });
+    logs.push({ id, path, sha256: hash });
+  }
+  const report = { format: 'patrick-emitted-runtime-execution-v1', materialSha256: material.materialSha256, inventorySha256: material.inventorySha256,
+    toolchainSha256: material.toolchainSha256, nativeSha256: inventory.native.sha256, observed: inventory.observed, native: inventory.native, entries, scenarios };
+  const reportPath = join(temporary, 'report.json');
+  await writeFile(reportPath, bytes(report));
+  evidence = { report: { path: reportPath, sha256: sha256(bytes(report)) }, logs };
+  prepared = await prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence });
+  packagePath = join(temporary, 'candidate.json');
+  const packed = await packEmittedRuntimeCandidate(prepared, { signatures: [signature(Buffer.from(prepared.signingManifestBase64, 'base64'))], outputPath: packagePath, outputStaging: staging });
+  expected = { version: input.version, target: input.target, schema: input.schema, activeSchema: 1, source: input.expectedSource,
+    runtime: { node: process.version, modules: process.versions.modules }, toolchainSha256: material.toolchainSha256, inventorySha256: material.inventorySha256,
+    materialSha256: material.materialSha256, packageSha256: packed.packageSha256 };
+  policy = { keys: [{ id: 'fixture', publicKey }], executionReportSha256: evidence.report.sha256, requiredScenarios: logs.map(log => ({ id: log.id, evidenceSha256: log.sha256 })) };
+}, 120_000);
+
+afterAll(async () => {
+  hook?.deregister();
+  if (temporary) await rm(temporary, { recursive: true, force: true });
+  expect(candidateLoads).toBe(0);
+});
+
+test('admits the real material and pins the exact package, manifest and runtime', async () => {
+  receipt = await verify();
+  expect(receipt.packageSha256).toBe(sha256(await readFile(packagePath)));
+  expect(receipt.materialSha256).toBe(material.materialSha256);
+  expect(Object.isFrozen(receipt.runtime.native)).toBe(true);
+  const signatures = [signature(Buffer.from(prepared.signingManifestBase64, 'base64'))];
+  const path = join(temporary, 'repeat.json');
+  expect((await packEmittedRuntimeCandidate(prepared, { outputStaging: staging, outputPath: path, signatures })).packageSha256).toBe(receipt.packageSha256);
+  await expect(packEmittedRuntimeCandidate(prepared, { outputStaging: staging, outputPath: path, signatures })).rejects.toThrow();
+  await expect(packEmittedRuntimeCandidate({ ...prepared }, { outputStaging: staging, outputPath: path, signatures })).rejects.toThrow(/prepared/i);
+}, 60_000);
+
+test('requires independent expected identity and evidence policy', async () => {
+  const wrong = '0'.repeat(64);
+  for (const change of [{ version: '9.9.9' }, { source: { ...expected.source, kind: 'pinned-snapshot', commit: '0'.repeat(40) } },
+    { activeSchema: 3 }, { runtime: { ...expected.runtime, modules: '999' } }, { target: { os: 'darwin', arch: 'bogus' } },
+    ...['toolchainSha256', 'inventorySha256', 'materialSha256', 'packageSha256'].map(key => ({ [key]: wrong }))]) {
+    await expect(verify(change)).rejects.toThrow();
+  }
+  for (const modified of [{ ...policy, keys: [] }, { ...policy, keys: [{ id: 'other', publicKey }] },
+    { ...policy, executionReportSha256: wrong }, { ...policy, requiredScenarios: [] },
+    { ...policy, requiredScenarios: [...policy.requiredScenarios, policy.requiredScenarios[0]] },
+    { ...policy, requiredScenarios: policy.requiredScenarios.map(s => ({ ...s, evidenceSha256: wrong })) }]) {
+    await expect(verify({}, modified)).rejects.toThrow();
+  }
+}, 60_000);
+
+test('requires genuine receipts under the same port and rechecks all staged identities before effects', async () => {
+  const destination = join(temporary, 'stage');
+  const options = { staging, destination };
+  const verified = await verify();
+  for (const fake of [JSON.parse(JSON.stringify(verified)), { ...verified }, { installable: false }]) {
+    await expect(stageVerifiedEmittedRuntime(fake, options)).rejects.toThrow();
+  }
+  await expect(stageVerifiedEmittedRuntime(verified, { ...options, staging: { ...staging } })).rejects.toThrow();
+  const staged = await stageVerifiedEmittedRuntime(verified, options);
+  let effects = 0;
+  const use = async () => ++effects;
+  await withStagedEmittedRuntime(verified, staged, async admitted => {
+    expect(await readFile(admitted.entrypoints.cli)).toEqual(await readFile(join(artifact, 'runtime/cli.mjs')));
+    expect(admitted.root).toBe(destination);
+  });
+  await withStagedEmittedRuntime(verified, staged, use);
+  await expect(withStagedEmittedRuntime(await verify(), staged, use)).rejects.toThrow();
+  await expect(withStagedEmittedRuntime(verified, { ...staged }, use)).rejects.toThrow();
+  const foreign = await import(pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href + '?isolated-authority');
+  await expect(foreign.withStagedEmittedRuntime(verified, staged, use)).rejects.toThrow();
+  const path = join(destination, 'runtime/cli.mjs');
+  await rename(path, path + '.old');
+  await cp(path + '.old', path);
+  await unlink(path + '.old');
+  await expect(withStagedEmittedRuntime(verified, staged, use)).rejects.toThrow();
+  expect(effects).toBe(1);
+}, 60_000);
+
+test('bounds disk input and rejects alternate inode links, modes, and unexpected directories', async () => {
+  const path = join(artifact, 'runtime/cli.mjs');
+  for (const kind of ['symlink', 'hardlink', 'fifo', 'empty', 'oversize', 'mode']) {
+    const extra = join(artifact, 'extra');
+    if (kind === 'symlink') await symlink(path, extra);
+    if (kind === 'hardlink') await link(path, extra);
+    if (kind === 'fifo') child([extra], temporary, '/usr/bin/mkfifo');
+    if (kind === 'empty') await mkdir(extra);
+    if (kind === 'oversize') { await writeFile(extra, ''); await truncate(extra, RELEASE_LIMITS.artifactBytes + 1); }
+    if (kind === 'mode') await chmod(path, 0o755);
+    try { await expect(inspectEmittedRuntimeMaterial(input)).rejects.toThrow(); }
+    finally { if (kind === 'mode') await chmod(path, 0o644); else await rm(extra, { recursive: true }); }
+  }
+}, 60_000);
+
+// This program runs only in an isolated ordinary-Node child, outside material inspection and admission.
+const scenarioRunner = String.raw`
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { createRequire, registerHooks } from 'node:module';
+import { hostname } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
+const [id, artifact, materialSha256, checkout] = process.argv.slice(2);
+const dataRoot = await mkdtemp(join(process.cwd(), 'data-'));
+const modules = {};
+for (const name of ['composition', 'cli', 'service', 'worker']) {
+  modules[name] = await import(pathToFileURL(join(artifact, 'runtime', name + '.mjs')));
+}
+const { openRuntimeDatabase, createRuntimeProvisioning } = modules.composition;
+const require = createRequire(join(artifact, 'runtime/composition.mjs'));
+const sqliteResolved = require.resolve('better-sqlite3');
+assert.ok(sqliteResolved.startsWith(artifact + '/node_modules/'));
+await assert.rejects(readFile(join(checkout, 'node_modules/better-sqlite3/package.json')), { code: 'ERR_ACCESS_DENIED' });
+const inventory = JSON.parse(await readFile(join(artifact, 'metadata/runtime-materials.json')));
+const sqlite = new (require('better-sqlite3'))(':memory:');
+const sqliteVersion = sqlite.prepare('select sqlite_version() as v').get().v;
+sqlite.close();
+assert.equal(sqliteVersion, inventory.native.sqlite);
+assert.equal(process.versions.modules, inventory.observed.modules);
+assert.equal(process.version, inventory.observed.node);
+assert.equal(process.arch, inventory.observed.arch);
+assert.equal(process.platform, inventory.observed.platform);
+const digest = data => createHash('sha256').update(data).digest('hex');
+const nativeSha256 = digest(await readFile(join(artifact, inventory.native.path)));
+assert.equal(nativeSha256, inventory.native.sha256);
+const outcome = {};
+if (id === 'relocated-node-import') {
+  for (const [name, fn] of Object.entries({ composition: 'createRuntimeProvisioning', cli: 'createInstalledCli', service: 'runInstalledService', worker: 'runInstalledWorker' })) assert.equal(typeof modules[name][fn], 'function');
+  outcome.entries = Object.keys(modules);
+} else if (id === 'sqlite-migrate-reopen') {
+  const file = join(dataRoot, 'main.sqlite');
+  const read = () => {
+    const db = openRuntimeDatabase(file);
+    const count = db.prepare('select count(*) as n from schema_migrations').get().n;
+    assert.equal(db.pragma('journal_mode', { simple: true }), 'wal');
+    db.close();
+    return count;
+  };
+  outcome.migrations = read();
+  assert.ok(outcome.migrations > 0);
+  assert.equal(read(), outcome.migrations);
+} else {
+  const identity = { accountId: 'account-1', scopeId: 'scope-1', domains: ['personal'], deviceId: 'device-1', configRevision: '1' };
+  const credentials = join(dataRoot, 'credentials');
+  const recoveryRoot = join(dataRoot, 'recovery');
+  await mkdir(credentials);
+  await mkdir(recoveryRoot);
+  const now = new Date().toISOString();
+  let database;
+  const service = { databasePath: join(dataRoot, 'service.sqlite'), credentialDirectory: credentials,
+    recoveryRuntime: { attach(context) {
+      database = context.database;
+      database.prepare('INSERT OR IGNORE INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at) VALUES(?,?,?,?,?,?,?)')
+        .run('personal', 'epoch', 'open', 'activation', 'witness', 'fixture', now);
+      context.admission.admit({ domain: 'personal', writerEpoch: 'epoch', activationId: 'activation', witnessRevision: 'witness' });
+    } },
+    bindRecoveryOperations() { return { root: recoveryRoot, authority, targets: {} }; },
+  };
+  const authority = { keyId: 'fixture', async sign() { throw Error('unused'); }, async verify() { return false; } };
+  const registration = { identity, captureHost: hostname(), serviceUid: process.geteuid(), profile: 'test', dataRoot,
+    minimumFreeBytes: 0, origin: 'http://localhost', rpId: 'localhost', listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' } };
+  if (id === 'service-cli-drain') {
+    const token = createRuntimeProvisioning({ registration, service, hostCapabilities: {
+      recovery: { root: recoveryRoot, authority, targets: { backup: { identity } } } } });
+    outcome.preview = (await modules.cli.createInstalledCli(token).run(['backup', '--preview', '--target', 'backup'])).code;
+    assert.equal(outcome.preview, 'RECOVERY_PREVIEW');
+    const runtime = modules.service.createInstalledService(token);
+    const listener = await modules.service.startServiceListener(runtime, token);
+    const home = await fetch(listener.url + '/');
+    assert.equal(home.status, 200);
+    assert.match(await home.text(), /<title>PAtrick/);
+    outcome.drain = await listener.drain({ timeoutMs: 5000 });
+    assert.equal(outcome.drain.listener, 'closed');
+    assert.equal(outcome.drain.runtime.status, 'closed');
+  } else {
+    assert.equal(id, 'worker-role-readback');
+    const commit = '45aecbf578289cda72d1fc773dcad069bfe7778b';
+    const events = [];
+    const hub = createServer(async (req, res) => {
+      if (req.url === '/healthz') return res.end(JSON.stringify({ ok: true, commit }));
+      assert.equal(req.headers.authorization, 'Bearer fixture-source');
+      if (req.url === '/v1/events' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        events.push(JSON.parse(body).type);
+        return res.end(JSON.stringify({ event: 1, duplicate: false, routed: ['咨询'] }));
+      }
+      if (req.url === '/v1/events/1') return res.end(JSON.stringify({ event: 1, runs: [{ run: 1, rule: '咨询', state: 'queued' }] }));
+      res.writeHead(404).end();
+    });
+    hub.listen(0, '127.0.0.1');
+    await once(hub, 'listening');
+    const token = createRuntimeProvisioning({ registration: { ...registration, operationalHub: { origin: 'http://127.0.0.1:' + hub.address().port, commit } },
+      hostCapabilities: {}, service, worker: { keys: { owner: 'fixture-owner', worker: 'fixture-worker', source: 'fixture-source' } } });
+    const runtime = modules.service.createInstalledService(token);
+    const db = database;
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(identity.accountId, 1, 1, now);
+    db.prepare('INSERT INTO caller_scopes VALUES (?,?,?,?,NULL)').run(identity.accountId, 'web', 'personal', 'owner');
+    const secret = 'a'.repeat(48);
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?)').run(digest(secret), identity.accountId, 'web', 1, new Date(Date.now()+60000).toISOString(), now, 'fixture');
+    const payload = { parent_work_id: null, request_scope: { account_id: identity.accountId, caller_id: 'web', data_domain: 'personal', permission_epoch: 1 }, text: 'Finite candidate fixture' };
+    const reply = await runtime.app.request('http://localhost/api/v1/consultations', { method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost', cookie: ['patrick_session', secret].join('=') },
+      body: JSON.stringify({ client_request_id: 'fixture-dispatch', expected_revision: null, payload, payload_hash: digest(JSON.stringify(payload)) }) });
+    assert.equal(reply.status, 202, await reply.text());
+    const worker = await modules.worker.runInstalledWorker(token);
+    const deadline = Date.now()+5000;
+    do {
+      outcome.outbox = db.prepare("SELECT result FROM outbox WHERE destination='autoloop'").get()?.result;
+      if (outcome.outbox) break;
+      await wait(15);
+    } while (Date.now() < deadline);
+    assert.equal(outcome.outbox, 'accepted');
+    assert.deepEqual(events, ['consultation.requested']);
+    outcome.events = events;
+    assert.equal((await worker.drain({ timeoutMs: 5000 })).status, 'closed');
+    assert.equal((await runtime.drain({ timeoutMs: 5000 })).status, 'closed');
+    await new Promise(done => hub.close(done));
+  }
+}
+console.log(JSON.stringify({ id, materialSha256, inventorySha256: digest(await readFile(join(artifact, 'metadata/runtime-materials.json'))),
+  nativeSha256, os: process.platform, arch: process.arch, node: process.version, modules: process.versions.modules, sqliteVersion, sqliteResolved, outcome }));
+`;
+
+test('binds even a genuine port to its originally admitted physical root', async () => {
+  const privateRoot = join(temporary, 'narrow-root');
+  await mkdir(privateRoot, { mode: 0o700 });
+  const path = join(privateRoot, 'candidate.json');
+  await cp(packagePath, path);
+  let currentRoot = privateRoot;
+  const port: ExclusiveRuntimeStaging = { withExclusiveReadRoot: read => read(currentRoot) };
+  const original = await verifyEmittedRuntimeCandidate(path, { staging: port, expected, policy });
+  currentRoot = temporary;
+  await expect(stageVerifiedEmittedRuntime(original, { staging: port, destination: join(temporary, 'wider-stage') })).rejects.toThrow(/root|lease/);
+}, 60_000);
+
+test('rejects incomplete, duplicate and substituted lease callbacks', async () => {
+  const ports: ExclusiveRuntimeStaging[] = [
+    { withExclusiveReadRoot: async <T>() => ({} as T) },
+    { withExclusiveReadRoot: async <T>(read: (root: string) => Promise<T>) => { await read(temporary); return {} as T; } },
+    { withExclusiveReadRoot: async read => { const first = await read(temporary); await read(temporary).catch(() => {}); return first; } },
+    { withExclusiveReadRoot: async <T>(read: (root: string) => Promise<T>) => { void read(temporary).catch(() => {}); return {} as T; } },
+  ];
+  for (const port of ports) await expect(verifyEmittedRuntimeCandidate(packagePath, { staging: port, expected, policy })).rejects.toThrow(/lease|callback/);
+}, 60_000);
+
+test('denies signed structural changes and malformed encodings within finite size limits', async () => {
+  const encoded = await readFile(packagePath);
+  const path = join(temporary, 'malformed.json');
+  async function reject(raw: Buffer, message: RegExp) {
+    await writeFile(path, raw);
+    await expect(verifyEmittedRuntimeCandidate(path, { staging, expected: { ...expected, packageSha256: sha256(raw) }, policy })).rejects.toThrow(message);
+  }
+  const valid = JSON.parse(encoded.toString('utf8'));
+  type Row = { path: string; mode: string; bytes: number; sha256: string; role: string };
+  for (const kind of ['empty', 'duplicate', 'altered', 'count', 'noncanonical', 'base64', 'hash', 'source', 'size', 'total', 'files', 'depth', 'path', 'traversal', 'prefix']) {
+    const m = structuredClone(valid.manifest);
+    const first: Row = m.artifacts[0];
+    const envelope = { ...valid, manifest: m, files: [...valid.files], signatures: [...valid.signatures] };
+    let pattern = /signature/;
+    if (kind === 'empty') envelope.signatures = [];
+    if (kind === 'duplicate') envelope.signatures.push(valid.signatures[0]);
+    if (kind === 'count') envelope.signatures = Array(17).fill(valid.signatures[0]);
+    if (kind === 'altered') envelope.signatures = [{ keyId: 'fixture', signature: Buffer.alloc(64).toString('base64') }];
+    if (kind === 'noncanonical') { await reject(Buffer.concat([encoded, Buffer.from('\n')]), /noncanonical/); continue; }
+    if (kind === 'base64') { envelope.files[0] = { ...valid.files[0], data: '*' + valid.files[0].data.slice(1) }; pattern = /base64/; }
+    if (kind === 'hash') { first.sha256 = '0'.repeat(64); pattern = /hash/; }
+    if (kind === 'source') { m.kind = 'source-candidate'; pattern = /manifest/; }
+    if (kind === 'size') { first.bytes = RELEASE_LIMITS.artifactBytes + 1; pattern = /byte limit/; }
+    if (kind === 'total') { m.artifacts.slice(0, 3).forEach((r: Row) => { r.bytes = RELEASE_LIMITS.artifactBytes; }); pattern = /byte limit/; }
+    if (kind === 'files') { m.artifacts = Array(RELEASE_LIMITS.files + 1).fill(first); pattern = /count/; }
+    if (kind === 'depth') { first.path = 'a/'.repeat(64) + 'b'; pattern = /path limit/; }
+    if (kind === 'path') { first.path = 'a'.repeat(513); pattern = /path limit/; }
+    if (kind === 'traversal') { first.path = '../outside'; pattern = /path/; }
+    if (kind === 'prefix') {
+      const r = m.artifacts.find((r: Row) => r.path.startsWith('web/assets/'));
+      r.path = r.path.replace('web/assets/', 'web/Assets/');
+      pattern = /directory spelling/;
+    }
+    if (!['empty','duplicate','altered','count'].includes(kind)) envelope.signatures = [signature(bytes(m))];
+    await reject(bytes(envelope), pattern);
+  }
+  await writeFile(path, '');
+  await truncate(path, RELEASE_LIMITS.packageBytes + 1);
+  await expect(verifyEmittedRuntimeCandidate(path, { staging, expected, policy })).rejects.toThrow(/file byte limit/);
+}, 90_000);
+
+test('rejects missing runtime components and coordinated omissions with a repinned inventory', async () => {
+  const inventoryPath = join(artifact, 'metadata/runtime-materials.json');
+  const raw = await readFile(inventoryPath);
+  const inventory = JSON.parse(raw.toString('utf8'));
+  const names = ['runtime-entry','runtime-shared-chunk','storage-migration-manifest','storage-migration','web-entry','web-asset','runtime-package-code','runtime-package-metadata','native-addon'];
+  for (const role of names) {
+    const row = inventory.files.find((r: {role: string; path: string}) => r.role === role && (role !== 'web-asset' || r.path.endsWith('.js')));
+    const file = join(artifact, row.path);
+    const content = await readFile(file);
+    const changed = bytes({ ...inventory, files: inventory.files.filter((r: { path: string }) => r.path !== row.path) });
+    await unlink(file);
+    await writeFile(inventoryPath, changed);
+    try { await expect(inspectEmittedRuntimeMaterial({ ...input, expectedInventorySha256: sha256(changed) })).rejects.toThrow(/missing|graph|migration|empty runtime directory/i); }
+    finally {
+      await writeFile(file, content, { mode: parseInt(row.mode.slice(3),8) });
+      await writeFile(inventoryPath, raw);
+    }
+  }
+}, 60_000);
+
+test('rejects a repinned native binary with the wrong physical architecture', async () => {
+  const inventoryPath = join(artifact, 'metadata/runtime-materials.json');
+  const raw = await readFile(inventoryPath);
+  const inv = JSON.parse(raw.toString('utf8'));
+  const path = join(artifact, inv.native.path);
+  const original = await readFile(path);
+  const changed = Buffer.from(original);
+  changed.writeUInt32LE(0,4);
+  const digest = sha256(changed);
+  inv.native.sha256 = digest;
+  inv.files.find((r: { path: string }) => r.path === inv.native.path).sha256 = digest;
+  const encoded = bytes(inv);
+  try {
+    await writeFile(path, changed);
+    await writeFile(inventoryPath, encoded);
+    await expect(inspectEmittedRuntimeMaterial({ ...input, expectedInventorySha256: sha256(encoded) })).rejects.toThrow(/native binary/);
+  } finally { await writeFile(path, original); await writeFile(inventoryPath, raw); }
+}, 60_000);
+
+test('checks report content after independent report hashing and distinguishes evidence from material identity', async () => {
+  const changedPath = join(temporary, 'alternate-report.json');
+  const original = JSON.parse(await readFile(evidence.report.path, 'utf8'));
+  for (const kind of ['material', 'abi', 'failed', 'duplicate', 'log', 'metadata']) {
+    const report = structuredClone(original);
+    if (kind === 'material') report.materialSha256 = '0'.repeat(64);
+    if (kind === 'abi') report.observed.modules = '1';
+    if (kind === 'failed') report.scenarios[0].exitCode = 1;
+    if (kind === 'duplicate') report.scenarios[0] = report.scenarios[1];
+    if (kind === 'log') report.scenarios[0].evidenceSha256 = '0'.repeat(64);
+    if (kind === 'metadata') report.scenarios.reverse();
+    const raw = bytes(report);
+    await writeFile(changedPath, raw);
+    const alternate = { ...evidence, report: { path: changedPath, sha256: sha256(raw) } };
+    const next = prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence: alternate });
+    if (kind === 'metadata') {
+      const valid = await next;
+      expect(valid.materialSha256).toBe(material.materialSha256);
+      const packed = await packEmittedRuntimeCandidate(valid, { outputStaging: staging, outputPath: join(temporary,'alternate.json'), signatures: [signature(Buffer.from(valid.signingManifestBase64,'base64'))] });
+      expect(packed.packageSha256).not.toBe(expected.packageSha256);
+    } else await expect(next).rejects.toThrow(/execution|scenario/);
+  }
+  const different = { ...input, schema: { min: 1, max: 3 } };
+  const actual = await inspectEmittedRuntimeMaterial(different);
+  expect(actual.materialSha256).not.toBe(material.materialSha256);
+  await expect(prepareEmittedRuntimeCandidate({ ...different, expectedMaterialSha256: actual.materialSha256, evidence })).rejects.toThrow(/execution material/);
+}, 90_000);
+
+test('rechecks package, stage and ancestry before and after trusted use', async () => {
+  for (const kind of ['ancestor', 'mode', 'new-entry', 'bytes', 'during-use', 'package-inode']) {
+    const parent = join(temporary, 'physical-' + kind);
+    await mkdir(parent);
+    const path = join(parent, 'candidate.json');
+    await cp(packagePath, path);
+    const verified = await verifyEmittedRuntimeCandidate(path, { staging, expected, policy });
+    const dest = join(parent, 'runtime-root');
+    const stage = await stageVerifiedEmittedRuntime(verified, { staging, destination: dest });
+    const entry = join(dest, 'runtime/cli.mjs');
+    if (kind === 'ancestor') {
+      await rename(parent, parent + '-old');
+      await mkdir(parent);
+      await rename(join(parent + '-old', 'runtime-root'), dest);
+      await rename(join(parent + '-old', 'candidate.json'), path);
+    }
+    if (kind === 'mode') await chmod(entry, 0o755);
+    if (kind === 'new-entry') await mkdir(join(dest, 'unexpected'));
+    if (kind === 'bytes') await writeFile(entry, 'changed');
+    if (kind === 'package-inode') { await rename(path, path + '-old'); await cp(path + '-old', path); }
+    let entered = 0;
+    await expect(withStagedEmittedRuntime(verified, stage, async () => {
+      entered++;
+      if (kind === 'during-use') await chmod(entry, 0o755);
+    })).rejects.toThrow();
+    expect(entered).toBe(kind === 'during-use' ? 1 : 0);
+  }
+}, 90_000);
+
+test('rejects signed evidence from another material and stale pinned transcripts after a fresh signature', async () => {
+  const envelope = JSON.parse(await readFile(packagePath, 'utf8'));
+  const path = join(temporary, 'stale-evidence.json');
+  const name = 'evidence/runtime-execution.json';
+  const payload = envelope.files.find((f: { path: string }) => f.path === name);
+  const report = JSON.parse(Buffer.from(payload.data, 'base64').toString('utf8'));
+  report.materialSha256 = '0'.repeat(64);
+  const raw = bytes(report);
+  payload.data = raw.toString('base64');
+  Object.assign(envelope.manifest.artifacts.find((r: {path: string}) => r.path === name), { bytes: raw.length, sha256: sha256(raw) });
+  envelope.signatures = [signature(bytes(envelope.manifest))];
+  const encoded = bytes(envelope);
+  await writeFile(path, encoded);
+  await expect(verifyEmittedRuntimeCandidate(path, { staging, expected: { ...expected, packageSha256: sha256(encoded) },
+    policy: { ...policy, executionReportSha256: sha256(raw) } })).rejects.toThrow(/execution material/);
+}, 60_000);
+
+test('rejects a genuine source receipt at the emitted stage gate', async () => {
+  const source = join(temporary, 'source-fixture');
+  const out = join(temporary, 'source-release.json');
+  const evidenceDir = join(temporary, 'source-evidence');
+  await mkdir(join(source,'deploy/lima'), {recursive:true});
+  await mkdir(evidenceDir);
+  await writeFile(join(source,'package.json'), JSON.stringify({name:'fixture',version:'1.2.3'}));
+  await writeFile(join(source,'package-lock.json'), JSON.stringify({lockfileVersion:3,packages:{}}));
+  await writeFile(join(source,'deploy/lima/executor.yaml'), 'arch: default\n');
+  const git = (argv: string[]) => child(argv,source,'/usr/bin/git');
+  git(['init','-q']); git(['add','.']); git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','source fixture']);
+  const commit = git(['rev-parse','HEAD']).trim();
+  const transcript = Buffer.from('fixture only');
+  await writeFile(join(evidenceDir,'probe.log'),transcript);
+  await writeFile(join(evidenceDir,'T25.json'),JSON.stringify({ task:'T25', versions:{ release:'1.2.3',commit,os:'darwin',arch:'arm64' },
+    scenarios:[{id:'fixture',command:'fixture',exitCode:0,status:'passed',versions:{fixture:'1'},evidenceFile:'evidence/probe.log',evidenceSha256:sha256(transcript)}] }));
+  child([join(root,'scripts/pack-release.mjs'),source,commit,'1.2.3','arm64','1','2',out,evidenceDir]);
+  const candidate = JSON.parse(await readFile(out,'utf8'));
+  candidate.signatures = [signature(bytes(candidate.manifest))];
+  await writeFile(out,bytes(candidate));
+  const sourceReceipt = await verifyRelease(out,{readRoot:temporary,expected:{version:'1.2.3',commit,os:'darwin',arch:'arm64',schema:1},
+    policy:{ keys:[{id:'fixture',publicKey}],requiredEvidence:['T25']} });
+  expect(sourceReceipt.installable).toBe(false);
+  await expect(stageVerifiedEmittedRuntime(sourceReceipt as unknown as VerifiedEmittedRuntimeCandidate, { staging, destination: join(temporary,'wrong-kind') })).rejects.toThrow(/verified receipt/);
+},60_000);
+
+test('rejects executable provenance or evidence files before signing', async () => {
+  await chmod(input.toolchain.path, 0o755);
+  try { await expect(inspectEmittedRuntimeMaterial(input)).rejects.toThrow(/mode/); }
+  finally { await chmod(input.toolchain.path, 0o644); }
+  await chmod(evidence.report.path, 0o755);
+  try { await expect(prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence })).rejects.toThrow(/mode/); }
+  finally { await chmod(evidence.report.path, 0o644); }
+});
+
+test('checks the fixed emitted wrapper imports and CSS asset references as data', async () => {
+  const invPath = join(artifact, 'metadata/runtime-materials.json');
+  const raw = await readFile(invPath);
+  for (const kind of ['wrapper','css']) {
+    const inv = JSON.parse(raw.toString('utf8'));
+    const row = inv.files.find((r: { path:string }) => kind === 'wrapper' ? r.path === 'runtime/cli.mjs' : r.path.endsWith('.css'));
+    const path = join(artifact, row.path);
+    const original = await readFile(path);
+    const altered = Buffer.concat([original,Buffer.from(kind === 'wrapper' ? '\nimport("./undeclared.mjs");\n' : '\n.fixture { background: url(/assets/absent.woff); }\n')]);
+    row.bytes = altered.length;
+    row.sha256 = sha256(altered);
+    const changed = bytes(inv);
+    try {
+      await writeFile(path, altered);
+      await writeFile(invPath, changed);
+      await expect(inspectEmittedRuntimeMaterial({...input,expectedInventorySha256:sha256(changed)})).rejects.toThrow(kind === 'wrapper' ? /entry graph/ : /CSS asset/);
+    } finally { await writeFile(path,original); await writeFile(invPath,raw); }
+  }
+},60_000);
+
+test('reprepares the exact pinned inputs after physical relocation with the same detached signature', async () => {
+  const moved = join(temporary, 'moved');
+  await mkdir(moved, { mode: 0o700 });
+  const port: ExclusiveRuntimeStaging = { withExclusiveReadRoot: read => staging.withExclusiveReadRoot(() => read(moved)) };
+  const duplicate = async (path: string, name: string) => { const copy = join(moved,name); await cp(path,copy,{recursive:true}); return copy; };
+  const relocated = { ...input, staging: port, artifactRoot: await duplicate(artifact,'tree'),
+    lockPath: await duplicate(input.lockPath,'lock.json'), toolchain: { ...input.toolchain, path: await duplicate(input.toolchain.path,'tools.json') } };
+  const data = { report: { ...evidence.report, path: await duplicate(evidence.report.path,'report.json') },
+    logs: await Promise.all(evidence.logs.map(async r => ({ ...r, path: await duplicate(r.path,r.id + '.log') }))) };
+  const next = await prepareEmittedRuntimeCandidate({...relocated,expectedMaterialSha256:material.materialSha256,evidence:data});
+  const out = await packEmittedRuntimeCandidate(next,{ signatures:[signature(Buffer.from(prepared.signingManifestBase64,'base64'))],
+    outputStaging:port,outputPath:join(moved,'packed.json') });
+  expect(out.packageSha256).toBe(expected.packageSha256);
+},60_000);
+
+test('requires controlled directory permissions through the material and destination ancestry', async () => {
+  const inner = join(artifact,'runtime');
+  await chmod(inner,0o777);
+  try { await expect(inspectEmittedRuntimeMaterial(input)).rejects.toThrow(/ownership|permissions/); }
+  finally { await chmod(inner,0o755); }
+  const writable = join(temporary,'shared-output');
+  await mkdir(writable);
+  await chmod(writable,0o777);
+  await expect(stageVerifiedEmittedRuntime(await verify(),{staging,destination:join(writable,'stage')})).rejects.toThrow(/ownership|permissions/);
+},60_000);
+
+type MaterialRow = { path: string; role: string; mode: string; sha256: string; bytes: number };
+
+// Independently frame a signed contract-test variant. Its new report and all four
+// logs explicitly describe a synthetic fixture; they never reuse execution logs.
+async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: number) {
+  const env = JSON.parse(await readFile(packagePath,'utf8'));
+  const manifest = env.manifest;
+  const original = manifest.identity;
+  const payload = new Map<string, Buffer>(env.files.map((f: {path:string;data:string}) => [f.path, Buffer.from(f.data,'base64')]));
+  const descriptors = new Map<string,MaterialRow>((manifest.artifacts as MaterialRow[]).map(r => [r.path,r]));
+  const meta = 'metadata/runtime-materials.json';
+  const tool = 'provenance/toolchain-observed.json';
+  const reportPath = 'evidence/runtime-execution.json';
+  const inv = JSON.parse(payload.get(meta)!.toString());
+  const observed = JSON.parse(payload.get(tool)!.toString());
+  function put(key: string, data: Buffer, role: string) {
+    const row = {path:key,role,mode:'100644',bytes:data.length,sha256:sha256(data)};
+    payload.set(key,data);
+    descriptors.set(key,row);
+    return row;
+  }
+  const runtime = new Map<string,MaterialRow>((original.materials as MaterialRow[]).map(r=>[r.path,r]));
+  if (omitEntry) {
+    for (const map of [runtime,payload,descriptors]) map.delete('runtime/cli.mjs');
+  }
+  const nodes = new Set<string>(['.']);
+  function count(key:string) {
+    for (let p = key; !nodes.has(p); p = dirname(p)) nodes.add(p);
+  }
+  for (const key of runtime.keys()) count(key);
+  for (let n=0; requestedNodes && nodes.size < requestedNodes; n++) {
+    const remaining = requestedNodes - nodes.size;
+    const prefix = remaining === 1 ? 'web/fonts/' : 'web/fonts/d' + n + '/';
+    const key = prefix + 'f' + n + '.txt';
+    runtime.set(key,put(key,Buffer.alloc(0),'web-asset'));
+    count(key);
+  }
+  function sorted<T extends {path:string}>(rows: Iterable<T>) {
+    return [...rows].sort((a,b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  }
+  inv.files = sorted(runtime.values()).filter(r=>r.path!==meta);
+  const inventory = put(meta,bytes(inv),'runtime-inventory');
+  runtime.set(meta,inventory);
+  observed.totals = {};
+  for (const r of inv.files) {
+    observed.totals[r.role] ??= {files:0,bytes:0};
+    observed.totals[r.role].files++; observed.totals[r.role].bytes += r.bytes;
+  }
+  observed.runtimeFiles = inv.files.filter((r:MaterialRow)=>r.path.startsWith('runtime/'));
+  for (const key of ['inventory','repeatInventory']) Object.assign(observed[key],{sha256:inventory.sha256,bytes:inventory.bytes});
+  const toolchain = put(tool,bytes(observed),'toolchain-observation');
+  const identity = {...original, materials:sorted(runtime.values()), inventorySha256:inventory.sha256, toolchainSha256:toolchain.sha256};
+  const materialSha256 = sha256(bytes(identity));
+  const report = JSON.parse(payload.get(reportPath)!.toString());
+  Object.assign(report,{materialSha256,inventorySha256:inventory.sha256,toolchainSha256:toolchain.sha256});
+  const requiredScenarios = [];
+  for (const scenario of report.scenarios) {
+    const log = put('evidence/logs/'+scenario.id+'.log',Buffer.from('Synthetic parser test only: '+scenario.id+' '+materialSha256),'execution-log');
+    Object.assign(scenario,{argv:['synthetic-parser-fixture'],cwd:'/fixture',startedUtc:'2000-01-01T00:00:00.000Z',endedUtc:'2000-01-01T00:00:00.000Z',evidenceSha256:log.sha256});
+    requiredScenarios.push({id:scenario.id,evidenceSha256:log.sha256});
+  }
+  const execution = put(reportPath,bytes(report),'execution-report');
+  Object.assign(manifest,{identity,materialSha256,artifacts:sorted(descriptors.values())});
+  env.files = manifest.artifacts.map((r:MaterialRow)=>({path:r.path,data:payload.get(r.path)!.toString('base64')}));
+  env.signatures = [signature(bytes(manifest))];
+  const raw = bytes(env);
+  await writeFile(path,raw);
+  return {nodes:nodes.size,expected:{...expected,materialSha256,inventorySha256:inventory.sha256,toolchainSha256:toolchain.sha256,packageSha256:sha256(raw)},
+    policy:{...policy,executionReportSha256:execution.sha256,requiredScenarios},staging};
+}
+
+test('rejects an uncontrolled nested directory before enumerating its empty descendant', async () => {
+  const extra = join(artifact,'unchecked');
+  await mkdir(join(extra,'nested'),{recursive:true});
+  await chmod(extra,0o777);
+  try { await expect(inspectEmittedRuntimeMaterial(input)).rejects.toThrow(/directory ownership or permissions/); }
+  finally { await rm(extra,{recursive:true}); }
+});
+
+test('reconciles the signed omission after refreshing the independent fixture identity and policy',async () => {
+  const path = join(temporary,'signed-missing-cli');
+  const control = await signedVariant(path,false);
+  expect((await verifyEmittedRuntimeCandidate(path,control)).materialSha256).toBe(control.expected.materialSha256);
+  const pins = await signedVariant(path,true);
+  await expect(verifyEmittedRuntimeCandidate(path,pins)).rejects.toThrow('missing runtime material runtime/cli.mjs');
+},60_000);
+
+test('preflights unique staged nodes before receipt or destination creation',async () => {
+  const path = join(temporary,'node-boundary');
+  const parent = join(temporary,'node-boundary-parent');
+  await mkdir(parent);
+  const max = RELEASE_LIMITS.evidenceEntries;
+  const atLimit = await signedVariant(path,false,max);
+  expect(atLimit.nodes).toBe(max);
+  expect((await verifyEmittedRuntimeCandidate(path,atLimit)).packageSha256).toBe(atLimit.expected.packageSha256);
+  const over = await signedVariant(path,false,max+1);
+  expect(over.nodes).toBe(max+1);
+  const before = await lstat(parent,{bigint:true});
+  const admitted = await verifyEmittedRuntimeCandidate(path,over).catch((error: Error) => error);
+  if (!(admitted instanceof Error)) {
+    await stageVerifiedEmittedRuntime(admitted,{staging,destination:join(parent,'destination')}).catch(() => {});
+  }
+  expect((await lstat(parent,{bigint:true})).ctimeNs,'over-limit admission created a destination').toBe(before.ctimeNs);
+  expect(admitted).toBeInstanceOf(Error);
+  expect((admitted as Error).message).toMatch(/runtime tree entry limit/);
+},120_000);
+
+for (const operation of ['pack','stage'] as const) {
+  test('recovers '+operation+' output after an external post-callback lease failure',async () => {
+    const ownerRoot = join(temporary,'failed-lease-'+operation);
+    await mkdir(ownerRoot,{mode:0o700});
+    const candidate = join(ownerRoot,'candidate');
+    await cp(packagePath,candidate);
+    const output = join(ownerRoot,'output');
+    let after: ((value: unknown) => Promise<unknown>) | undefined;
+    let denied = false;
+    let duplicate = false;
+    let alternateRoot = '';
+    const port: ExclusiveRuntimeStaging = {async withExclusiveReadRoot<T>(read:(root:string)=>Promise<T>) {
+      if (denied) throw new Error('fixture lease unavailable');
+      return staging.withExclusiveReadRoot(async () => {
+        const value = await read(alternateRoot || ownerRoot);
+        if (duplicate) { duplicate = false; await read(ownerRoot).catch(() => {}); }
+        const action = after;
+        after = undefined;
+        return action ? await action(value) as T : value;
+      });
+    }};
+    const verified = await verifyEmittedRuntimeCandidate(candidate,{staging:port,expected,policy});
+    const signatures = [signature(Buffer.from(prepared.signingManifestBase64,'base64'))];
+    const write = () => operation==='pack'
+      ? packEmittedRuntimeCandidate(prepared,{signatures,outputPath:output,outputStaging:port})
+      : stageVerifiedEmittedRuntime(verified,{staging:port,destination:output});
+    async function failure() {
+      try { await write(); } catch(error) {return error;}
+      throw new Error('expected lease failure');
+    }
+    for (const mode of ['reject','substitute','duplicate','empty-rejection']) {
+      if (mode==='duplicate') duplicate = true;
+      else after = async () => {
+        if (mode==='reject') throw new Error('release failed');
+        if (mode==='empty-rejection') return Promise.reject();
+        return {};
+      };
+      const error = await failure();
+      expect(error).toMatchObject({code:'EMITTED_WRITE_ROLLED_BACK'});
+      await expect(lstat(output)).rejects.toMatchObject({code:'ENOENT'});
+      await write();
+      await expect(write()).rejects.toMatchObject({code:'EEXIST'});
+      expect((await lstat(output)).isDirectory()).toBe(operation==='stage');
+      await rm(output,{recursive:true});
+    }
+    after = async () => { denied=true; throw new Error('lost lease'); };
+    const unknown = await failure();
+    expect(unknown).toMatchObject({code:'EMITTED_WRITE_UNCERTAIN'});
+    expect(await readEmittedWriteOutcome(unknown)).toMatchObject({state:'unavailable',operation,path:output,packageSha256:expected.packageSha256});
+    denied=false;
+    alternateRoot=join(temporary,'alternate-root-'+operation);
+    await mkdir(alternateRoot,{mode:0o700});
+    expect(await readEmittedWriteOutcome(unknown)).toMatchObject({state:'unavailable'});
+    alternateRoot='';
+    expect(await readEmittedWriteOutcome(unknown)).toMatchObject({state:'owned'});
+    expect((await lstat(output)).isDirectory()).toBe(operation==='stage');
+    await rm(output,{recursive:true});
+    expect(await readEmittedWriteOutcome(unknown)).toMatchObject({state:'absent'});
+    const savedRoot = ownerRoot+'-original';
+    after = async () => {
+      await rename(ownerRoot,savedRoot);
+      await mkdir(ownerRoot,{mode:0o700});
+      await rename(join(savedRoot,'output'),output);
+      throw new Error('same output inode under an exchanged lease root');
+    };
+    const wrongRoot = await failure();
+    expect(wrongRoot).toMatchObject({code:'EMITTED_WRITE_UNCERTAIN'});
+    expect(await readEmittedWriteOutcome(wrongRoot)).toMatchObject({state:'unavailable'});
+    await rename(output,join(savedRoot,'output'));
+    await rm(ownerRoot,{recursive:true});
+    await rename(savedRoot,ownerRoot);
+    expect(['owned','changed']).toContain((await readEmittedWriteOutcome(wrongRoot)).state);
+    await rm(output,{recursive:true});
+    after = async () => {
+      await rename(output,output+'.original');
+      await writeFile(output,'replacement');
+      throw new Error('exchanged after lease callback');
+    };
+    const exchanged = await failure();
+    expect(exchanged).toMatchObject({code:'EMITTED_WRITE_UNCERTAIN'});
+    expect(await readEmittedWriteOutcome(exchanged)).toMatchObject({state:'changed'});
+    expect(await readFile(output,'utf8')).toBe('replacement');
+    expect((await lstat(output+'.original')).isDirectory()).toBe(operation==='stage');
+    await expect(readEmittedWriteOutcome({...exchanged as object})).rejects.toThrow(/genuine/);
+  },90_000);
+}
+
+});
+
+// Portable format/authority fixture. None of the material or scenario labels
+// here represent execution. Only the native suite above measures target behavior.
+runTest('verifies an offline signed format fixture and refuses copied capabilities',async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()),'emitted-offline-'));
+  const port: ExclusiveRuntimeStaging = {withExclusiveReadRoot: work => work(dir)};
+  try {
+    const tree = join(dir,'tree');
+    const files: Array<{path:string;role:string;mode:string;bytes:number;sha256:string}> = [];
+    async function put(path:string, role:string, data:Buffer, mode=0o644) {
+      await mkdir(dirname(join(tree,path)),{recursive:true,mode:0o700});
+      await writeFile(join(tree,path),data,{mode});
+      files.push({path,role,mode:'100'+mode.toString(8),bytes:data.length,sha256:sha256(data)});
+    }
+    const fixtureCode = Buffer.from('throw Error("offline fixture was executed");');
+    const sourceLock = JSON.parse(await readFile(join(root,'package-lock.json'),'utf8'));
+    const packages = ['better-sqlite3','bindings','file-uri-to-path'].map(name=>({name,version:sourceLock.packages['node_modules/'+name].version as string}));
+    for (const [index,{name,version}] of packages.entries()) {
+      const prefix = 'node_modules/'+name+'/';
+      await put(prefix+'package.json','runtime-package-metadata',bytes({name,version,main:['lib/index.js','./bindings.js','index.js'][index],
+        dependencies:sourceLock.packages['node_modules/'+name].dependencies ?? {}}));
+      await put(prefix+(name==='bindings'?'LICENSE.md':'LICENSE'),'runtime-package-license',Buffer.from('fixture only'));
+    }
+    const sqliteFiles = ['database','index','sqlite-error','util',...['aggregate','backup','function','inspect','pragma','serialize','table','transaction','wrappers'].map(n=>'methods/'+n)];
+    for (const name of [...sqliteFiles.map(n=>'better-sqlite3/lib/'+n+'.js'),'bindings/bindings.js','file-uri-to-path/index.js']) {
+      await put('node_modules/'+name,'runtime-package-code',fixtureCode);
+    }
+    for (const path of entries) await put(path,'runtime-entry',Buffer.from('import { fake } from "./chunk-TEST.mjs";'));
+    await put('runtime/chunk-TEST.mjs','runtime-shared-chunk',fixtureCode);
+    const sql = Buffer.from('select 1;');
+    await put('migrations/0001_fixture.sql','storage-migration',sql);
+    await put('migrations/manifest.json','storage-migration-manifest',bytes([{file:'0001_fixture.sql',sha256:sha256(sql)}]));
+    await put('web/index.html','web-entry',Buffer.from('<script src="/assets/test.js"></script><link href="/assets/test.css">'));
+    await put('web/assets/test.js','web-asset',fixtureCode);
+    await put('web/assets/test.css','web-asset',Buffer.from('body{}'));
+    const binary = Buffer.alloc(32);
+    binary.writeUInt32LE(0xfeedfacf); binary.writeUInt32LE(0x0100000c,4);
+    const nativePath = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
+    await put(nativePath,'native-addon',binary,0o755);
+    const lock = bytes(sourceLock), lockPath = join(dir,'lock.json');
+    await writeFile(lockPath,lock);
+    const source = {kind:'pinned-snapshot' as const, commit:'1'.repeat(40),snapshotSha256:sha256(fixtureCode),lockSha256:sha256(lock)};
+    const observed = {platform:'darwin',arch:'arm64',node:'v1.0.0',modules:'1',npm:'1.0.0'};
+    const tools = {esbuild:'0.28.2',vite:'7.3.8'};
+    const native = {path:nativePath,sha256:sha256(binary),bytes:binary.length,format:'mach-o',architecture:'arm64',observedArchitecture:'arm64',
+      observedNode:observed.node,observedModules:observed.modules,observedLoad:true,sqlite:'1.0.0'};
+    files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
+    const inventory = bytes({schemaVersion:1,materialKind:'emitted-runtime-materials',source,tools,observed,packages,native,files});
+    await mkdir(join(tree,'metadata'));
+    await writeFile(join(tree,'metadata/runtime-materials.json'),inventory);
+    const measure = {path:'/synthetic/tool',sha256:sha256(fixtureCode),bytes:fixtureCode.length};
+    const inv = {path:'/synthetic/inventory',sha256:sha256(inventory),bytes:inventory.length};
+    const totals: Record<string,{files:number;bytes:number}> = {};
+    for (const r of files) { totals[r.role] ??= {files:0,bytes:0}; totals[r.role].files++; totals[r.role].bytes+=r.bytes; }
+    const toolchain = bytes({source,observed,packages,inventory:inv,repeatInventory:inv,node:measure,npm:{...measure,version:observed.npm},
+      git:{path:'/synthetic/git',version:'git version 1.0'},esbuild:{...measure,version:tools.esbuild},esbuildBinary:measure,vite:{...measure,version:tools.vite},
+      viteEsbuild:{...measure,version:sourceLock.packages['node_modules/esbuild'].version},viteRollup:{...measure,version:sourceLock.packages['node_modules/rollup'].version},
+      totals,largestRecord:files.reduce((a,b)=>a.bytes>=b.bytes?a:b),native:{...native,fileMode:'755',binaryDescription:'synthetic Mach-O arm64'},
+      packageFiles:files.filter(f=>f.path.startsWith('node_modules/')),runtimeFiles:files.filter(f=>f.path.startsWith('runtime/'))});
+    const toolPath = join(dir,'tools.json');
+    await writeFile(toolPath,toolchain);
+    const input = {staging:port,artifactRoot:tree,version:sourceLock.version as string,target:{os:'darwin' as const,arch:'arm64' as const},
+      schema:{min:1,max:1},expectedSource:source,expectedInventorySha256:inv.sha256,lockPath,toolchain:{path:toolPath,sha256:sha256(toolchain)}};
+    const identity = await inspectEmittedRuntimeMaterial(input);
+    const logs = await Promise.all(ids.map(async id=>{
+      const path=join(dir,id+'.log'), data=Buffer.from('synthetic contract fixture only '+id);
+      await writeFile(path,data);
+      return {id,path,sha256:sha256(data)};
+    }));
+    const report = bytes({format:'patrick-emitted-runtime-execution-v1',materialSha256:identity.materialSha256,inventorySha256:inv.sha256,
+      toolchainSha256:input.toolchain.sha256,nativeSha256:native.sha256,native,observed,entries,scenarios:logs.map(l=>({
+        id:l.id,argv:['synthetic-format-fixture'],cwd:'/synthetic',startedUtc:'2000-01-01T00:00:00.000Z',endedUtc:'2000-01-01T00:00:00.000Z',
+        exitCode:0,status:'passed',evidenceSha256:l.sha256}))});
+    const reportPath = join(dir,'execution.json');
+    await writeFile(reportPath,report);
+    const ready = await prepareEmittedRuntimeCandidate({...input,expectedMaterialSha256:identity.materialSha256,evidence:{report:{path:reportPath,sha256:sha256(report)},logs}});
+    const path = join(dir,'signed');
+    const signed = await packEmittedRuntimeCandidate(ready,{signatures:[signature(Buffer.from(ready.signingManifestBase64,'base64'))],outputStaging:port,outputPath:path});
+    const expected = {version:input.version,source,target:input.target,schema:input.schema,activeSchema:1,runtime:{node:observed.node,modules:observed.modules},
+      inventorySha256:inv.sha256,toolchainSha256:input.toolchain.sha256,materialSha256:identity.materialSha256,packageSha256:signed.packageSha256};
+    const policy = {keys:[{id:'fixture',publicKey}],executionReportSha256:sha256(report),requiredScenarios:logs.map(l=>({id:l.id,evidenceSha256:l.sha256}))};
+    const options = {staging:port,expected,policy};
+    const verified = await verifyEmittedRuntimeCandidate(path,options);
+    expect(verified.materialSha256).toBe(identity.materialSha256);
+    await expect(verifyEmittedRuntimeCandidate(path,{...options,policy:{...policy,executionReportSha256:'0'.repeat(64)}})).rejects.toThrow(/report pin/);
+    const destination = join(dir,'stage');
+    await expect(stageVerifiedEmittedRuntime({...verified},{staging:port,destination})).rejects.toThrow(/genuine/);
+    const env = JSON.parse(await readFile(path,'utf8'));
+    env.signatures[0].signature = Buffer.alloc(64).toString('base64');
+    const invalid = bytes(env);
+    await writeFile(path,invalid);
+    await expect(verifyEmittedRuntimeCandidate(path,{...options,expected:{...expected,packageSha256:sha256(invalid)}})).rejects.toThrow(/signature verification/);
+  } finally {await rm(dir,{recursive:true,force:true});}
+},30_000);
