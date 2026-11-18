@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "minimumCitationAccuracyPercent": 95,
+  "minimumCases": {
+    "seed": 10,
+    "independentHoldout": 5
+  },
+  "maximumCriticalFailures": {
+    "unauthorized": 0,
+    "missedRequiredQuestion": 0,
+    "recalledWithdrawnMaterial": 0
+  },
+  "maintenance": {
+    "maximumWeeklyMinutes": 60,
+    "pauseAfterConsecutiveOverLimitWeeks": 2
+  }
+}
