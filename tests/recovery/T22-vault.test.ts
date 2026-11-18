@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -9,10 +9,11 @@ import { readVault, readVaultEdit } from '../../packages/integrations/vault/read
 import { createStandardsApi, type StandardRule } from '../../packages/domain/src/standards.js';
 import { projectVault, PROJECTION_BATCH_FILES } from '../../packages/integrations/vault/projector.js';
 
-const io = vi.hoisted(() => ({ after: (_operation: string, _path: string) => {} }));
+const io = vi.hoisted(() => ({ before: (_operation: string, _path: string) => {}, after: (_operation: string, _path: string) => {} }));
 vi.mock('node:fs/promises', async (original) => {
   const actual = await original<typeof import('node:fs/promises')>();
   const wrap = (operation: 'lstat' | 'readFile' | 'readdir' | 'realpath' | 'open') => async (...args: unknown[]) => {
+    io.before(operation, String(args[0]));
     const result = await (actual[operation] as (...values: unknown[]) => Promise<unknown>)(...args);
     io.after(operation, String(args[0]));
     return result;
@@ -43,7 +44,7 @@ function fixture() {
     { vaultId: 'vault', viewKind: 'knowledge', revision, files: Object.fromEntries(PROJECTION_BATCH_FILES.map((path) => [path, 'view'])) },
     { now: at, ...options });
   return { root, vault, db, blobs, put, api, connect, ready, counts, project,
-    close() { io.after = () => {}; db.close(); rmSync(root, { recursive: true, force: true }); } };
+    close() { io.before = () => {}; io.after = () => {}; db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 function admit(f: ReturnType<typeof fixture>, domain = 'personal') {
   f.db.prepare(`INSERT INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,updated_at)
@@ -96,6 +97,31 @@ test('scan closure prevents the first blob handoff', async () => {
     expect(f.put).not.toHaveBeenCalled(); expect(f.counts()).toEqual(before);
   } finally { f.close(); }
 });
+
+test('growth observed at the final attachment path check aborts the whole Vault sweep', async () => {
+  const f = fixture();
+  try {
+    await f.ready();
+    const directory = join(f.vault, '附件');
+    mkdirSync(directory);
+    const attachment = join(directory, 'sample.pdf');
+    writeFileSync(attachment, Buffer.alloc(20_000_000, 0x61));
+    const physicalAttachment = realpathSync(attachment);
+    let grown = false;
+    io.before = (operation, path) => {
+      if (!grown && operation === 'lstat' && path === physicalAttachment) {
+        appendFileSync(attachment, 'x');
+        grown = true;
+      }
+    };
+    const before = f.counts();
+    await expect(f.api.readVault('vault')).rejects.toThrow('VAULT_ATTACHMENT_TOO_LARGE');
+    expect(grown).toBe(true);
+    expect(f.put).not.toHaveBeenCalled();
+    expect(f.counts()).toEqual(before);
+  } finally { f.close(); }
+});
+
 test.each(['read', 'edit'] as const)('closure after %s blob staging prevents business commit and later blob handoffs', async (kind) => {
   const f = fixture();
   try { await f.ready(); writeFileSync(join(f.vault, '知识笔记/other.md'), 'B'); const gate = admit(f); const before = f.counts();

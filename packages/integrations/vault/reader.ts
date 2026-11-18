@@ -8,12 +8,16 @@ import { assertVaultWriteAllowed, requireVault, type VaultRecord } from './conne
 
 const NOTE_DIRS = new Set(['知识笔记', '判断案例', '标准修订']);
 const ATTACHMENT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']);
+const MAX_ATTACHMENT_BYTES = 20_000_000;
+const ATTACHMENT_CHUNK_BYTES = 64 * 1024;
 const OFFLINE_CODES = new Set(['ENOENT', 'EIO', 'ENOTCONN', 'ENETDOWN', 'ENETUNREACH', 'EHOSTDOWN', 'EHOSTUNREACH', 'ESTALE', 'ETIMEDOUT', 'ENXIO', 'ENOTDIR']);
 
 type Scalar = string | number | boolean | null;
 type ParsedFrontMatter =
   | { ok: true; data: Record<string, Scalar>; body: string }
   | { ok: false; line: number };
+
+type FileSample = { dev: number; ino: number; size: number; mtimeMs: number };
 
 type ScannedFile = {
   relativePath: string;
@@ -356,7 +360,8 @@ async function walk(
     if (!real) continue;
     const relativePath = relative(root, full).split(sep).join('/');
     if (!relativePath || relativePath.startsWith('..')) continue;
-    const bytes = new Uint8Array(await readFile(real));
+    const bytes = kind === 'attachment' ? await readAttachment(real, sample) : new Uint8Array(await readFile(real));
+    if (!bytes) continue;
     files.push({
       relativePath,
       kind,
@@ -369,6 +374,32 @@ async function walk(
   return files;
 }
 
+async function readAttachment(path: string, sample: FileSample): Promise<Uint8Array | undefined> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const before = await file.stat();
+    if (!before.isFile() || before.dev !== sample.dev || before.ino !== sample.ino) return;
+    if (before.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    if (before.size !== sample.size || before.mtimeMs !== sample.mtimeMs) return;
+
+    const bytes = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await file.read(bytes, offset, Math.min(ATTACHMENT_CHUNK_BYTES, bytes.length - offset), offset);
+      if (bytesRead === 0) return;
+      offset += bytesRead;
+    }
+    const after = await file.stat();
+    if (after.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    const named = await lstat(path);
+    if (!named.isFile() || named.dev !== after.dev || named.ino !== after.ino) return;
+    if (named.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs ||
+        named.size !== after.size || named.ctimeMs !== after.ctimeMs) return;
+    return bytes;
+  } finally { await file.close(); }
+}
+
 function skippedFile(name: string): boolean {
   const lower = name.toLowerCase();
   if (lower.endsWith('.tmp') || lower.endsWith('.temp') || name.endsWith('~')) return true;
@@ -378,16 +409,16 @@ function skippedFile(name: string): boolean {
   return false;
 }
 
-async function stableFile(path: string): Promise<{ dev: number; ino: number } | 'offline' | 'placeholder' | undefined> {
+async function stableFile(path: string): Promise<FileSample | 'offline' | 'placeholder' | undefined> {
   const first = await sample(path);
   if (first === 'offline' || first === 'placeholder' || !first) return first;
   const second = await sample(path);
   if (second === 'offline' || second === 'placeholder' || !second) return second;
   if (first.size !== second.size || first.mtimeMs !== second.mtimeMs) return undefined;
-  return { dev: second.dev, ino: second.ino };
+  return second;
 }
 
-async function sample(path: string): Promise<{ dev: number; ino: number; size: number; mtimeMs: number } | 'offline' | 'placeholder' | undefined> {
+async function sample(path: string): Promise<FileSample | 'offline' | 'placeholder' | undefined> {
   try {
     const info = await stat(path);
     if (!info.isFile()) return undefined;

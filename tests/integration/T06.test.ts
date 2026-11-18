@@ -286,6 +286,41 @@ test('obsidianFileUri encodes the vault and file and does not open an applicatio
   expect(editKey('revise_standard', 'std-1', 2, 'r')).toBe(JSON.stringify(['revise_standard', 'std-1', 2, null]));
 });
 
+test('the Vault attachment limit preserves the source cursor and pending work after a rejected sweep', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  const attachment = join(root, '附件', 'sample.pdf');
+  const manuscript = join(root, '知识笔记', 'sample.md');
+  mkdirSync(dirname(attachment), { recursive: true });
+  mkdirSync(dirname(manuscript), { recursive: true });
+  try {
+    const api = apiFor(fx);
+    const vaultId = await connect(api, root);
+    const allowed = Buffer.alloc(20_000_000, 0x61);
+    writeFileSync(attachment, allowed);
+    expect(await api.readVault(vaultId)).toMatchObject({ state: 'ready', attachments: 1 });
+    expect(Buffer.from(await fx.blobs.readBlob(sha256(allowed))).equals(allowed)).toBe(true);
+    const revisions = () => fx.db.prepare('SELECT relative_path, observed_seq, content_hash FROM vault_revisions ORDER BY relative_path, observed_seq').all();
+    const before = revisions();
+    const oversized = Buffer.alloc(20_000_001, 0x62);
+    const draft = Buffer.from(note('k-pending', 'Continue on the next approved sweep'));
+    writeFileSync(attachment, oversized);
+    writeFileSync(manuscript, draft);
+
+    await expect(api.readVault(vaultId)).rejects.toThrow('VAULT_ATTACHMENT_TOO_LARGE');
+    expect(revisions()).toEqual(before);
+    expect(existsSync(fx.blobs.pathFor(sha256(oversized)))).toBe(false);
+    expect(existsSync(fx.blobs.pathFor(sha256(draft)))).toBe(false);
+    expect(statSync(attachment).size).toBe(20_000_001);
+
+    writeFileSync(attachment, allowed);
+    expect(await api.readVault(vaultId)).toMatchObject({ state: 'ready', collected: 1, attachments: 0 });
+    const recovered = revisions();
+    expect(recovered).toHaveLength(2);
+    expect(recovered).toEqual(expect.arrayContaining([...before, { relative_path: '知识笔记/sample.md', observed_seq: 1, content_hash: sha256(draft) }]));
+  } finally { fx.close(); }
+});
+
 test('the reader skips system paths, archives original bytes, and ignores YAML authority', async () => {
   const fx = temporaryDatabase();
   const root = join(fx.dir, 'vault');
