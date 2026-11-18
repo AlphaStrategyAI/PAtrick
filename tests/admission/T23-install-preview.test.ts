@@ -9,6 +9,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { budgetInstallVolume, observeInstallSession, previewFirstInstall, type InstallPreviewEnrollment } from '../../deploy/runtime/install-preview.js';
+import { createPatrickCli } from '../../deploy/cli/patrick.mjs';
+import { createInstalledCli } from '../../deploy/runtime/cli.js';
+import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { deploymentPaths } from '../../deploy/lib/deployment-templates.mjs';
 import { sha256 } from '../../deploy/lib/release.mjs';
 
@@ -183,6 +186,204 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
       expect(await observe()).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_SESSION' });
       expect(trace).toEqual(['acquire', 'release']);
     } finally { selected = e; await rm(file); }
+  });
+
+  function installedFixture() {
+    const origin = 'https://preview.example.test:8443';
+    const onLease: { before?: () => void; after?: () => void } = {};
+    const owner = { async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>): Promise<T> {
+      expect(this).toBe(owner);
+      onLease.before?.();
+      const result = await e.owner.withExclusiveReadRoot(read);
+      onLease.after?.();
+      return result;
+    } };
+    const enrollment = { ...e, owner, deployment: { ...e.deployment, origin }, tls: { ...e.tls, rpId: 'preview.example.test' },
+      session: { ...e.session!, readBearer: async () => { throw new Error('unexpected credential access'); } } };
+    const registry: Record<string, InstallPreviewEnrollment> = { release: enrollment };
+    const legacy = { identity: e.identity, candidatePath: join(temporary, 'unavailable-source'),
+      expected: { version: '1', commit: '0'.repeat(40), os: 'darwin', arch: 'arm64', schema: 1 },
+      policy: { keys: [], requiredEvidence: [] },
+      staging: { async withExclusiveReadRoot<T>(): Promise<T> { trace.push('legacy'); throw new Error('source missing'); } } };
+    const caps = { installPreviews: registry, releases: { release: legacy, source: legacy } };
+    const provisioning = createRuntimeProvisioning({
+      registration: { identity: e.identity, captureHost: e.hostname, serviceUid: e.uid, minimumFreeBytes: 1,
+        dataRoot: join(e.root, 'data'), profile: 'test', origin, rpId: enrollment.tls.rpId,
+        listener: { ...e.deployment.listener, origin } },
+      hostCapabilities: caps,
+      service: { databasePath: join(e.root, 'data', 'service.sqlite'), credentialDirectory: join(e.root, 'credentials'),
+        recoveryRuntime: { attach() { throw new Error('unexpected database startup'); } },
+        bindRecoveryOperations() { throw new Error('unexpected recovery startup'); } },
+    });
+    return { cli: createInstalledCli(provisioning), provisioning, registry, enrollment, caps, onLease };
+  }
+
+  test('installed CLI previews a registered signed deployment without effects', async () => {
+    const { cli, enrollment } = installedFixture();
+    const before = await snapshot(e.root);
+    trace.length = 0;
+    const result = await cli.run(['install', '--release', 'release']);
+    const { status, ...expected } = await previewFirstInstall(() => enrollment, 'release');
+    expect(status).toBe('preview');
+    expect(result).toMatchObject({ command: 'install', action: 'preview', status: 'preview', code: 'INSTALL_BOOTSTRAP_PREVIEW',
+      identity: e.identity, exitCode: 0 });
+    expect(result.installPreview).toEqual(expected);
+    expect(await cli.run(['install', '--release', 'release', '--preview'])).toEqual(result);
+    expect(trace).toEqual(['acquire', 'release', 'acquire', 'release', 'acquire', 'release']);
+    expect(await snapshot(e.root)).toEqual(before);
+    for (const secret of [e.root, enrollment.deployment.origin, e.session!.ca, token]) expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  test('installed preview owns a failed selection and preserves the original guard and other action routes', async () => {
+    const { cli, enrollment, registry, provisioning } = installedFixture();
+    trace.length = 0;
+    const run = (...extra: string[]) => cli.run(['install', '--release', 'release', ...extra]);
+    registry.release = { ...enrollment, expected: { ...enrollment.expected, materialSha256: '0'.repeat(64) } };
+    expect(await run()).toMatchObject({ status: 'blocked', code: 'INSTALL_PREVIEW_PACKAGE' });
+    registry.release = { ...enrollment, identity: { ...enrollment.identity, configRevision: 'wrong' } };
+    expect(await run()).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+    registry.release = enrollment;
+    expect(await run('--preview', '--operation', 'unused')).toMatchObject({ status: 'invalid' });
+    expect(await run('--readback', '--operation', 'unknown')).toMatchObject({ code: 'LIFECYCLE_READBACK_REQUIRED' });
+    expect(trace).toEqual(['acquire', 'release']);
+    const guarded = createPatrickCli(provisioning.host, () => ({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH', exitCode: 5 }));
+    expect(await guarded.run(['install', '--release', 'release'])).toMatchObject({ code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+    let calls = 0;
+    const forged = createPatrickCli({ ...provisioning.host, runtime: { ...provisioning.host.runtime,
+      previewFirstInstall: async () => { calls++; throw new Error('arbitrary observer'); } } });
+    expect(await forged.run(['install', '--release', 'release'])).toMatchObject({ code: 'INSTALL_PREVIEW_RUNTIME_REQUIRED' });
+    expect(calls).toBe(0);
+    expect(trace).toEqual(['acquire', 'release']);
+    // Legacy verification still owns an unselected source ID, execute and upgrade.
+    for (const args of [['install', '--release', 'source'], ['install', '--release', 'release', '--execute', '--operation', 'op'],
+      ['upgrade', '--release', 'release']]) expect(await cli.run(args)).toMatchObject({ code: 'RELEASE_VERIFICATION_FAILED' });
+    expect(trace.slice(2)).toEqual(['legacy', 'legacy', 'legacy']);
+  });
+
+  test('installed CLI refuses a class enrollment revised during lease acknowledgement', async () => {
+    const { cli, registry, enrollment, onLease } = installedFixture();
+    const original = Object.assign(new class Enrollment {}(), enrollment);
+    registry.release = original;
+    onLease.after = () => { original.targetSchema = 1; };
+    const result = await cli.run(['install', '--release', 'release']);
+    expect(result.status).toBe('blocked');
+    expect(result.installPreview).toBeUndefined();
+  });
+
+  test('direct preview snapshots nested class plan data and refuses an acknowledged change', async () => {
+    class BudgetRegistration {
+      releases = e.reserveBytes.releases;
+      data = e.reserveBytes.data;
+      lima = e.reserveBytes.lima;
+    }
+    const reserveBytes = new BudgetRegistration();
+    let revise = false;
+    class ReadOwner {
+      #receiver = true;
+      async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>): Promise<T> {
+        expect(this.#receiver).toBe(true);
+        const answer = await e.owner.withExclusiveReadRoot(read);
+        if (revise) reserveBytes.data++;
+        return answer;
+      }
+    }
+    const original = Object.assign(new class Enrollment {}(), e, { reserveBytes, owner: new ReadOwner() });
+    const observed = await previewFirstInstall(() => original, 'release');
+    expect(observed).toEqual(await previewFirstInstall(() => e, 'release'));
+    expect(observed.status).toBe('preview');
+    revise = true;
+    expect(await previewFirstInstall(() => original, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_LEASE' });
+  });
+
+  test('checks configuration on the original class credential receiver without using it for bootstrap', async () => {
+    const credential = e.session!;
+    class Credential {
+      #bearer = token;
+      bootstrapPlanSha256 = credential.bootstrapPlanSha256;
+      ca = credential.ca;
+      callerId = credential.callerId;
+      authEpoch = credential.authEpoch;
+      credentialRevision = credential.credentialRevision;
+      async readBearer() { reads++; return this.#bearer; }
+    }
+    let reads = 0;
+    let revise = false;
+    const session = new Credential();
+    const original = Object.assign(new class Enrollment {}(), e, { session,
+      owner: { async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+        const answer = await e.owner.withExclusiveReadRoot(read);
+        if (revise) session.credentialRevision += 'x';
+        return answer;
+      } } });
+    expect((await previewFirstInstall(() => original, 'release')).status).toBe('preview');
+    expect(reads).toBe(0);
+    expect((await observeInstallSession(() => original, 'release')).status).toBe('session-observed');
+    revise = true;
+    expect((await observeInstallSession(() => original, 'release')).status).toBe('blocked');
+    expect(reads).toBe(2);
+  });
+
+  test('invokes only the original port methods without reading callable metadata', async () => {
+    const { cli, registry, enrollment } = installedFixture();
+    const metadataReads: string[] = [];
+    let leases = 0;
+    let credentials = 0;
+    class Owner {
+      #original = e.owner;
+      async withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) {
+        leases++;
+        return this.#original.withExclusiveReadRoot(read);
+      }
+    }
+    class Credential {
+      #token = token;
+      async readBearer() { credentials++; return this.#token; }
+    }
+    const owner = new Owner();
+    const { readBearer: _originalReader, ...metadata } = e.session!;
+    expect(typeof _originalReader).toBe('function');
+    const session = Object.assign(new Credential(), metadata);
+    for (const [port, method] of [['owner', owner.withExclusiveReadRoot], ['credential', session.readBearer]] as const) {
+      for (const key of ['name', 'length', 'bind'] as const) {
+        const previous = method[key];
+        Object.defineProperty(method, key, { get() { metadataReads.push(port + '.' + key); return previous; } });
+      }
+    }
+    registry.release = { ...enrollment, owner, session };
+    expect((await cli.run(['install', '--release', 'release'])).status).toBe('preview');
+    expect(credentials).toBe(0);
+    expect(leases).toBe(1);
+    expect.soft([...metadataReads]).toEqual([]);
+    // The direct authenticated observation uses the independently retained loopback plan.
+    const original = { ...e, owner, session };
+    expect((await observeInstallSession(() => original, 'release')).status).toBe('session-observed');
+    expect(credentials).toBe(1);
+    expect(leases).toBe(2);
+    expect(metadataReads).toEqual([]);
+  });
+
+  test.each(['identity', 'budget', 'method'] as const)('rejects accessor-backed %s without invoking its getter', async kind => {
+    const { cli, registry, enrollment } = installedFixture();
+    let reads = 0;
+    const original = Object.assign(new class Enrollment {}(), enrollment, {
+      reserveBytes: Object.assign(new class Budget {}(), enrollment.reserveBytes),
+      owner: Object.assign(new class Owner {}(), enrollment.owner),
+    });
+    registry.release = original;
+    const target = kind === 'identity' ? [original, 'identity'] as const :
+      kind === 'budget' ? [original.reserveBytes, 'data'] as const : [original.owner, 'withExclusiveReadRoot'] as const;
+    Object.defineProperty(target[0], target[1], { enumerable: true, get() { reads++; throw new Error('unexpected accessor'); } });
+    expect((await cli.run(['install', '--release', 'release'])).status).toBe('blocked');
+    expect((await previewFirstInstall(() => original, 'release')).status).toBe('blocked');
+    expect(reads).toBe(0);
+  });
+
+  test.each(['before', 'after'] as const)('rechecks original installed registration %s the owner callback', async when => {
+    const { cli, caps, registry, onLease } = installedFixture();
+    onLease[when] = () => { caps.installPreviews = { ...registry }; };
+    const result = await cli.run(['install', '--release', 'release']);
+    expect(result).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+    expect(result.installPreview).toBeUndefined();
   });
 
   test('reads an exact signed plan under one lease with no filesystem mutations', async () => {

@@ -2,6 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
+import { bindInstallPreviewEnrollment, previewFirstInstall } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
 
 const commands = new Set(['init', 'doctor', 'install', 'start', 'stop', 'backup', 'restore', 'upgrade', 'uninstall']);
@@ -165,6 +166,44 @@ export function createPatrickCli(host, checkLiveStorage) {
         try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
         return response(request, 'blocked', code, 'Inspect the signed records and independent evidence through the trusted controller.', context);
       }
+    }
+    const installs = request.command === 'install' && request.action === 'preview' && request.release !== undefined
+      ? host.installPreviews : undefined;
+    if (installs && Object.hasOwn(installs, request.release)) {
+      if (request.operation !== undefined) return response(request, 'invalid', 'CLI_ARGUMENT_INVALID',
+        'Use install --release ID to preview this registration.');
+      const enrollment = Object.getOwnPropertyDescriptor(installs, request.release)?.value;
+      const current = () => {
+        hostBinding.validate();
+        if (host.installPreviews !== installs || !enrollment || Object.getOwnPropertyDescriptor(installs, request.release)?.value !== enrollment) {
+          throw new Error('HOST_IDENTITY_MISMATCH');
+        }
+        return enrollment;
+      };
+      const binding = bindInstallPreviewEnrollment(current);
+      const selected = binding.value;
+      const validate = () => {
+        try { binding.validate(); } catch { throw new Error('HOST_IDENTITY_MISMATCH'); }
+        if (!sameIdentity(identity, selected.identity) || selected.releaseId !== request.release ||
+          selected.hostname !== host.captureHost || selected.uid !== host.serviceUid ||
+          selected.deployment.origin !== host.origin || selected.tls.rpId !== host.rpId) throw new Error('HOST_IDENTITY_MISMATCH');
+      };
+      validate();
+      // Only the specific module installed by trusted provisioning can select this route.
+      // Never execute a function selected by registration, command input or candidate contents.
+      if (host.runtime?.previewFirstInstall !== previewFirstInstall) return response(request, 'unavailable',
+        'INSTALL_PREVIEW_RUNTIME_REQUIRED', 'Provision the registered controller with its first-install verifier.', context);
+      const result = await previewFirstInstall(() => { validate(); return enrollment; }, request.release);
+      validate();
+      if (result.status === 'blocked') return response(request, 'blocked', result.code,
+        'Inspect the registered release and physical installation prerequisites.', context);
+      const { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
+        volumes, outstanding, activationAuthorized, delegationAuthorized } = result;
+      return response(request, 'preview', 'INSTALL_BOOTSTRAP_PREVIEW',
+        'Retain the plan digest and complete the outstanding bootstrap checks through the enrolled controller.', {
+          ...context, installPreview: { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
+            volumes, outstanding, activationAuthorized, delegationAuthorized },
+        });
     }
     if (['install', 'upgrade'].includes(request.command)) {
       const releaseBinding = bindRegistration(() => host.releases && Object.hasOwn(host.releases, request.release) ? host.releases[request.release] : undefined);

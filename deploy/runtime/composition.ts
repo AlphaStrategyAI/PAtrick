@@ -1,3 +1,4 @@
+import { previewFirstInstall } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -948,6 +949,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
   });
   const host: RegisteredHost = Object.freeze({
     ...hostCapabilities,
+    get installPreviews() { return hostCapabilities.installPreviews; },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
     identity,
     captureHost: registrationData.captureHost,
@@ -961,6 +963,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
       createRecoveryOperations(configuration: RecoveryConfiguration) { return createRecoveryOperations(bindRecoveryTargets(configuration)); },
       createRecoveryBackupReader,
       createLifecycleJournalReader,
+      previewFirstInstall,
       createNetworkInspector,
       createNodeNetworkProbePorts,
       createObsidianDoctor,

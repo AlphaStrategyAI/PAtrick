@@ -4,7 +4,7 @@ import { request } from 'node:https';
 import { hostname, machine } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { GenerationNode } from './lifecycle-generation.js';
-import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
+import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import { leased, verifyEmittedRuntimeCandidate, type ExclusiveRuntimeStaging,
   type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy } from '../lib/emitted-release.mjs';
@@ -158,6 +158,87 @@ async function checkSession(e: InstallPreviewEnrollment, credential: NonNullable
 /** Computes a deterministic digest for later independent rederivation. A preview is never
  * authorization to activate a release, create a generation or dispatch native jobs. */
 type Registry = () => InstallPreviewEnrollment | undefined;
+/**
+ * Snapshot the plan's data fields as detached records, including fields on class-backed
+ * registrations. Nested records use their own enumerable data fields. Only the two
+ * executable ports keep their original method receivers.
+ * Accessor-backed fields cannot provide a repeatable registration observation.
+ */
+export function bindInstallPreviewEnrollment(current: Registry) {
+  const original = current();
+  requireFact(original);
+  const checks: (() => void)[] = [];
+  function trackPrototype(object: object) {
+    const prototype = Object.getPrototypeOf(object);
+    checks.push(() => requireFact(Object.getPrototypeOf(object) === prototype));
+  }
+  trackPrototype(original);
+  function field<T extends object, K extends keyof T>(object: T, key: K, optional = false): T[K] {
+    const descriptor = () => {
+      for (let at: object | null = object; at; at = Object.getPrototypeOf(at)) {
+        const found = Object.getOwnPropertyDescriptor(at, key);
+        if (found) return found;
+      }
+    };
+    const first = descriptor();
+    requireFact(first ? Object.hasOwn(first, 'value') : optional);
+    checks.push(() => {
+      const live = descriptor();
+      requireFact(first ? live && Object.hasOwn(live, 'value') && Object.is(live.value, first.value) : !live);
+    });
+    return first?.value;
+  }
+  function copy<T>(value: T, depth = 0): T {
+    if (value === null || typeof value !== 'object') {
+      requireFact(typeof value !== 'function');
+      return value;
+    }
+    requireFact(depth < 32);
+    trackPrototype(value);
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    checks.push(() => {
+      const currentKeys = Object.keys(record).sort();
+      requireFact(currentKeys.length === keys.length && keys.every((key, i) => currentKeys[i] === key));
+    });
+    if (Array.isArray(value)) {
+      const length = field(value, 'length');
+      requireFact(keys.length === length);
+      return Array.from({ length }, (_, i) => {
+        requireFact(Object.hasOwn(value, i));
+        return copy(field(value, i), depth + 1);
+      }) as T;
+    }
+    return Object.fromEntries(keys.map(key => [key, copy(field(record, key), depth + 1)])) as T;
+  }
+  function dataFields<T extends object, K extends keyof T>(object: T, keys: readonly K[]): Pick<T, K> {
+    return Object.fromEntries(keys.map(key => [key, copy(field(object, key))])) as Pick<T, K>;
+  }
+  const data = dataFields(original, ['installationId', 'releaseId', 'identity', 'hostname', 'uid', 'root', 'rootNode',
+    'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
+  const owner = field(original, 'owner');
+  trackPrototype(owner);
+  const readRoot = field(owner, 'withExclusiveReadRoot');
+  requireFact(typeof readRoot === 'function');
+  const session = field(original, 'session', true);
+  let credential: InstallPreviewEnrollment['session'];
+  if (session !== undefined) {
+    trackPrototype(session);
+    const metadata = dataFields(session, ['bootstrapPlanSha256', 'ca', 'callerId', 'authEpoch', 'credentialRevision']);
+    const readBearer = field(session, 'readBearer');
+    requireFact(typeof readBearer === 'function');
+    credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
+  }
+  const value: InstallPreviewEnrollment = { ...data, session: credential, owner: {
+    withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) { return Reflect.apply(readRoot<T>, owner, [read]); },
+  } };
+  function validate() {
+    requireFact(current() === original);
+    for (const check of checks) check();
+  }
+  validate();
+  return { value, validate };
+}
 export function previewFirstInstall(current: Registry, releaseId: string) {
   return inspectInstall(current, releaseId, 'bootstrap');
 }
@@ -170,12 +251,7 @@ export function observeInstallSession(current: Registry, releaseId: string) {
 async function inspectInstall(current: Registry, releaseId: string, phase: 'bootstrap' | 'authenticated-session'): Promise<InstallPreviewResult> {
   let stage: Stage = 'REGISTRATION';
   try {
-    const original = current();
-    requireFact(original);
-    const binding = bindRegistration(() => original);
-    const validate = () => { requireFact(current() === original); binding.validate(); };
-    validate();
-    const e = binding.value;
+    const { value: e, validate } = bindInstallPreviewEnrollment(current);
     requireFact(e && id(e.installationId) && id(releaseId) && releaseId === e.releaseId);
     const identity = projectIdentity(e.identity);
     identity.domains.sort();
@@ -185,7 +261,7 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
     stage = 'HOST';
     nativeHost(e);
     stage = 'LEASE';
-    const result = await leased(original.owner, async lease => {
+    const result = await leased(e.owner, async lease => {
       const guard = () => { validate(); lease.guard(); };
       guard();
       stage = 'LAYOUT';
@@ -225,7 +301,7 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
       let credentialBindingSha256: string | undefined;
       if (phase === 'authenticated-session') {
         stage = 'SESSION';
-        const credential = original.session;
+        const credential = e.session;
         requireFact(credential && credential.bootstrapPlanSha256 === planSha256);
         guard();
         await checkSession(e, credential, guard);

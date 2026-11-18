@@ -1,3 +1,4 @@
+import type { InstallPreviewEnrollment, previewFirstInstall } from '../runtime/install-preview.js';
 import type { createLifecycleJournalReader, LifecycleRegistration } from '../runtime/lifecycle-journal.js';
 import type { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import type { createNetworkInspector } from '../../packages/host/src/network/probes.js';
@@ -24,6 +25,7 @@ export type RegisteredHost = {
   runtime?: {
     createRecoveryOperations?: typeof createRecoveryOperations;
     createRecoveryBackupReader?: typeof createRecoveryBackupReader;
+    previewFirstInstall?: typeof previewFirstInstall;
     createLifecycleJournalReader?: typeof createLifecycleJournalReader;
     createNetworkInspector?: typeof createNetworkInspector;
     createNodeNetworkProbePorts?: typeof createNodeNetworkProbePorts;
@@ -32,6 +34,7 @@ export type RegisteredHost = {
   };
   recovery?: Parameters<typeof createRecoveryOperations>[0];
   backupReadback?: Parameters<typeof createRecoveryBackupReader>[0];
+  installPreviews?: Readonly<Record<string, InstallPreviewEnrollment>>;
   lifecycleReadbacks?: Readonly<Record<string, LifecycleRegistration>>;
   recoveryReadbacks?: readonly { targetId: string; backupOperationId: string; drillOperationId: string; manifestHash: string }[];
   network?: {
