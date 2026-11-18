@@ -1,0 +1,723 @@
+#!/usr/bin/env node
+import { createHash } from 'node:crypto';
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const recipePaths = ['scripts/build-runtime.mjs', 'deploy/lib/release.mjs'];
+let LIMITS;
+let validatePaths;
+
+async function loadRecipe(sourceRoot) {
+  const script = fileURLToPath(import.meta.url);
+  const checkout = resolve(dirname(script), '..');
+  if ((sourceRoot !== undefined && sourceRoot !== checkout) || script !== resolve(checkout, recipePaths[0])) {
+    fail('RUNTIME_BUILD_RECIPE_MISMATCH');
+  }
+  const observed = new Map();
+  for (const path of recipePaths) {
+    const absolute = resolve(checkout, path);
+    const info = await regularFile(absolute);
+    if (await realpath(absolute) !== absolute || info.size > 1024 * 1024) fail('RUNTIME_BUILD_RECIPE_MISMATCH');
+    observed.set(path, sha256(await readFile(absolute)));
+  }
+  const helper = await import(pathToFileURL(resolve(checkout, recipePaths[1])).href);
+  LIMITS = helper.RELEASE_LIMITS;
+  validatePaths = helper.validatePaths;
+  await verifyRecipe(checkout, observed);
+  return observed;
+}
+
+async function verifyRecipe(root, expected, snapshot) {
+  for (const [path, sha] of expected) {
+    const absolute = resolve(root, path);
+    if (await realpath(absolute) !== absolute || sha256(await readFile(absolute)) !== sha ||
+        (snapshot && snapshot.files.find((file) => file.path === path)?.sha !== sha)) {
+      fail('RUNTIME_BUILD_RECIPE_MISMATCH');
+    }
+  }
+}
+const entries = Object.freeze({
+  composition: 'deploy/runtime/composition.ts',
+  service: 'deploy/runtime/service.ts',
+  cli: 'deploy/runtime/cli.ts',
+  worker: 'deploy/runtime/worker.ts',
+});
+const designPath = 'docs/designs/设计资产/v2/';
+const sourceRoots = Object.freeze([
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+  'apps/service/package.json',
+  'apps/service/src',
+  'apps/web/index.html',
+  'apps/web/package.json',
+  'apps/web/public',
+  'apps/web/src',
+  'apps/web/tsconfig.json',
+  'deploy/cli',
+  'deploy/lib',
+  'deploy/obsidian',
+  designPath + 'icons',
+  designPath + 'logo-curious-p.svg',
+  ...Object.values(entries),
+  'scripts/build-runtime.mjs',
+  'packages',
+]);
+const runtimePackages = Object.freeze({
+  'better-sqlite3': [
+    'LICENSE',
+    'package.json',
+    'lib',
+    'build/Release/better_sqlite3.node',
+  ],
+  bindings: ['LICENSE.md', 'package.json', 'bindings.js'],
+  'file-uri-to-path': ['LICENSE', 'package.json', 'index.js'],
+});
+const runtimeVersions = Object.freeze({
+  'better-sqlite3': '12.11.1',
+  bindings: '1.5.0',
+  'file-uri-to-path': '1.0.0',
+});
+const nativePath = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
+const inventoryFile = 'metadata/runtime-materials.json';
+const digestPattern = /^[a-f0-9]{64}$/;
+const gitHashPattern = /^[a-f0-9]{40}$/;
+const workspaceDirectories = [
+  'apps/service', 'packages/contracts', 'packages/domain', 'packages/executor',
+  'packages/host', 'packages/integrations', 'packages/storage',
+];
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function fail(code) {
+  throw new Error(code);
+}
+
+function parse(command, argv) {
+  const required = command === 'verify'
+    ? ['artifact-root']
+    : ['source-root', 'source-commit', ...(command === 'build' ? ['output-root'] : [])];
+  const allowed = new Set([...required, ...(command === 'build' ? ['source-snapshot'] : [])]);
+  const values = {};
+  for (let index = 0; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (!flag?.startsWith('--') || !allowed.has(flag.slice(2)) || value === undefined ||
+        value.startsWith('--') || Object.hasOwn(values, flag.slice(2))) {
+      fail('RUNTIME_BUILD_ARGUMENT_INVALID');
+    }
+    values[flag.slice(2)] = value;
+  }
+  if (required.some((flag) => !Object.hasOwn(values, flag))) {
+    fail('RUNTIME_BUILD_ARGUMENT_INVALID');
+  }
+  return values;
+}
+
+function validateMaterialPaths(paths) {
+  try { validatePaths(paths); }
+  catch { fail('RUNTIME_MATERIAL_PATH_INVALID'); }
+}
+
+async function physicalDirectory(path, code) {
+  if (!isAbsolute(path) || resolve(path) !== path || await realpath(path) !== path ||
+      !(await lstat(path)).isDirectory()) fail(code);
+  return path;
+}
+
+async function regularFile(path) {
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) fail('RUNTIME_MATERIAL_SYMLINK');
+  if (!info.isFile()) fail('RUNTIME_MATERIAL_TYPE_INVALID');
+  return info;
+}
+
+async function walk(root, prefix = '') {
+  const directory = resolve(root, prefix);
+  const info = await lstat(directory);
+  if (info.isSymbolicLink()) fail('RUNTIME_MATERIAL_SYMLINK');
+  if (info.isFile()) return [prefix];
+  if (!info.isDirectory()) fail('RUNTIME_MATERIAL_TYPE_INVALID');
+  const names = (await readdir(directory)).sort();
+  if (!names.length) fail('RUNTIME_MATERIAL_EXTRA');
+  const files = [];
+  for (const name of names) {
+    const child = prefix ? `${prefix}/${name}` : name;
+    const childInfo = await lstat(resolve(root, child));
+    if (childInfo.isSymbolicLink()) fail('RUNTIME_MATERIAL_SYMLINK');
+    if (childInfo.isDirectory()) files.push(...await walk(root, child));
+    else if (childInfo.isFile()) files.push(child);
+    else fail('RUNTIME_MATERIAL_TYPE_INVALID');
+  }
+  return files;
+}
+
+async function copyRegular(source, destination) {
+  const info = await regularFile(source);
+  await mkdir(dirname(destination), { recursive: true });
+  await copyFile(source, destination);
+  await chmod(destination, info.mode & 0o111 ? 0o755 : 0o644);
+}
+
+async function copySelected(sourceRoot, destinationRoot, selected) {
+  for (const selectedPath of selected) {
+    const source = resolve(sourceRoot, selectedPath);
+    const info = await lstat(source);
+    if (info.isSymbolicLink()) fail('RUNTIME_MATERIAL_SYMLINK');
+    if (info.isFile()) {
+      await copyRegular(source, resolve(destinationRoot, selectedPath));
+      continue;
+    }
+    if (!info.isDirectory()) fail('RUNTIME_MATERIAL_TYPE_INVALID');
+    for (const file of await walk(source)) {
+      await copyRegular(resolve(source, file), resolve(destinationRoot, selectedPath, file));
+    }
+  }
+}
+
+function readGit(root, args) {
+  const result = spawnSync('/usr/bin/git', ['--no-replace-objects', '-C', root, ...args], {
+    env: {
+      PATH: '/usr/bin:/bin',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_NO_REPLACE_OBJECTS: '1',
+    },
+    maxBuffer: LIMITS.artifactBytes,
+    timeout: 30_000,
+  });
+  if (result.status !== 0) fail('RUNTIME_SOURCE_COMMIT_INVALID');
+  return result.stdout;
+}
+
+function sourceTree(root, commit) {
+  if (!gitHashPattern.test(commit) ||
+      readGit(root, ['rev-parse', '--verify', commit + '^{commit}']).toString().trim() !== commit) {
+    fail('RUNTIME_SOURCE_COMMIT_INVALID');
+  }
+  const gitRoot = readGit(root, ['rev-parse', '--show-toplevel']).toString().trim();
+  if (gitRoot !== root) fail('RUNTIME_SOURCE_ROOT_INVALID');
+  const tree = readGit(root, ['ls-tree', '-rz', '--full-tree', commit, '--', ...sourceRoots]);
+  const committed = new Map();
+  for (const row of tree.toString().split('\0').filter(Boolean)) {
+    const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(row);
+    if (!match) fail('RUNTIME_SOURCE_TYPE_INVALID');
+    committed.set(match[3], { mode: match[1], blob: match[2] });
+  }
+  return committed;
+}
+
+async function captureSource(root, commit) {
+  if (Object.keys(process.env).some((name) => name.startsWith('GIT_') && name !== 'GIT_PAGER')) {
+    fail('RUNTIME_GIT_ENVIRONMENT_FORBIDDEN');
+  }
+  await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
+  const committed = sourceTree(root, commit);
+  const allowedAdditions = [...Object.values(entries), 'scripts/build-runtime.mjs'];
+  const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
+  // The reviewed Web source imports SVGs from this single non-ASCII directory.
+  // All other source paths and the emitted inventory retain the portable path allowlist.
+  validateMaterialPaths(paths.map((path) => path.replace(designPath, 'docs/designs/artwork/v2/')).sort());
+  if (paths.length > LIMITS.files) fail('RUNTIME_SOURCE_LIMIT');
+  let total = 0;
+  let changed = false;
+  const files = [];
+  for (const path of paths) {
+    const absolute = resolve(root, path);
+    if (await realpath(absolute) !== absolute) fail('RUNTIME_SOURCE_SYMLINK');
+    const info = await regularFile(absolute);
+    if (info.size > LIMITS.artifactBytes || total + info.size > LIMITS.totalBytes) fail('RUNTIME_SOURCE_LIMIT');
+    const bytes = await readFile(absolute);
+    const after = await regularFile(absolute);
+    if (after.dev !== info.dev || after.ino !== info.ino || after.size !== bytes.length ||
+        after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) fail('RUNTIME_SOURCE_CHANGED');
+    total += bytes.length;
+    const mode = info.mode & 0o111 ? '100755' : '100644';
+    const sha = sha256(bytes);
+    const blob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
+    const prior = committed.get(path);
+    changed ||= prior?.blob !== blob || prior?.mode !== mode;
+    files.push({ path, bytes, mode, sha });
+  }
+  const digest = sha256(JSON.stringify(files.map(({ path, mode, sha }) => [path, mode, sha])));
+  return { files, changed, digest };
+}
+
+async function materializeSource(snapshot, sourceRoot) {
+  for (const { path, bytes, mode } of snapshot.files) {
+    const destination = resolve(sourceRoot, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, bytes, { flag: 'wx', mode: mode === '100755' ? 0o755 : 0o644 });
+  }
+}
+
+// Admitted workspace sources have no fallback link to the original checkout.
+// Only separate, installed non-workspace tool/dependency packages may be linked.
+async function linkBuildDependencies(sourceRoot, toolRoot, lock) {
+  for (const [path, info] of Object.entries(lock.packages)) {
+    if (!/^node_modules\/(?:@[a-z0-9][a-z0-9_.-]*\/)?[a-z0-9][a-z0-9_.-]*$/.test(path) ||
+        path.startsWith('node_modules/@patrick/') || info.link) continue;
+    const installed = resolve(toolRoot, path);
+    const stat = await lstat(installed).catch((error) => {
+      if (error?.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!stat) continue; // npm omits incompatible platform-specific optional dependencies.
+    if (!stat.isDirectory() || await realpath(installed) !== installed) fail('RUNTIME_DEPENDENCY_ROOT_INVALID');
+    const destination = resolve(sourceRoot, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await symlink(installed, destination, 'dir');
+  }
+}
+
+async function workspaceExports(sourceRoot) {
+  const result = new Map();
+  for (const path of workspaceDirectories) {
+    const workspace = resolve(sourceRoot, path);
+    const pkg = JSON.parse(await readFile(resolve(workspace, 'package.json'), 'utf8'));
+    for (const [key, target] of Object.entries(pkg.exports)) {
+      if (typeof target !== 'string' || !target.startsWith('./') ||
+          !resolve(workspace, target).startsWith(workspace + sep)) fail('RUNTIME_WORKSPACE_EXPORT_INVALID');
+      const name = key === '.' ? pkg.name : pkg.name + key.slice(1);
+      result.set(name, resolve(workspace, target));
+    }
+  }
+  return result;
+}
+
+async function readMigrations(source) {
+  const manifestBytes = await readFile(resolve(source, 'manifest.json'));
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
+  } catch {
+    fail('MIGRATION_MANIFEST_INVALID');
+  }
+  if (!Array.isArray(manifest) || manifest.length < 1 || manifest.length > 128) {
+    fail('MIGRATION_MANIFEST_INVALID');
+  }
+  const names = new Set();
+  for (const entry of manifest) {
+    if (!entry || Object.keys(entry).sort().join(',') !== 'file,sha256' ||
+        !/^[0-9]{4}_[a-z0-9_]+\.sql$/.test(entry.file) ||
+        !/^[a-f0-9]{64}$/.test(entry.sha256) || names.has(entry.file)) {
+      fail('MIGRATION_MANIFEST_INVALID');
+    }
+    names.add(entry.file);
+    const bytes = await readFile(resolve(source, entry.file));
+    if (sha256(bytes) !== entry.sha256) fail('MIGRATION_HASH_MISMATCH');
+  }
+  names.add('manifest.json');
+  const actual = await readdir(source);
+  if (actual.length !== names.size || actual.some((name) => !names.has(name))) fail('MIGRATION_MANIFEST_INCOMPLETE');
+  return [...names];
+}
+
+async function copyMigrations(sourceRoot, outputRoot) {
+  const source = resolve(sourceRoot, 'packages/storage/migrations');
+  for (const path of await readMigrations(source)) {
+    await copyRegular(resolve(source, path), resolve(outputRoot, 'migrations', path));
+  }
+}
+
+async function loadTool(toolRoot, lock, location, version, entry) {
+  const directory = await physicalDirectory(resolve(toolRoot, location), 'RUNTIME_TOOL_ROOT_INVALID');
+  const pkg = JSON.parse(await readFile(resolve(directory, 'package.json'), 'utf8'));
+  if (lock.packages?.[location]?.version !== version || pkg.version !== version) fail('RUNTIME_TOOL_VERSION_MISMATCH');
+  const executable = resolve(directory, entry);
+  if (await realpath(executable) !== executable) fail('RUNTIME_TOOL_ENTRY_INVALID');
+  return import(pathToFileURL(executable).href);
+}
+
+async function buildWeb(sourceRoot, outputRoot, vite, exports) {
+  await vite.build({
+    root: resolve(sourceRoot, 'apps/web'),
+    configFile: false,
+    envFile: false,
+    mode: 'production',
+    logLevel: 'silent',
+    publicDir: resolve(sourceRoot, 'apps/web/public'),
+    esbuild: { jsx: 'automatic' },
+    css: { postcss: {} },
+    resolve: {
+      preserveSymlinks: true,
+      alias: [...exports].filter(([name]) => name.startsWith('@patrick/contracts'))
+        .map(([name, replacement]) => ({ find: new RegExp('^' + name + '$'), replacement })),
+    },
+    build: {
+      outDir: resolve(outputRoot, 'web'),
+      emptyOutDir: true,
+      sourcemap: false,
+      target: 'es2022',
+      minify: 'esbuild',
+      cssCodeSplit: true,
+    },
+  });
+}
+
+async function copyRuntimePackages(toolRoot, outputRoot, lock) {
+  for (const [name, selected] of Object.entries(runtimePackages)) {
+    const source = await physicalDirectory(resolve(toolRoot, 'node_modules', name), 'RUNTIME_DEPENDENCY_ROOT_INVALID');
+    const destination = resolve(outputRoot, 'node_modules', name);
+    const packageJson = JSON.parse(await readFile(resolve(source, 'package.json'), 'utf8'));
+    const expected = runtimeVersions[name];
+    if (packageJson.version !== expected || lock.packages?.['node_modules/' + name]?.version !== expected) {
+      fail('RUNTIME_DEPENDENCY_VERSION_MISMATCH');
+    }
+    for (const path of selected) {
+      const absolute = resolve(source, path);
+      if (await realpath(absolute) !== absolute) fail('RUNTIME_MATERIAL_SYMLINK');
+    }
+    await copySelected(source, destination, selected);
+  }
+}
+
+async function npmVersion(staging) {
+  const npm = await realpath(resolve(dirname(process.execPath), 'npm'));
+  if (basename(npm) !== 'npm-cli.js') fail('RUNTIME_NPM_VERSION_UNAVAILABLE');
+  const observed = spawnSync(process.execPath, [npm, '--global', '--version'], {
+    cwd: staging,
+    encoding: 'utf8',
+    env: { PATH: '/usr/bin:/bin', npm_config_userconfig: resolve(staging, 'npmrc'), npm_config_globalconfig: '/dev/null' },
+    timeout: 10_000,
+  });
+  if (observed.status !== 0 || !/^\d+\.\d+\.\d+$/.test(observed.stdout.trim())) {
+    fail('RUNTIME_NPM_VERSION_UNAVAILABLE');
+  }
+  return observed.stdout.trim();
+}
+
+function nativeIdentity(bytes) {
+  const arches = new Map([[0x01000007, 'x64'], [0x0100000c, 'arm64']]);
+  const magic = bytes.subarray(0, 4).toString('hex');
+  if (bytes.length >= 20 && magic === 'cffaedfe') {
+    return { format: 'mach-o', architecture: arches.get(bytes.readUInt32LE(4)) };
+  }
+  if (bytes.length >= 20 && magic === '7f454c46' && bytes[4] === 2 && bytes[5] === 1) {
+    const machine = bytes.readUInt16LE(18);
+    return { format: 'elf', architecture: new Map([[62, 'x64'], [183, 'arm64']]).get(machine) };
+  }
+  fail('RUNTIME_NATIVE_FORMAT_INVALID');
+}
+
+function nativeLoad(outputRoot) {
+  const probe = `
+    import { createRequire } from 'node:module';
+    import { join } from 'node:path';
+    const require = createRequire(join(process.cwd(), 'runtime-native-probe.cjs'));
+    const Database = require('better-sqlite3');
+    const db = new Database(':memory:');
+    const sqlite = db.prepare('SELECT sqlite_version() version').get().version;
+    db.close();
+    process.stdout.write(JSON.stringify({sqlite, resolved: require.resolve('better-sqlite3')}) + '\\n');
+  `;
+  const run = spawnSync(process.execPath, ['--input-type=module', '--eval', probe], {
+    cwd: outputRoot,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      TMPDIR: process.env.TMPDIR,
+      NODE_OPTIONS: '',
+      NODE_PATH: '',
+    },
+    timeout: 30_000,
+  });
+  if (run.status !== 0) fail('RUNTIME_NATIVE_LOAD_FAILED');
+  let result;
+  try {
+    result = JSON.parse(run.stdout);
+  } catch {
+    fail('RUNTIME_NATIVE_LOAD_FAILED');
+  }
+  if (!result.resolved.startsWith(resolve(outputRoot, 'node_modules') + sep)) {
+    fail('RUNTIME_NATIVE_RESOLUTION_ESCAPE');
+  }
+  return result;
+}
+
+function role(path) {
+  if (/^runtime\/(composition|service|cli|worker)\.mjs$/.test(path)) return 'runtime-entry';
+  if (/^runtime\/chunk-[A-Z0-9]+\.mjs$/.test(path)) return 'runtime-shared-chunk';
+  if (path === 'migrations/manifest.json') return 'storage-migration-manifest';
+  if (/^migrations\/[0-9]{4}_[a-z0-9_]+\.sql$/.test(path)) return 'storage-migration';
+  if (path === 'web/index.html') return 'web-entry';
+  if (path.startsWith('web/')) return 'web-asset';
+  if (path === nativePath) return 'native-addon';
+  const [, pkg, filename] = path.split('/');
+  if (path.startsWith('node_modules/') && Object.hasOwn(runtimePackages, pkg) && runtimePackages[pkg].includes(filename) && path.split('/').length === 3) {
+    if (filename === 'package.json') return 'runtime-package-metadata';
+    if (filename === 'LICENSE' || filename === 'LICENSE.md') return 'runtime-package-license';
+  }
+  if (/^node_modules\/(?:better-sqlite3\/lib\/.+\.js|bindings\/bindings\.js|file-uri-to-path\/index\.js)$/.test(path)) return 'runtime-package-code';
+  fail('RUNTIME_MATERIAL_ROLE_UNKNOWN');
+}
+
+async function materialRecords(root) {
+  const paths = (await walk(root)).filter((path) => path !== inventoryFile).sort();
+  validateMaterialPaths(paths);
+  if (paths.length > LIMITS.files) fail('RUNTIME_MATERIAL_LIMIT');
+  const records = [];
+  let total = 0;
+  for (const path of paths) {
+    const absolute = resolve(root, path);
+    const info = await regularFile(absolute);
+    if (info.size > LIMITS.artifactBytes) fail('RUNTIME_MATERIAL_LIMIT');
+    total += info.size;
+    if (total > LIMITS.totalBytes) fail('RUNTIME_MATERIAL_LIMIT');
+    records.push({
+      path,
+      role: role(path),
+      bytes: info.size,
+      sha256: sha256(await readFile(absolute)),
+      mode: fileMode(info),
+    });
+  }
+  return records;
+}
+
+function fileMode(info) {
+  const mode = (info.mode & 0o7777).toString(8);
+  if (mode !== '644' && mode !== '755') fail('RUNTIME_MATERIAL_MODE_INVALID');
+  return '100' + mode;
+}
+
+async function verifyArtifact(root) {
+  await physicalDirectory(root, 'RUNTIME_ARTIFACT_ROOT_INVALID');
+  const inventoryPath = resolve(root, inventoryFile);
+  const info = await regularFile(inventoryPath);
+  if (await realpath(inventoryPath) !== inventoryPath) fail('RUNTIME_MATERIAL_SYMLINK');
+  if (info.size > LIMITS.artifactBytes || fileMode(info) !== '100644') fail('RUNTIME_INVENTORY_INVALID');
+  const inventoryBytes = await readFile(inventoryPath);
+  let inventory;
+  try { inventory = JSON.parse(inventoryBytes.toString('utf8')); }
+  catch { fail('RUNTIME_INVENTORY_INVALID'); }
+  if (inventory?.schemaVersion !== 1 || inventory?.materialKind !== 'emitted-runtime-materials' ||
+      !Array.isArray(inventory.files) || inventory.files.length > LIMITS.files) fail('RUNTIME_INVENTORY_INVALID');
+  const expectedPaths = inventory.files.map((record) => record?.path);
+  validateMaterialPaths(expectedPaths);
+  const { source, native, observed, tools } = inventory;
+  if (!gitHashPattern.test(source?.commit) || !digestPattern.test(source?.snapshotSha256) ||
+      !digestPattern.test(source?.lockSha256) || !['commit', 'pinned-snapshot'].includes(source?.kind) ||
+      tools?.esbuild !== '0.28.2' || tools?.vite !== '7.3.8' ||
+      !['darwin', 'linux'].includes(observed?.platform) || !['x64', 'arm64'].includes(observed?.arch) ||
+      !/^v\d+\.\d+\.\d+$/.test(observed?.node) || !/^\d+$/.test(observed?.modules) ||
+      !/^\d+\.\d+\.\d+$/.test(observed?.npm) || native?.path !== nativePath ||
+      native.architecture !== observed.arch || native.observedArchitecture !== observed.arch ||
+      native.observedNode !== observed.node || native.observedModules !== observed.modules ||
+      native.observedLoad !== true || !/^\d+\.\d+\.\d+$/.test(native.sqlite) ||
+      JSON.stringify(inventory.packages) !== JSON.stringify(packageInventory())) fail('RUNTIME_INVENTORY_INVALID');
+  const actualPaths = (await walk(root)).filter((path) => path !== inventoryFile).sort();
+  const expected = new Set(expectedPaths);
+  const actualSet = new Set(actualPaths);
+  if (expectedPaths.some((path) => !actualSet.has(path))) fail('RUNTIME_MATERIAL_MISSING');
+  if (actualPaths.some((path) => !expected.has(path))) fail('RUNTIME_MATERIAL_EXTRA');
+  const required = [
+    ...Object.keys(entries).map((name) => 'runtime/' + name + '.mjs'),
+    'migrations/manifest.json',
+    'web/index.html',
+    'node_modules/better-sqlite3/lib/index.js',
+    nativePath,
+    ...Object.entries(runtimePackages).flatMap(([name, items]) => items.filter((path) => path !== 'lib')
+      .map((path) => 'node_modules/' + name + '/' + path)),
+  ];
+  if (required.some((path) => !actualSet.has(path)) ||
+      !actualPaths.some((path) => path.startsWith('runtime/chunk-')) ||
+      !actualPaths.some((path) => path.startsWith('web/assets/'))) fail('RUNTIME_MATERIAL_MISSING');
+  const actual = await materialRecords(root);
+  if (JSON.stringify(actual) !== JSON.stringify(inventory.files)) fail('RUNTIME_MATERIAL_MISMATCH');
+  await readMigrations(resolve(root, 'migrations'));
+  for (const [name, version] of Object.entries(runtimeVersions)) {
+    const installed = JSON.parse(await readFile(resolve(root, 'node_modules', name, 'package.json'), 'utf8'));
+    if (installed.name !== name || installed.version !== version) fail('RUNTIME_DEPENDENCY_VERSION_MISMATCH');
+  }
+  const addon = actual.find((record) => record.path === nativePath);
+  const nativeBytes = await readFile(resolve(root, nativePath));
+  const architecture = nativeIdentity(nativeBytes);
+  if (addon.sha256 !== native.sha256 || addon.bytes !== native.bytes ||
+      architecture.format !== native.format || architecture.architecture !== native.architecture) {
+    fail('RUNTIME_NATIVE_INVENTORY_MISMATCH');
+  }
+  const bytes = actual.reduce((sum, record) => sum + record.bytes, 0);
+  if (bytes + inventoryBytes.length > LIMITS.totalBytes || actual.length + 1 > LIMITS.files ||
+      Math.ceil((bytes + inventoryBytes.length) / 3) * 4 > LIMITS.packageBytes) fail('RUNTIME_MATERIAL_LIMIT');
+  return {
+    status: 'verified',
+    files: actual.length,
+    bytes,
+    inventoryBytes: inventoryBytes.length,
+    inventorySha256: sha256(inventoryBytes),
+  };
+}
+
+function packageInventory() {
+  return Object.entries(runtimeVersions).map(([name, version]) => ({ name, version }));
+}
+
+async function buildRuntime(values, recipe) {
+  const toolRoot = values['source-root'];
+  const outputRoot = values['output-root'];
+  const commit = values['source-commit'];
+  const pinnedSnapshot = values['source-snapshot'];
+  if (pinnedSnapshot !== undefined && !digestPattern.test(pinnedSnapshot)) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
+  const snapshot = await captureSource(toolRoot, commit);
+  await verifyRecipe(toolRoot, recipe, snapshot);
+  if (pinnedSnapshot !== undefined ? pinnedSnapshot !== snapshot.digest : snapshot.changed) {
+    fail('RUNTIME_SOURCE_SNAPSHOT_MISMATCH');
+  }
+  if (!isAbsolute(outputRoot) || resolve(outputRoot) !== outputRoot) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
+  const local = relative(toolRoot, outputRoot);
+  if (local === '' || (!local.startsWith('..' + sep) && local !== '..')) fail('RUNTIME_OUTPUT_INSIDE_SOURCE');
+  const outputParent = await physicalDirectory(dirname(outputRoot), 'RUNTIME_OUTPUT_PARENT_INVALID');
+  const owner = await lstat(outputParent);
+  if (owner.uid !== process.geteuid?.() || (owner.mode & 0o022) !== 0) fail('RUNTIME_OUTPUT_PARENT_NOT_EXCLUSIVE');
+  try {
+    await lstat(outputRoot);
+    fail('RUNTIME_OUTPUT_EXISTS');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  process.umask(0o022);
+  const staging = await mkdtemp(join(dirname(outputRoot), '.' + basename(outputRoot) + '-build-'));
+  const sourceRoot = resolve(staging, 'inputs');
+  const materials = resolve(staging, 'materials');
+  try {
+    await materializeSource(snapshot, sourceRoot);
+    for (const name of Object.keys(process.env)) {
+      if (/^(?:VITE_|ROLLUP_|BROWSERSLIST(?:_|$)|ESBUILD_BINARY_PATH$|NODE_ENV$)/.test(name)) delete process.env[name];
+    }
+    const lockBytes = await readFile(resolve(sourceRoot, 'package-lock.json'));
+    const lock = JSON.parse(lockBytes.toString('utf8'));
+    if (lock.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object') fail('RUNTIME_LOCKFILE_INVALID');
+    await linkBuildDependencies(sourceRoot, toolRoot, lock);
+    const esbuild = await loadTool(toolRoot, lock, 'node_modules/esbuild', '0.28.2', 'lib/main.js');
+    const vite = await loadTool(toolRoot, lock, 'apps/web/node_modules/vite', '7.3.8', 'dist/node/index.js');
+    const exports = await workspaceExports(sourceRoot);
+    await esbuild.build({
+      absWorkingDir: sourceRoot,
+      entryPoints: entries,
+      outdir: resolve(materials, 'runtime'),
+      bundle: true,
+      splitting: true,
+      format: 'esm',
+      platform: 'node',
+      target: ['node24.9'],
+      external: ['better-sqlite3'],
+      preserveSymlinks: true,
+      tsconfigRaw: { compilerOptions: {} },
+      sourcemap: false,
+      legalComments: 'eof',
+      entryNames: '[name]',
+      chunkNames: 'chunk-[hash]',
+      outExtension: { '.js': '.mjs' },
+      logLevel: 'silent',
+      plugins: [{
+        name: 'admitted-workspace',
+        setup(build) {
+          build.onResolve({ filter: /^@patrick\// }, ({ path }) => {
+            const target = exports.get(path);
+            return target ? { path: target } : { errors: [{ text: 'RUNTIME_WORKSPACE_EXPORT_UNKNOWN' }] };
+          });
+        },
+      }],
+    });
+    await copyMigrations(sourceRoot, materials);
+    await buildWeb(sourceRoot, materials, vite, exports);
+    await copyRuntimePackages(toolRoot, materials, lock);
+    const nativeBytes = await readFile(resolve(materials, nativePath));
+    const native = nativeIdentity(nativeBytes);
+    if (native.architecture !== process.arch ||
+        native.format !== (process.platform === 'darwin' ? 'mach-o' : 'elf')) fail('RUNTIME_NATIVE_ARCHITECTURE_MISMATCH');
+    const nativeObservation = nativeLoad(materials);
+    const files = await materialRecords(materials);
+    const inventory = {
+      schemaVersion: 1,
+      materialKind: 'emitted-runtime-materials',
+      source: {
+        kind: pinnedSnapshot === undefined ? 'commit' : 'pinned-snapshot',
+        commit,
+        snapshotSha256: snapshot.digest,
+        lockSha256: sha256(lockBytes),
+      },
+      tools: { esbuild: '0.28.2', vite: '7.3.8' },
+      observed: {
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+        modules: process.versions.modules,
+        npm: await npmVersion(staging),
+      },
+      packages: packageInventory(),
+      native: {
+        path: nativePath,
+        sha256: sha256(nativeBytes),
+        bytes: nativeBytes.length,
+        ...native,
+        observedArchitecture: process.arch,
+        observedNode: process.version,
+        observedModules: process.versions.modules,
+        observedLoad: true,
+        sqlite: nativeObservation.sqlite,
+      },
+      files,
+    };
+    await mkdir(resolve(materials, 'metadata'), { recursive: true });
+    await writeFile(resolve(materials, inventoryFile), JSON.stringify(inventory, null, 2) + '\n', {
+      mode: 0o644, flag: 'wx',
+    });
+    await verifyArtifact(materials);
+    await verifyRecipe(toolRoot, recipe, snapshot);
+    await rename(materials, outputRoot);
+    const receipt = await verifyArtifact(outputRoot);
+    return {
+      ...receipt,
+      status: 'built',
+      sourceCommit: commit,
+      sourceSnapshotSha256: snapshot.digest,
+      artifactRoot: outputRoot,
+    };
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  if (process.env.NODE_OPTIONS || process.env.NODE_PATH || process.execArgv.length) fail('RUNTIME_BUILD_LOADER_FORBIDDEN');
+  const [command, ...argv] = process.argv.slice(2);
+  if (!['build', 'snapshot', 'verify'].includes(command)) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
+  const values = parse(command, argv);
+  const recipe = await loadRecipe(values['source-root']);
+  let result;
+  if (command === 'snapshot') {
+    const snapshot = await captureSource(values['source-root'], values['source-commit']);
+    await verifyRecipe(values['source-root'], recipe, snapshot);
+    result = { status: 'captured', snapshotSha256: snapshot.digest, files: snapshot.files.length, changed: snapshot.changed };
+  } else {
+    result = command === 'build' ? await buildRuntime(values, recipe) : await verifyArtifact(values['artifact-root']);
+  }
+  process.stdout.write(JSON.stringify(result) + '\n');
+}
+
+main().catch((error) => {
+  const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+    ? error.message
+    : 'RUNTIME_BUILD_FAILED';
+  process.stderr.write(JSON.stringify({ status: 'failed', code }) + '\n');
+  process.exitCode = 1;
+});

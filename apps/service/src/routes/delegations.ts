@@ -10,7 +10,7 @@ import {
   type MandateChange,
   type MandateChangeBaseline,
 } from '../../../../packages/domain/src/delegation.js';
-import { assertDomainPermission, authContext, canConfirm, ORIGIN, RP_ID, snapshot, type Principal } from '../auth.js';
+import { assertDomainPermission, authContext, browserAuthority, canConfirm, snapshot, type Principal } from '../auth.js';
 import { stageControlProposal } from '../control.js';
 import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
@@ -103,7 +103,7 @@ function stage(db: SqliteDatabase, principal: Principal, time: Date, input: Stag
     const now = time.toISOString();
     const challenge = db.prepare(`SELECT challenge_hash,expires_at FROM auth_challenges WHERE challenge_id=? AND account_id=?
       AND purpose='control' AND consumed_at IS NULL AND expires_at>? AND origin=? AND rp_id=?`)
-      .get(input.challengeId, principal.account_id, now, ORIGIN, RP_ID) as { challenge_hash: string; expires_at: string } | undefined;
+      .get(input.challengeId, principal.account_id, now, browserAuthority().origin, browserAuthority().rpId) as { challenge_hash: string; expires_at: string } | undefined;
     if (!challenge) forbidden('challenge');
     const bound = db.prepare('SELECT 1 FROM control_proposals WHERE account_id=? AND challenge_hash=? LIMIT 1')
       .get(principal.account_id, challenge.challenge_hash);
@@ -190,7 +190,7 @@ async function applyProposal(c: Context, ready: Ready): Promise<Response> {
         AND r.challenge_hash=@challenge AND r.created_at=@confirmed`).get({
       receipt: input.payload.control_receipt_id, proposal: id, account: principal.account_id, caller: principal.caller_id,
       epoch: principal.auth_epoch, hash, policy: row.base_revision, challenge: row.challenge_hash,
-      confirmed: row.confirmed_at, origin: ORIGIN, rp: RP_ID,
+      confirmed: row.confirmed_at, origin: browserAuthority().origin, rp: browserAuthority().rpId,
     }) as { credential_ref: string; authenticated_at: string } | undefined;
     if (!receipt || !isRecent(receipt.authenticated_at, time) || !credentials.resolve(receipt.credential_ref)) forbidden('control_receipt');
     assertMandateScopes(db, principal, change, row.mandate_id);

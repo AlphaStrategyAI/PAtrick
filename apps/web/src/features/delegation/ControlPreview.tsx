@@ -54,7 +54,7 @@ export function ControlPreview({ preview, onClose, onApplied }: { preview: Previ
 
   async function stage(signal: AbortSignal) {
     const keys = exact.current;
-    if (!keys.challenge) keys.challenge = string(record(await api.write('createAuthChallenge', {}, { rp_id: 'localhost' }, { signal })).challenge_id);
+    if (!keys.challenge) keys.challenge = string(record(await api.write('createAuthChallenge', {}, { rp_id: window.location.hostname }, { signal })).challenge_id);
     const accepted = await api.command('controlDelegation', { id: preview.id }, {
       client_request_id: keys.stage ??= crypto.randomUUID(), expected_revision: preview.revision,
       payload: { type: actions[preview.requested], challenge_id: keys.challenge },

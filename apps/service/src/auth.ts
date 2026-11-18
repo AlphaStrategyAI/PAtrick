@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import type { Context } from 'hono';
 import type { Hono } from 'hono';
 import {
@@ -17,6 +18,23 @@ import { ApiError, errorBody } from './errors.js';
 
 export const ORIGIN = 'http://localhost';
 export const RP_ID = 'localhost';
+export type BrowserAuthority = Readonly<{ origin: string; rpId: string }>;
+export const LOCAL_BROWSER_AUTHORITY: BrowserAuthority = Object.freeze({ origin: ORIGIN, rpId: RP_ID });
+
+export function validateBrowserAuthority(input: BrowserAuthority, allowLocal = false): BrowserAuthority {
+  const { origin, rpId } = input;
+  if (allowLocal && origin === ORIGIN && rpId === RP_ID) return LOCAL_BROWSER_AUTHORITY;
+  if (typeof origin !== 'string' || origin.length > 512 || typeof rpId !== 'string' || rpId.length > 253 ||
+      !rpId.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ||
+      isIP(rpId)) throw new Error('BROWSER_AUTHORITY_INVALID');
+  let url: URL;
+  try { url = new URL(origin); }
+  catch { throw new Error('BROWSER_AUTHORITY_INVALID'); }
+  if (url.protocol !== 'https:' || url.origin !== origin || url.hostname !== rpId) {
+    throw new Error('BROWSER_AUTHORITY_INVALID');
+  }
+  return Object.freeze({ origin, rpId });
+}
 export const CHALLENGE_TTL_MS = 120_000;
 export const BOOTSTRAP_TTL_MS = 120_000;
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -51,6 +69,7 @@ export type AuthContext = {
   db: SqliteDatabase;
   credentials: CredentialStore;
   now: () => Date;
+  browserAuthority?: BrowserAuthority;
 };
 
 type ChallengePurpose = 'registration' | 'authentication' | 'control';
@@ -80,6 +99,10 @@ const authStorage = new AsyncLocalStorage<AuthContext>();
 
 const challengeRequest = routeRequest('createAuthChallenge');
 const verifyRequest = routeRequest('verifyAuth');
+
+export function browserAuthority(): BrowserAuthority {
+  return authStorage.getStore()?.browserAuthority ?? LOCAL_BROWSER_AUTHORITY;
+}
 
 export function authContext(): AuthContext {
   const current = authStorage.getStore();
@@ -304,7 +327,7 @@ export function mountAuthRoutes(app: Hono): void {
 }
 
 export function assertBrowserOrigin(request: Request): void {
-  if (request.headers.get('origin') !== ORIGIN) {
+  if (request.headers.get('origin') !== browserAuthority().origin) {
     throw new ApiError(403, 'FORBIDDEN', { reason: 'origin' });
   }
 }
@@ -325,7 +348,7 @@ async function createChallenge(c: Context): Promise<Response> {
   const parsed = challengeRequest.safeParse(await readJson(c.req.raw));
   if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'schema' });
   const body = parsed.data as { rp_id: string };
-  if (body.rp_id !== RP_ID) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'rp_id' });
+  if (body.rp_id !== browserAuthority().rpId) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'rp_id' });
   const bootstrap = c.req.header('x-patrick-bootstrap');
   if (bootstrap) return c.json(await beginRegistration(bootstrap));
   if (readPresentedToken(c.req.raw)) {
@@ -445,7 +468,7 @@ async function beginRegistration(ticket: string): Promise<{ challenge_id: string
   if (!pending) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
   const options = await generateRegistrationOptions({
     rpName: 'PAtrick',
-    rpID: RP_ID,
+    rpID: browserAuthority().rpId,
     userName: pending.account_id,
     userID: crypto.getRandomValues(new Uint8Array(16)),
     attestationType: 'none',
@@ -470,8 +493,8 @@ async function beginRegistration(ticket: string): Promise<{ challenge_id: string
       'registration',
       options.challenge,
       sha256(options.challenge),
-      ORIGIN,
-      RP_ID,
+      browserAuthority().origin,
+      browserAuthority().rpId,
       expiresAt,
       createdAt,
     );
@@ -484,7 +507,7 @@ async function beginAuthentication(): Promise<{ challenge_id: string; challenge:
   const credentials = db.prepare('SELECT credential_id AS id FROM passkey_credentials').all() as { id: string }[];
   if (credentials.length === 0) throw new ApiError(403, 'FORBIDDEN', { reason: 'registration_required' });
   const options = await generateAuthenticationOptions({
-    rpID: RP_ID,
+    rpID: browserAuthority().rpId,
     userVerification: 'required',
     timeout: CHALLENGE_TTL_MS,
     allowCredentials: credentials.map((credential) => ({ id: credential.id, transports: ['internal'] })),
@@ -501,7 +524,7 @@ async function beginControlChallenge(principal: Principal): Promise<{ challenge_
   const { db, now } = authContext();
   const credentials = db.prepare('SELECT credential_id AS id FROM passkey_credentials WHERE account_id = ?').all(principal.account_id) as { id: string }[];
   const options = await generateAuthenticationOptions({
-    rpID: RP_ID,
+    rpID: browserAuthority().rpId,
     userVerification: 'required',
     timeout: CHALLENGE_TTL_MS,
     allowCredentials: credentials.map((credential) => ({ id: credential.id, transports: ['internal'] })),
@@ -519,8 +542,8 @@ async function verifyRegistration(credential: object, expectedChallenge: string)
     const verified = await verifyRegistrationResponse({
       response: credential as RegistrationResponseJSON,
       expectedChallenge,
-      expectedOrigin: ORIGIN,
-      expectedRPID: RP_ID,
+      expectedOrigin: browserAuthority().origin,
+      expectedRPID: browserAuthority().rpId,
       requireUserVerification: true,
       supportedAlgorithmIDs: [COSEALG.ES256],
     });
@@ -544,8 +567,8 @@ async function verifyAssertion(db: SqliteDatabase, credential: object, expectedC
     const verified = await verifyAuthenticationResponse({
       response: credential as AuthenticationResponseJSON,
       expectedChallenge,
-      expectedOrigin: ORIGIN,
-      expectedRPID: RP_ID,
+      expectedOrigin: browserAuthority().origin,
+      expectedRPID: browserAuthority().rpId,
       requireUserVerification: true,
       credential: {
         id: credentialId,
@@ -605,7 +628,7 @@ function consumeAuthChallenge(db: SqliteDatabase, row: ChallengeRow, nowIso: str
   const consumed = db.prepare(`UPDATE auth_challenges
     SET consumed_at = ?
     WHERE challenge_id = ? AND purpose = ? AND origin = ? AND rp_id = ? AND consumed_at IS NULL AND expires_at > ?
-    RETURNING challenge_id`).get(nowIso, row.challenge_id, row.purpose, ORIGIN, RP_ID, nowIso);
+    RETURNING challenge_id`).get(nowIso, row.challenge_id, row.purpose, browserAuthority().origin, browserAuthority().rpId, nowIso);
   if (!consumed) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'challenge' });
 }
 
@@ -657,8 +680,8 @@ function insertChallenge(
     input.purpose,
     input.challenge,
     sha256(input.challenge),
-    ORIGIN,
-    RP_ID,
+    browserAuthority().origin,
+    browserAuthority().rpId,
     new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString(),
     createdAt,
   );
@@ -668,7 +691,7 @@ function insertChallenge(
 function loadChallenge(db: SqliteDatabase, challengeId: string, now: Date): ChallengeRow {
   const row = db.prepare(`SELECT challenge_id, account_id, purpose, challenge, origin, rp_id, expires_at, consumed_at
     FROM auth_challenges WHERE challenge_id = ?`).get(challengeId) as ChallengeRow | undefined;
-  if (!row || row.consumed_at || row.expires_at <= now.toISOString() || row.origin !== ORIGIN || row.rp_id !== RP_ID) {
+  if (!row || row.consumed_at || row.expires_at <= now.toISOString() || row.origin !== browserAuthority().origin || row.rp_id !== browserAuthority().rpId) {
     throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'challenge' });
   }
   return row;
@@ -683,11 +706,15 @@ function publicSession(principal: Principal) {
 }
 
 function sessionCookie(token: string, maxAge: number): string {
-  return `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+  return `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secureCookieAttribute()}`;
 }
 
 function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
+  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secureCookieAttribute()}`;
+}
+
+function secureCookieAttribute(): string {
+  return browserAuthority().origin.startsWith('https:') ? '; Secure' : '';
 }
 
 function readCookie(request: Request, name: string): string | null {

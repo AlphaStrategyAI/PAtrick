@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalPayload, type Json } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import { assertDomainPermission, canConfirm, ORIGIN, RP_ID, snapshot, type Principal } from '../auth.js';
+import { assertDomainPermission, canConfirm, LOCAL_BROWSER_AUTHORITY, snapshot, type BrowserAuthority, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { stageControlProposal } from '../control.js';
 import { settingsControlHash } from './authority.js';
@@ -79,9 +79,10 @@ export function canApply(proof: Validation, live: BoundDraft, now: Date): boolea
 }
 
 export function createSettingsChanges(options: {
-  db: SqliteDatabase; now: () => Date; ttlMs?: number; handlers: Readonly<Partial<Record<string, SettingsHandler>>>;
+  db: SqliteDatabase; now: () => Date; ttlMs?: number; browserAuthority?: BrowserAuthority;
+  handlers: Readonly<Partial<Record<string, SettingsHandler>>>;
 }) {
-  const { db, now, handlers } = options;
+  const { db, now, handlers, browserAuthority = LOCAL_BROWSER_AUTHORITY } = options;
   const ttlMs = options.ttlMs ?? 120_000;
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > 300_000) throw new Error('SETTINGS_TTL_INVALID');
   const changeById = db.prepare('SELECT account_id,caller_id,data_domain,receipt FROM settings_changes WHERE change_id=?');
@@ -253,7 +254,7 @@ export function createSettingsChanges(options: {
         const account = db.prepare('SELECT policy_revision FROM accounts WHERE account_id=?').get(principal.account_id) as { policy_revision: number };
         const challenge = db.prepare(`SELECT challenge_hash,expires_at FROM auth_challenges WHERE challenge_id=? AND account_id=?
           AND purpose='control' AND consumed_at IS NULL AND expires_at>? AND origin=? AND rp_id=?`)
-          .get(challengeId, principal.account_id, time.toISOString(), ORIGIN, RP_ID) as { challenge_hash: string; expires_at: string } | undefined;
+          .get(challengeId, principal.account_id, time.toISOString(), browserAuthority.origin, browserAuthority.rpId) as { challenge_hash: string; expires_at: string } | undefined;
         if (!challenge) throw new ApiError(403, 'FORBIDDEN', { reason: 'challenge' });
         const proposalId = 'settings_proposal_' + sha256([principal.account_id, principal.caller_id, validationId, challengeId]);
         const proposalHash = settingsControlHash({ operation: draft.operation, target: draft.target, domain: draft.domain,

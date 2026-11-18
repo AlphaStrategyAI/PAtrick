@@ -3,8 +3,7 @@ import type { Context, Hono } from 'hono';
 import { canonicalPayload, routes, type Json } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
-  ORIGIN,
-  RP_ID,
+  browserAuthority,
   assertBrowserOrigin,
   assertDomainPermission,
   authContext,
@@ -139,8 +138,8 @@ export async function confirmControl(principal: Principal, input: ConfirmControl
       now: nowIso,
       id: input.challenge,
       account: principal.account_id,
-      origin: ORIGIN,
-      rp_id: RP_ID,
+      origin: browserAuthority().origin,
+      rp_id: browserAuthority().rpId,
     }) as { challenge_hash: string } | undefined;
     if (!consumed) throw new ApiError(403, 'FORBIDDEN', { reason: 'challenge' });
     const confirmed = db.prepare(CONFIRM_PROPOSAL_SQL).get({

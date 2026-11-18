@@ -7,7 +7,7 @@ import { encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autolo
 import { channelPermit, createAnswerGate, type AnswerPayload } from '../../../../packages/domain/src/answer-gate.js';
 import { createFeishuChannel, type EnableProof } from '../../../../packages/integrations/feishu/connection.js';
 import { claimFeishuOutboundTest, dispatchClaimedFeishuTest, type FeishuTestOutbound } from '../../../../packages/integrations/feishu/outbound.js';
-import { assertDomainPermission, domainsWithPermission, ORIGIN, requireSession, snapshot, type Principal } from '../auth.js';
+import { assertDomainPermission, browserAuthority, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { assertBusinessWrite } from '../recovery-runtime.js';
 import { registerSettingsOperation, runSettingsOperation, runSettingsOperationNow } from '../settings/registry.js';
@@ -17,7 +17,9 @@ type Ready = () => {
   db: SqliteDatabase; now: () => Date; hub: LocalHubPort; feishuCredentials?: CredentialStore; feishuTestOutbound?: FeishuTestOutbound;
 };
 type PairingCodes = Map<string, { code: string; expires_at: string; connection_id: string }>;
-const secureSetupOrigin = ORIGIN.replace(/^http:/u, 'https:');
+function secureSetupOrigin(): string {
+  return browserAuthority().origin.replace(/^http:/u, 'https:');
+}
 type Envelope<T> = { client_request_id: string; expected_revision: number | null; payload_hash: string; payload: T };
 
 const bindingRequest = routeRequest('createFeishuBinding');
@@ -61,7 +63,7 @@ async function readChannel(c: Context, ready: Ready): Promise<Response> {
 async function putCredential(c: Context, ready: Ready): Promise<Response> {
   assertFeishuOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
-  if (new URL(c.req.url).origin !== secureSetupOrigin || c.req.header('origin') !== secureSetupOrigin) {
+  if (new URL(c.req.url).origin !== secureSetupOrigin() || c.req.header('origin') !== secureSetupOrigin()) {
     throw new ApiError(409, 'CONFLICT', { reason: 'tls_required' });
   }
   const { feishuCredentials, db, now } = ready();
@@ -161,11 +163,11 @@ async function readBinding(c: Context, ready: Ready, codes: PairingCodes): Promi
   const expired = !!pairing && pairing.status !== 'consumed' &&
     (!isCurrent || pairing.status === 'expired' || pairing.expires_at <= stamped.toISOString());
   const disclose = !current && isCurrent && pairing.status === 'open' && !expired && owner &&
-    new URL(c.req.url).origin === secureSetupOrigin;
+    new URL(c.req.url).origin === secureSetupOrigin();
   const code = disclose && pairingId ? codes.get(pairingId)?.code ?? null : null;
   if ((code || expired) && pairingId) codes.delete(pairingId);
   const summary = {
-    credential_setup_available: owner && !!feishuCredentials && new URL(c.req.url).origin === secureSetupOrigin,
+    credential_setup_available: owner && !!feishuCredentials && new URL(c.req.url).origin === secureSetupOrigin(),
     transport_available: owner && !!feishuTestOutbound && !!connection?.owner_open_id && connection.transport_mode === 'probe' &&
       (connection.status === 'needs_test' || connection.status === 'needs_enable') && admittedPairingProbe(connection),
     owner_actions_available: owner,
@@ -265,7 +267,7 @@ async function readTest(c: Context, ready: Ready): Promise<Response> {
 }
 
 function assertFeishuOrigin(request: Request): void {
-  if (new URL(request.url).origin === secureSetupOrigin && request.headers.get('origin') === secureSetupOrigin) return;
+  if (new URL(request.url).origin === secureSetupOrigin() && request.headers.get('origin') === secureSetupOrigin()) return;
   assertWriteOrigin(request);
 }
 

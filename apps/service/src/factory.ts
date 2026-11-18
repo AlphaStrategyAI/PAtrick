@@ -14,7 +14,10 @@ import { createSourceRegistry, type RegistryOptions } from '@patrick/integration
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
-import { mountAuthRoutes, runWithAuth, type AuthContext } from './auth.js';
+import {
+  LOCAL_BROWSER_AUTHORITY, mountAuthRoutes, runWithAuth, validateBrowserAuthority,
+  type AuthContext, type BrowserAuthority,
+} from './auth.js';
 import { mountControlRoutes } from './control.js';
 import { createPrDeliveryService, type PrDeliveryOptions } from './pr-delivery.js';
 import { mountAnswerRoutes } from './routes/answers.js';
@@ -49,6 +52,7 @@ import { mountProjectionEventRoutes } from './routes/events.js';
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
 export type CreateAppOptions = {
+  browserAuthority?: BrowserAuthority;
   signal?: AbortSignal;
   /** Trusted installed composition receives the exact gated handles before worker admission. */
   bindRecoveryOperations?: (resources: { database: SqliteDatabase; hub: LocalHubPort; hubDatabase: SqliteDatabase }) => RecoverySettingsConfiguration | undefined;
@@ -91,6 +95,8 @@ export class ServiceStartupError extends Error {
 }
 
 export function createServiceRuntime(options: CreateAppOptions = {}) {
+  const browserAuthority = options.browserAuthority
+    ? validateBrowserAuthority(options.browserAuthority, true) : LOCAL_BROWSER_AUTHORITY;
   const lifetime = createTaskLifetime(options.signal);
   const workers: WorkerLifetime[] = [];
   const starters: Array<() => void> = [];
@@ -181,7 +187,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
       }
     }
     state.credentials ??= createCredentialStore(options.credentialDirectory ?? join(tmpdir(), `patrick-credentials-${randomUUID()}`), now);
-    return { db: state.db, credentials: state.credentials, now };
+    return { db: state.db, credentials: state.credentials, now, browserAuthority };
   }
   function durableHub(): LocalHubPort {
     if (state.hub) return state.hub;
