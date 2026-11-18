@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
@@ -127,7 +127,7 @@ export async function t16Fixture(page: Page, seedStandard = false) {
         symlinkSync(outside, target, 'dir');
         return {
           list: () => readdirSync(outside),
-          release: () => rmSync(target),
+          release: () => unlinkSync(target),
         };
       },
       async saveNewKnowledgeAfterFailure() {
