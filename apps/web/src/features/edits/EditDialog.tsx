@@ -110,6 +110,7 @@ export function EditDialog({ operation, payload, target, onClose }: {
     finally { locked.current = false; setBusy(false); }
   }
 
+  const actionPending = editId ? receipt.isFetching : busy;
   return <Dialog title={t(`edits.operation.${operation}`)} onClose={() => { if (!locked.current) onClose(); }}>
     <p>{t(`edits.preview.${operation}`)}</p>
     {location ? <p><code>{location.relative_path}</code></p> : <p className="muted">{t('edits.targetUnavailable')}</p>}
@@ -132,9 +133,15 @@ export function EditDialog({ operation, payload, target, onClose }: {
       <p className="muted">{t('edits.receiptId')} <code>{read.edit_id}</code></p>
     </>}
     <div className="actions">
-      {editId
-        ? <button type="button" disabled={receipt.isFetching} onClick={() => { void receipt.refetch(); }}>{t('edits.refresh')}</button>
-        : payload && <button className="primary" type="button" disabled={busy || error?.code === 'CONFLICT'} onClick={() => { void register(); }}>{t('edits.register')}</button>}
+      {/* Keep the same focusable action while registration becomes a receipt read. */}
+      {(editId || payload) && <button type="button" className={editId ? undefined : 'primary'}
+        disabled={!editId && error?.code === 'CONFLICT'} aria-disabled={actionPending || undefined}
+        style={actionPending ? { opacity: 0.6, cursor: 'default' } : undefined}
+        onClick={() => {
+          if (actionPending) return;
+          if (editId) void receipt.refetch();
+          else void register();
+        }}>{t(editId ? 'edits.refresh' : 'edits.register')}</button>}
       <button type="button" disabled={busy} onClick={onClose}>{t('button.cancel')}</button>
     </div>
   </Dialog>;
