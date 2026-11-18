@@ -177,6 +177,56 @@ test('知识页展示原稿和补充入口，并保留原始证据', async ({ pa
   } finally { fixture.close(); }
 });
 
+for (const scenario of [
+  { name: '文件名带井号', target: '知识笔记/证据 #1.md', destination: '知识笔记/证据 #2.md', mismatch: false, link: false },
+  { name: '目录名带井号', target: '知识笔记/分组 #1/证据.md', destination: '知识笔记/分组 #2/证据.md', mismatch: false, link: false },
+  { name: '普通路径', target: '知识笔记/普通证据.md', destination: '知识笔记/另一个普通证据.md', mismatch: false, link: true },
+  { name: '服务返回不匹配的 URI', target: '知识笔记/普通证据.md', destination: '知识笔记/另一个普通证据.md', mismatch: true, link: false },
+]) {
+  for (const phase of ['target', 'destination'] as const) {
+    test(`编辑目标：${scenario.name}，${phase} 保留路径并只展示正确跳转`, async ({ page }) => {
+      const fixture = await t16Fixture(page);
+      const seen: string[] = [];
+      let releaseDestination!: () => void;
+      const destinationGate = new Promise<void>((resolve) => { releaseDestination = resolve; });
+      const uriFor = (path: string) => `obsidian://open?vault=${encodeURIComponent('个人 Vault')}&file=${encodeURIComponent(path)}`;
+      try {
+        // Simulate a stale/forged server value independently at both response boundaries.
+        await page.route('http://localhost/api/v1/**', async (route) => {
+          const url = new URL(route.request().url());
+          const isDestination = /^\/api\/v1\/edits\/[^/]+\/destination$/.test(url.pathname);
+          if (route.request().method() !== 'GET' || !(url.pathname === '/api/v1/knowledge/k-t16/edit-target' || isDestination)) {
+            return route.fallback();
+          }
+          const response = await fixture.request(url.pathname + url.search);
+          expect(response.status).toBe(200);
+          const body = await response.json() as { data: { relative_path: string; obsidian_uri?: string } };
+          body.data.relative_path = isDestination ? scenario.destination : scenario.target;
+          body.data.obsidian_uri = uriFor(scenario.mismatch ? '知识笔记/另一份.md' : body.data.relative_path);
+          seen.push(url.pathname);
+          if (isDestination) await destinationGate;
+          await route.fulfill({ status: response.status, json: body });
+        });
+        await page.goto('/knowledge');
+        await page.getByRole('button', { name: 'k-t16' }).click({ timeout: 3_000 });
+        await page.getByRole('button', { name: '编辑原稿' }).click();
+        const dialog = page.getByRole('dialog', { name: '编辑原稿' });
+        await expect(dialog.getByText(scenario.target, { exact: true })).toBeVisible();
+        await dialog.getByRole('button', { name: '登记编辑' }).click();
+        await expect(dialog.getByTestId('edit-progress').getByTestId('file-state')).toHaveText('等待保存');
+        await expect.poll(() => seen.some((path) => /^\/api\/v1\/edits\/[^/]+\/destination$/.test(path))).toBe(true);
+        if (phase === 'destination') releaseDestination();
+        const displayedPath = phase === 'target' ? scenario.target : scenario.destination;
+        await expect(dialog.getByText(displayedPath, { exact: true })).toBeVisible();
+        const link = dialog.getByRole('link', { name: '在 Obsidian 打开' });
+        if (scenario.link) await expect(link).toHaveAttribute('href', uriFor(displayedPath));
+        else await expect(link).toHaveCount(0, { timeout: 1_000 });
+        expect(seen).toContain('/api/v1/knowledge/k-t16/edit-target');
+      } finally { releaseDestination(); fixture.close(); }
+    });
+  }
+}
+
 test('委托状态与具体范围来自服务，预览未核验的变更不会写入', async ({ page }) => {
   const fixture = await t16Fixture(page);
   try {

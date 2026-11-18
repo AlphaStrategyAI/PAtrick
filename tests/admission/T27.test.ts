@@ -246,11 +246,18 @@ test('doctor reports app, installer and URI independently, and stopped editor le
     })(deviceId);
     expect(missing).toMatchObject({ application: { status: 'missing' }, uri: 'unregistered', installer: { status: 'unverified' } });
     expect((await inspectObsidian('other-device')).application.status).toBe('unknown');
-    expect(obsidianEditTarget(ready.editor, { vaultId, deviceId, alias: '个人 Vault', mappingRevision: 1 },
-      { vaultId, relativePath: uriPath, mappingRevision: 1 })).toEqual({
+    const mapping = { vaultId, deviceId, alias: '个人 Vault', mappingRevision: 1 };
+    const ambiguousPaths = [uriPath, '知识笔记/分组 #1/证据.md'];
+    expect(ambiguousPaths.map((relativePath) => obsidianEditTarget(ready.editor, mapping,
+      { vaultId, relativePath, mappingRevision: 1 })))
+      .toEqual(ambiguousPaths.map((relativePath) => ({ kind: 'relative_path', relativePath })));
+    expect(obsidianEditTarget(ready.editor, mapping,
+      { vaultId, relativePath: '知识笔记/普通证据.md', mappingRevision: 1 })).toEqual({
       kind: 'obsidian_uri',
-      uri: 'obsidian://open?vault=%E4%B8%AA%E4%BA%BA%20Vault&file=%E7%9F%A5%E8%AF%86%E7%AC%94%E8%AE%B0%2F%E8%AF%81%E6%8D%AE%20%231.md',
+      uri: 'obsidian://open?vault=%E4%B8%AA%E4%BA%BA%20Vault&file=%E7%9F%A5%E8%AF%86%E7%AC%94%E8%AE%B0%2F%E6%99%AE%E9%80%9A%E8%AF%81%E6%8D%AE.md',
     });
+    expect(obsidianEditTarget(ready.editor, mapping, { vaultId, relativePath: '../证据 #1.md', mappingRevision: 1 }))
+      .toEqual({ kind: 'unavailable' });
     expect(obsidianEditTarget(missing, null, { vaultId, relativePath: uriPath, mappingRevision: 1 }))
       .toEqual({ kind: 'relative_path', relativePath: uriPath });
     expect(obsidianEditTarget(ready.editor, { vaultId, deviceId, alias: '个人 Vault', mappingRevision: 1 },

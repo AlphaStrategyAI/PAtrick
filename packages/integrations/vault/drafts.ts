@@ -153,6 +153,7 @@ export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
       } | undefined;
       if (!intent?.relative_path) throw new Error('NOT_FOUND');
       const vault = requireVault(db, intent.vault_id);
+      if (intent.relative_path.includes('#')) throw new Error('OBSIDIAN_URI_UNSUPPORTED_PATH');
       return obsidianFileUri(basename(vault.root_path), intent.relative_path);
     },
   };

@@ -122,7 +122,8 @@ export function obsidianEditTarget(editor, mapping, edit) {
   const parts = path.split('/');
   if (parts.length < 2 || !draftDirs.includes(parts[0]) ||
       parts.some((part) => part === '' || part === '..' || part.startsWith('.'))) return { kind: 'unavailable' };
-  if (editor.application.status !== 'ready' || editor.uri !== 'registered' ||
+  // Obsidian 1.15.1 treats a decoded # as a subpath, including in directory names.
+  if (path.includes('#') || editor.application.status !== 'ready' || editor.uri !== 'registered' ||
       !mapping || mapping.deviceId !== editor.deviceId || mapping.vaultId !== edit.vaultId ||
       !Number.isInteger(mapping.mappingRevision) || mapping.mappingRevision < 1 ||
       mapping.mappingRevision !== edit.mappingRevision || typeof mapping.alias !== 'string' ||

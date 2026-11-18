@@ -271,6 +271,36 @@ test('publishCreateOnly claims a new name and leaves an existing file untouched'
   }
 });
 
+test.each(['知识笔记/原稿 #1.md', '知识笔记/分组 #1/原稿.md'])(
+  'fileUri rejects Obsidian subpath ambiguity for %s without changing the edit', async (relativePath) => {
+    const fx = temporaryDatabase();
+    const root = join(fx.dir, 'vault');
+    const file = join(root, relativePath);
+    mkdirSync(dirname(file), { recursive: true });
+    const contents = note('k-hash', '原始事实');
+    writeFileSync(file, contents, 'utf8');
+    try {
+      const api = apiFor(fx);
+      const vaultId = await connect(api, root);
+      await api.readVault(vaultId);
+      const document = fx.db.prepare('SELECT document_id, observed_seq FROM vault_documents WHERE relative_path = ?')
+        .get(relativePath) as { document_id: string; observed_seq: number };
+      expect(document).toBeDefined();
+      const opened = await api.createEdit(principal, {
+        operation: 'edit_original', knowledge_id: 'k-hash', document_id: document.document_id,
+        expected_source_revision: document.observed_seq,
+      });
+      const before = fx.db.prepare('SELECT * FROM edit_receipts WHERE edit_id = ?').all(opened.edit_id);
+      expect(opened.file.state).toBe('awaiting_save');
+      expect(() => api.fileUri(opened.edit_id)).toThrow('OBSIDIAN_URI_UNSUPPORTED_PATH');
+      expect(readFileSync(file, 'utf8')).toBe(contents);
+      expect(fx.db.prepare('SELECT * FROM edit_receipts WHERE edit_id = ?').all(opened.edit_id)).toEqual(before);
+    } finally {
+      fx.close();
+    }
+  },
+);
+
 test('obsidianFileUri encodes the vault and file and does not open an application', () => {
   const relative = '知识笔记/补充 稿#.md';
   expect(obsidianFileUri('个人库', relative)).toBe(

@@ -21,7 +21,8 @@ export function parseEditTarget(value: unknown): EditTarget {
     throw new ClientError('INVALID_RESPONSE');
   }
   let uri: string | undefined;
-  if (typeof row.obsidian_uri === 'string') {
+  // Obsidian 1.15.1 interprets decoded # as a subpath instead of a filename.
+  if (!path.includes('#') && typeof row.obsidian_uri === 'string') {
     const target = URL.parse(row.obsidian_uri);
     const vault = target?.searchParams.get('vault');
     if (target?.protocol === 'obsidian:' && target.host === 'open' && !target.pathname && !target.username && !target.password && !target.hash &&
@@ -122,7 +123,8 @@ export function EditDialog({ operation, payload, target, onClose }: {
       {(operation === 'create_standard' || operation === 'revise_standard') && read.business.candidate_id && read.business.result_ref &&
         (read.business.state === 'adopted' || read.business.state === 'not_adopted') &&
         <EvaluationEvidence id={read.business.result_ref} candidate={read.business.candidate_id} />}
-      {location?.obsidian_uri && read.file.state === 'awaiting_save' && <a className="primary" href={location.obsidian_uri}>{t('edits.openObsidian')}</a>}
+      {location?.obsidian_uri && !location.relative_path.includes('#') && read.file.state === 'awaiting_save' &&
+        <a className="primary" href={location.obsidian_uri}>{t('edits.openObsidian')}</a>}
       {canRetry
         ? <button type="button" disabled={busy} onClick={() => { void retry(); }}>{t('edits.retryProjection')}</button>
         : read.business.state === 'adopted' && read.projection.state === 'failed' && <p>{t('edits.retryUnavailable')}</p>}
