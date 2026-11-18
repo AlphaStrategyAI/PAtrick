@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { expect, test, vi } from 'vitest';
 import { canonicalPayload, type BrowserCreationScope, type Json } from '@patrick/contracts';
 import { createCredentialStore } from '@patrick/host';
-import { createBlobStore, openDatabase, type MigrationEntry } from '@patrick/storage';
+import { createBlobStore, openDatabase } from '@patrick/storage';
 import { createSourceRegistry } from '@patrick/integrations/sources/registry';
 import { issueCallerSession, mountAuthRoutes, ORIGIN, RP_ID, runWithAuth } from '../../apps/service/src/auth.js';
 import { mountControlRoutes } from '../../apps/service/src/control.js';
@@ -24,11 +24,7 @@ const own = { account_id: 'owner', caller_id: 'web', data_domain: 'personal', pe
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t18-routes-'));
-  const migrations = new URL('../../packages/storage/migrations/', import.meta.url);
-  const manifest = JSON.parse(readFileSync(new URL('manifest.json', migrations), 'utf8')) as MigrationEntry[];
-  const file = '0020_http_sources.sql';
-  const sha256 = createHash('sha256').update(readFileSync(new URL(file, migrations))).digest('hex');
-  const db = openDatabase(join(dir, 'service.sqlite'), { manifest: [...manifest.filter((entry) => entry.file !== file), { file, sha256 }] });
+  const db = openDatabase(join(dir, 'service.sqlite'));
   const credentials = createCredentialStore(join(dir, 'credentials'), now);
   for (const account of ['owner', 'other']) db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(account, 1, 1, now().toISOString());
   const session = (accountId: string, domain: string, permissions: string[], callerId = 'web') =>

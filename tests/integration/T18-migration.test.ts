@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,11 +8,13 @@ test('the HTTP source migration keeps existing lineage and checks new connector 
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t18-upgrade-'));
   const filename = join(dir, 'source.sqlite');
   const sourceMigrations = new URL('../../packages/storage/migrations/', import.meta.url);
-  const manifest = (JSON.parse(readFileSync(new URL('manifest.json', sourceMigrations), 'utf8')) as MigrationEntry[])
-    .filter((entry) => entry.file !== '0020_http_sources.sql');
+  const manifest = JSON.parse(readFileSync(new URL('manifest.json', sourceMigrations), 'utf8')) as MigrationEntry[];
+  const migrationIndex = manifest.findIndex((entry) => entry.file === '0020_http_sources.sql');
+  expect(migrationIndex).toBeGreaterThan(0);
+  const previousManifest = manifest.slice(0, migrationIndex);
   const now = '2026-11-17T00:00:00.000Z';
   try {
-    const prior = openDatabase(filename, { manifest });
+    const prior = openDatabase(filename, { manifest: previousManifest });
     try {
       prior.prepare(`INSERT INTO source_configs VALUES ('before','owner','personal','directory','/test/root','/test/root',
         '{}','[]',NULL,'daily','none',0,1,'enabled',1,'1.0',?,?)`).run(now, now);
@@ -23,9 +24,7 @@ test('the HTTP source migration keeps existing lineage and checks new connector 
       prior.prepare(`INSERT INTO source_revisions VALUES ('before','o-1',1,'before-r1',NULL,'source',1,'owner','personal','1.0',?)`).run(now);
       prior.prepare(`INSERT INTO collection_receipts VALUES ('before-c1','before',1,'success','cursor',0,NULL,?,1,NULL)`).run(now);
     } finally { prior.close(); }
-    const file = '0020_http_sources.sql';
-    const sha256 = createHash('sha256').update(readFileSync(new URL(file, sourceMigrations))).digest('hex');
-    const after = openDatabase(filename, { manifest: [...manifest, { file, sha256 }] });
+    const after = openDatabase(filename, { manifest });
     try {
       expect(after.pragma('foreign_key_check')).toEqual([]);
       expect(after.pragma('foreign_keys', { simple: true })).toBe(1);

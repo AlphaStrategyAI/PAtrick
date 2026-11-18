@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,11 +17,8 @@ function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t18-registry-'));
   const migrations = new URL('../../packages/storage/migrations/', import.meta.url);
   const manifest = JSON.parse(readFileSync(new URL('manifest.json', migrations), 'utf8')) as MigrationEntry[];
-  const file = '0020_http_sources.sql';
-  const sha256 = createHash('sha256').update(readFileSync(new URL(file, migrations))).digest('hex');
-  const migrationSet = [...manifest.filter((entry) => entry.file !== file), { file, sha256 }];
   const path = join(dir, 'source.sqlite');
-  const db = openDatabase(path, { manifest: migrationSet });
+  const db = openDatabase(path, { manifest });
   const blobs = createBlobStore(join(dir, 'blobs'));
   const request = vi.fn(async () => response);
   const resolve = vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]);
@@ -30,7 +26,7 @@ function setup() {
     approvedUrls(owner, origin) { return owner.accountId === principal.accountId && owner.dataDomain === principal.dataDomain && origin === url ? [url] : null; },
     port: { request, resolve },
   } });
-  return { db, registry, request, resolve, blobs, path, manifest: migrationSet, close() { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { db, registry, request, resolve, blobs, path, manifest, close() { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test('preview, enable and first successful RSS collection are independent; duplicates share the original source', async () => {

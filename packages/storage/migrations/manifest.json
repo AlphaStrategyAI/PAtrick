@@ -74,5 +74,9 @@
   {
     "file": "0024_settings_recoveries.sql",
     "sha256": "a2e4c46c207056d3b4beb484c1431f3ebdaf553b2aab3caa483f594a5151a667"
+  },
+  {
+    "file": "0025_source_revision_provenance.sql",
+    "sha256": "05560b8e45ad2f5b05a6197ce465d19854d67534c851d01664b6820d2683018c"
   }
 ]

@@ -682,6 +682,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     });
   }
 
+  function recordRevisionProvenance(source: SourceRecord, revisionId: string): void {
+    db.prepare(`INSERT INTO source_revision_provenance (revision_id, source_id, config_revision, account_id, data_domain)
+      VALUES (?, ?, ?, ?, ?)`).run(revisionId, source.source_id, source.config_revision, source.account_id, source.data_domain);
+  }
+
   function applyContent(source: SourceRecord, object: PendingObject, observedAt: string, allowWork = true): boolean {
     db.prepare('INSERT INTO blobs (sha256, byte_length, created_at) VALUES (?, ?, ?) ON CONFLICT(sha256) DO NOTHING').run(
       object.hash,
@@ -716,6 +721,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       SCHEMA_VERSION,
       observedAt,
     );
+    recordRevisionProvenance(source, revisionId);
     const change: CollectedChange = {
       hasTriggerRule: source.has_trigger_rule === 1,
       origin: 'source',
@@ -780,6 +786,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       SCHEMA_VERSION,
       observedAt,
     );
+    recordRevisionProvenance(source, revisionId);
     const checkId = `dep_${object.object_id}_${seq}`;
     db.prepare(`INSERT INTO dependency_checks (check_id, source_id, object_id, observed_seq, reason, created_at)
       VALUES (?, ?, ?, ?, 'source_withdrawn', ?)`).run(checkId, source.source_id, object.object_id, seq, observedAt);
