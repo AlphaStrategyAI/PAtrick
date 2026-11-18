@@ -41,16 +41,23 @@ async function assertHubIdentity(origin: string, commit: string): Promise<void> 
       !('commit' in health) || health.commit !== commit) throw new Error('OPERATIONAL_HUB_IDENTITY_MISMATCH');
 }
 
+const generationWorkers = new WeakMap<RuntimeProvisioning, Pick<ReturnType<typeof createServiceRuntime>, 'drain'>>();
+export function drainGenerationWorker(provisioning: RuntimeProvisioning) {
+  return generationWorkers.get(provisioning)?.drain({ timeoutMs: 2_147_483_647 });
+}
+
 export async function createInstalledWorker(provisioning: RuntimeProvisioning) {
   const { worker, storageOptions } = requireRuntimeProvisioning(provisioning);
   const hub = provisioning.registration.operationalHub;
   if (!hub || !worker) throw new Error('OPERATIONAL_HUB_CAPABILITIES_REQUIRED');
+  storageOptions.assertStartupAllowed?.();
   await assertHubIdentity(hub.origin, hub.commit);
   try {
     const { stop, drain, read } = createServiceRuntime({
       ...storageOptions,
       consultationWorker: { hub: createHubClient(hub.origin, worker.keys), backend: worker.backend },
     });
+    if (storageOptions.assertStartupAllowed) generationWorkers.set(provisioning, { drain });
     return { stop, drain, read };
   } catch (error) {
     const { code, cleanup, readCleanup } = await cleanRuntimeStartup(error);

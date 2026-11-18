@@ -11,6 +11,7 @@ import {
   cleanRuntimeStartup,
   createProvisionedServiceRuntime,
   isRuntimeMain,
+  installRuntimeMaintenance,
   requireRuntimeProvisioning,
   unavailableRuntimeDiagnostic,
   type RuntimeProvisioning,
@@ -21,6 +22,11 @@ type ListenerState = 'running' | 'draining' | 'closed' | 'close_failed';
 type WebMaterial = { path: string; bytes: number; sha256: string };
 
 const owners = new WeakMap<ServiceRuntime, RuntimeProvisioning>();
+const startedIngress = new WeakMap<ServiceRuntime, object>();
+export function ownsMaintenanceIngress(runtime: ServiceRuntime, ingress: object) {
+  return startedIngress.get(runtime) === ingress;
+}
+
 const listenerStarted = new WeakSet<ServiceRuntime>();
 // Keeps the existing 20 MB attachment contract within a bounded encoded request.
 const maxBodyBytes = 32 * 1024 * 1024;
@@ -129,8 +135,9 @@ export function createInstalledService(provisioning: RuntimeProvisioning) {
   return runtime;
 }
 
+const maintenanceSignals = new WeakMap<ServiceRuntime, { held: boolean; settled(): void }>();
 export async function startServiceListener(runtime: ServiceRuntime, provisioning: RuntimeProvisioning) {
-  requireRuntimeProvisioning(provisioning);
+  const ports = requireRuntimeProvisioning(provisioning);
   if (owners.get(runtime) !== provisioning || listenerStarted.has(runtime)) throw new Error('LISTENER_OWNER_INVALID');
   listenerStarted.add(runtime);
   if (runtime.read().status !== 'running') throw new Error('LISTENER_RUNTIME_NOT_RUNNING');
@@ -205,6 +212,8 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     const cleanup = await runtime.drain();
     throw Object.assign(new Error('LISTENER_BIND_FAILED'), { cleanup, readCleanup: runtime.read });
   }
+  let ingressFailed = false;
+  let closing: Promise<void> | undefined;
   const address = server.address();
   const hostname = registration.host === '::1' ? '[::1]' : registration.host;
   if (!address || typeof address === 'string') {
@@ -215,15 +224,13 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
 
   authority = hostname + ':' + address.port;
   const url = 'http://' + authority;
-  let closing: Promise<void> | undefined;
-
-  function stop() {
+  function stopIngress(stopRuntime = false) {
     if (!admitting) return;
     admitting = false;
     state = 'draining';
     // Runtime joins application handlers and real response producers before closing SQLite.
     // The remaining socket work only holds bridge buffers and the immutable Web files.
-    runtime.stop();
+    if (stopRuntime) runtime.stop();
     const serverClosed = new Promise<boolean>((settle) => {
       server.close((error) => settle(!error));
     });
@@ -231,7 +238,10 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
       state = closed ? 'closed' : 'close_failed';
     });
   }
-  server.on('error', stop);
+  function stop() {
+    stopIngress(true);
+  }
+  server.on('error', () => { ingressFailed = true; stop(); });
 
   function read() {
     return { listener: state, activeRequests: tasks.size, openConnections: sockets.size, runtime: runtime.read() };
@@ -253,7 +263,26 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     }
     return read();
   }
-  return { url, stop, drain, read };
+  const ingress = Object.freeze({
+    async stopIngress() {
+      const signals = maintenanceSignals.get(runtime);
+      if (signals) signals.held = true;
+      const allSockets = [...sockets].map((socket) => new Promise<void>((settle) => socket.once('close', settle)));
+      stopIngress();
+      await Promise.all([closing, ...allSockets]);
+      return !ingressFailed && state === 'closed' && tasks.size === 0 && sockets.size === 0;
+    },
+    onClose() { maintenanceSignals.get(runtime)?.settled(); },
+  });
+  startedIngress.set(runtime, ingress);
+  const maintenance = await installRuntimeMaintenance(runtime, ingress);
+  startedIngress.delete(runtime);
+  if (ports.serviceOptions.assertStartupAllowed && runtime.read().status !== 'running') {
+    stop();
+    const cleanup = await drain();
+    throw Object.assign(new Error('LISTENER_RUNTIME_NOT_RUNNING'), { cleanup, readCleanup: read });
+  }
+  return { url, stop, drain, read, ...(maintenance ? { maintenance } : {}) };
 }
 
 export async function runInstalledService(provisioning: RuntimeProvisioning) {
@@ -272,6 +301,7 @@ export async function runInstalledService(provisioning: RuntimeProvisioning) {
   let observing: NodeJS.Timeout | undefined;
 
   const uninstallSignals = () => {
+    if (maintenanceSignals.get(runtime)?.held) return;
     process.off('SIGTERM', signal);
     process.off('SIGINT', signal);
     clearInterval(observing);
@@ -305,6 +335,7 @@ export async function runInstalledService(provisioning: RuntimeProvisioning) {
   process.on('SIGTERM', signal);
   process.on('SIGINT', signal);
   try {
+    maintenanceSignals.set(runtime, { held: false, settled() { this.held = false; uninstallSignals(); } });
     listener = await startServiceListener(runtime, provisioning);
     monitorDrain();
     return {

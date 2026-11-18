@@ -885,3 +885,72 @@ test.each(['closed', 'close_failed'] as const)(
     }
   },
 );
+
+test('a reserved factory hold joins the actual handler and producer before ordered final close', async () => {
+  const make = await runtimeFactory();
+  let reserve!: () => import('../../apps/service/src/factory.js').ServiceCloseHold | undefined;
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  let service!: ReturnType<typeof openDatabase>;
+  let answer!: ReturnType<typeof openDatabase>;
+  const runtime = make({
+    ...temporary(), recoveryRuntime: { attach() {} },
+    bindRecoveryOperations(resources) {
+      service = resources.database;
+      answer = resources.hubDatabase;
+      return undefined;
+    },
+    registerCloseHold(port) { reserve = port; },
+  });
+  runtime.app.get('/held', async (c) => {
+    entered.resolve();
+    await release.promise;
+    return c.text('done');
+  });
+  const request = runtime.app.request('/held');
+  await entered.promise;
+  try {
+    expect(reserve).toBeTypeOf('function');
+    const hold = reserve()!;
+    expect(reserve()).toBeUndefined();
+    expect((await runtime.app.request('/healthz')).status).toBe(503);
+    expect((await runtime.drain({ timeoutMs: 1 })).status).toBe('draining');
+    expect([service.open, answer.open]).toEqual([true, true]);
+    let joined = false;
+    void hold.joined.then(() => { joined = true; });
+    await Promise.resolve();
+    expect(joined).toBe(false);
+    release.resolve();
+    await request;
+    await hold.joined;
+    expect([service.open, answer.open]).toEqual([true, true]);
+    expect((await hold.finalize()).status).toBe('closed');
+    expect((await hold.finalize()).status).toBe('closed');
+    expect([service.open, answer.open]).toEqual([false, false]);
+  } finally {
+    release.resolve();
+    await request;
+    await runtime.drain({ timeoutMs: 5 });
+  }
+});
+
+test('failed startup and a prior ordinary stop cannot grant an installed close hold', async () => {
+  const make = await runtimeFactory();
+  let reserve!: () => import('../../apps/service/src/factory.js').ServiceCloseHold | undefined;
+  const { ServiceStartupError } = await import('../../apps/service/src/factory.js');
+  let failure: unknown;
+  try {
+    make({ ...temporary(), registerCloseHold(port) {
+      reserve = port;
+      expect(reserve()).toBeUndefined();
+      throw new Error('fixture registration failed');
+    } });
+  } catch (error) { failure = error; }
+  expect(failure).toBeInstanceOf(ServiceStartupError);
+  expect((await (failure as InstanceType<typeof ServiceStartupError>).cleanup.drain()).status).toBe('closed');
+  expect(reserve()).toBeUndefined();
+  const runtime = make({ ...temporary(), registerCloseHold(port) { reserve = port; } });
+  runtime.stop();
+  expect(reserve()).toBeUndefined();
+  expect((await runtime.drain()).status).toBe('closed');
+});

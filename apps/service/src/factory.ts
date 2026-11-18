@@ -52,6 +52,12 @@ import { mountProjectionEventRoutes } from './routes/events.js';
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
 export type CreateAppOptions = {
+  /** Installed-generation guard runs before opening either database. */
+  assertStartupAllowed?: () => void;
+  openMain?: (path: string) => SqliteDatabase;
+  openLocalAnswers?: typeof createLocalHubPort;
+  /** Private installed owner receives this only after successful startup. */
+  registerCloseHold?: (reserve: () => ServiceCloseHold | undefined) => void;
   browserAuthority?: BrowserAuthority;
   signal?: AbortSignal;
   /** Trusted installed composition receives the exact gated handles before worker admission. */
@@ -80,6 +86,11 @@ export type ServiceDrainResult = {
   errors: readonly { code: string }[];
 };
 
+export type ServiceCloseHold = Readonly<{
+  joined: Promise<void>;
+  finalize(): Promise<ServiceDrainResult>;
+}>;
+
 export type ServiceCleanup = {
   stop(): void;
   drain(options?: { timeoutMs?: number }): Promise<ServiceDrainResult>;
@@ -101,6 +112,9 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
   const workers: WorkerLifetime[] = [];
   const starters: Array<() => void> = [];
   let completion: Promise<void> | undefined;
+  let joined: Promise<void> | undefined;
+  let barrier: Promise<void> | undefined;
+  let holdEligible = false;
   let status: ServiceDrainResult['status'] = 'running';
   const errors: Array<{ code: string }> = [];
   function recordError(code: string) {
@@ -174,7 +188,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     if (!state.db) {
       const databasePath = options.databasePath ?? join(tmpdir(), `patrick-${randomUUID()}.sqlite`);
       state.databasePath = databasePath;
-      const database = openDatabase(databasePath);
+      const database = (options.openMain ?? openDatabase)(databasePath);
       state.db = database;
       try {
         if (options.recoveryRuntime) attachRecoveryRuntime(database, options.recoveryRuntime);
@@ -193,7 +207,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     if (state.hub) return state.hub;
     context();
     if (!state.databasePath) throw new Error('DATABASE_PATH_MISSING');
-    state.hub = createLocalHubPort(`${state.databasePath}.hub`, (database) => { state.hubDatabase = database; });
+    state.hub = (options.openLocalAnswers ?? createLocalHubPort)(`${state.databasePath}.hub`, (database) => { state.hubDatabase = database; });
     return state.hub;
   }
   function vaultApi(): ReturnType<typeof createVaultApi> {
@@ -239,10 +253,18 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     callerSignal?.removeEventListener('abort', stop);
     lifetime.stop();
     for (const worker of workers) worker.stop();
-    completion = (async () => {
-      await Promise.all([lifetime.join(), ...workers.map((worker) => worker.join())]);
-      closeResources();
-    })();
+    joined = Promise.all([lifetime.join(), ...workers.map((worker) => worker.join())]).then(() => {});
+    completion = (barrier ? Promise.all([joined, barrier]) : joined).then(closeResources);
+  }
+  function reserveCloseHold(): ServiceCloseHold | undefined {
+    if (!holdEligible || status !== 'running') return undefined;
+    let release!: () => void;
+    barrier = new Promise<void>((resolve) => { release = resolve; });
+    stop();
+    return Object.freeze({
+      joined: joined!,
+      async finalize() { release(); await completion; return read(); },
+    });
   }
   async function drain({ timeoutMs = 5000 }: { timeoutMs?: number } = {}): Promise<ServiceDrainResult> {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647) throw new Error('SERVICE_DRAIN_TIMEOUT_INVALID');
@@ -254,6 +276,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     return read();
   }
   try {
+    options.assertStartupAllowed?.();
     if (lifetime.signal.aborted) throw new Error('SERVICE_START_CANCELLED');
     if (options.databasePath || options.bindRecoveryOperations) context();
     if (options.bindRecoveryOperations) {
@@ -420,6 +443,10 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     }
     options.signal?.addEventListener('abort', stop, { once: true });
     if (options.signal?.aborted) stop();
+    if (status === 'running' && options.registerCloseHold) {
+      options.registerCloseHold(reserveCloseHold);
+      holdEligible = true;
+    }
     return { app, stop, drain, read };
   } catch (error) {
     stop();

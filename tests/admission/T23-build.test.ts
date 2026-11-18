@@ -1033,6 +1033,609 @@ describe('T23 installed runtime build and bootstrap', () => {
     });
   }, 30_000);
 
+  test.each(['success', 'join-timeout', 'missing-terminal', 'lost-response', 'bad-freeze', 'ordinary-first', 'inode-swap',
+    'unbound-open', 'pre-open-exchange', 'swap-at-acquire', 'open-lease-loss', 'prior-at-open', 'prior-start', 'prior-set', 'prior-handoff', 'clearance-mismatch',
+    'warm-prior', 'warm-admit', 'warm-withdraw', 'root-ancestor', 'private-descendant', 'receipt-outage', 'warm-receipt-outage',
+    'lease-outage', 'post-readback-outage', 'receipt-handoff-exchanged', 'prior-other-operation', 'revoked-receipt', 'tamper-handoff', 'sign-timeout', 'lost-close', 'file-after-claim', 'close-failed', 'tamper-after-close', 'SIGINT', 'SIGTERM'] as const)('runs the signed installed maintenance cut for %s', async (mode) => {
+    const harness = join(temporary, 'cut-' + mode + '.mjs');
+    await writeFile(harness, String.raw`import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { setTimeout as wait } from 'node:timers/promises';
+
+const [artifact, mode] = process.argv.slice(2);
+const entry = (name) => pathToFileURL(join(artifact, 'runtime', name + '.mjs')).href;
+const { createMaintenanceStorage, createRuntimeProvisioning, openRuntimeDatabase, runtimeRecoveryWriteAllowed } = await import(entry('composition'));
+const { runInstalledService } = await import(entry('service'));
+const { runInstalledWorker } = await import(entry('worker'));
+const Database = createRequire(entry('composition'))('better-sqlite3');
+const root = await mkdtemp(join(process.cwd(), 'maintenance-'));
+const [journalRoot, setRoot, handoffRoot, normalRoot, credentialDirectory] =
+  ['journal', 'sets', 'handoff', 'ordinary', 'credentials'].map((name) => join(root, name));
+for (const path of [journalRoot, setRoot, handoffRoot, normalRoot, credentialDirectory]) await mkdir(path, { mode: 0o700 });
+const databasePath = join(root, 'service.sqlite');
+const hubPath = join(root, 'operational.sqlite');
+if (mode.startsWith('prior-') || mode === 'clearance-mismatch') {
+  const seed = new Database(databasePath);
+  seed.pragma('user_version=1'); seed.close();
+} else openRuntimeDatabase(databasePath).close();
+const answerSeed = new Database(databasePath + '.hub');
+answerSeed.pragma('user_version=1'); answerSeed.close();
+openRuntimeDatabase(hubPath).close();
+let operational;
+let unbound;
+if (mode === 'unbound-open') {
+  unbound = new Database(hubPath, { readonly: true, fileMustExist: true });
+  await rename(hubPath, hubPath + '.old');
+  const replacement = openRuntimeDatabase(hubPath);
+  replacement.exec('CREATE TABLE replacement_identity(value TEXT)');
+  replacement.close();
+}
+const alternate = new Database(hubPath);
+const hubLock = new Database(hubPath);
+const controls = new Database(join(root, 'fixture-controller.sqlite'));
+controls.exec("CREATE TABLE writer_gate(id INTEGER PRIMARY KEY, permitted INTEGER); INSERT INTO writer_gate VALUES (1,1)");
+controls.exec("CREATE TABLE unresolved(operation_id TEXT PRIMARY KEY, channel_test TEXT NOT NULL)");
+function credentialUsable() { return controls.prepare('SELECT permitted FROM writer_gate WHERE id=1').pluck().get() === 1; }
+function alternateWrite(id) {
+  assert(credentialUsable(), 'fixture writer capability withdrawn');
+  alternate.prepare('INSERT INTO fixture_external VALUES (?)').run(id);
+}
+alternate.exec("CREATE TABLE fixture_external(id INTEGER PRIMARY KEY); SELECT 1");
+alternateWrite(7);
+const uid = process.geteuid();
+const identity = { accountId: 'owner', scopeId: 'scope', domains: ['personal'], deviceId: 'device', configRevision: '1' };
+const domain = { domain: 'personal', writerEpoch: 'epoch', withdrawal: { seq: 0, hash: hash('') } };
+const writer = { domain: 'personal', writerId: 'old-writer', writerEpoch: 'epoch', activationId: 'grant', witnessRevision: 'rev-1' };
+const plan = { installationId: 'installation', generationId: 'old', operationId: 'maintain', cutId: 'cut', targetId: 'private',
+  scope: { setId: 'owned', domains: [domain], resources: [], versionLocks: { app: '1' } }, writers: [writer],
+  roles: Object.fromEntries(['service', 'worker', 'hub'].map((role) => [role, { ownerId: role + '-fixture', uid }])),
+  journalRoot, setRoot, handoffRoot, protection: 'local_only' };
+function hash(value) { return createHash('sha256').update(value).digest('hex'); }
+function canonical(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+}
+function file(path) {
+  const s = statSync(path, { bigint: true });
+  return { path, device: String(s.dev), inode: String(s.ino) };
+}
+function signingKeys() {
+  const keys = generateKeyPairSync('ed25519');
+  return {
+    attest(value) { return sign(null, Buffer.from(value), keys.privateKey).toString('base64'); },
+    check(value, signature) { return verify(null, Buffer.from(value), keys.publicKey, Buffer.from(signature, 'base64')); },
+  };
+}
+function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { resolve, promise }; }
+const rawEntered = deferred(), rawRelease = deferred(), serviceEntered = deferred(), serviceRelease = deferred();
+const signing = deferred(), signRelease = deferred();
+const migrationSigner = signingKeys(), witness = signingKeys();
+let signs = 0, innerCount = 0, innerRelease = 0, began = 0, closedReads = 0, dropped = false;
+let originalAnswerClose, closeAttempts = 0;
+let terminalHash, matchingManifests = 0;
+let expected, permit, closure, outerHeld = false, sealed = false;
+let service, worker, main, workerDb, answers, localHub, serviceGate;
+const trace = [];
+const signer = { keyId: 'fixture-sign',
+  async sign(bytes) {
+    signs++;
+    const record = JSON.parse(Buffer.from(bytes).toString());
+    if (record.kind === 'claim' && mode === 'file-after-claim') {
+      await rename(hubPath, hubPath + '.registered');
+      await writeFile(hubPath, await readFile(hubPath + '.registered'));
+    }
+    if (record.kind === 'terminal' && mode === 'missing-terminal') throw new Error('fixture terminal publication denied');
+    if (record.schemaVersion && record.setId) { signing.resolve(); await signRelease.promise; }
+    return migrationSigner.attest(bytes);
+  },
+  async verify(bytes, signature, keyId) {
+    if (mode === 'lost-response' && !dropped && JSON.parse(Buffer.from(bytes).toString()).kind === 'terminal' &&
+        (await readdir(journalRoot)).includes('maintain.terminal.json')) {
+      dropped = true;
+      throw new Error('fixture response lost after publication');
+    }
+    const valid = keyId === this.keyId && migrationSigner.check(bytes, signature);
+    if (valid && mode === 'post-readback-outage') {
+      const record = JSON.parse(Buffer.from(bytes).toString());
+      if (record.kind === 'terminal') {
+        terminalHash = record.outcome.manifestHash;
+        matchingManifests = 0;
+      } else if (record.setId && hash(bytes) === terminalHash) matchingManifests++;
+    }
+    return valid;
+  } };
+const pin = '45aecbf578289cda72d1fc773dcad069bfe7778b';
+const hub = createServer(async (req, res) => {
+  res.setHeader('content-type', 'application/json');
+  if (req.url === '/healthz') res.end(JSON.stringify({ ok: true, commit: pin }));
+  else if (req.url.startsWith('/v1/work?')) {
+    rawEntered.resolve();
+    await rawRelease.promise;
+    res.end(JSON.stringify({ job: null, cancel: [] }));
+  } else res.writeHead(404).end();
+});
+hub.listen(0, '127.0.0.1');
+await once(hub, 'listening');
+const hubOrigin = 'http://127.0.0.1:' + hub.address().port;
+const originalFetch = globalThis.fetch;
+// A deliberately non-cancellable, already-dispatched fixture transport. The actual worker
+// still owns this loopback response and must join it after its logical abort completes.
+globalThis.fetch = (url, options) => originalFetch(url, String(url).startsWith(hubOrigin + '/v1/work?')
+  ? { ...options, signal: undefined } : options);
+const observation = 'fixture worker route';
+const admission = { backend: 'dsh', available: true, status: 'verified', command: 'fixture', observation, evidenceSha256: hash(observation) };
+const terms = { accountId: 'owner', dataDomain: 'personal', backend: 'dsh', admissionSha256: admission.evidenceSha256,
+  routeId: 'fixture', chargeMicros: 1, providerQuoteRef: 'fixture' };
+const backend = { scope: { accountId: 'owner', dataDomain: 'personal' }, admission,
+  route: { sdkMaxRetries: 0, implicitResend: false, perHttpAccounted: false, verifiedMaxSends: null }, routeId: 'fixture',
+  pricing: { kind: 'fixed', terms, evidenceSha256: hash(canonical({ ...terms, kind: 'fixed' })) },
+  async send() { throw new Error('unexpected fixture dispatch'); } };
+
+const parents = new Set();
+for (let directory = root; !parents.has(directory); directory = dirname(directory)) parents.add(directory);
+const files = { service: file(databasePath), worker: file(databasePath), localAnswers: file(databasePath + '.hub'), operationalHub: file(hubPath) };
+const enrollment = { installationId: plan.installationId, generationId: plan.generationId, identity, roles: plan.roles,
+  files, ancestors: [...parents].map(file) };
+const ownerPermit = witness.attest(canonical(enrollment));
+const openingLock = new Database(join(root, 'fixture-opening.sqlite'));
+openingLock.exec('CREATE TABLE custody(value INTEGER)');
+const renameAuthority = new Database(join(root, 'fixture-opening.sqlite'), { timeout: 0 });
+const openedRoles = [], releasedRoles = [];
+let denyOpen = mode === 'open-lease-loss';
+const storage = createMaintenanceStorage({ enrollment, acquire(bound, role) {
+  assert(witness.check(canonical(bound), ownerPermit));
+  if (mode === 'swap-at-acquire' && role === 'operationalHub') {
+    renameAuthority.exec('BEGIN IMMEDIATE');
+    renameSync(hubPath, hubPath + '.moved');
+    writeFileSync(hubPath, readFileSync(hubPath + '.moved'));
+    renameAuthority.exec('COMMIT');
+  }
+  if (mode === 'prior-at-open' && role === 'service') {
+    writeFileSync(join(journalRoot, 'maintain.claim.json'), 'contrary evidence during acquisition');
+  }
+  openingLock.exec('BEGIN IMMEDIATE');
+  assert.throws(() => renameAuthority.exec('BEGIN IMMEDIATE'), { code: 'SQLITE_BUSY' });
+  openedRoles.push(role);
+  let reads = 0;
+  return { current() { return ++reads > 0 && openingLock.inTransaction && !(denyOpen && reads === 2); },
+    release() { openingLock.exec('ROLLBACK'); releasedRoles.push(role); } };
+} });
+if (mode === 'open-lease-loss') {
+  assert.throws(() => storage.openOperationalHub());
+  assert.deepEqual(releasedRoles, ['operationalHub']);
+  denyOpen = false;
+}
+if (mode === 'pre-open-exchange') {
+  renameAuthority.exec('BEGIN IMMEDIATE');
+  await rename(hubPath, hubPath + '.moved');
+  await writeFile(hubPath, await readFile(hubPath + '.moved'));
+  renameAuthority.exec('COMMIT');
+  assert.throws(() => storage.openOperationalHub());
+  assert.deepEqual(releasedRoles, ['operationalHub']);
+  await rename(hubPath + '.moved', hubPath);
+}
+if (mode === 'swap-at-acquire') {
+  assert.throws(() => storage.openOperationalHub());
+  await rename(hubPath + '.moved', hubPath);
+}
+if (['open-lease-loss', 'pre-open-exchange', 'swap-at-acquire'].includes(mode)) {
+  assert.throws(() => storage.openOperationalHub());
+  assert.deepEqual(openedRoles, ['operationalHub']);
+  hub.closeAllConnections();
+  await new Promise((done) => hub.close(done));
+  for (const db of [alternate, hubLock, controls, openingLock, renameAuthority]) db.close();
+  console.log(JSON.stringify({ mode, openedRoles, releasedRoles, knownLossLatched: true }));
+  process.exit(0);
+}
+operational = storage.openOperationalHub();
+const withdrawal = new AbortController();
+let generationStops = 0, unavailable = false, revokedReceipt = false, leaseProbe;
+const startupPermits = new Map();
+const maintenance = {
+  plan, signer, storage,
+  generation: {
+    withdrawal: withdrawal.signal,
+    cleared(binding, role) {
+      return credentialUsable() && witness.check(canonical({ binding, role }), startupPermits.get(role));
+    },
+    stop(binding) {
+      assert(witness.check(canonical({ binding, role: 'service' }), startupPermits.get('service')));
+      generationStops++;
+      controls.prepare('UPDATE writer_gate SET permitted=0 WHERE id=1').run();
+      if (alternate.open) alternate.close();
+    },
+  },
+  authorize(binding) { return !!permit && witness.check(canonical(binding), permit); },
+  begin(binding) {
+    assert(this.authorize(binding)); assert.equal(++began, 1);
+    controls.prepare('UPDATE writer_gate SET permitted=0 WHERE id=1 AND permitted=1').run();
+    alternate.close();
+    hubLock.exec('BEGIN IMMEDIATE');
+    outerHeld = true;
+    worker.stop();
+    trace.push('begin');
+    return {
+      async joinWorkerAndFence() {
+        assert.equal((await worker.drain({ timeoutMs: 5000 })).status, 'closed');
+        assert.equal(workerDb.open, false);
+        sealed = !alternate.open && hubLock.inTransaction && !credentialUsable();
+        const uncertain = main.prepare("SELECT test_id FROM channel_tests WHERE status='sending'").pluck().get();
+        controls.prepare('INSERT INTO unresolved VALUES (?,?)').run(binding.operationId, uncertain);
+        trace.push('worker-closed');
+      },
+      current(subject) {
+        if (leaseProbe === 'unavailable') return undefined;
+        if (leaseProbe === 'lost') return false;
+        const continuous = sealed && outerHeld && hubLock.inTransaction && !credentialUsable() &&
+          !alternate.open && !workerDb.open && witness.check(canonical(subject), permit);
+        if (mode === 'post-readback-outage' && continuous && main.open && answers.open && matchingManifests === 2) {
+          // Both the signed operation and the explicit set read verified the terminal's manifest.
+          if (!trace.includes('post-readback-unavailable')) {
+            trace.push('post-readback-unavailable');
+            return undefined;
+          }
+          trace.push('pre-close-confirmed');
+        }
+        return continuous;
+      },
+      async acquireInner(domains) {
+        assert.deepEqual(domains, ['personal']); assert(sealed && main.open && answers.open);
+        assert.equal(runtimeRecoveryWriteAllowed(main, 'personal'), false);
+        assert.throws(() => serviceGate.admit(writer));
+        innerCount++; trace.push('inner');
+        const drained = service.read();
+        const journaled = controls.prepare('SELECT channel_test FROM unresolved WHERE operation_id=?').pluck().get(binding.operationId) === 'probe';
+        return { cutId: mode === 'bad-freeze' ? 'other-cut' : binding.cutId,
+          ingressFrozen: drained.listener === 'closed' && drained.openConnections === 0,
+          claimsFrozen: !workerDb.open && !credentialUsable(), receiptsFrozen: sealed && drained.activeRequests === 0,
+          effectsFrozen: hubLock.inTransaction && !credentialUsable(),
+          executionTreesStopped: worker.read().status === 'closed' && drained.runtime.active === 0,
+          uncertainCallsJournaled: journaled, durableHandoff: journaled && (await readdir(handoffRoot)).includes('local-answers.sqlite'),
+          async release() { innerRelease++; assert(sealed && outerHeld); trace.push('inner-release'); } };
+      },
+      async finish(subject, closed, manifestHash) {
+        assert(outerHeld && !alternate.open && !workerDb.open);
+        assert.equal(closed, !answers.open && !main.open);
+        trace.push('finish');
+        if (closed && manifestHash && this.current(subject)) closure = witness.attest(canonical({ subject, manifestHash, closed }));
+        if (mode === 'lost-close') throw new Error('fixture finish reply lost');
+      },
+    };
+  },
+  readClose(subject, manifestHash) {
+    closedReads++;
+    if (mode === 'receipt-handoff-exchanged' && closedReads === 1) return undefined;
+    if (unavailable || (mode === 'receipt-outage' && closedReads === 1)) throw new Error('fixture receipt unavailable');
+    if (revokedReceipt) return false;
+    return closure && outerHeld && !main.open && !answers.open && !alternate.open && !workerDb.open &&
+      witness.check(canonical({ subject, manifestHash, closed: true }), closure) ? hash(closure) : undefined;
+  },
+};
+const serviceConfig = {
+  databasePath, credentialDirectory,
+  recoveryRuntime: { attach({ database, admission: gate }) {
+    database.prepare("INSERT OR IGNORE INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run('personal', 'epoch', 'open', 'grant', 'rev-1', 'test', new Date(0).toISOString());
+    gate.admit(writer);
+    if (!main) { main = database; serviceGate = gate; }
+    else workerDb = database;
+  } },
+  bindRecoveryOperations(resources) {
+    answers = resources.hubDatabase; localHub = resources.hub;
+    originalAnswerClose = localHub.close.bind(localHub);
+    localHub.close = () => {
+      closeAttempts++;
+      assert(main.open);
+      if (mode === 'close-failed') throw new Error('fixture checkpoint failed');
+      originalAnswerClose();
+    };
+    const normal = mode === 'root-ancestor' ? '/' : mode === 'private-descendant' ? join(handoffRoot, 'ordinary') : normalRoot;
+    return { root: normal, authority: signer, targets: {} };
+  },
+  notificationMaintenance: {
+    hub: { async claim() { serviceEntered.resolve(); await serviceRelease.promise; return null; },
+      async heartbeat() { return []; }, async result() { return { rejected: [] }; } },
+    transport: { async send() { throw new Error(); }, async lookup() { return null; } },
+    scopes: [{ accountId: 'owner', dataDomain: 'personal' }], timezone: 'UTC', credentialUsable: () => false,
+  },
+};
+const readDatabase = (db) => ({
+  hubSeq: db.prepare('SELECT COALESCE(MAX(hub_seq),0) AS seq FROM hub_snapshots').get().seq,
+  domainSeq: db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM domain_events').get().seq,
+  schemaHistory: db.prepare('SELECT file,sha256 FROM schema_migrations ORDER BY position').all(),
+});
+  expected = { ...structuredClone(plan), identity, captureHost: hostname(), signerId: signer.keyId,
+    runtime: { dataRoot: root, profile: 'test', origin: 'http://localhost', rpId: 'localhost',
+      listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' }, operationalHub: { origin: hubOrigin, commit: pin } },
+    roots: [journalRoot, setRoot, handoffRoot].map(file), files: {
+      service: file(databasePath), worker: file(databasePath), operationalHub: file(hubPath), localAnswers: file(databasePath + '.hub'),
+    } };
+for (const role of ['service', 'worker']) startupPermits.set(role, witness.attest(canonical({ binding: expected, role })));
+const makeProvision = (hubConnection = operational, ordinaryRoot) => createRuntimeProvisioning({
+  ...(ordinaryRoot && { hostCapabilities: { recovery: { root: ordinaryRoot, authority: signer, targets: {} } } }),
+  registration: { identity, captureHost: hostname(), serviceUid: uid, profile: 'test',
+  dataRoot: root, minimumFreeBytes: 0, origin: 'http://localhost', rpId: 'localhost',
+  listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' }, operationalHub: { origin: hubOrigin, commit: pin } },
+  operationalRecoveryHub: { identity, database: hubConnection, physicalPath: hubPath, readDatabase }, maintenance, service: serviceConfig,
+  worker: { keys: { owner: 'fixture-owner', worker: 'fixture-worker', source: 'fixture-source' }, backend } });
+if (unbound) {
+  assert.throws(() => makeProvision(unbound));
+  const sameFile = new Database(hubPath, { readonly: true });
+  try { assert.throws(() => makeProvision(sameFile)); } finally { sameFile.close(); }
+  unbound.close();
+}
+if (mode === 'root-ancestor') {
+  assert.throws(() => makeProvision(operational, '/'));
+  assert.deepEqual(openedRoles, ['operationalHub']);
+}
+const provision = makeProvision();
+assert.throws(() => makeProvision());
+const watchdog = setTimeout(() => { console.error('fixture deadline', mode, trace); process.exit(3); }, 12000);
+async function scenario() {
+  if (['prior-start', 'prior-set', 'prior-handoff', 'prior-at-open', 'prior-other-operation', 'clearance-mismatch'].includes(mode)) {
+    if (mode === 'prior-start') await writeFile(join(journalRoot, 'maintain.claim.json'), 'previous operation evidence');
+    if (mode === 'prior-other-operation') await writeFile(join(journalRoot, 'older.claim.json'), 'prior generation evidence');
+    if (mode === 'prior-set') await mkdir(join(setRoot, 'owned'));
+    if (mode === 'prior-handoff') await writeFile(join(handoffRoot, 'local-answers.sqlite'), 'prior handoff');
+    if (mode === 'clearance-mismatch') startupPermits.set('service', startupPermits.get('worker'));
+    await assert.rejects(runInstalledService(provision));
+    await assert.rejects(runInstalledWorker(provision));
+    assert.deepEqual(openedRoles, mode === 'prior-at-open' ? ['operationalHub', 'service'] : ['operationalHub']);
+    const seed = new Database(databasePath, { readonly: true });
+    try { assert.equal(seed.prepare("SELECT count(*) FROM sqlite_schema WHERE name='schema_migrations'").pluck().get(), 0); }
+    finally { seed.close(); }
+    assert.equal(main, undefined); assert.equal(workerDb, undefined);
+    assert.equal(innerCount + began, 0); assert.equal(generationStops, mode === 'prior-at-open' ? 1 : 0);
+    return;
+  }
+  if (mode === 'root-ancestor' || mode === 'private-descendant') {
+    await assert.rejects(runInstalledService(provision));
+    assert.equal(main.open, false); assert.equal(answers.open, false); assert.equal(operational.open, true);
+    assert.equal(closeAttempts, 1);
+    return;
+  }
+  service = await runInstalledService(provision);
+  worker = await runInstalledWorker(provision);
+  await Promise.all([serviceEntered.promise, rawEntered.promise]);
+  assert(service.maintenance, 'started installed owner must expose its enrolled maintenance cut');
+  const observed = (id = 'maintain') => service.maintenance.read(id);
+  const capture = (timeoutMs = 5000, operationId = 'maintain') => service.maintenance.capture({ operationId, timeoutMs });
+  assert.deepEqual(openedRoles.slice(-4), ['operationalHub', 'service', 'localAnswers', 'worker']);
+  assert.deepEqual(releasedRoles, openedRoles);
+  assert.equal(observed().status, 'absent');
+  if (['warm-prior', 'warm-admit', 'warm-withdraw'].includes(mode)) {
+    await writeFile(join(journalRoot, 'maintain.claim.json'), 'uncertain prior operation');
+    if (mode === 'warm-admit') assert.throws(() => serviceGate.admit(writer));
+    else if (mode === 'warm-withdraw') withdrawal.abort();
+    else assert.equal((await capture()).status, 'unresolved');
+    assert.equal(service.read().runtime.status, 'draining');
+    assert.equal(worker.read().status, 'draining');
+    for (const db of [main, workerDb]) { assert(db.open); assert.equal(runtimeRecoveryWriteAllowed(db, 'personal'), false); }
+    assert(answers.open); assert.equal(credentialUsable(), false);
+    assert.equal(await fetch(service.url + '/healthz').then((r) => r.status, () => 503), 503);
+    serviceRelease.resolve(); rawRelease.resolve();
+    assert.equal((await worker.drain()).status, 'closed');
+    assert.equal((await service.drain()).runtime.status, 'closed');
+    assert.equal((await capture()).status, 'unresolved');
+    assert.deepEqual(await readdir(journalRoot), ['maintain.claim.json']);
+    assert.deepEqual(await readdir(setRoot), []); assert.deepEqual(await readdir(handoffRoot), []);
+    assert.equal(began + innerCount, 0); assert.equal(generationStops, 1);
+    return;
+  }
+  assert.equal((await capture(100, 'other')).status, 'blocked');
+  for (const wrong of [{ ...expected, cutId: 'old-cut' }, { ...expected, identity: { ...identity, configRevision: '2' } },
+    { ...expected, files: { ...expected.files, service: expected.files.operationalHub } },
+    { ...expected, writers: [{ ...writer, witnessRevision: 'old' }] }]) {
+    permit = witness.attest(canonical(wrong));
+    assert.equal((await capture()).status, 'blocked');
+  }
+  assert.equal(began, 0); assert.equal((await fetch(service.url + '/healthz')).status, 200);
+  permit = witness.attest(canonical(expected));
+  await localHub.accept('attributed-question', 19, { text: 'original answer' });
+  main.prepare("INSERT INTO channel_tests VALUES ('probe','c','owner','personal','p','d','sending',NULL,NULL,'a','t',1,1,'b',1,1,NULL,'1','t','t')").run();
+  const now = new Date().toISOString();
+  main.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run('owner', 1, 1, now);
+  main.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?)').run(hash('fixture-session'), 'owner', 'web', 1,
+    new Date(Date.now() + 60000).toISOString(), now, 'fixture');
+  const stream = await fetch(service.url + '/api/v1/session/stream', { headers: { cookie: ['patrick_session', 'fixture-session'].join('=') } });
+  assert.equal(stream.status, 200);
+  const consumer = stream.body.getReader();
+  assert.match(new TextDecoder().decode((await consumer.read()).value), /event: open/);
+  if (mode === 'ordinary-first') service.stop();
+  if (mode === 'inode-swap') {
+    await rename(databasePath + '.hub', databasePath + '.saved');
+    await writeFile(databasePath + '.hub', await readFile(databasePath + '.saved'));
+  }
+  const pending = capture(mode === 'join-timeout' ? 20 : 5000);
+  if (mode === 'ordinary-first' || mode === 'inode-swap') {
+    assert.equal((await pending).status, 'blocked');
+    assert.equal(began, 0);
+    if (mode === 'inode-swap') {
+      await rename(databasePath + '.saved', databasePath + '.hub');
+      assert.equal((await capture()).status, 'blocked');
+    }
+  } else {
+    assert.equal(observed().phase, 'joining');
+    assert.equal((await capture(1)).status, 'unresolved');
+    assert.equal((await capture(1, 'other')).status, 'blocked');
+    assert.throws(() => alternateWrite(8), /capability withdrawn/);
+    const reopened = new Database(hubPath, { timeout: 0 });
+    try { assert.throws(() => reopened.prepare('INSERT INTO fixture_external VALUES (8)').run(), { code: 'SQLITE_BUSY' }); }
+    finally { reopened.close(); }
+    assert.throws(() => serviceGate.admit(writer));
+    await assert.rejects(runInstalledService(provision));
+    await assert.rejects(runInstalledWorker(provision));
+    assert.equal(await fetch(service.url + '/healthz').then((r) => r.status, () => 503), 503);
+    const queued = await service.drain({ timeoutMs: 1 });
+    assert.equal(queued.runtime.status, 'draining');
+    assert(main.open && workerDb.open && answers.open);
+    assert.deepEqual(await readdir(journalRoot), []);
+    serviceRelease.resolve();
+    await wait(3);
+    assert.equal(worker.read().status, 'draining'); assert.equal(innerCount, 0);
+    if (mode === 'join-timeout') assert.equal((await pending).status, 'unresolved');
+    rawRelease.resolve();
+    if (!['join-timeout', 'bad-freeze', 'file-after-claim'].includes(mode)) {
+      await signing.promise;
+      assert(main.open && answers.open && !workerDb.open && !alternate.open);
+      assert.equal((await capture(1)).phase, 'capturing');
+      if (mode === 'sign-timeout') {
+        assert.equal((await pending).status, 'unresolved');
+        assert(main.open && answers.open && hubLock.inTransaction);
+      }
+      if (mode.startsWith('SIG')) {
+        process.stdout.write(JSON.stringify({ ready: true }) + '\n');
+        await once(process, mode);
+        assert.equal((await service.drain({ timeoutMs: 1 })).runtime.status, 'draining');
+        assert(main.open && answers.open);
+      }
+      signRelease.resolve();
+    }
+    const firstResult = await pending;
+    if (mode === 'receipt-outage') assert.equal(firstResult.status, 'unresolved');
+    if (mode === 'receipt-handoff-exchanged') {
+      assert.equal(firstResult.status, 'unresolved');
+      const original = await readFile(join(handoffRoot, 'local-answers.sqlite'));
+      const signedCopy = join(setRoot, 'owned/resources/0/local-answers.sqlite');
+      await writeFile(signedCopy, Buffer.alloc(original.length));
+      assert.equal((await capture()).status, 'unresolved');
+      await writeFile(signedCopy, original);
+      assert.equal((await capture()).status, 'unresolved');
+      assert.equal(innerCount, 1); assert.equal(trace.filter((entry) => entry === 'finish').length, 1);
+      return;
+    }
+    const signsBeforeRepeat = signs;
+    if (mode === 'post-readback-outage') {
+      assert.equal(firstResult.status, 'unresolved');
+      assert.deepEqual(trace.slice(-3), ['post-readback-unavailable', 'pre-close-confirmed', 'finish']);
+      assert.equal(main.open || answers.open, false);
+      assert(witness.check(canonical({ subject: expected, manifestHash: terminalHash, closed: true }), closure));
+    }
+    const result = await capture(5000);
+    if (mode === 'post-readback-outage') {
+      assert.equal(result.status, 'verified');
+      assert.equal(result.manifestHash, terminalHash);
+      assert.equal(signs, signsBeforeRepeat);
+      assert.deepEqual((await readdir(journalRoot)).sort(), ['maintain.claim.json', 'maintain.reservation.json', 'maintain.terminal.json']);
+    }
+    assert.equal(closeAttempts, 1);
+    assert.equal(service.read().runtime.status, mode === 'close-failed' ? 'close_failed' : 'closed');
+    assert.equal(answers.open, mode === 'close-failed'); assert.equal(main.open, mode === 'close-failed');
+    assert.equal(workerDb.open || alternate.open, false);
+    assert(operational.open && outerHeld);
+    if (['join-timeout', 'missing-terminal', 'bad-freeze', 'close-failed', 'file-after-claim'].includes(mode)) {
+      assert.equal(result.status, 'unresolved');
+      assert.equal(innerCount, ['join-timeout', 'file-after-claim'].includes(mode) ? 0 : 1);
+      if (mode === 'file-after-claim') {
+        assert.deepEqual((await readdir(journalRoot)).sort(), ['maintain.claim.json', 'maintain.reservation.json']);
+        assert.deepEqual(await readdir(setRoot), []);
+        await rename(hubPath + '.registered', hubPath);
+        assert.equal((await capture()).status, 'unresolved');
+      }
+      if (mode === 'missing-terminal') {
+        assert((await readdir(setRoot)).includes('owned'));
+        assert.deepEqual((await readdir(journalRoot)).sort(), ['maintain.claim.json', 'maintain.reservation.json']);
+      }
+    } else {
+      assert.equal(result.status, 'verified');
+      assert.equal(innerCount, 1); assert.equal(innerRelease, 1);
+      const envelope = JSON.parse(await readFile(join(setRoot, 'owned/manifest.json'), 'utf8'));
+      const terminal = JSON.parse(await readFile(join(journalRoot, 'maintain.terminal.json'), 'utf8'));
+      assert(migrationSigner.check(canonical(envelope.manifest), envelope.signature));
+      assert(migrationSigner.check(canonical(terminal.payload), terminal.signature));
+      assert.equal(result.manifestHash, hash(canonical(envelope.manifest)));
+      assert.equal(terminal.payload.outcome.manifestHash, result.manifestHash);
+      assert.deepEqual(envelope.manifest.domains, [domain]);
+      const handoff = envelope.manifest.artifacts.find((artifact) => artifact.kind === 'handoff');
+      assert.equal(handoff.hash, hash(await readFile(join(setRoot, 'owned', handoff.path))));
+      function query(path, sql) {
+        const db = new Database(join(setRoot, 'owned', path), { readonly: true, fileMustExist: true });
+        try { return db.prepare(sql).get(); } finally { db.close(); }
+      }
+      assert.deepEqual(query(handoff.path, 'SELECT * FROM hub_answers'), { question_id: 'attributed-question', card_id: 19,
+        body_json: '{"text":"original answer"}', answer_event_id: 'hub:attributed-question:19' });
+      assert.deepEqual(query('databases/service.sqlite', 'SELECT status,reason_code FROM channel_tests'),
+        { status: 'unknown', reason_code: 'recovery_cut_unconfirmed' });
+      assert.deepEqual(query('databases/hub.sqlite', 'SELECT id FROM fixture_external'), { id: 7 });
+      const before = signs;
+      assert.deepEqual(observed(), result);
+      assert.deepEqual(await capture(), result);
+      assert.equal(signs, before);
+      assert.equal(began, 1);
+      if (mode === 'lost-response') assert(dropped);
+      if (mode === 'warm-receipt-outage') {
+        unavailable = true; assert.equal(observed().status, 'unresolved');
+        unavailable = false; assert.deepEqual(await capture(), result);
+      }
+      if (mode === 'lease-outage') {
+        leaseProbe = 'unavailable'; assert.equal(observed().status, 'unresolved');
+        leaseProbe = undefined; assert.deepEqual(await capture(), result);
+        leaseProbe = 'lost'; assert.equal(observed().status, 'unresolved');
+        leaseProbe = undefined; assert.equal((await capture()).status, 'unresolved');
+      }
+      if (mode === 'revoked-receipt') {
+        revokedReceipt = true; assert.equal(observed().status, 'unresolved');
+        revokedReceipt = false; assert.equal((await capture()).status, 'unresolved');
+      }
+      if (mode === 'tamper-handoff') {
+        const path = join(setRoot, 'owned', handoff.path);
+        const original = await readFile(path);
+        await writeFile(path, Buffer.alloc(original.length));
+        assert.equal((await capture()).status, 'unresolved');
+        await writeFile(path, original);
+        assert.equal((await capture()).status, 'unresolved');
+      }
+      assert.equal(trace.filter((entry) => entry === 'finish').length, 1);
+      assert.equal(signs, before);
+      if (mode === 'tamper-after-close') {
+        const path = join(journalRoot, 'maintain.terminal.json');
+        await writeFile(path, JSON.stringify({ ...terminal, signature: terminal.signature.slice(7) }));
+        assert.equal((await capture()).status, 'unresolved');
+        assert.equal(signs, before);
+      }
+    }
+  }
+  console.log(JSON.stringify({ mode, outcome: observed().status, began, innerCount, innerRelease, closedReads, trace }));
+}
+try {
+  await scenario();
+  console.log(JSON.stringify({ mode, openedRoles, releasedRoles, generationStops }));
+} catch (error) {
+  console.error(error, { mode, trace }); process.exitCode = 1;
+} finally {
+  serviceRelease.resolve(); rawRelease.resolve(); signRelease.resolve();
+  await worker?.drain({ timeoutMs: 1000 }); await service?.drain({ timeoutMs: 1000 });
+  hub.closeAllConnections(); await new Promise((done) => hub.close(done));
+  if (mode === 'close-failed' && answers?.open) { originalAnswerClose(); main.close(); }
+  if (alternate.open) alternate.close();
+  hubLock.close(); controls.close(); openingLock.close(); renameAuthority.close();
+  if (operational.open) operational.close();
+  clearTimeout(watchdog);
+  // A genuine failed close intentionally retains its runtime keepalive. This isolated
+  // test process owns its resources and exits only after observing the failure.
+  if (mode === 'close-failed') process.exit(process.exitCode ?? 0);
+}
+`);
+    if (mode === 'SIGINT' || mode === 'SIGTERM') {
+      const child = spawn(process.execPath, [harness, relocated, mode], { cwd: temporary, stdio: ['ignore', 'pipe', 'pipe'] });
+      const result = await runSignalHarness(child, mode);
+      expect(result.code, result.stderr + result.stdout).toBe(0);
+      expect(result.stdout).toContain('"outcome":"verified"');
+    } else {
+      const result = runNode([harness, relocated, mode], { cwd: temporary });
+      expect(result.status, output(result)).toBe(0);
+    }
+  }, 30000);
+
   test('reaps only its stalled signal fixture when readiness and graceful termination expire', async () => {
     const child = spawn(process.execPath, ['--eval', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], {
       cwd: temporary,
