@@ -245,6 +245,37 @@ describe('T23 finite release candidates', () => {
     await expect(pending).rejects.toThrow(/changed|symlink|ancestor/);
   });
 
+  it('reports a bounded file identity change when the file disappears at open', () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t23-open-'));
+    temporary.push(root);
+    const candidate = join(root, 'candidate.json');
+    writeFileSync(candidate, 'admitted candidate');
+    const release = new URL('../../deploy/lib/release.mjs', import.meta.url).href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const [release, root, candidate] = process.argv.slice(1);
+      const open = fs.promises.open;
+      let fileDisappearedAtOpen = false;
+      fs.promises.open = async (...args) => {
+        if (args[0] !== candidate) return open(...args);
+        fs.renameSync(candidate, candidate + '.moved');
+        try { return await open(...args); }
+        catch (error) {
+          assert.equal(error.code, 'ENOENT');
+          fileDisappearedAtOpen = true;
+          throw error;
+        }
+      };
+      syncBuiltinESMExports();
+      const { admitReadRoot, readRegularFile } = await import(release);
+      await assert.rejects(readRegularFile(candidate, undefined, admitReadRoot(root)), { message: 'file identity changed' });
+      assert.ok(fileDisappearedAtOpen);
+    `;
+    expect(execFileSync(process.execPath, ['--input-type=module', '-e', script, release, root, candidate], { timeout: 3000 }).length).toBe(0);
+  });
+
   it('enforces approved physical root containment and root identity', async () => {
     const f = fixture(); await packRelease(f.options); signed(f);
     await expect(verifyRelease(f.output, { policy: f.policy, expected: f.expected, readRoot: f.options.evidenceDirectory })).rejects.toThrow(/outside/);

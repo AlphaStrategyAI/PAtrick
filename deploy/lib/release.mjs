@@ -80,7 +80,10 @@ export async function readRegularFile(path, limit = RELEASE_LIMITS.artifactBytes
     for (const ancestor of ancestors) requireCondition(sameIdentity(ancestor.info, lstatSync(ancestor.path)), 'read ancestor changed');
     requireCondition(sameIdentity(leaf, lstatSync(absolute)), 'file identity changed');
   }
-  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(error => {
+    if (error?.code === 'ENOENT') throw new Error('file identity changed');
+    throw error;
+  });
   try {
     validate();
     const before = await handle.stat();
