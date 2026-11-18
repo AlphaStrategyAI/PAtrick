@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "kind": "runtime-reference",
+  "coverage": "partial",
+  "platform": "darwin-arm64",
+  "chromium": "156.0.8078.4",
+  "clock": "2026-11-17T05:00:00.000Z",
+  "timezone": "UTC",
+  "color_scheme": "light",
+  "reduced_motion": "reduce",
+  "logo": "static",
+  "screens": [
+    {
+      "frame_id": "26:1617",
+      "key": "zh-knowledge",
+      "route": "/knowledge",
+      "locale": "zh-CN",
+      "scenario": "no-knowledge-in-current-scope",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "dpr": 1,
+      "fixture_sha256": "5574ce3c085d7b27d40cd34bb50f5575ccd0dbb9273bc318f2593c55cb73816d",
+      "rendering_lock_sha256": "436f021a8d8f134cc8e3decd3de22084d4d9dd493fbaefcd687730f304c6dffc",
+      "test_id": "Chinese desktop runtime reference for zh-knowledge",
+      "expected_actions": [
+        "search"
+      ],
+      "baseline_asset": "fixtures/screens/baselines/zh-knowledge.png",
+      "baseline_sha256": "dfe8babb2cd83da4f5837715cc0952b5a498cfd32172452d82d594e9d9cc8f0a",
+      "design_comparison": "export_unavailable"
+    },
+    {
+      "frame_id": "26:1829",
+      "key": "zh-delegation",
+      "route": "/delegations",
+      "locale": "zh-CN",
+      "scenario": "no-delegated-work-in-current-scope",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "dpr": 1,
+      "fixture_sha256": "5574ce3c085d7b27d40cd34bb50f5575ccd0dbb9273bc318f2593c55cb73816d",
+      "rendering_lock_sha256": "436f021a8d8f134cc8e3decd3de22084d4d9dd493fbaefcd687730f304c6dffc",
+      "test_id": "Chinese desktop runtime reference for zh-delegation",
+      "expected_actions": [],
+      "baseline_asset": "fixtures/screens/baselines/zh-delegation.png",
+      "baseline_sha256": "edbf73ea0eecf6cb30bbbf3f4ebbd4ba7a3295217e9cda94649e0335c882dca5",
+      "design_comparison": "export_unavailable"
+    },
+    {
+      "frame_id": "26:2046",
+      "key": "zh-system",
+      "route": "/system",
+      "locale": "zh-CN",
+      "scenario": "disconnected-event-stream-with-readable-diagnostics",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "dpr": 1,
+      "fixture_sha256": "5574ce3c085d7b27d40cd34bb50f5575ccd0dbb9273bc318f2593c55cb73816d",
+      "rendering_lock_sha256": "436f021a8d8f134cc8e3decd3de22084d4d9dd493fbaefcd687730f304c6dffc",
+      "test_id": "Chinese desktop runtime reference for zh-system",
+      "expected_actions": [
+        "refresh-status",
+        "preview-diagnostics"
+      ],
+      "baseline_asset": "fixtures/screens/baselines/zh-system.png",
+      "baseline_sha256": "ac9ac10a1640427f003bec0ba54f2df04418fd30f26c7e5fc1ce6ea806ac354f",
+      "design_comparison": "export_unavailable"
+    }
+  ]
+}
