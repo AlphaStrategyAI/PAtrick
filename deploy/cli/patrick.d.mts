@@ -1,3 +1,4 @@
+import type { VaultInitCliPreview } from '../runtime/vault-init-cli.js';
 import type { InstallPreviewResult } from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
@@ -12,6 +13,7 @@ export type CliResult = {
   code: string; exitCode: number; nextStep?: string; identity?: HostIdentity;
   manifestHash?: string; mode?: 'backup' | 'drill'; externalWrites?: number; checks?: Record<string, DoctorCheck>;
   installPreview?: Omit<Extract<InstallPreviewResult, { status: 'preview' }>, 'status'>;
+  operationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };

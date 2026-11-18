@@ -79,6 +79,8 @@ const sourceRoots = Object.freeze([
   ...Object.values(entries),
   'deploy/runtime/lifecycle-journal.ts',
   'deploy/runtime/install-preview.ts',
+  'deploy/runtime/vault-init.ts',
+  'deploy/runtime/vault-init-cli.ts',
   'scripts/build-runtime.mjs',
   'packages',
 ]);
@@ -235,7 +237,8 @@ async function captureSource(root, commit, profile) {
   await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
   const templatePaths = profile === 'deployment-complete' ? Object.values(deployment.deploymentPaths) : [];
   const committed = sourceTree(root, commit, templatePaths);
-  const allowedAdditions = [...Object.values(entries), ...recipePaths, 'deploy/lib/deployment-templates.d.mts', ...templatePaths];
+  const allowedAdditions = [...Object.values(entries), ...recipePaths, 'deploy/lib/deployment-templates.d.mts',
+    'deploy/runtime/vault-init-cli.ts', ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.
   // All other source paths and the emitted inventory retain the portable path allowlist.

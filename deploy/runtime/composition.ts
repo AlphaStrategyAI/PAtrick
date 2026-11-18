@@ -1,3 +1,5 @@
+import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
+export { createVaultInitController, vaultInitApproval } from './vault-init.js';
 import { previewFirstInstall } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -108,12 +110,28 @@ function validateIdentity(identity: HostIdentity): void {
   }
 }
 
+function ownCapability<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (descriptor && Object.hasOwn(descriptor, 'value')) return descriptor.value;
+  if (key in object) throw new Error('HOST_IDENTITY_MISMATCH');
+  return undefined;
+}
+
 function validateNestedIdentities(host: HostCapabilities | undefined, identity: HostIdentity): void {
   const candidates: HostIdentity[] = [];
   if (host?.network?.identity) candidates.push(host.network.identity);
   for (const target of Object.values(host?.recovery?.targets ?? {})) candidates.push(target.identity);
   for (const target of Object.values(host?.backupReadback?.targets ?? {})) candidates.push(target.identity);
-  for (const vault of Object.values(host?.vaults ?? {})) candidates.push(vault.identity);
+  const vaults = host?.vaults;
+  if (host && Object.hasOwn(host, 'vaultInitOperations')) {
+    for (const key of Object.keys(vaults ?? {})) {
+      const vault = ownCapability(vaults!, key);
+      if (!vault) throw new Error('HOST_IDENTITY_MISMATCH');
+      candidates.push(ownCapability(vault, 'identity')!);
+    }
+  } else {
+    for (const vault of Object.values(vaults ?? {})) candidates.push(vault.identity);
+  }
   for (const release of Object.values(host?.releases ?? {})) candidates.push(release.identity);
   for (const readiness of Object.values(host?.readiness ?? {})) {
     if (readiness?.identity) candidates.push(readiness.identity);
@@ -932,6 +950,10 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
   const domains = [...registration.identity.domains];
   Object.freeze(domains);
   const identity = Object.freeze({ ...registration.identity, domains });
+  const hasVaultInit = Object.hasOwn(hostCapabilities, 'vaultInitOperations');
+  if (hasVaultInit) {
+    for (const key of ['vaultInitOperations', 'vaults', 'lifecycleReadbacks'] as const) ownCapability(hostCapabilities, key);
+  }
   validateNestedIdentities(hostCapabilities, identity);
   if (input.maintenance) {
     const opener = openingOwners.get(input.maintenance.storage);
@@ -947,7 +969,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
     listener: Object.freeze({ ...registration.listener }),
     ...(registration.operationalHub ? { operationalHub: Object.freeze({ ...registration.operationalHub }) } : {}),
   });
-  const host: RegisteredHost = Object.freeze({
+  const host: RegisteredHost = {
     ...hostCapabilities,
     get installPreviews() { return hostCapabilities.installPreviews; },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
@@ -964,12 +986,19 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
       createRecoveryBackupReader,
       createLifecycleJournalReader,
       previewFirstInstall,
+      selectVaultInit,
       createNetworkInspector,
       createNodeNetworkProbePorts,
       createObsidianDoctor,
       createVaultKitInstaller,
     }),
+  };
+  if (hasVaultInit) Object.defineProperties(host, {
+    vaultInitOperations: { enumerable: true, get: () => ownCapability(hostCapabilities, 'vaultInitOperations') },
+    vaults: { enumerable: true, get: () => ownCapability(hostCapabilities, 'vaults') },
+    lifecycleReadbacks: { enumerable: true, get: () => ownCapability(hostCapabilities, 'lifecycleReadbacks') },
   });
+  Object.freeze(host);
   const {
     databasePath, credentialDirectory, recoveryRuntime, bindRecoveryOperations, networkRepair,
     feishuCredentials, feishuTestOutbound, httpSources, settingsHandlers, prDeliveryWorker,
@@ -1022,10 +1051,14 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
 export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const { assertCliRecoveryCurrent } = requireRuntimeProvisioning(provisioning);
   const { host } = provisioning;
-  validateNestedIdentities(host, provisioning.registration.identity);
-  if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0) assertCliRecoveryCurrent();
+  const publicVaultInit = hasVaultInitReadback(host);
+  if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
+  if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
-    try { assertCliRecoveryCurrent(); }
+    try {
+      if (publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
+      assertCliRecoveryCurrent();
+    }
     catch {
       return {
         status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH', exitCode: 5,

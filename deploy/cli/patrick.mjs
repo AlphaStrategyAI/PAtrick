@@ -59,6 +59,17 @@ function projectRecovery(request, context, operation, validate, result) {
   if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'RECOVERY_OUTCOME_UNCERTAIN', 'Read back this operation ID without repeating its effects.', context);
   return response(request, result.status, 'RECOVERY_' + result.status.toUpperCase(), 'Use the same operation ID for the next authorized execute or readback.', context);
 }
+function projectLifecycle(request, context, result) {
+  if (result.status === 'completed') {
+    const { evidenceId, claimSha256, evidenceSha256 } = result.receipt;
+    return response(request, 'completed', 'LIFECYCLE_COMPLETED', 'Retain the signed lifecycle records and verified evidence.',
+      { ...context, lifecycleReceipt: { evidenceId, claimSha256, evidenceSha256 } });
+  }
+  if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'LIFECYCLE_OUTCOME_UNCERTAIN',
+    'Read the same operation ID without repeating its effects.', context);
+  return response(request, result.status, 'LIFECYCLE_' + result.status.toUpperCase(),
+    'Read back this registered operation ID after its authorized controller runs.', context);
+}
 /** Fixed adapter for the trusted lifecycle controller. The CLI never promotes a kit receipt to host enrollment. */
 export function createVaultKitAdapter(host) {
   return { async install(vaultId) {
@@ -97,19 +108,32 @@ export function createVaultKitAdapter(host) {
 }
 export function createPatrickCli(host, checkLiveStorage) {
   async function runCommand(request) {
+    let vaultInit;
+    let legacyVaultReadback;
+    const typedInit = request.command === 'init' && request.operation && host?.vaultInitOperations;
+    if (typedInit) {
+      const selectVaultInit = host.runtime?.selectVaultInit;
+      if (typeof selectVaultInit !== 'function') return response(request, 'unavailable', 'VAULT_INIT_ENROLLMENT_REQUIRED',
+        'Provision the exact Vault operation and authority for this action.');
+      const selected = selectVaultInit(host, request);
+      if (selected?.legacy) legacyVaultReadback = selected.legacy;
+      else vaultInit = selected;
+    }
     const enrolledReadback = request.command === 'backup' && request.action === 'readback' && request.target
       ? host?.backupReadback : undefined;
     const readbackTargets = enrolledReadback?.targets;
     const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
-    const lifecycle = lifecycleReadbacks && Object.hasOwn(lifecycleReadbacks, request.operation)
-      ? lifecycleReadbacks[request.operation] : undefined;
+    const lifecycle = legacyVaultReadback ? legacyVaultReadback.registration
+      : lifecycleReadbacks && !vaultInit && Object.hasOwn(lifecycleReadbacks, request.operation)
+        ? typedInit ? Object.getOwnPropertyDescriptor(lifecycleReadbacks, request.operation)?.value
+          : lifecycleReadbacks[request.operation] : undefined;
     const lifecycleTarget = lifecycle?.plan?.targetId;
     const requestedTarget = request.command === 'init' ? request.vault
       : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
     const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
-    if (!coldTargetSelected && !lifecycleSelected) {
+    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
     }
@@ -122,6 +146,21 @@ export function createPatrickCli(host, checkLiveStorage) {
     if (request.command !== 'doctor' && (host.serviceUid !== process.geteuid?.() || host.captureHost !== hostname())) {
       return response(request, 'blocked', 'HOST_SERVICE_IDENTITY_MISMATCH', 'Run the trusted controller under the registered service UID and capture host.', context);
     }
+    if (vaultInit) {
+      let result;
+      try { result = await vaultInit.run(() => hostBinding.validate()); }
+      catch (error) {
+        const code = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value === 'HOST_IDENTITY_MISMATCH'
+          ? 'HOST_IDENTITY_MISMATCH' : request.action === 'readback' ? 'LIFECYCLE_READBACK_FAILED' : 'VAULT_INIT_ADMISSION_FAILED';
+        return response(request, 'blocked', code, 'Reconcile the enrolled plan, host, and signed records before continuing.', context);
+      }
+      if (result.status === 'unavailable') return response(request, 'unavailable', 'VAULT_INIT_ENROLLMENT_REQUIRED',
+        'Provision the exact Vault operation and authority for this action.', context);
+      const selected = { ...context, operationId: request.operation, vaultId: request.vault };
+      if (result.status === 'preview') return response(request, 'preview', 'VAULT_INIT_KIT_PREVIEW',
+        'Approve the exact retained plan through the trusted host controller.', { ...selected, vaultInitPreview: result.preview });
+      return projectLifecycle(request, selected, result);
+    }
     if (request.command === 'doctor') {
       const report = await doctor(host, request.vault);
       const ready = Object.values(report.checks).filter((check) => check.impact === 'core').every((check) => check.status === 'ready');
@@ -129,8 +168,13 @@ export function createPatrickCli(host, checkLiveStorage) {
     }
     if (lifecycleSelected) {
       const binding = bindRegistration(() => {
+        if (legacyVaultReadback) {
+          legacyVaultReadback.validate();
+          return legacyVaultReadback.registration;
+        }
         if (host.lifecycleReadbacks !== lifecycleReadbacks || !Object.hasOwn(lifecycleReadbacks, request.operation)
-          || lifecycleReadbacks[request.operation] !== lifecycle) throw new Error('HOST_IDENTITY_MISMATCH');
+          || (typedInit ? Object.getOwnPropertyDescriptor(lifecycleReadbacks, request.operation)?.value
+            : lifecycleReadbacks[request.operation]) !== lifecycle) throw new Error('HOST_IDENTITY_MISMATCH');
         return lifecycle;
       });
       const selected = binding.value;
@@ -152,15 +196,7 @@ export function createPatrickCli(host, checkLiveStorage) {
         const result = await reader.read({ operationId: request.operation, command: request.command,
           targetId: lifecycleTarget, expectedGeneration, planSha256 });
         validate();
-        if (result.status === 'completed') {
-          const { evidenceId, claimSha256, evidenceSha256 } = result.receipt;
-          return response(request, 'completed', 'LIFECYCLE_COMPLETED', 'Retain the signed lifecycle records and verified evidence.',
-            { ...context, lifecycleReceipt: { evidenceId, claimSha256, evidenceSha256 } });
-        }
-        if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'LIFECYCLE_OUTCOME_UNCERTAIN',
-          'Read the same operation ID without repeating its effects.', context);
-        return response(request, result.status, 'LIFECYCLE_' + result.status.toUpperCase(),
-          'Read back this registered operation ID after its authorized controller runs.', context);
+        return projectLifecycle(request, context, result);
       } catch {
         let code = 'LIFECYCLE_READBACK_FAILED';
         try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
