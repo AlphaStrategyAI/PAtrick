@@ -7,8 +7,23 @@ on:
       - 'apps/**'
       - 'packages/**'
       - 'deploy/**'
+      - 'docs/designs/设计资产/v2/**'
+      - 'scripts/build-runtime.mjs'
       - 'scripts/pack-release.mjs'
       - 'package*.json'
+      - 'tsconfig.json'
+      - '.github/workflows/release-darwin.yml'
+  push:
+    branches: ['impl/patrick-plan']
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'deploy/**'
+      - 'docs/designs/设计资产/v2/**'
+      - 'scripts/build-runtime.mjs'
+      - 'scripts/pack-release.mjs'
+      - 'package*.json'
+      - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
 
 permissions:
@@ -25,33 +40,148 @@ jobs:
           - runner: macos-15-intel
             arch: x64
     runs-on: ${{ matrix.runner }}
+    env:
+      TARGET_ARCH: ${{ matrix.arch }}
+      NODE_VERSION: '24.9.0'
+      NODE_HEADERS_SHA256: '4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c157fbf48'
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.9.0'
-      - name: Check candidate host architecture
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: node --input-type=module -e 'if (process.platform !== "darwin" || process.arch !== process.env.TARGET_ARCH) throw new Error("candidate host target mismatch")'
-      - name: Pack exact locked source candidate
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
+          node-version: ${{ env.NODE_VERSION }}
+          architecture: ${{ matrix.arch }}
+      - name: Verify native Darwin host and toolchain
         run: |
-          version=$(node -p 'JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).version')
+          case "$TARGET_ARCH" in
+            arm64) machine=arm64 ;;
+            x64) machine=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "$machine"
+          translated=$(/usr/sbin/sysctl -in sysctl.proc_translated)
+          test "${translated:-0}" = 0
+          node --input-type=module -e '
+            if (process.platform !== "darwin" || process.arch !== process.env.TARGET_ARCH ||
+                process.version !== "v" + process.env.NODE_VERSION) {
+              throw new Error("native Darwin Node version or architecture mismatch");
+            }
+            console.log(JSON.stringify({
+              platform: process.platform, arch: process.arch, node: process.version, modules: process.versions.modules,
+            }));
+          '
+      - name: Pack exact locked source candidate
+        run: |
+          version=$(node -p 'require("./package.json").version')
           commit=$(git rev-parse HEAD)
-          mkdir -p candidate
-          node scripts/pack-release.mjs . "$commit" "$version" "$TARGET_ARCH" 1 1 "candidate/patrick-darwin-$TARGET_ARCH.candidate.json" > candidate/receipt.json
+          test "$commit" = "$GITHUB_SHA"
+          source_root=$(pwd -P)
+          cd "$RUNNER_TEMP"
+          mkdir candidate
+          node "$source_root/scripts/pack-release.mjs" "$source_root" "$commit" "$version" "$TARGET_ARCH" 1 1 "candidate/patrick-darwin-$TARGET_ARCH.candidate.json" > candidate/receipt.json
           shasum -a 256 candidate/*.candidate.json > candidate/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: patrick-darwin-${{ matrix.arch }}-unsigned-source-candidate
-          path: candidate/
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Download official Node headers
+        run: |
+          archive="node-v$NODE_VERSION-headers.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' \
+            "https://nodejs.org/dist/v$NODE_VERSION/$archive" --output "$RUNNER_TEMP/$archive"
+      - name: Install locked dependencies and compile better-sqlite3
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          checkout_status=$(git status --porcelain=v1 --untracked-files=all)
+          test -z "$checkout_status"
+          node_root=$(node -p 'require("node:path").dirname(require("node:path").dirname(process.execPath))')
+          npm_root="$node_root/lib/node_modules/npm"
+          node "$npm_root/bin/npm-cli.js" ci --ignore-scripts --no-audit --no-fund
+          node --input-type=commonjs -e '
+            const locked = require("./package-lock.json").packages["node_modules/better-sqlite3"];
+            const installed = require("./node_modules/better-sqlite3/package.json");
+            if (!locked?.integrity || installed.name !== "better-sqlite3" || installed.version !== locked.version) {
+              throw new Error("installed better-sqlite3 does not match the dependency lock");
+            }
+          '
+          archive="$RUNNER_TEMP/node-v$NODE_VERSION-headers.tar.xz"
+          printf '%s  %s\n' "$NODE_HEADERS_SHA256" "$archive" | shasum -a 256 -c -
+          headers=$(mktemp -d "$RUNNER_TEMP/patrick-node-headers.XXXXXXXX")
+          /usr/bin/tar -xf "$archive" -C "$headers"
+          xcrun --find clang
+          xcrun --find make
+          python3 --version
+          (
+            cd node_modules/better-sqlite3
+            node "$npm_root/node_modules/node-gyp/bin/node-gyp.js" rebuild \
+              --arch="$TARGET_ARCH" --nodedir="$headers/node-v$NODE_VERSION" --devdir="$headers/gyp-cache"
+          )
+      - name: Build and verify archived deployment-complete material
+        run: |
+          source_root=$(pwd -P)
+          commit=$(git rev-parse HEAD)
+          test "$commit" = "$GITHUB_SHA"
+          checkout_status=$(git status --porcelain=v1 --untracked-files=all)
+          test -z "$checkout_status"
+          work=$(mktemp -d "$RUNNER_TEMP/patrick-materials.XXXXXXXX")
+          work=$(cd "$work" && pwd -P)
+          upload="$RUNNER_TEMP/patrick-native-material-upload"
+          mkdir "$upload" "$work/readback"
+
+          node scripts/build-runtime.mjs build --profile deployment-complete \
+            --source-root "$source_root" --source-commit "$commit" --output-root "$work/materials" > "$work/build.json"
+          /usr/bin/tar --format=ustar --no-mac-metadata -cf "$upload/runtime-materials.tar" -C "$work/materials" .
+          (
+            cd "$upload"
+            shasum -a 256 runtime-materials.tar > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
+          )
+          /usr/bin/tar -xpf "$upload/runtime-materials.tar" -C "$work/readback"
+          node scripts/build-runtime.mjs verify --profile deployment-complete \
+            --artifact-root "$work/readback" > "$work/readback.json"
+
+          node --input-type=module - "$work" "$upload" > "$upload/readback-receipt.json" <<'JS'
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const [work, upload] = process.argv.slice(2);
+          const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+          const built = readJson(join(work, "build.json"));
+          const readback = readJson(join(work, "readback.json"));
+          const { source, observed, native } = readJson(join(work, "readback/metadata/runtime-materials.json"));
+          if (built.status !== "built" || readback.status !== "verified" ||
+              built.profile !== readback.profile || built.inventorySha256 !== readback.inventorySha256 ||
+              built.inventoryBytes !== readback.inventoryBytes || built.files !== readback.files ||
+              source.kind !== "commit" || source.commit !== process.env.GITHUB_SHA ||
+              source.snapshotSha256 !== built.sourceSnapshotSha256 ||
+              observed.platform !== process.platform || observed.arch !== process.arch ||
+              observed.node !== process.version || observed.modules !== process.versions.modules) {
+            throw new Error("archived runtime inventory differs from the build");
+          }
+          const sha256 = readFileSync(join(upload, "SHA256SUMS"), "utf8").split(" ")[0];
+          console.log(JSON.stringify({
+            kind: "unsigned-deployment-complete-materials",
+            source, observed, native,
+            archive: { name: "runtime-materials.tar", sha256 },
+            readback,
+          }, null, 2));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patrick-darwin-${{ matrix.arch }}-unsigned-deployment-complete-materials
+          path: |
+            ${{ runner.temp }}/patrick-native-material-upload/runtime-materials.tar
+            ${{ runner.temp }}/patrick-native-material-upload/SHA256SUMS
+            ${{ runner.temp }}/patrick-native-material-upload/readback-receipt.json
           if-no-files-found: error
           retention-days: 90
 
-  # Real signer enrollment and protected signing/publication belong to the
-  # separately invoked T25/T26 workflow. Candidates retain their exact bytes.
-  # This workflow has no signing secrets, signing job or release permissions.
+  # T25 accepts this unsigned material using separately protected evidence.
+  # Native admission requires the independently signed exact envelope and its pin.
