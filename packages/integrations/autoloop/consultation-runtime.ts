@@ -33,7 +33,21 @@ export type ConsultationWorkerOptions = {
 
 export function startConsultationWorker(
   db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions, credentials: CredentialStore,
-): void {
+) {
+  const stop = new AbortController();
+  options = { ...options, signal: options.signal ? AbortSignal.any([stop.signal, options.signal]) : stop.signal };
+  const pending = new Set<Promise<unknown>>();
+  const errors: Array<{ code: string }> = [];
+  function track<T>(task: Promise<T>): Promise<T> {
+    pending.add(task);
+    void task.then(() => pending.delete(task), () => {
+      pending.delete(task);
+      if (errors.length < 16) errors.push({ code: 'ASYNC_TASK_FAILED' });
+    });
+    return task;
+  }
+  async function join() { while (pending.size) await Promise.allSettled([...pending]); }
+
   const interval = options.intervalMs ?? 1000;
   const heartbeatInterval = options.heartbeatIntervalMs ?? HEARTBEAT_MS;
   const hubTimeout = options.hubTimeoutMs ?? HUB_TIMEOUT_MS;
@@ -69,10 +83,10 @@ export function startConsultationWorker(
     const stopped = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); });
     signal.addEventListener('abort', abort, { once: true });
     try {
-      return await Promise.race([Promise.resolve().then(() => {
+      return await Promise.race([track(Promise.resolve().then(() => {
         signal.throwIfAborted();
         return start(signal);
-      }), stopped]);
+      })), stopped]);
     } finally {
       signal.removeEventListener('abort', abort);
     }
@@ -84,7 +98,10 @@ export function startConsultationWorker(
     recoverConsultationPaidResults(db, now().toISOString(), BATCH);
     await receipts.recover(BATCH, report, combinedDeadline(2 * hubTimeout));
     await routing.drain(BATCH, combinedDeadline(2 * hubTimeout), report);
-    const backend = options.backend;
+    const configuredBackend = options.backend;
+    const backend = configuredBackend && { ...configuredBackend,
+      send: (input: Parameters<ConsultationBackend['send']>[0]) => track(configuredBackend.send(input)),
+    };
     if (options.signal?.aborted || !backend || !consultationBackendAdmitted(backend)) return;
     // The same slot is recovered after restart or an ambiguous claim response. Once a result
     // is staged, the next slot is deterministic and the old run can be replayed independently.
@@ -126,13 +143,14 @@ export function startConsultationWorker(
     const signals = [stop.signal, AbortSignal.timeout(executionTimeout)];
     if (options.signal) signals.push(options.signal);
     const signal = AbortSignal.any(signals);
-    void keepLease(job.run, claimedAs, signal, stop).catch((error: unknown) => {
+    const lease = track(keepLease(job.run, claimedAs, signal, stop)).catch((error: unknown) => {
       if (!signal.aborted) report(error);
     });
     try {
       return await run(signal);
     } finally {
       stop.abort();
+      await lease;
     }
   }
 
@@ -188,17 +206,18 @@ export function startConsultationWorker(
 
   function report(error: unknown) {
     if (options.signal?.aborted) return;
-    if (options.onError) options.onError(error);
+    if (options.onError) { try { options.onError(error); } catch { /* Reporting cannot reject scheduling cleanup. */ } }
     else process.emitWarning('Consultation worker could not finish a polling step', { code: 'CONSULTATION_WORKER' });
   }
 
   function schedule(delay: number) {
     if (options.signal?.aborted) return;
     timeout = setTimeout(() => {
-      void tick().catch(report).finally(() => schedule(interval));
+      void track(tick()).catch(report).finally(() => schedule(interval));
     }, delay);
     timeout.unref();
   }
 
   schedule(0);
+  return { stop() { stop.abort(); }, join, errors, get active() { return pending.size; } };
 }

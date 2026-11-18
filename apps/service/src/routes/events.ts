@@ -26,7 +26,9 @@ export function mountProjectionEventRoutes(app: Hono, ready: ProjectionReady, op
 function subscribeEvents(resources: ProjectionResources, request: Request, scope: ProjectionScope, after: string | undefined, pollMs: number): Response {
   let controller: ReadableStreamDefaultController<Uint8Array>;
   let closed = false;
+  let cancelled = false;
   let active = false;
+  let polling: Promise<void> | undefined;
   let immediately = false;
   let timer: NodeJS.Timeout | undefined;
   let wakeReader: (() => void) | undefined;
@@ -36,19 +38,26 @@ function subscribeEvents(resources: ProjectionResources, request: Request, scope
   let lastFrame = Date.now();
 
   const abort = () => stop();
-  function stop(terminal?: 'reset_required' | 'scope_revoked', cancelled = false) {
+  function stop(terminal?: 'reset_required' | 'scope_revoked', cancelRequested = false) {
+    cancelled ||= cancelRequested;
     if (closed) return;
     closed = true;
     clearTimeout(timer);
     request.signal.removeEventListener('abort', abort);
     queued = [];
     bytes = 0;
-    if (!cancelled) {
-      if (terminal) controller.enqueue(encoder.encode(record(terminal, {})));
-      controller.close();
-    }
-    wakeReader?.();
-    wakeReader = undefined;
+    const finish = () => {
+      if (!cancelled) {
+        if (terminal) controller.enqueue(encoder.encode(record(terminal, {})));
+        controller.close();
+      }
+      wakeReader?.();
+      wakeReader = undefined;
+    };
+    // A poll may still be authenticating. Keep the stream lifetime until its SQL completes.
+    // Do not await here because a poll can itself request a terminal reset.
+    if (polling) void polling.then(finish, finish);
+    else finish();
   }
 
   function schedule(delay: number) {
@@ -56,7 +65,7 @@ function subscribeEvents(resources: ProjectionResources, request: Request, scope
     clearTimeout(timer);
     timer = setTimeout(() => {
       active = true;
-      void poll().catch((error: unknown) => {
+      polling = poll().catch((error: unknown) => {
         const revoked = error instanceof ApiError && (error.status === 401 || error.status === 403);
         stop(revoked ? 'scope_revoked' : 'reset_required');
       }).finally(() => {
@@ -134,7 +143,7 @@ function subscribeEvents(resources: ProjectionResources, request: Request, scope
         schedule(0);
       });
     },
-    cancel() { stop(undefined, true); },
+    cancel() { stop(undefined, true); return polling?.then(() => {}); },
   }, { highWaterMark: 0 });
   return new Response(stream, { headers: { 'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' } });

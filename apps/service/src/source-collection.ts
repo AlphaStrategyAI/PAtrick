@@ -1,3 +1,4 @@
+import { createTaskLifetime } from './lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import type { SourceRegistry } from '@patrick/integrations/sources/registry';
 import { recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
@@ -13,7 +14,9 @@ const interval: Record<string, number> = { poll: 15 * min, '30m': 30 * min, '1h'
 export type HttpCollectionWorkerOptions = { signal: AbortSignal; pollMs?: number; onError?: (error: unknown) => void };
 
 export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceRegistry, now: () => Date, options: HttpCollectionWorkerOptions) {
-  const { signal, onError } = options;
+  const lifetime = createTaskLifetime(options.signal);
+  const signal = lifetime.signal;
+  const { onError } = options;
   const pollMs = options.pollMs ?? 5_000;
   if (!Number.isSafeInteger(pollMs) || pollMs < 100 || pollMs > 60_000) throw new Error('SOURCE_WORKER_POLL_INVALID');
   let running = false;
@@ -46,7 +49,7 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
     });
   }
 
-  async function tick() {
+  async function runTick() {
     if (running || signal.aborted) return false;
     running = true;
     try {
@@ -66,7 +69,7 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
         return Boolean(current && recoveryWriteAllowed(db, current.data_domain));
       };
       try {
-        await registry.collectSource(work.source_id, work.config_revision, { isLive, signal });
+        await registry.collectSource(work.source_id, work.config_revision, { isLive, signal, trackAsync: lifetime.track });
       } finally {
         const nextAt = new Date(+now() + (signal.aborted ? 0 : interval[work.frequency] ?? interval.poll)).toISOString();
         withImmediateTransaction(db, () => {
@@ -77,6 +80,8 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
       return true;
     } finally { running = false; }
   }
+
+  function tick() { return lifetime.run(runTick); }
 
   function start() {
     if (signal.aborted || started) return;
@@ -93,5 +98,5 @@ export function createHttpCollectionWorker(db: SqliteDatabase, registry: SourceR
     };
     schedule();
   }
-  return { start, tick };
+  return { start, tick, stop: lifetime.stop, join: lifetime.join, errors: lifetime.errors, get active() { return lifetime.active; } };
 }

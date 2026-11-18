@@ -1,3 +1,4 @@
+import { createTaskLifetime } from './lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import { type HubClient, type HubJob, NOTIFICATION_RULE, NOTIFICATION_WORKER } from '@patrick/integrations/autoloop/client';
 import { recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
@@ -35,6 +36,8 @@ function scheduleKey(job: HubJob): string | null {
 }
 
 export function createNotificationMaintenance(db: SqliteDatabase, now: () => Date, options: NotificationMaintenanceOptions) {
+  const lifetime = createTaskLifetime(options.signal);
+  options = { ...options, signal: lifetime.signal };
   if (options.scopes.length < 1 || options.scopes.length > 16) throw new Error('NOTIFICATION_SCOPE_INVALID');
   const scopes = options.scopes.map(({ accountId, dataDomain }) => {
     if (![accountId, dataDomain].every((s) => typeof s === 'string' && s.length >= 1 && s.length <= 160)) {
@@ -120,7 +123,7 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
     return entries.length === pageSize ? entries.at(-1)!.work_id : '';
   }
 
-  async function tick() {
+  async function runTick() {
     if (running || options.signal?.aborted) return;
     running = true;
     try {
@@ -147,7 +150,7 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
       let cancelled = false;
       let timer: NodeJS.Timeout | undefined;
       async function heartbeat() {
-        if (abort.signal.aborted) return;
+        if (abort.signal.aborted || options.signal?.aborted) return;
         const cancel = await options.hub.heartbeat(NOTIFICATION_WORKER, job!.run, bounded(4000, abort.signal));
         if (cancel.includes(job!.run)) {
           cancelled = true;
@@ -155,15 +158,15 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
         }
       }
       function watch() {
-        if (abort.signal.aborted) return;
+        if (abort.signal.aborted || options.signal?.aborted) return;
         timer = setTimeout(() => {
-          void heartbeat().catch(() => abort.abort()).finally(watch);
+          void lifetime.track(heartbeat()).catch(() => abort.abort()).finally(watch);
         }, 5000);
         timer.unref();
       }
       try {
         await heartbeat();
-        if (!abort.signal.aborted && own(job.run)) {
+        if (!abort.signal.aborted && !options.signal?.aborted && own(job.run)) {
           watch();
           const scope = scopes[scopeIndex];
           const position = positions[scopeIndex];
@@ -175,13 +178,13 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
           });
           const transport: NotificationPort = {
             send(delivery, beforeSend, signal) {
-              return options.transport.send(delivery, () => {
+              return lifetime.track(options.transport.send(delivery, () => {
                 if (!own(job.run) || abort.signal.aborted || options.signal?.aborted) throw new Error('NOTIFICATION_MAINTENANCE_LEASE');
                 beforeSend();
-              }, AbortSignal.any([signal, abort.signal, ...[options.signal].filter((signal): signal is AbortSignal => !!signal)]));
+              }, AbortSignal.any([signal, abort.signal, ...[options.signal].filter((signal): signal is AbortSignal => !!signal)])));
             },
-            lookup: (delivery, signal) => options.transport.lookup(delivery,
-              AbortSignal.any([signal, abort.signal, ...[options.signal].filter((signal): signal is AbortSignal => !!signal)])),
+            lookup: (delivery, signal) => lifetime.track(options.transport.lookup(delivery,
+              AbortSignal.any([signal, abort.signal, ...[options.signal].filter((signal): signal is AbortSignal => !!signal)]))),
           };
           const engine = createNotifications(db, { ...observations, now, transport });
           const asOf = at.toISOString();
@@ -204,6 +207,8 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
     } finally { running = false; }
   }
 
+  function tick() { return lifetime.run(runTick); }
+
   function start() {
     if (started || options.signal?.aborted) return;
     started = true;
@@ -220,5 +225,5 @@ export function createNotificationMaintenance(db: SqliteDatabase, now: () => Dat
     }
     poll(0);
   }
-  return { start, tick };
+  return { start, tick, stop: lifetime.stop, join: lifetime.join, errors: lifetime.errors, get active() { return lifetime.active; } };
 }

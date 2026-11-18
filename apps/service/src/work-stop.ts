@@ -1,3 +1,4 @@
+import { createTaskLifetime, type WorkerLifetime } from './lifecycle.js';
 import { ackOutbox, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import type { StopReport } from '../../../packages/domain/src/work-control.js';
 
@@ -15,7 +16,7 @@ type Pending = {
 };
 export const workStopDestination = 'work-stop-supervisor';
 
-export async function observeWorkStop(db: SqliteDatabase, supervisor: WorkStopSupervisor, now: () => Date, after = 0, timeoutMs = 5000): Promise<number> {
+export async function observeWorkStop(db: SqliteDatabase, supervisor: WorkStopSupervisor, now: () => Date, after = 0, timeoutMs = 5000, track: <T>(task: Promise<T>) => Promise<T> = (task) => task): Promise<number> {
   const pending = db.prepare(`SELECT d.seq,d.event_id,d.account_id,d.data_domain,w.work_id,w.generation,r.receipt_id,r.revision
     FROM outbox o JOIN domain_events d ON d.event_id=o.event_id
     JOIN work_control_receipts r ON r.receipt_id=json_extract(d.payload,'$.receipt_id') AND r.account_id=d.account_id
@@ -37,10 +38,10 @@ export async function observeWorkStop(db: SqliteDatabase, supervisor: WorkStopSu
       onAbort = () => resolve(null);
       signal.addEventListener('abort', onAbort, { once: true });
     });
-    observed = await Promise.race([aborted, supervisor.reconcile({
+    observed = await Promise.race([aborted, track(supervisor.reconcile({
       eventId: pending.event_id, accountId: pending.account_id, dataDomain: pending.data_domain,
       workId: pending.work_id, generation: pending.generation,
-    }, signal)]);
+    }, signal))]);
   } catch {
     // An interrupted or unavailable supervisor proves nothing; the stable intent remains queued.
     return pending.seq;
@@ -66,17 +67,20 @@ export async function observeWorkStop(db: SqliteDatabase, supervisor: WorkStopSu
   return pending.seq;
 }
 
-export function startWorkStopObserver(db: SqliteDatabase, supervisor: WorkStopSupervisor, now: () => Date): void {
+export function startWorkStopObserver(db: SqliteDatabase, supervisor: WorkStopSupervisor, now: () => Date): WorkerLifetime {
+  const lifetime = createTaskLifetime(supervisor.signal);
+  supervisor = { ...supervisor, signal: lifetime.signal };
   let cursor = 0;
   let timer: NodeJS.Timeout | undefined;
   supervisor.signal?.addEventListener('abort', () => clearTimeout(timer), { once: true });
   function schedule(wait: number) {
     if (supervisor.signal?.aborted) return;
     timer = setTimeout(() => {
-      void observeWorkStop(db, supervisor, now, cursor).then((next) => { cursor = next; })
+      void lifetime.track(observeWorkStop(db, supervisor, now, cursor, 5000, lifetime.track)).then((next) => { cursor = next; })
         .catch(() => { cursor = 0; }).finally(() => schedule(1000));
     }, wait);
     timer.unref();
   }
   schedule(0);
+  return lifetime;
 }

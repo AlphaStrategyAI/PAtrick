@@ -100,8 +100,9 @@ export type GithubWebhookInput = {
 export const httpFrequencies = ['poll', '30m', '1h', '6h', '24h'] as const;
 export type HttpSourceOperation = 'modify' | 'pause' | 'resume' | 'disconnect';
 type SourceEnableGuard = { draftHash: string; httpBaseline?: HttpBaselineEntry[]; beforeWrite(): string };
-type CollectionGuard = { signal: AbortSignal; isLive(): boolean };
-type PreviewGuard = { signal?: AbortSignal; assertLive(): void | Promise<void> };
+type AsyncTracker = <T>(pending: Promise<T>) => Promise<T>;
+type CollectionGuard = { signal: AbortSignal; isLive(): boolean; trackAsync?: AsyncTracker };
+type PreviewGuard = { signal?: AbortSignal; assertLive(): void | Promise<void>; trackAsync?: AsyncTracker };
 
 export type RssHistoryActor = Principal & { callerId: string; authEpoch: number };
 type RssEvidence = { event_id: string; response_url: string; response_hash: string; byte_length: number };
@@ -149,6 +150,8 @@ export type SourceRegistry = {
 };
 
 export type RegistryOptions = {
+  /** Trusted in-process owner retains actual port work beyond logical cancellation. */
+  trackAsync?: AsyncTracker;
   blobs: BlobStore;
   now?: () => string;
   githubFixtureRoot?: string;
@@ -446,7 +449,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     scope: SourceScope, live?: () => boolean, guard?: PreviewGuard) {
     const allowedUrls = checkHttpScope(principal, target, type, scope);
     const raw = await readRegisteredHttp({ sourceId, accountId: principal.accountId, dataDomain: principal.dataDomain, target, allowedUrls },
-      options.http?.port, { signal: guard?.signal, async stillAllowed(next) {
+      options.http?.port, { signal: guard?.signal, trackAsync: guard?.trackAsync ?? options.trackAsync, async stillAllowed(next) {
         await guard?.assertLive();
         return (!live || live()) && checkHttpScope(principal, target, type, scope).includes(next);
       } });
@@ -823,7 +826,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     try {
       read = await readHttp(principal, source.source_id, source.normalized_target, type, scope,
         () => !isReceipt(gate(source.source_id, configRevision)) && (!guard || guard.isLive()),
-        guard ? { signal: guard.signal, assertLive: () => {} } : undefined);
+        guard ? { signal: guard.signal, trackAsync: guard.trackAsync, assertLive: () => {} } : undefined);
     }
     catch (error) {
       const reason = error instanceof Error && sourceReadFailures.has(error.message) ? error.message : 'SOURCE_HTTP_UNAVAILABLE';

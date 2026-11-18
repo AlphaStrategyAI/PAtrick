@@ -49,11 +49,12 @@ export function sourceUrl(raw: string): URL {
 }
 
 export async function readRegisteredHttp(source: RegisteredHttpSource, port: HttpReadPort = nativePort,
-  input?: { signal?: AbortSignal; stillAllowed?: (url: string) => boolean | Promise<boolean> }): Promise<CollectedResponse> {
+  input?: { signal?: AbortSignal; trackAsync?: <T>(pending: Promise<T>) => Promise<T>; stillAllowed?: (url: string) => boolean | Promise<boolean> }): Promise<CollectedResponse> {
   if (!source.sourceId || !source.accountId || !source.dataDomain || source.allowedUrls.length < 1 || source.allowedUrls.length > 32) denied();
   const allowed = new Set(source.allowedUrls.map((value) => sourceUrl(value).href));
   let target = sourceUrl(source.target);
   const signal = input?.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
+  const track = input?.trackAsync ?? (<T>(pending: Promise<T>) => pending);
   const visited = new Set<string>();
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
     signal.throwIfAborted();
@@ -61,12 +62,12 @@ export async function readRegisteredHttp(source: RegisteredHttpSource, port: Htt
     if (visited.has(target.href)) throw new Error('SOURCE_REDIRECT_LIMIT');
     visited.add(target.href);
     signal.throwIfAborted();
-    const candidates = await untilAbort(port.resolve(target.hostname, signal), signal);
+    const candidates = await untilAbort(track(port.resolve(target.hostname, signal)), signal);
     if (!candidates.length || candidates.length > 32 || !candidates.every(publicAddress)) denied();
     if (await input?.stillAllowed?.(target.href) === false) denied();
     signal.throwIfAborted();
     const pinned = { ...candidates[0] };
-    const response = await untilAbort(port.request(new URL(target), pinned, signal, maxBytes), signal);
+    const response = await untilAbort(track(port.request(new URL(target), pinned, signal, maxBytes)), signal);
     if (redirectStatuses.has(response.status)) {
       if (!response.location || redirects === maxRedirects) throw new Error('SOURCE_REDIRECT_LIMIT');
       let next: URL;

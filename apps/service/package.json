@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/app.ts"
+    ".": "./src/app.ts",
+    "./factory": "./src/factory.ts"
   },
   "dependencies": {
     "@patrick/contracts": "*",

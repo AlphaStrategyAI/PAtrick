@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
 import { createAnswerGate, type Principal } from '../../packages/domain/src/answer-gate.js';
 import { createDelegationApi } from '../../packages/domain/src/delegation.js';
@@ -14,53 +14,86 @@ import { openDatabase } from '../../packages/storage/src/database.js';
 const MATRIX = fileURLToPath(new URL('../../fixtures/contracts/admission-matrix.json', import.meta.url));
 const NOW = '2026-11-17T02:00:00.000Z';
 
-test('feishu deferred card is blocked without app credentials and the web entry remains', async () => {
-  const probe = probeDeferredCard();
-  expect(probe.status).toBe('blocked');
-  expect(probe.messageId).toBeNull();
-  expect(probe.evidenceSha256).toBe(sha256(probe.observation));
-  expect(probe.observation).toContain('missing Feishu app credential');
-  expect(probe.observation).toContain('ERR_MODULE_NOT_FOUND');
-  expect(probe.observation).toContain('channel blocked');
-  expect(probe.observation).toContain('web entry remains');
-  expect(probe.observation).toContain('message_id: none');
-  expect(probe.observation).not.toMatch(/om_[A-Za-z0-9]{8,}/);
-  expect(probe.command).toContain('--input-type=module');
+const credentialEnvironment = ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'LARK_APP_ID', 'LARK_APP_SECRET'] as const;
 
-  const matrix = JSON.parse(readFileSync(MATRIX, 'utf8')) as {
-    feishu_deferred_card: {
-      upstream: { sdk: string; version: string };
-      status: string;
-      command: string;
-      observation: string;
-      evidenceSha256: string | null;
-    };
-  };
-  matrix.feishu_deferred_card = {
-    upstream: matrix.feishu_deferred_card.upstream,
-    status: 'blocked',
-    command: probe.command,
-    observation: probe.observation,
-    evidenceSha256: probe.evidenceSha256,
-  };
-  writeFileSync(MATRIX, `${JSON.stringify(matrix, null, 2)}\n`);
-  const stored = JSON.parse(readFileSync(MATRIX, 'utf8')).feishu_deferred_card as {
-    status: string;
-    command: string;
-    observation: string;
-    evidenceSha256: string;
-  };
-  expect(stored.status).toBe('blocked');
-  expect(stored.command).toBe(probe.command);
-  expect(stored.observation).toBe(probe.observation);
-  expect(stored.evidenceSha256).toBe(sha256(stored.observation));
-  expect(stored.observation).toContain('channel blocked');
-  expect(stored.observation).toContain('web entry remains');
+test.each(['absent', 'present'] as const)(
+  'feishu deferred card is blocked without app credentials and the web entry remains with %s ambient credentials', async (ambient) => {
+    const directory = mkdtempSync(join(tmpdir(), 'patrick-t10-probe-'));
+    try {
+      for (const key of credentialEnvironment) {
+        vi.stubEnv(key, ambient === 'present' ? `synthetic-test-${key}` : undefined);
+      }
+      const beforeProbe = credentialEnvironment.map((key) => process.env[key]);
+      let probe: ReturnType<typeof probeDeferredCard>;
+      try {
+        for (const key of credentialEnvironment) delete process.env[key];
+        probe = probeDeferredCard();
+      } finally {
+        for (const [index, key] of credentialEnvironment.entries()) {
+          const previous = beforeProbe[index];
+          if (previous === undefined) delete process.env[key];
+          else process.env[key] = previous;
+        }
+      }
+      expect(credentialEnvironment.every((key, index) => process.env[key] === beforeProbe[index])).toBe(true);
+      expect(probe.status).toBe('blocked');
+      expect(probe.messageId).toBeNull();
+      expect(probe.evidenceSha256).toBe(sha256(probe.observation));
+      expect(probe.observation).toMatch(/^exit: 1$/m);
+      expect(probe.observation).toContain('missing Feishu app credential');
+      const sdk = /^sdk-exit: (0|1)\n([\s\S]*?)\nchannel blocked$/m.exec(probe.observation);
+      expect(sdk, 'the actual SDK import must have an observed exit and matching diagnostic').not.toBeNull();
+      if (sdk![1] === '0') expect(sdk![2].trim()).toBe('');
+      else expect(sdk![2].trim()).not.toBe('');
+      expect(probe.observation).toContain('channel blocked');
+      expect(probe.observation).toContain('web entry remains');
+      expect(probe.observation).toContain('message_id: none');
+      expect(probe.observation).not.toMatch(/om_[A-Za-z0-9]{8,}/);
+      expect(probe.command).toContain('--input-type=module');
 
-  const receipt = await submitWebAnswer();
-  expect(receipt.validity).toBe('verified');
-  expect(receipt.question_id).toBe('Q-017');
-});
+      const recordedMatrix = readFileSync(MATRIX, 'utf8');
+      const temporaryMatrix = join(directory, 'admission-matrix.json');
+      writeFileSync(temporaryMatrix, recordedMatrix);
+      const matrix = JSON.parse(readFileSync(temporaryMatrix, 'utf8')) as {
+        feishu_deferred_card: {
+          upstream: { sdk: string; version: string };
+          status: string;
+          command: string;
+          observation: string;
+          evidenceSha256: string | null;
+        };
+      };
+      matrix.feishu_deferred_card = {
+        upstream: matrix.feishu_deferred_card.upstream,
+        status: 'blocked',
+        command: probe.command,
+        observation: probe.observation,
+        evidenceSha256: probe.evidenceSha256,
+      };
+      writeFileSync(temporaryMatrix, `${JSON.stringify(matrix, null, 2)}\n`);
+      const stored = JSON.parse(readFileSync(temporaryMatrix, 'utf8')).feishu_deferred_card as {
+        status: string;
+        command: string;
+        observation: string;
+        evidenceSha256: string;
+      };
+      expect(stored.status).toBe('blocked');
+      expect(stored.command).toBe(probe.command);
+      expect(stored.observation).toBe(probe.observation);
+      expect(stored.evidenceSha256).toBe(sha256(stored.observation));
+      expect(stored.observation).toContain('channel blocked');
+      expect(stored.observation).toContain('web entry remains');
+      expect(sha256(readFileSync(MATRIX, 'utf8'))).toBe(sha256(recordedMatrix));
+
+      const receipt = await submitWebAnswer();
+      expect(receipt.validity).toBe('verified');
+      expect(receipt.question_id).toBe('Q-017');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 async function submitWebAnswer() {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t10-admit-'));
@@ -163,13 +196,15 @@ async function submitWebAnswer() {
       options_hash: binding.options_hash,
       answer: { kind: 'option' as const, option_id: 'A' },
     };
-    return await gate.submitAnswer(principal, {
+    const receipt = await gate.submitAnswer(principal, {
       client_request_id: 'web-remains',
       expected_revision: 8,
       payload_hash: sha256(canonicalPayload(payload as unknown as Json)),
       entry: 'web',
       payload,
     });
+    expect(await hub.read('Q-017')).toMatchObject({ cardId: 17, state: 'answered', body: { choice: 0 } });
+    return receipt;
   } finally {
     hub.close();
     db.close();

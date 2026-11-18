@@ -1,3 +1,4 @@
+import { createTaskLifetime, type WorkerLifetime } from './lifecycle.js';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { HUB_CURSOR, readConsistentHubSnapshot, storeHubView, type HubSnapshot, type HubStateReader } from '@patrick/integrations/autoloop/observer';
 import { createProjectionCursorCodec, type ProjectionScope } from '../../../packages/storage/src/views/cursors.js';
@@ -19,6 +20,7 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
   const observed = new Map<string, string>();
   let authored = 0;
   let started = false;
+  let worker: WorkerLifetime | undefined;
 
   function totalChanges(): number {
     return (db.prepare('SELECT total_changes() AS changes').get() as { changes: number }).changes;
@@ -47,20 +49,29 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
       if (observed.size > 4096) observed.delete(observed.keys().next().value!);
     }
   }
-  function start(options: ProjectionWorkerOptions = {}): void {
-    if (started || options.signal?.aborted) return;
+  function start(options: ProjectionWorkerOptions = {}): WorkerLifetime {
+    if (worker) return worker;
+    const lifetime = createTaskLifetime(options.signal);
+    worker = lifetime;
+    options = { ...options, signal: lifetime.signal };
+    if (started || options.signal?.aborted) return lifetime;
     started = true;
     const interval = options.intervalMs ?? 400;
     const pageSize = 4;
     let last: SweepRow | undefined;
     let timer: NodeJS.Timeout | undefined;
     options.signal?.addEventListener('abort', () => clearTimeout(timer), { once: true });
+    function report(error: unknown) {
+      lifetime.recordError();
+      try { options.onError?.(error); } catch { /* Reporting cannot escape a sweep. */ }
+    }
     function schedule(wait: number) {
       if (options.signal?.aborted) return;
       timer = setTimeout(sweep, wait);
       timer.unref();
     }
     function sweep() {
+      if (options.signal?.aborted) return;
       try {
         const scopes = db.prepare(`SELECT DISTINCT account_id,data_domain FROM caller_scopes
           WHERE revoked_at IS NULL ${last ? 'AND (account_id,data_domain)>(?,?)' : ''}
@@ -68,16 +79,17 @@ export function createProductViewService(db: SqliteDatabase, now: () => Date) {
           .all(...(last ? [last.account_id, last.data_domain, pageSize] : [pageSize])) as SweepRow[];
         for (const { account_id, data_domain } of scopes) {
           try { refresh({ accountId: account_id, dataDomain: data_domain }, true); }
-          catch (error) { options.onError?.(error); }
+          catch (error) { report(error); }
         }
         last = scopes.length === pageSize ? scopes.at(-1) : undefined;
         schedule(last ? 10 : interval);
       } catch (error) {
-        options.onError?.(error);
+        report(error);
         schedule(interval);
       }
     }
     schedule(0);
+    return lifetime;
   }
 
   function recordHubObservation(view: HubSnapshot, observedAt: string): void {
@@ -97,14 +109,18 @@ export type ProductViewHub = { hub: HubStateReader; signal?: AbortSignal; onErro
 export function startProductViewHubObserver(
   db: SqliteDatabase, now: () => Date, options: ProductViewHub,
   record: (view: HubSnapshot, observedAt: string) => void,
-): void {
+): WorkerLifetime {
+  const lifetime = createTaskLifetime(options.signal);
+  options = { ...options, signal: lifetime.signal };
   let timeout: NodeJS.Timeout | undefined;
   options.signal?.addEventListener('abort', () => clearTimeout(timeout), { once: true });
   function schedule(delay: number) {
     if (options.signal?.aborted) return;
     timeout = setTimeout(() => {
-      void observe().catch((error: unknown) => {
-        if (!options.signal?.aborted) options.onError?.(error);
+      void lifetime.track(observe()).catch((error: unknown) => {
+        if (!options.signal?.aborted) {
+          try { options.onError?.(error); } catch { /* The tracked observation remains joined. */ }
+        }
       }).finally(() => schedule(2500));
     }, delay);
     timeout.unref();
@@ -121,4 +137,5 @@ export function startProductViewHubObserver(
     });
   }
   schedule(0);
+  return lifetime;
 }

@@ -1,3 +1,4 @@
+import { createTaskLifetime } from './lifecycle.js';
 import { assertBusinessWrite, recoveryWriteCredential } from './recovery-runtime.js';
 import type { BlobStore, SqliteDatabase } from '@patrick/storage';
 import { createPrBuildVerifier } from '@patrick/integrations/publisher/build';
@@ -30,6 +31,8 @@ const batchSize = 12;
 
 export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, options: PrDeliveryOptions) {
   if (!options.accountId || !options.callerId || !options.domain || !options.artifactsRoot.trim() || !options.receiptsRoot.trim()) throw new Error('PUBLISHER_SCOPE_REQUIRED');
+  const lifetime = createTaskLifetime(options.signal);
+  options = { ...options, signal: lifetime.signal };
   const allowWrites = options.liveWrites === true;
   if (allowWrites && (!options.writeAuthorization || (!options.authorization && !options.fetch))) {
     throw new Error('PUBLISHER_SCOPED_CREDENTIALS_REQUIRED');
@@ -38,23 +41,32 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
     throw new Error('PUBLISHER_SINGLE_WRITER_REQUIRED');
   }
   const github = createGitHubClient({
-    fetch: options.fetch,
+    fetch: (input, init) => {
+      lifetime.signal.throwIfAborted();
+      const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const signal = requestSignal ? AbortSignal.any([lifetime.signal, requestSignal]) : lifetime.signal;
+      return (options.fetch ?? globalThis.fetch)(input, { ...init, signal });
+    },
     authorization: options.authorization,
     writeAuthorization: allowWrites && options.writeAuthorization
       ? recoveryWriteCredential(db, options.domain, options.writeAuthorization) : undefined,
-    assertWriteAllowed: () => assertBusinessWrite(db, options.domain),
+    assertWriteAllowed: () => { lifetime.signal.throwIfAborted(); assertBusinessWrite(db, options.domain); },
     branchAuthority: allowWrites ? options.branchAuthority : undefined,
   });
   const target = { ...options.target };
   const { accountId, callerId, domain, signal, reportError } = options;
   const verifyBuild = createPrBuildVerifier(github, { artifactsRoot: options.artifactsRoot, receiptsRoot: options.receiptsRoot, blobs: options.blobs });
-  const stop = new AbortController();
   let stageCursor = '';
   let cursor = '';
   let watchCursor = '';
   let polling: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const stopped = () => stop.signal.aborted || signal?.aborted === true;
+  const stopped = () => lifetime.signal.aborted;
+
+  function report(error: unknown) {
+    lifetime.recordError();
+    try { reportError?.(error); } catch { /* A reporter cannot escape the worker lifetime. */ }
+  }
 
   function scopedRepository() {
     const account = db.prepare('SELECT auth_epoch FROM accounts WHERE account_id = ?').get(accountId) as { auth_epoch: number } | undefined;
@@ -88,7 +100,7 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
           await stage(repository, grant, { title: 'Plan for review', body: 'Plan generated from the admitted source revision.' });
         } catch (error) {
           const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
-          if (code !== 'ENOENT') reportError?.(error);
+          if (code !== 'ENOENT') report(error);
         }
         stageCursor = grant.grant_id;
       }
@@ -102,7 +114,7 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
         if (allowWrites) await publisher.publishPr(item.intent_id);
         else await publisher.reconcilePr(item.intent_id);
       } catch (error) {
-        reportError?.(error);
+        report(error);
       }
       cursor = item.intent_id;
     }
@@ -113,7 +125,7 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
       try {
         await observer.observeOutcome(watch.case_id, watch.remote_ref);
       } catch (error) {
-        reportError?.(error);
+        report(error);
       }
       watchCursor = watch.intent_id;
     }
@@ -121,13 +133,13 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
   }
 
   function pollOnce(): Promise<void> {
-    polling ??= poll().finally(() => { polling = undefined; });
+    polling ??= lifetime.run(poll).finally(() => { polling = undefined; });
     return polling;
   }
 
   function close() {
-    stop.abort();
     signal?.removeEventListener('abort', close);
+    lifetime.stop();
     clearInterval(timer);
   }
 
@@ -136,17 +148,18 @@ export function createPrDeliveryService(db: SqliteDatabase, now: () => Date, opt
     async stageCompletedBuild(grant: ExecutionGrant, artifact: Pick<BuildCandidate, 'baseSha' | 'title' | 'body'>) {
       const repository = stopped() ? null : scopedRepository();
       if (!repository) throw new Error('PUBLISHER_SCOPE_UNAVAILABLE');
-      return stage(repository, grant, artifact);
+      return lifetime.run(() => stage(repository, grant, artifact));
     },
 
     pollOnce,
+    stop: close, join: lifetime.join, errors: lifetime.errors, get active() { return lifetime.active; },
 
     start() {
       if (timer || stopped()) return close;
       const interval = options.pollMs ?? 30_000;
       if (!Number.isSafeInteger(interval) || interval < 250) throw new Error('PUBLISHER_INTERVAL_INVALID');
       signal?.addEventListener('abort', close, { once: true });
-      const run = () => { void pollOnce().catch((error) => reportError?.(error)); };
+      const run = () => { void pollOnce().catch((error) => report(error)); };
       timer = setInterval(run, interval);
       timer.unref();
       run();
