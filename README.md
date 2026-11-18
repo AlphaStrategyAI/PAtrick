@@ -4,15 +4,17 @@
 
 ![PAtrick logo](docs/designs/设计资产/v2/logo-still.svg)
 
-PAtrick helps you make better decisions by carrying work from a source change to a verified proposal pull request and turning observed results into reusable cases.
+PAtrick is designed to help you make better decisions by carrying work from a source change to a verified proposal pull request and turning observed results into reusable cases.
 
 ## What it is for
 
-PAtrick researches your work and asks only when a real trade-off needs your judgment. A decision card presents two concrete options, A and B, with evidence, benefits, and costs, plus **Custom decision** for a custom answer. Once your answer is verified, PAtrick resumes the same work with the applicable authorization.
+PAtrick is intended to research your work and ask only when a real trade-off needs your judgment. A decision card presents two concrete options, A and B, with evidence, benefits, and costs, plus **Custom decision** for a custom answer. After your answer is verified, the intended flow resumes the same work with the applicable authorization.
 
-The first workflow starts with a change in an approved `productIdeas` directory. Delivery is the creation and verification of the proposal pull request (PR). [Product design v2.6](docs/designs/PAtrick产品设计.md)
+The planned first workflow starts with a change in an approved `productIdeas` directory. Delivery is the creation and verification of the proposal pull request (PR). [Product design v2.6](docs/designs/PAtrick产品设计.md)
 
 ## How a piece of work moves
+
+The following describes the intended end-to-end flow. The automatic handoff from an approved source change to a work item is not wired yet.
 
 1. PAtrick captures an approved source change and researches it against the applicable evidence and standards.
 2. Work proceeds within its delegated scope. If a consequential choice is still open, PAtrick preserves its progress and asks for a decision.
@@ -140,6 +142,7 @@ The service runtime is built separately. Running it against real data requires a
 ## This version does not
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
+- Collected source revisions do not automatically create work. Approved trigger rules and the source-to-work dispatcher are not yet available; local tests exercise individual components rather than a complete source-to-PR flow.
 - The Settings index shows the six groups. The design’s global checks panel and per-category readiness summary are still pending.
 - Adding GitHub and local-directory sources in Settings, the work-directory editor, built-in Settings executor and host inspection handlers, and notification preferences are still pending. The System page does not yet provide separate network, executor, and source status summaries.
 - The current Feishu setup covers initial connection and pairing. Rotating credentials or re-pairing an existing connection still needs the authorized change flow in the design.
