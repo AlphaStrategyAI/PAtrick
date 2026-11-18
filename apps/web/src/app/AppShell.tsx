@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router';
 import { healthSnapshotSchema } from '@patrick/contracts/resources';
 import { asClientError, useScopedSnapshot, useService, useSnapshotEvents } from '../api/query.js';
-import { CuriousLogo, Icon } from '../components/icons.js';
+import { Icon } from '../components/icons.js';
+import { ServiceLogo } from '../components/ServiceLogo.js';
 import { Dialog, LocalizedError, StatusEvidence } from '../components/shared.js';
 import { LocaleProvider, useLocale } from '../i18n/LocaleProvider.js';
 import type { LocaleMode, MessageKey } from '../i18n/locale.js';
@@ -35,10 +36,10 @@ function Shell() {
   const connected = useSnapshotEvents(health.data);
   const latestHealth = health.data;
   const healthError = health.error ? asClientError(health.error) : null;
+  const liveHealth = !isDemo && !healthError && connected === true && latestHealth?.freshness === 'fresh'
+    ? latestHealth.data : undefined;
   const healthStatus: MessageKey = healthError?.code === 'UNAVAILABLE' || connected === false ? 'status.offline'
-    : latestHealth?.freshness === 'fresh' && latestHealth.data.freshness === 'fresh'
-      ? `status.${latestHealth.data.service}`
-      : 'status.unknown';
+    : liveHealth?.freshness === 'fresh' ? `status.${liveHealth.service}` : 'status.unknown';
   const lastCheck = healthStatus === 'status.offline' ? latestHealth?.as_of : undefined;
 
   useEffect(() => {
@@ -57,9 +58,9 @@ function Shell() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">{t('aria.skip')}</a>
-    <aside className="desktop-sidebar"><Sidebar status={healthStatus} asOf={lastCheck} hidden={hidden} /></aside>
+    <aside className="desktop-sidebar"><Sidebar health={liveHealth} status={healthStatus} asOf={lastCheck} hidden={hidden} /></aside>
     {drawer && <Dialog className="mobile-drawer" title={t('aria.navigation')} onClose={() => setDrawer(false)}>
-      <Sidebar status={healthStatus} asOf={lastCheck} hidden={hidden} onNavigate={() => setDrawer(false)} />
+      <Sidebar health={liveHealth} status={healthStatus} asOf={lastCheck} hidden={hidden} onNavigate={() => setDrawer(false)} />
     </Dialog>}
     <div className="main-panel">
       <header className="topbar">
@@ -84,12 +85,14 @@ function Shell() {
   </div>;
 }
 
-function Sidebar({ status, asOf, hidden, onNavigate }: { status: MessageKey; asOf?: string; hidden: boolean; onNavigate?: () => void }) {
-  const { locale, t } = useLocale();
+function Sidebar({ health, status, asOf, hidden, onNavigate }: {
+  health?: ReturnType<typeof healthSnapshotSchema.parse>; status: MessageKey; asOf?: string; hidden: boolean; onNavigate?: () => void;
+}) {
+  const { locale, t, reducedMotion } = useLocale();
   const slogan = t('app.slogan');
   return <>
     <div className="brand">
-      <CuriousLogo label={t('app.name')} running={status === 'status.running' && !isDemo} hidden={hidden} />
+      <ServiceLogo label={t('app.name')} health={health} reducedMotion={reducedMotion} pageVisible={!hidden} />
       <StatusEvidence status={status} asOf={asOf} announce />
       <p className="slogan">{locale === 'zh' ? <>{slogan.split('，')[0]}，<wbr />{slogan.split('，')[1]}</> : slogan}</p>
     </div>

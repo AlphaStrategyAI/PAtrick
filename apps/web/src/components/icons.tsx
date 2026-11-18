@@ -6,7 +6,6 @@ import execution from '../../../../docs/designs/设计资产/v2/icons/settings-e
 import operation from '../../../../docs/designs/设计资产/v2/icons/settings-operation.svg?url';
 import interaction from '../../../../docs/designs/设计资产/v2/icons/settings-interaction.svg?url';
 import preferences from '../../../../docs/designs/设计资产/v2/icons/settings-preferences.svg?url';
-import logo from '../../../../docs/designs/设计资产/v2/logo-curious-p.svg?url';
 
 const locked: Record<string, string> = {
   system, settings, 'settings-collection': collection, 'settings-materials': materials,
@@ -28,17 +27,4 @@ export function Icon({ name }: { name: string }) {
   if (locked[name]) return <span aria-hidden="true" className="icon locked-icon" style={{ maskImage: `url("${locked[name]}")` }} />;
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
-}
-
-export function CuriousLogo({ label, running, hidden }: { label: string; running: boolean; hidden: boolean }) {
-  return <div className="curious-logo" data-running={running} data-background={hidden}>
-    <img src={logo} alt={label} />
-    <svg aria-hidden="true" viewBox="0 0 96 96" className="logo-orbit" fill="none">
-      <circle cx="48" cy="48" r="43" stroke="currentColor" opacity=".16" />
-      {running && <g className="logo-runner">
-        <path d="M87.82 31.7A43 43 0 0 1 91 48" stroke="currentColor" opacity=".38" strokeWidth="1.8" />
-        <circle cx="91" cy="48" r="2.35" fill="currentColor" />
-      </g>}
-    </svg>
-  </div>;
 }

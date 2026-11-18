@@ -71,15 +71,6 @@ h2 { font-size: 23px; line-height: 30px; }
 }
 .desktop-sidebar { position: sticky; inset-block-start: 0; height: 100dvh; overflow: auto; display: flex; flex-direction: column; padding: 28px 16px 16px; }
 .brand { display: grid; justify-items: center; text-align: center; gap: 8px; margin-block-end: 28px; }
-.curious-logo {
-  width: 80px; height: 80px; position: relative; display: grid; place-items: center;
-  border-radius: 18px; background: var(--soft); border: 1px solid var(--border); color: var(--primary);
-}
-.curious-logo img { width: 68px; height: 68px; }
-.logo-orbit { position: absolute; inset: 0; width: 100%; }
-.logo-runner { transform-origin: 48px 48px; animation: orbit 4.8s linear infinite; }
-.curious-logo[data-background="true"] .logo-runner { animation-play-state: paused; }
-@keyframes orbit { to { transform: rotate(360deg); } }
 .slogan { margin-inline: 8px; }
 .navigation { display: flex; flex: 1; flex-direction: column; gap: 4px; }
 .nav-link {

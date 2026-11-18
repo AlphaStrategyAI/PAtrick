@@ -1,0 +1,9 @@
+.curious-logo {
+  width: 80px; height: 80px; position: relative; display: grid; place-items: center;
+  border-radius: 18px; background: var(--soft); border: 1px solid var(--border); color: var(--primary);
+}
+.curious-logo img { width: 68px; height: 68px; }
+.logo-orbit { position: absolute; inset: 0; width: 100%; }
+.logo-runner { transform-origin: 48px 48px; animation: orbit 4.8s linear infinite; }
+.curious-logo[data-background="true"] .logo-runner { animation-play-state: paused; }
+@keyframes orbit { to { transform: rotate(360deg); } }
