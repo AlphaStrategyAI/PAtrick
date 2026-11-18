@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "recorded_date": "2026-11-18",
+  "platform": "macOS 27.2.1 (26B131) arm64",
+  "uid": 501,
+  "application": {
+    "version": "1.15.1",
+    "bundle": "/Applications/Obsidian.app",
+    "temporary_profile": "separate user-data-dir",
+    "selected_synthetic_vault_count": 1,
+    "graceful_exit_code": 0,
+    "normal_profile_obsidian_json_sha256_unchanged": true
+  },
+  "observations": [
+    {
+      "action": "standard encoded URI",
+      "relative_path": "标准修订/native-rehearsal.md",
+      "open_exit_code": 0,
+      "visible_window": "native-rehearsal",
+      "result": "opened"
+    },
+    {
+      "action": "hash filename encoded URI",
+      "relative_path": "知识笔记/演练笔记 #1.md",
+      "open_exit_code": 0,
+      "visible_window": "native-rehearsal",
+      "result": "target_not_opened"
+    },
+    {
+      "action": "hash filename double-encoded URI",
+      "relative_path": "知识笔记/演练笔记 #1.md",
+      "open_exit_code": 0,
+      "visible_window": "native-rehearsal",
+      "result": "target_not_opened"
+    },
+    {
+      "action": "select target from file list",
+      "relative_path": "知识笔记/演练笔记 #1.md",
+      "visible_window": "演练笔记 #1",
+      "result": "opened",
+      "synthetic_markers_observed": true
+    }
+  ],
+  "target_content_sha256_before_after": "861395f5097a547f085945e4d3fe2d7a5d27b9eae1be21599525e6f319015e0c",
+  "raw_launch_log_sha256": "499045240a11572ae82112d679568dae51e3b720f12eb9d722a96e22fcf0da2b",
+  "evidence": "Process log and CUA accessibility observations retained in task session. The original process policy failed because the application helper could not initialize its own sandbox; the successful run used the separate profile without that policy.",
+  "limitations": [
+    "The application was not tested across a host reboot.",
+    "The # filename URI did not open the target."
+  ]
+}
