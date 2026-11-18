@@ -77,6 +77,7 @@ const sourceRoots = Object.freeze([
   designPath + 'icons',
   designPath + 'logo-curious-p.svg',
   ...Object.values(entries),
+  'deploy/runtime/lifecycle-journal.ts',
   'scripts/build-runtime.mjs',
   'packages',
 ]);

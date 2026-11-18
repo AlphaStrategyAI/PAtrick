@@ -1,3 +1,4 @@
+import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { readFile } from 'node:fs/promises';
@@ -959,6 +960,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
     runtime: Object.freeze({
       createRecoveryOperations(configuration: RecoveryConfiguration) { return createRecoveryOperations(bindRecoveryTargets(configuration)); },
       createRecoveryBackupReader,
+      createLifecycleJournalReader,
       createNetworkInspector,
       createNodeNetworkProbePorts,
       createObsidianDoctor,
@@ -1018,7 +1020,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const { assertCliRecoveryCurrent } = requireRuntimeProvisioning(provisioning);
   const { host } = provisioning;
   validateNestedIdentities(host, provisioning.registration.identity);
-  if (!host.backupReadback) assertCliRecoveryCurrent();
+  if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
     try { assertCliRecoveryCurrent(); }
     catch {

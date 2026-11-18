@@ -30,7 +30,8 @@ import { afterEach } from 'vitest';
 import { openDatabase } from '@patrick/storage';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { readRecoveryDatabase } from '../../packages/host/src/recovery/backup.js';
-import { canonical } from '../../packages/host/src/recovery/files.js';
+import { canonical, digest } from '../../packages/host/src/recovery/files.js';
+import { createLifecycleJournal, type LifecycleRegistration, type LifecycleRequest } from '../../deploy/runtime/lifecycle-journal.js';
 import { createRuntimeCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import type { RegisteredHost } from '../../deploy/lib/doctor.mjs';
 import { createNetworkInspector } from '../../packages/host/src/network/probes.js';
@@ -177,7 +178,8 @@ test('verification-only CLI preserves a signed claim without a terminal and cann
   expect(f.captures()).toBe(1);
 });
 
-function installedBackupProvisioning(f: ReturnType<typeof fixture>, backupReadback: NonNullable<RegisteredHost['backupReadback']>) {
+function installedRecoveryProvisioning(f: ReturnType<typeof fixture>, backupReadback?: RegisteredHost['backupReadback'],
+  lifecycleReadbacks?: RegisteredHost['lifecycleReadbacks']) {
   Object.assign(f.target.backup.options, { readDatabase: readRecoveryDatabase });
   return createRuntimeProvisioning({
     registration: {
@@ -185,7 +187,7 @@ function installedBackupProvisioning(f: ReturnType<typeof fixture>, backupReadba
       dataRoot: f.root, minimumFreeBytes: 1, profile: 'test', origin: 'http://localhost', rpId: 'localhost',
       listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' },
     },
-    hostCapabilities: { recovery: f.host.recovery, backupReadback },
+    hostCapabilities: { recovery: f.host.recovery, backupReadback, lifecycleReadbacks },
     operationalRecoveryHub: {
       identity: f.host.identity, database: f.target.backup.options.databases.hub,
       physicalPath: join(f.root, 'hub.sqlite'), readDatabase: readRecoveryDatabase,
@@ -200,7 +202,7 @@ function installedBackupProvisioning(f: ReturnType<typeof fixture>, backupReadba
 
 test('installed CLI keeps cold readback usable when its original live recovery binding has closed', async () => {
   const f = fixture();
-  const provisioning = installedBackupProvisioning(f, verificationOnlyHost(f).backupReadback);
+  const provisioning = installedRecoveryProvisioning(f, verificationOnlyHost(f).backupReadback);
   const execute = ['backup', '--target', 'target', '--execute', '--operation', 'backup'];
   const invalid = ['backup', '--readback', '--target', 'target'];
   const installed = createRuntimeCli(provisioning);
@@ -230,7 +232,7 @@ test('installed CLI keeps cold readback usable when its original live recovery b
 test('a live-only backup target ignores unrelated cold configuration before checking live storage', async () => {
   const f = fixture();
   const { backupReadback: cold } = verificationOnlyHost(f);
-  const provisioning = installedBackupProvisioning(f, {
+  const provisioning = installedRecoveryProvisioning(f, {
     ...cold,
     authority: { get keyId() { return cold.authority.keyId; }, verify: cold.authority.verify },
     targets: { unrelated: cold.targets.target },
@@ -244,6 +246,124 @@ test('a live-only backup target ignores unrelated cold configuration before chec
   expect(await cli.run(['backup', '--target', 'unrelated', '--readback', '--operation', 'backup']))
     .toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
   expect(f.captures()).toBe(1);
+});
+
+function installedLifecycleFixture(command: LifecycleRequest['command'], requireOriginalReceiver = false) {
+  const f = fixture();
+  const path = join(f.root, 'lifecycle');
+  mkdirSync(path, { mode: 0o700 });
+  const { dev, ino } = statSync(path);
+  const { keyId, verify } = f.host.recovery.authority;
+  const evidencePath = join(f.root, 'fixture-native-readback');
+  const target = 'registered-target';
+  const targetFlag = command === 'init' ? '--vault' : command === 'install' || command === 'upgrade' ? '--release' : undefined;
+  const planSha256 = digest('normalized fixture ' + command + ' plan');
+  let beforeVerification: (() => Promise<void>) | undefined;
+  let evidenceReads = 0;
+  const authority: LifecycleRegistration['authority'] = { keyId, async verify(bytes, signature, expected) {
+    if (requireOriginalReceiver && this !== authority) return false;
+    const pause = beforeVerification;
+    beforeVerification = undefined;
+    await pause?.();
+    return verify(bytes, signature, expected);
+  } };
+  const evidence: LifecycleRegistration['evidence'] = { version: 'fixture-evidence-v1', async observe(subject, evidenceId) {
+    evidenceReads++;
+    if (requireOriginalReceiver && this !== evidence) throw new Error('Fixture observer receiver changed');
+    const bytes = readFileSync(evidencePath);
+    if (bytes.toString() !== canonical({ subject, evidenceId })) throw new Error('Fixture evidence changed');
+    return { evidenceId, claimSha256: subject.claimSha256, evidenceSha256: digest(bytes) };
+  } };
+  const registered: LifecycleRegistration = {
+    root: { path, device: dev, inode: ino },
+    identity: { ...f.host.identity, installationId: 'fixture-installation' },
+    plan: { command, targetId: target, expectedGeneration: null,
+      nextGeneration: 'generation-one', releaseSha256: targetFlag === '--release' ? digest('registered fixture archive') : null, planSha256 },
+    authority, evidence,
+  };
+  const operation: LifecycleRequest = { operationId: 'lifecycle-one', command, targetId: target,
+    planSha256, expectedGeneration: null };
+  const selected = targetFlag ? [targetFlag, target] : [];
+  const args = [command, ...selected, '--readback', '--operation', operation.operationId];
+  const registrations = { [operation.operationId]: registered } as Record<string, LifecycleRegistration>;
+  const provisioning = installedRecoveryProvisioning(f, undefined, registrations);
+  const writer = createLifecycleJournal(() => registered, f.host.recovery.authority);
+  return { f, path, evidencePath, writer, operation, targetFlag, selected, args, provisioning, registrations,
+    evidenceReads: () => evidenceReads,
+    pauseVerification(pause: () => Promise<void>) { beforeVerification = pause; },
+  };
+}
+
+test.each(['init', 'install', 'start', 'stop', 'upgrade', 'uninstall'] as const)(
+  'installed lifecycle readback observes exact signed %s receipts after closing live storage', async (command) => {
+    const { f, path, evidencePath, writer, operation, targetFlag, selected, args, provisioning } = installedLifecycleFixture(command, true);
+    const cli = createRuntimeCli(provisioning);
+    expect(await cli.run(args)).toMatchObject({ status: 'absent', code: 'LIFECYCLE_ABSENT' });
+    await writer.reserve(operation);
+    expect(await cli.run(args)).toMatchObject({ status: 'reserved', code: 'LIFECYCLE_RESERVED' });
+    const claim = await writer.claim(operation);
+    if (claim.status !== 'claimed') throw new Error('Fixture claim missing');
+    f.closeSources();
+    const restarted = createRuntimeCli(provisioning);
+    expect(await restarted.run(args)).toMatchObject({ status: 'uncertain', code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
+    const wrongSelection = targetFlag ? [targetFlag, 'other', '--operation', operation.operationId] : ['--operation', 'other'];
+    expect(await restarted.run([command, '--readback', ...wrongSelection]))
+      .toMatchObject({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+    expect(await restarted.run([command, ...selected, '--execute', '--operation', operation.operationId]))
+      .toMatchObject({ status: 'blocked', code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
+    const evidenceId = 'observed';
+    writeFileSync(evidencePath, canonical({ subject: claim.subject, evidenceId }));
+    const completion = await writer.markCompleted(claim.token, evidenceId);
+    if (completion.status !== 'completed') throw new Error('Fixture terminal missing');
+    const files = readdirSync(path).sort().map((file) => [file, digest(readFileSync(join(path, file)))]);
+    const result = await createRuntimeCli(provisioning).run(args);
+    expect(result).toEqual({
+      command, action: 'readback', status: 'completed', code: 'LIFECYCLE_COMPLETED',
+      nextStep: 'Retain the signed lifecycle records and verified evidence.',
+      identity: f.host.identity, lifecycleReceipt: completion.receipt, exitCode: 0,
+    });
+    expect(JSON.stringify(result)).not.toContain(f.root);
+    expect(readdirSync(path).sort().map((file) => [file, digest(readFileSync(join(path, file)))])).toEqual(files);
+    writeFileSync(evidencePath, 'different observation');
+    expect(await restarted.run(args)).toMatchObject({ status: 'blocked', code: 'LIFECYCLE_READBACK_FAILED' });
+    expect(f.captures()).toBe(0);
+  });
+
+test('withdrawn lifecycle enrollment cannot call its evidence observer after signature validation', async () => {
+  const setup = installedLifecycleFixture('install');
+  await setup.writer.reserve(setup.operation);
+  const claim = await setup.writer.claim(setup.operation);
+  if (claim.status !== 'claimed') throw new Error('Fixture claim missing');
+  writeFileSync(setup.evidencePath, canonical({ subject: claim.subject, evidenceId: 'observed' }));
+  await setup.writer.markCompleted(claim.token, 'observed');
+  const originalReads = setup.evidenceReads();
+  let onPause!: () => void;
+  let resume!: () => void;
+  const entered = new Promise<void>((resolve) => { onPause = resolve; });
+  const waiting = new Promise<void>((resolve) => { resume = resolve; });
+  setup.pauseVerification(async () => { onPause(); await waiting; });
+  const pending = createRuntimeCli(setup.provisioning).run(setup.args);
+  await entered;
+  delete setup.registrations[setup.operation.operationId];
+  resume();
+  expect(await pending).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+  expect(setup.evidenceReads()).toBe(originalReads);
+});
+
+test.each([undefined, {}])('empty or absent lifecycle enrollment keeps the stale constructor guard (%j)', (registrations) => {
+  const f = fixture();
+  const provisioning = installedRecoveryProvisioning(f, undefined, registrations);
+  f.closeSources();
+  expect(() => createRuntimeCli(provisioning)).toThrow('RECOVERY_SERVICE_HANDLE_MISMATCH');
+});
+
+test('installed lifecycle readback uses the same own keys at construction and dispatch', async () => {
+  const setup = installedLifecycleFixture('install');
+  Object.defineProperty(setup.registrations, setup.operation.operationId, { enumerable: false });
+  await setup.writer.reserve(setup.operation);
+  setup.f.closeSources();
+  await expect(createRuntimeCli(setup.provisioning).run(setup.args))
+    .resolves.toMatchObject({ status: 'reserved', code: 'LIFECYCLE_RESERVED' });
 });
 
 test('verification-only CLI treats the enrolled reader as authoritative if a signed record was damaged', async () => {

@@ -1,3 +1,4 @@
+import type { createLifecycleJournalReader, LifecycleRegistration } from '../runtime/lifecycle-journal.js';
 import type { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import type { createNetworkInspector } from '../../packages/host/src/network/probes.js';
 import type { createNodeNetworkProbePorts } from '../../packages/host/src/network/node-probes.js';
@@ -23,6 +24,7 @@ export type RegisteredHost = {
   runtime?: {
     createRecoveryOperations?: typeof createRecoveryOperations;
     createRecoveryBackupReader?: typeof createRecoveryBackupReader;
+    createLifecycleJournalReader?: typeof createLifecycleJournalReader;
     createNetworkInspector?: typeof createNetworkInspector;
     createNodeNetworkProbePorts?: typeof createNodeNetworkProbePorts;
     createObsidianDoctor?: typeof createObsidianDoctor;
@@ -30,6 +32,7 @@ export type RegisteredHost = {
   };
   recovery?: Parameters<typeof createRecoveryOperations>[0];
   backupReadback?: Parameters<typeof createRecoveryBackupReader>[0];
+  lifecycleReadbacks?: Readonly<Record<string, LifecycleRegistration>>;
   recoveryReadbacks?: readonly { targetId: string; backupOperationId: string; drillOperationId: string; manifestHash: string }[];
   network?: {
     identity: HostIdentity; policy: Parameters<typeof createNetworkInspector>[0];

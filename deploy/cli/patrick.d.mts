@@ -1,3 +1,4 @@
+import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
 export type CliRequest = Readonly<{
@@ -9,11 +10,11 @@ export type CliResult = {
   status: 'preview' | 'completed' | 'invalid' | 'unavailable' | 'blocked' | 'uncertain' | 'absent' | 'reserved';
   code: string; exitCode: number; nextStep?: string; identity?: HostIdentity;
   manifestHash?: string; mode?: 'backup' | 'drill'; externalWrites?: number; checks?: Record<string, DoctorCheck>;
-  prerequisites?: readonly string[];
+  lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };
 export function parseArguments(argv: readonly string[]): CliRequest;
-/** The installed live-storage check applies to all requests except enrolled backup readback. */
+/** The installed live-storage check applies to all requests except exact enrolled readback. */
 export function createPatrickCli(host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined): {
   run(argv: readonly string[]): Promise<CliResult>;
 };

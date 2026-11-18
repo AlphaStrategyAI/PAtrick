@@ -5,6 +5,7 @@ import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectId
 import { verifyRelease } from '../lib/release.mjs';
 
 const commands = new Set(['init', 'doctor', 'install', 'start', 'stop', 'backup', 'restore', 'upgrade', 'uninstall']);
+const lifecycleCommands = new Set(['init', 'install', 'start', 'stop', 'upgrade', 'uninstall']);
 const id = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const commandOptions = {
   init: ['vault'], doctor: ['vault'], install: ['release'], start: [], stop: [],
@@ -99,7 +100,15 @@ export function createPatrickCli(host, checkLiveStorage) {
       ? host?.backupReadback : undefined;
     const readbackTargets = enrolledReadback?.targets;
     const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
-    if (!coldTargetSelected) {
+    const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
+      ? host?.lifecycleReadbacks : undefined;
+    const lifecycle = lifecycleReadbacks && Object.hasOwn(lifecycleReadbacks, request.operation)
+      ? lifecycleReadbacks[request.operation] : undefined;
+    const lifecycleTarget = lifecycle?.plan?.targetId;
+    const requestedTarget = request.command === 'init' ? request.vault
+      : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
+    const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
+    if (!coldTargetSelected && !lifecycleSelected) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
     }
@@ -116,6 +125,46 @@ export function createPatrickCli(host, checkLiveStorage) {
       const report = await doctor(host, request.vault);
       const ready = Object.values(report.checks).filter((check) => check.impact === 'core').every((check) => check.status === 'ready');
       return response(request, ready ? 'completed' : 'blocked', ready ? 'DOCTOR_READY' : 'DOCTOR_PREREQUISITES', 'Resolve each core prerequisite before service admission.', report);
+    }
+    if (lifecycleSelected) {
+      const binding = bindRegistration(() => {
+        if (host.lifecycleReadbacks !== lifecycleReadbacks || !Object.hasOwn(lifecycleReadbacks, request.operation)
+          || lifecycleReadbacks[request.operation] !== lifecycle) throw new Error('HOST_IDENTITY_MISMATCH');
+        return lifecycle;
+      });
+      const selected = binding.value;
+      if (!sameIdentity(identity, selected.identity) || selected.plan.command !== request.command
+        || selected.plan.targetId !== lifecycleTarget) return response(request, 'blocked', 'HOST_IDENTITY_MISMATCH',
+        'Reconcile the registered lifecycle command and configuration revision.', context);
+      const createReader = hostBinding.value.runtime?.createLifecycleJournalReader;
+      if (typeof createReader !== 'function') return response(request, 'unavailable', 'LIFECYCLE_READBACK_REQUIRED',
+        'Install the verification-only lifecycle journal reader.', context);
+      const validate = () => { hostBinding.validate(); binding.validate(); };
+      try {
+        validate();
+        const reader = createReader(() => {
+          validate();
+          return lifecycle;
+        });
+        validate();
+        const { expectedGeneration, planSha256 } = selected.plan;
+        const result = await reader.read({ operationId: request.operation, command: request.command,
+          targetId: lifecycleTarget, expectedGeneration, planSha256 });
+        validate();
+        if (result.status === 'completed') {
+          const { evidenceId, claimSha256, evidenceSha256 } = result.receipt;
+          return response(request, 'completed', 'LIFECYCLE_COMPLETED', 'Retain the signed lifecycle records and verified evidence.',
+            { ...context, lifecycleReceipt: { evidenceId, claimSha256, evidenceSha256 } });
+        }
+        if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'LIFECYCLE_OUTCOME_UNCERTAIN',
+          'Read the same operation ID without repeating its effects.', context);
+        return response(request, result.status, 'LIFECYCLE_' + result.status.toUpperCase(),
+          'Read back this registered operation ID after its authorized controller runs.', context);
+      } catch {
+        let code = 'LIFECYCLE_READBACK_FAILED';
+        try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
+        return response(request, 'blocked', code, 'Inspect the signed records and independent evidence through the trusted controller.', context);
+      }
     }
     if (['install', 'upgrade'].includes(request.command)) {
       const releaseBinding = bindRegistration(() => host.releases && Object.hasOwn(host.releases, request.release) ? host.releases[request.release] : undefined);
