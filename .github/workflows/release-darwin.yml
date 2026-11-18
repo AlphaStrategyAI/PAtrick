@@ -1,0 +1,57 @@
+name: darwin release candidates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'deploy/**'
+      - 'scripts/pack-release.mjs'
+      - 'package*.json'
+      - '.github/workflows/release-darwin.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.9.0'
+      - name: Check candidate host architecture
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: node --input-type=module -e 'if (process.platform !== "darwin" || process.arch !== process.env.TARGET_ARCH) throw new Error("candidate host target mismatch")'
+      - name: Pack exact locked source candidate
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(node -p 'JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).version')
+          commit=$(git rev-parse HEAD)
+          mkdir -p candidate
+          node scripts/pack-release.mjs . "$commit" "$version" "$TARGET_ARCH" 1 1 "candidate/patrick-darwin-$TARGET_ARCH.candidate.json" > candidate/receipt.json
+          shasum -a 256 candidate/*.candidate.json > candidate/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patrick-darwin-${{ matrix.arch }}-unsigned-source-candidate
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 90
+
+  # Real signer enrollment and protected signing/publication belong to the
+  # separately invoked T25/T26 workflow. Candidates retain their exact bytes.
+  # This workflow has no signing secrets, signing job or release permissions.
