@@ -18,9 +18,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const recipePaths = ['scripts/build-runtime.mjs', 'deploy/lib/release.mjs'];
+const recipePaths = ['scripts/build-runtime.mjs', 'deploy/lib/release.mjs', 'deploy/lib/deployment-templates.mjs'];
 let LIMITS;
 let validatePaths;
+let deployment;
 
 async function loadRecipe(sourceRoot) {
   const script = fileURLToPath(import.meta.url);
@@ -36,6 +37,7 @@ async function loadRecipe(sourceRoot) {
     observed.set(path, sha256(await readFile(absolute)));
   }
   const helper = await import(pathToFileURL(resolve(checkout, recipePaths[1])).href);
+  deployment = await import(pathToFileURL(resolve(checkout, recipePaths[2])).href);
   LIMITS = helper.RELEASE_LIMITS;
   validatePaths = helper.validatePaths;
   await verifyRecipe(checkout, observed);
@@ -114,7 +116,7 @@ function parse(command, argv) {
   const required = command === 'verify'
     ? ['artifact-root']
     : ['source-root', 'source-commit', ...(command === 'build' ? ['output-root'] : [])];
-  const allowed = new Set([...required, ...(command === 'build' ? ['source-snapshot'] : [])]);
+  const allowed = new Set([...required, 'profile', ...(command === 'build' ? ['source-snapshot'] : [])]);
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -207,14 +209,14 @@ function readGit(root, args) {
   return result.stdout;
 }
 
-function sourceTree(root, commit) {
+function sourceTree(root, commit, templatePaths) {
   if (!gitHashPattern.test(commit) ||
       readGit(root, ['rev-parse', '--verify', commit + '^{commit}']).toString().trim() !== commit) {
     fail('RUNTIME_SOURCE_COMMIT_INVALID');
   }
   const gitRoot = readGit(root, ['rev-parse', '--show-toplevel']).toString().trim();
   if (gitRoot !== root) fail('RUNTIME_SOURCE_ROOT_INVALID');
-  const tree = readGit(root, ['ls-tree', '-rz', '--full-tree', commit, '--', ...sourceRoots]);
+  const tree = readGit(root, ['ls-tree', '-rz', '--full-tree', commit, '--', ...sourceRoots, ...templatePaths]);
   const committed = new Map();
   for (const row of tree.toString().split('\0').filter(Boolean)) {
     const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(row);
@@ -224,13 +226,14 @@ function sourceTree(root, commit) {
   return committed;
 }
 
-async function captureSource(root, commit) {
+async function captureSource(root, commit, profile) {
   if (Object.keys(process.env).some((name) => name.startsWith('GIT_') && name !== 'GIT_PAGER')) {
     fail('RUNTIME_GIT_ENVIRONMENT_FORBIDDEN');
   }
   await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
-  const committed = sourceTree(root, commit);
-  const allowedAdditions = [...Object.values(entries), 'scripts/build-runtime.mjs'];
+  const templatePaths = profile === 'deployment-complete' ? Object.values(deployment.deploymentPaths) : [];
+  const committed = sourceTree(root, commit, templatePaths);
+  const allowedAdditions = [...Object.values(entries), ...recipePaths, 'deploy/lib/deployment-templates.d.mts', ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.
   // All other source paths and the emitted inventory retain the portable path allowlist.
@@ -251,6 +254,10 @@ async function captureSource(root, commit) {
     total += bytes.length;
     const mode = info.mode & 0o111 ? '100755' : '100644';
     const sha = sha256(bytes);
+    if (templatePaths.includes(path)) {
+      if (info.nlink !== 1) fail('RUNTIME_TEMPLATE_ALIAS');
+      deployment.checkDeploymentRecord(profile, path, fileMode(info), sha);
+    }
     const blob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
     const prior = committed.get(path);
     changed ||= prior?.blob !== blob || prior?.mode !== mode;
@@ -452,13 +459,20 @@ function nativeLoad(outputRoot) {
   return result;
 }
 
-function role(path) {
+function role(path, profile) {
+  if (profile === 'deployment-complete' && deployment.deploymentRole(path)) return deployment.deploymentRole(path);
   if (/^runtime\/(composition|service|cli|worker)\.mjs$/.test(path)) return 'runtime-entry';
   if (/^runtime\/chunk-[A-Z0-9]+\.mjs$/.test(path)) return 'runtime-shared-chunk';
   if (path === 'migrations/manifest.json') return 'storage-migration-manifest';
   if (/^migrations\/[0-9]{4}_[a-z0-9_]+\.sql$/.test(path)) return 'storage-migration';
   if (path === 'web/index.html') return 'web-entry';
-  if (path.startsWith('web/')) return 'web-asset';
+  if (path.startsWith('web/')) {
+    if (profile === 'deployment-complete' &&
+        !/^web\/(?:assets\/[A-Za-z0-9_.-]+\.(?:js|css|woff2?)|fonts\/[A-Za-z0-9_./-]+\.(?:woff2?|txt))$/.test(path)) {
+      fail('RUNTIME_MATERIAL_ROLE_UNKNOWN');
+    }
+    return 'web-asset';
+  }
   if (path === nativePath) return 'native-addon';
   const [, pkg, filename] = path.split('/');
   if (path.startsWith('node_modules/') && Object.hasOwn(runtimePackages, pkg) && runtimePackages[pkg].includes(filename) && path.split('/').length === 3) {
@@ -469,7 +483,7 @@ function role(path) {
   fail('RUNTIME_MATERIAL_ROLE_UNKNOWN');
 }
 
-async function materialRecords(root) {
+async function materialRecords(root, profile) {
   const paths = (await walk(root)).filter((path) => path !== inventoryFile).sort();
   validateMaterialPaths(paths);
   if (paths.length > LIMITS.files) fail('RUNTIME_MATERIAL_LIMIT');
@@ -481,12 +495,16 @@ async function materialRecords(root) {
     if (info.size > LIMITS.artifactBytes) fail('RUNTIME_MATERIAL_LIMIT');
     total += info.size;
     if (total > LIMITS.totalBytes) fail('RUNTIME_MATERIAL_LIMIT');
+    const digest = sha256(await readFile(absolute));
+    const mode = fileMode(info);
+    if (deployment.deploymentRole(path) && info.nlink !== 1) fail('RUNTIME_TEMPLATE_ALIAS');
+    deployment.checkDeploymentRecord(profile, path, mode, digest);
     records.push({
       path,
-      role: role(path),
+      role: role(path, profile),
       bytes: info.size,
-      sha256: sha256(await readFile(absolute)),
-      mode: fileMode(info),
+      sha256: digest,
+      mode,
     });
   }
   return records;
@@ -498,7 +516,7 @@ function fileMode(info) {
   return '100' + mode;
 }
 
-async function verifyArtifact(root) {
+async function verifyArtifact(root, profile) {
   await physicalDirectory(root, 'RUNTIME_ARTIFACT_ROOT_INVALID');
   const inventoryPath = resolve(root, inventoryFile);
   const info = await regularFile(inventoryPath);
@@ -508,7 +526,9 @@ async function verifyArtifact(root) {
   let inventory;
   try { inventory = JSON.parse(inventoryBytes.toString('utf8')); }
   catch { fail('RUNTIME_INVENTORY_INVALID'); }
-  if (inventory?.schemaVersion !== 1 || inventory?.materialKind !== 'emitted-runtime-materials' ||
+  const complete = profile === 'deployment-complete';
+  if (inventory?.schemaVersion !== (complete ? 2 : 1) ||
+      (complete ? inventory.profile !== profile : Object.hasOwn(inventory, 'profile')) || inventory?.materialKind !== 'emitted-runtime-materials' ||
       !Array.isArray(inventory.files) || inventory.files.length > LIMITS.files) fail('RUNTIME_INVENTORY_INVALID');
   const expectedPaths = inventory.files.map((record) => record?.path);
   validateMaterialPaths(expectedPaths);
@@ -529,6 +549,7 @@ async function verifyArtifact(root) {
   if (expectedPaths.some((path) => !actualSet.has(path))) fail('RUNTIME_MATERIAL_MISSING');
   if (actualPaths.some((path) => !expected.has(path))) fail('RUNTIME_MATERIAL_EXTRA');
   const required = [
+    ...(complete ? Object.values(deployment.deploymentPaths) : []),
     ...Object.keys(entries).map((name) => 'runtime/' + name + '.mjs'),
     'migrations/manifest.json',
     'web/index.html',
@@ -540,7 +561,7 @@ async function verifyArtifact(root) {
   if (required.some((path) => !actualSet.has(path)) ||
       !actualPaths.some((path) => path.startsWith('runtime/chunk-')) ||
       !actualPaths.some((path) => path.startsWith('web/assets/'))) fail('RUNTIME_MATERIAL_MISSING');
-  const actual = await materialRecords(root);
+  const actual = await materialRecords(root, profile);
   if (JSON.stringify(actual) !== JSON.stringify(inventory.files)) fail('RUNTIME_MATERIAL_MISMATCH');
   await readMigrations(resolve(root, 'migrations'));
   for (const [name, version] of Object.entries(runtimeVersions)) {
@@ -558,7 +579,7 @@ async function verifyArtifact(root) {
   if (bytes + inventoryBytes.length > LIMITS.totalBytes || actual.length + 1 > LIMITS.files ||
       Math.ceil((bytes + inventoryBytes.length) / 3) * 4 > LIMITS.packageBytes) fail('RUNTIME_MATERIAL_LIMIT');
   return {
-    status: 'verified',
+    status: 'verified', profile,
     files: actual.length,
     bytes,
     inventoryBytes: inventoryBytes.length,
@@ -571,12 +592,13 @@ function packageInventory() {
 }
 
 async function buildRuntime(values, recipe) {
+  const profile = values.profile;
   const toolRoot = values['source-root'];
   const outputRoot = values['output-root'];
   const commit = values['source-commit'];
   const pinnedSnapshot = values['source-snapshot'];
   if (pinnedSnapshot !== undefined && !digestPattern.test(pinnedSnapshot)) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
-  const snapshot = await captureSource(toolRoot, commit);
+  const snapshot = await captureSource(toolRoot, commit, profile);
   await verifyRecipe(toolRoot, recipe, snapshot);
   if (pinnedSnapshot !== undefined ? pinnedSnapshot !== snapshot.digest : snapshot.changed) {
     fail('RUNTIME_SOURCE_SNAPSHOT_MISMATCH');
@@ -637,6 +659,7 @@ async function buildRuntime(values, recipe) {
         },
       }],
     });
+    if (profile === 'deployment-complete') await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
     await copyMigrations(sourceRoot, materials);
     await buildWeb(sourceRoot, materials, vite, exports);
     await copyRuntimePackages(toolRoot, materials, lock);
@@ -645,9 +668,10 @@ async function buildRuntime(values, recipe) {
     if (native.architecture !== process.arch ||
         native.format !== (process.platform === 'darwin' ? 'mach-o' : 'elf')) fail('RUNTIME_NATIVE_ARCHITECTURE_MISMATCH');
     const nativeObservation = nativeLoad(materials);
-    const files = await materialRecords(materials);
+    const files = await materialRecords(materials, profile);
     const inventory = {
-      schemaVersion: 1,
+      schemaVersion: profile === 'deployment-complete' ? 2 : 1,
+      ...(profile === 'deployment-complete' && { profile }),
       materialKind: 'emitted-runtime-materials',
       source: {
         kind: pinnedSnapshot === undefined ? 'commit' : 'pinned-snapshot',
@@ -681,10 +705,10 @@ async function buildRuntime(values, recipe) {
     await writeFile(resolve(materials, inventoryFile), JSON.stringify(inventory, null, 2) + '\n', {
       mode: 0o644, flag: 'wx',
     });
-    await verifyArtifact(materials);
+    await verifyArtifact(materials, profile);
     await verifyRecipe(toolRoot, recipe, snapshot);
     await rename(materials, outputRoot);
-    const receipt = await verifyArtifact(outputRoot);
+    const receipt = await verifyArtifact(outputRoot, profile);
     return {
       ...receipt,
       status: 'built',
@@ -703,13 +727,14 @@ async function main() {
   if (!['build', 'snapshot', 'verify'].includes(command)) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
   const values = parse(command, argv);
   const recipe = await loadRecipe(values['source-root']);
+  values.profile = deployment.releaseProfile(values.profile);
   let result;
   if (command === 'snapshot') {
-    const snapshot = await captureSource(values['source-root'], values['source-commit']);
+    const snapshot = await captureSource(values['source-root'], values['source-commit'], values.profile);
     await verifyRecipe(values['source-root'], recipe, snapshot);
-    result = { status: 'captured', snapshotSha256: snapshot.digest, files: snapshot.files.length, changed: snapshot.changed };
+    result = { status: 'captured', profile: values.profile, snapshotSha256: snapshot.digest, files: snapshot.files.length, changed: snapshot.changed };
   } else {
-    result = command === 'build' ? await buildRuntime(values, recipe) : await verifyArtifact(values['artifact-root']);
+    result = command === 'build' ? await buildRuntime(values, recipe) : await verifyArtifact(values['artifact-root'], values.profile);
   }
   process.stdout.write(JSON.stringify(result) + '\n');
 }

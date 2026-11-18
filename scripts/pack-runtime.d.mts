@@ -1,7 +1,8 @@
+import type { EmittedReleaseProfile } from '../deploy/lib/deployment-templates.mjs';
 import type { DarwinTarget, EmittedMaterialIdentity, EmittedSourceIdentity, ExclusiveRuntimeStaging, SchemaInterval } from '../deploy/lib/emitted-release.mjs';
 export type { EmittedMaterialIdentity, EmittedWriteFailure, EmittedWriteOutcome } from '../deploy/lib/emitted-release.mjs';
 export type EmittedMaterialInput = Readonly<{
-  staging: ExclusiveRuntimeStaging; artifactRoot: string; version: string; target: DarwinTarget; schema: SchemaInterval;
+  profile?: EmittedReleaseProfile; staging: ExclusiveRuntimeStaging; artifactRoot: string; version: string; target: DarwinTarget; schema: SchemaInterval;
   expectedSource: EmittedSourceIdentity; expectedInventorySha256: string; lockPath: string;
   toolchain: Readonly<{ path: string; sha256: string }>;
 }>;

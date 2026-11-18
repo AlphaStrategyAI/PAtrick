@@ -1,3 +1,4 @@
+import type { DeploymentKey, DeploymentRole, EmittedReleaseProfile } from './deployment-templates.mjs';
 export type DarwinTarget = Readonly<{ os: 'darwin'; arch: 'arm64' | 'x64' }>;
 export type SchemaInterval = Readonly<{ min: number; max: number }>;
 export type EmittedSourceIdentity = Readonly<{
@@ -10,20 +11,21 @@ export type EmittedNativeIdentity = Readonly<{
 export type EmittedRuntimeIdentity = Readonly<{ node: string; modules: string; npm: string; native: EmittedNativeIdentity }>;
 export type EmittedRuntimeMaterial = Readonly<{
   path: string; mode: '100644' | '100755'; bytes: number; sha256: string;
-  role: 'runtime-entry' | 'runtime-shared-chunk' | 'storage-migration-manifest' | 'storage-migration' | 'web-entry' |
+  role: DeploymentRole | 'runtime-entry' | 'runtime-shared-chunk' | 'storage-migration-manifest' | 'storage-migration' | 'web-entry' |
     'web-asset' | 'runtime-package-code' | 'runtime-package-metadata' | 'runtime-package-license' | 'native-addon' | 'runtime-inventory';
 }>;
 export type EmittedMaterialIdentity = Readonly<{
-  format: 'patrick-emitted-runtime-material-identity-v1'; version: string; source: EmittedSourceIdentity; target: DarwinTarget;
+  version: string; source: EmittedSourceIdentity; target: DarwinTarget;
   schema: SchemaInterval; runtime: EmittedRuntimeIdentity; toolchainSha256: string; inventorySha256: string; sbomSha256: string;
   materials: readonly EmittedRuntimeMaterial[]; materialSha256: string;
-}>;
+} & ({ format: 'patrick-emitted-runtime-material-identity-v1'; profile?: never } |
+  { format: 'patrick-emitted-runtime-material-identity-v2'; profile: 'deployment-complete' })>;
 /** Provisioned by the trusted host. Writers are excluded through callback completion, including awaited use. */
 export interface ExclusiveRuntimeStaging {
   withExclusiveReadRoot<T>(read: (physicalRoot: string) => Promise<T>): Promise<T>;
 }
 export type EmittedReleaseExpectation = Readonly<{
-  version: string; target: DarwinTarget; schema: SchemaInterval; activeSchema: number; source: EmittedSourceIdentity;
+  profile?: EmittedReleaseProfile; version: string; target: DarwinTarget; schema: SchemaInterval; activeSchema: number; source: EmittedSourceIdentity;
   runtime: Readonly<{ node: string; modules: string }>; toolchainSha256: string; inventorySha256: string;
   materialSha256: string; packageSha256: string;
 }>;
@@ -34,14 +36,18 @@ export type EmittedReleaseTrustPolicy = Readonly<{
 }>;
 declare const verified: unique symbol;
 declare const staged: unique symbol;
-export type VerifiedEmittedRuntimeCandidate = Readonly<Omit<EmittedMaterialIdentity, 'format' | 'sbomSha256'> & {
-  [verified]: true; kind: 'emitted-runtime-candidate'; packageSha256: string; manifestSha256: string; nativeSha256: string;
+export type VerifiedEmittedRuntimeCandidate = Readonly<Omit<EmittedMaterialIdentity, 'format' | 'sbomSha256' | 'profile'> & {
+  profile: EmittedReleaseProfile; [verified]: true; kind: 'emitted-runtime-candidate'; packageSha256: string; manifestSha256: string; nativeSha256: string;
 }>;
-export type StagedEmittedRuntime = Readonly<{ [staged]: true; packageSha256: string; materialSha256: string }>;
-export type AdmittedEmittedRuntime = Readonly<{
+export type StagedEmittedRuntime = Readonly<{ [staged]: true; profile: EmittedReleaseProfile; packageSha256: string; materialSha256: string }>;
+type StagedRuntimePaths = Readonly<{
   root: string; entrypoints: Readonly<Record<'composition' | 'service' | 'cli' | 'worker', string>>;
   packageSha256: string; materialSha256: string; inventorySha256: string; runtime: EmittedRuntimeIdentity;
 }>;
+export type AdmittedDeployment = Readonly<StagedRuntimePaths & { profile: 'deployment-complete'; templates: Readonly<Record<DeploymentKey, string>> }>;
+export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntimePaths & { profile: 'runtime-only' }>;
+export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
+  use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
   staging: ExclusiveRuntimeStaging; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
 }): Promise<VerifiedEmittedRuntimeCandidate>;

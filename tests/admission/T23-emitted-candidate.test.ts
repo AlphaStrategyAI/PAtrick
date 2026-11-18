@@ -7,7 +7,8 @@ import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
-import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import { readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import { deploymentPaths, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -57,21 +58,71 @@ async function observePackage(path: string) {
   return { ...await observe(path), version: JSON.parse(await readFile(path, 'utf8')).version };
 }
 
+const base = '/fixture/Patrick & Co';
+const digest = 'a'.repeat(64);
+const registration = {
+  instanceRoot: base, controllerSha256: digest, controllerPath: '/fixture/Controllers & Tools/'+digest+'/patrick-host-controller',
+  accounts: { caddy: '_proxy', service: '_service', hub: '_hub', worker: '_worker' },
+  origin: 'https://patrick.example.test:8443', listener: { host: '::1' as const, port: 43123 },
+  certificatePath: base+'/caddy/trust/endpoint & chain.pem', keyPath: base+'/caddy/trust/private-key.ref',
+};
+
+describe('offline deployment renderer', () => {
+  let sources: Parameters<typeof renderDeploymentTemplates>[0];
+  beforeAll(async () => {
+    const read = (key: keyof typeof deploymentPaths) => readFile(join(root, deploymentPaths[key]));
+    sources = { caddy: await read('caddy'), service: await read('service'), hub: await read('hub'), worker: await read('worker') };
+  });
+
+  for (const host of ['127.0.0.1', '::1'] as const) {
+    test.each([
+      ['https://patrick.example.test:80', 43123],
+      ['https://patrick.example.test', 443],
+      ['https://patrick.example.test:8443', 8443],
+    ] as const)('refuses frontend %s with '+host+' upstream port %d', (origin, port) => {
+      expect(() => renderDeploymentTemplates(sources, { ...registration, origin, listener: { host, port } })).toThrow();
+    });
+    test.each(['https://patrick.example.test', 'https://patrick.example.test:8443'])(
+      'renders distinct frontend %s and '+host+' upstream', origin => {
+        const rendered = renderDeploymentTemplates(sources, { ...registration, origin, listener: { host, port: 43123 } });
+        expect(rendered.caddy).toContain(origin + ' {');
+        expect(rendered.caddy).toContain((host === '::1' ? '[::1]' : host) + ':43123');
+      });
+  }
+  test('redacts the malformed HTTPS origin in error properties and serialization', () => {
+    const marker = 'malformed-origin-fixture-marker';
+    let failure: unknown;
+    try { renderDeploymentTemplates(sources, { ...registration, origin: 'invalid input ' + marker }); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    const error = failure as Error;
+    expect.soft(error.message).toBe('invalid deployment HTTPS origin');
+    expect.soft(Object.hasOwn(error, 'cause')).toBe(false);
+    expect.soft(Object.hasOwn(error, 'input')).toBe(false);
+    expect.soft(JSON.stringify(error)).not.toContain(marker);
+    for (const key of Reflect.ownKeys(error)) expect.soft(String(Reflect.get(error, key))).not.toContain(marker);
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('Darwin runtime admission', () => {
 beforeAll(async () => {
   temporary = await mkdtemp(join(await realpath(tmpdir()), 'emitted-admission-'));
-  artifact = join(temporary, 'relocated');
   const prefix = pathToFileURL(temporary).href + '/';
   hook = registerHooks({ load(url, context, next) {
     if (url.startsWith(prefix)) { candidateLoads++; throw new Error('candidate module execution during admission'); }
     return next(url, context);
   } });
+  ({ input, evidence, prepared, packagePath, expected, policy, material, artifact } = await buildSignedFixture(temporary));
+}, 120_000);
+
+async function buildSignedFixture(temporary: string, profile?: 'deployment-complete') {
   const git = '/usr/bin/git';
   const commit = child(['--no-replace-objects', 'rev-parse', 'HEAD'], root, git).trim();
-  const source = ['--source-root', root, '--source-commit', commit];
+  const source = ['--source-root', root, '--source-commit', commit, ...(profile ? ['--profile', profile] : [])];
   const build = join(root, 'scripts/build-runtime.mjs');
   const snapshot = JSON.parse(child([build, 'snapshot', ...source]));
   const built = join(temporary, 'original');
+  const artifact = join(temporary, 'relocated');
   child([build, 'build', ...source, '--output-root', built, ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
   await cp(built, artifact, { recursive: true });
   const metadata = 'metadata/runtime-materials.json';
@@ -104,11 +155,11 @@ beforeAll(async () => {
   await writeFile(toolchainPath, bytes(toolchain));
   const lockPath = join(temporary, 'package-lock.json');
   await cp(join(root, 'package-lock.json'), lockPath);
-  input = { staging, artifactRoot: artifact, version: JSON.parse(await readFile(lockPath, 'utf8')).version,
+  const input: EmittedMaterialInput = { ...(profile && { profile }), staging, artifactRoot: artifact, version: JSON.parse(await readFile(lockPath, 'utf8')).version,
     target: { os: 'darwin', arch: inventory.observed.arch }, schema: { min: 1, max: 2 },
     expectedSource: inventory.source, expectedInventorySha256: toolchain.inventory.sha256, lockPath,
     toolchain: { path: toolchainPath, sha256: sha256(bytes(toolchain)) } };
-  material = await inspectEmittedRuntimeMaterial(input);
+  const material = await inspectEmittedRuntimeMaterial(input);
   const runner = join(temporary, 'scenario.mjs');
   await writeFile(runner, scenarioRunner);
   const scenarios = [];
@@ -129,20 +180,150 @@ beforeAll(async () => {
     toolchainSha256: material.toolchainSha256, nativeSha256: inventory.native.sha256, observed: inventory.observed, native: inventory.native, entries, scenarios };
   const reportPath = join(temporary, 'report.json');
   await writeFile(reportPath, bytes(report));
-  evidence = { report: { path: reportPath, sha256: sha256(bytes(report)) }, logs };
-  prepared = await prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence });
-  packagePath = join(temporary, 'candidate.json');
+  const evidence: ExplicitEvidenceInput = { report: { path: reportPath, sha256: sha256(bytes(report)) }, logs };
+  const prepared: PreparedEmittedRuntimeCandidate = await prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence });
+  const packagePath: string = join(temporary, 'candidate.json');
   const packed = await packEmittedRuntimeCandidate(prepared, { signatures: [signature(Buffer.from(prepared.signingManifestBase64, 'base64'))], outputPath: packagePath, outputStaging: staging });
-  expected = { version: input.version, target: input.target, schema: input.schema, activeSchema: 1, source: input.expectedSource,
+  const expected: EmittedReleaseExpectation = { ...(profile && { profile }), version: input.version, target: input.target, schema: input.schema, activeSchema: 1, source: input.expectedSource,
     runtime: { node: process.version, modules: process.versions.modules }, toolchainSha256: material.toolchainSha256, inventorySha256: material.inventorySha256,
     materialSha256: material.materialSha256, packageSha256: packed.packageSha256 };
-  policy = { keys: [{ id: 'fixture', publicKey }], executionReportSha256: evidence.report.sha256, requiredScenarios: logs.map(log => ({ id: log.id, evidenceSha256: log.sha256 })) };
-}, 120_000);
+  const policy: EmittedReleaseTrustPolicy = { keys: [{ id: 'fixture', publicKey }], executionReportSha256: evidence.report.sha256, requiredScenarios: logs.map(log => ({ id: log.id, evidenceSha256: log.sha256 })) };
+  return { input, evidence, prepared, packagePath, expected, policy, material, artifact };
+}
 
 afterAll(async () => {
   hook?.deregister();
   if (temporary) await rm(temporary, { recursive: true, force: true });
   expect(candidateLoads).toBe(0);
+});
+
+describe('signed deployment material', () => {
+let dir: string;
+let complete: Awaited<ReturnType<typeof buildSignedFixture>>;
+beforeAll(async () => {
+  dir = join(temporary, 'complete');
+  await mkdir(dir);
+  complete = await buildSignedFixture(dir, 'deployment-complete');
+}, 120_000);
+
+test('requires an independent complete profile pin and the genuine deployment stage', async () => {
+  await expect(verify({ profile: 'deployment-complete' })).rejects.toThrow(/profile/);
+  const options = { staging, expected: complete.expected, policy: complete.policy };
+  const checked = await verifyEmittedRuntimeCandidate(complete.packagePath, options);
+  expect(checked.profile).toBe('deployment-complete');
+  for (const profile of [undefined, 'runtime-only', 'unknown'] as const) {
+    await expect(verifyEmittedRuntimeCandidate(complete.packagePath, { ...options,
+      expected: { ...complete.expected, profile } as EmittedReleaseExpectation })).rejects.toThrow(/profile/);
+  }
+  const otherPolicy = { ...options, policy };
+  await expect(verifyEmittedRuntimeCandidate(complete.packagePath, otherPolicy)).rejects.toThrow(/report pin/);
+  const roles = {
+    caddy: ['deploy/Caddyfile', 'caddy-template'],
+    service: ['deploy/launchd/com.patrick.service.plist', 'service-launchd-template'],
+    hub: ['deploy/launchd/com.patrick.autoloop-hub.plist', 'hub-launchd-template'],
+    worker: ['deploy/launchd/com.patrick.autoloop-worker.plist', 'worker-launchd-template'],
+    lima: ['deploy/lima/executor.yaml', 'lima-executor-template'],
+  } as const;
+  const templates = checked.materials.filter(row => row.path.startsWith('deploy/'));
+  expect(templates).toHaveLength(5);
+  const destination = join(dir, 'stage');
+  const token = await stageVerifiedEmittedRuntime(checked, { staging, destination });
+  const v1 = await verify();
+  const v1Token = await stageVerifiedEmittedRuntime(v1, { staging, destination: join(dir, 'stage-runtime') });
+  let effects = 0;
+  const effect = async () => ++effects;
+  await expect(withStagedDeployment(v1, v1Token, effect)).rejects.toThrow(/complete deployment profile/);
+  await expect(withStagedDeployment({ ...checked }, token, effect)).rejects.toThrow();
+  await expect(withStagedDeployment(checked, v1Token, effect)).rejects.toThrow();
+  expect(effects).toBe(0);
+  expect(token.profile).toBe('deployment-complete');
+  await withStagedDeployment(checked, token, async admitted => {
+    expect(admitted.profile).toBe('deployment-complete');
+    for (const [key, [path, role]] of Object.entries(roles)) {
+      const source = await readFile(join(root, path));
+      expect(templates).toContainEqual({ path, role, mode: '100644', bytes: source.length, sha256: sha256(source) });
+      const staged = admitted.templates[key as keyof typeof roles];
+      expect(staged).toBe(join(destination, path));
+      expect(await readFile(staged)).toEqual(source);
+    }
+    const sources = {
+      caddy: await readFile(admitted.templates.caddy), service: await readFile(admitted.templates.service),
+      hub: await readFile(admitted.templates.hub), worker: await readFile(admitted.templates.worker),
+    };
+    const rendered = renderDeploymentTemplates(sources, registration);
+    expect(rendered.caddy).toContain('reverse_proxy @registered [::1]:43123');
+    expect(rendered.caddy).toContain('https://patrick.example.test:8443 {');
+    expect(rendered.caddy).toContain('tls "' + registration.certificatePath + '" "' + registration.keyPath + '"');
+    expect(rendered.caddy).not.toMatch(/header_up|@@|localhost|127\.0\.0\.1/);
+    expect(rendered.caddyProcess).toEqual({
+      account: '_proxy', configPath: base+'/caddy/config/Caddyfile', workingDirectory: base+'/caddy',
+      environment: { HOME: base+'/caddy/home', XDG_CONFIG_HOME: base+'/caddy/config', XDG_DATA_HOME: base+'/caddy/data' },
+    });
+    await writeFile(join(dir, 'Caddyfile'), rendered.caddy);
+    for (const role of ['service','hub','worker'] as const) {
+      const path = join(dir, role+'.plist');
+      await writeFile(path, rendered.plists[role]);
+      child(['-lint', path], dir, '/usr/bin/plutil');
+      const parsed = JSON.parse(child(['-convert', 'json', '-o', '-', path], dir, '/usr/bin/plutil'));
+      const label = 'com.patrick.' + (role === 'service' ? role : 'autoloop-' + role);
+      expect(parsed).toEqual({ Label: label, ProgramArguments: [registration.controllerPath, 'run-role', role],
+        UserName: registration.accounts[role], WorkingDirectory: base+'/runtime/'+role,
+        EnvironmentVariables: { HOME: base+'/runtime/'+role+'/home' }, StandardOutPath: base+'/logs/'+role+'/redacted.stdout.log',
+        StandardErrorPath: base+'/logs/'+role+'/redacted.stderr.log', Umask: 63, ProcessType: 'Background', RunAtLoad: true, KeepAlive: true });
+    }
+    for (const bad of [
+      { origin: 'http://patrick.example.test' }, { origin: 'https://patrick.example.test/extra' },
+      { origin: 'https://user@patrick.example.test' }, { origin: 'https://*.example.test' },
+      { listener: { host: '0.0.0.0', port: 43123 } }, { listener: { host: '::1', port: 0 } },
+      { keyPath: registration.certificatePath }, { keyPath: base+'/caddy/trust/../keys/key' },
+      { certificatePath: base+'/caddy/trust/\n import evil' }, { instanceRoot: '/fixture/{env.HOME}' },
+      { controllerPath: '/bin/sh' }, { controllerPath: '/controllers/CURRENT/'+digest+'/patrick-host-controller' },
+      { controllerPath: base+'/'+digest+'/patrick-host-controller' }, { args: ['-c','echo'] },
+      { accounts: { ...registration.accounts, service: 'root' } }, { accounts: { ...registration.accounts, worker: registration.accounts.hub } },
+    ]) expect(() => renderDeploymentTemplates(sources, { ...registration, ...bad } as typeof registration)).toThrow();
+    expect(() => renderDeploymentTemplates({ ...sources, worker: sources.hub }, registration)).toThrow(/content/);
+    expect(renderDeploymentTemplates(sources, { ...registration, listener: { host: '127.0.0.1', port: 4431 } }).caddy).toContain('127.0.0.1:4431');
+  });
+  // A separately provisioned consumer can re-open this explicit pin set and
+  // the fixture public key in a fresh process without retaining signing keys.
+  await writeFile(join(dir, 'fixture-pins.json'), bytes({ expected: complete.expected, policy: complete.policy }));
+}, 120_000);
+
+test('refuses independently re-signed incomplete, aliased or substituted templates', async () => {
+  const candidate = join(dir, 'variant');
+  const fixture = { packagePath: complete.packagePath, expected: complete.expected, policy: complete.policy };
+  const control = await signedVariant(candidate, false, undefined, fixture);
+  expect((await verifyEmittedRuntimeCandidate(candidate, control)).profile).toBe('deployment-complete');
+  const reasons = { omit: /missing deployment template/, extra: /deployment template alias/, alias: /missing deployment template/,
+    duplicate: /duplicate or ambiguous/, role: /role\/mode mismatch/, mode: /deployment template profile\/mode\/content/,
+    substitute: /deployment template profile\/mode\/content/, 'under-web': /deployment template alias/, version: /unsupported inventory/ };
+  for (const variant of Object.keys(reasons) as (keyof typeof reasons)[]) {
+    const options = await signedVariant(candidate, false, undefined, fixture, variant);
+    await expect(verifyEmittedRuntimeCandidate(candidate, options)).rejects.toThrow(reasons[variant]);
+  }
+}, 120_000);
+
+test('checks profile selection for build, capture, material inspection and independent readback', async () => {
+  const build = join(root, 'scripts/build-runtime.mjs');
+  const source = ['--source-root', root, '--source-commit', expected.source.commit];
+  const snapshot = (profile: string) => JSON.parse(child([build, 'snapshot', '--profile', profile, ...source]));
+  const v1 = snapshot('runtime-only');
+  const v2 = snapshot('deployment-complete');
+  expect(v2.files).toBe(v1.files + 5);
+  expect(v2.snapshotSha256).toBe(complete.expected.source.snapshotSha256);
+  expect(v2.snapshotSha256).not.toBe(v1.snapshotSha256);
+  expect(JSON.parse(child([build, 'verify', '--profile', 'deployment-complete', '--artifact-root', complete.artifact])).profile).toBe('deployment-complete');
+  for (const args of [
+    ['verify', '--profile', 'runtime-only', '--artifact-root', complete.artifact],
+    ['verify', '--profile', 'deployment-complete', '--artifact-root', artifact],
+    ['snapshot', '--profile', 'unknown', ...source],
+    ['build', ...source, '--profile', 'deployment-complete', '--source-snapshot', v1.snapshotSha256, '--output-root', join(dir,'wrong-output')],
+  ]) expect(spawnSync(process.execPath, [build, ...args], { cwd: root, timeout: 30_000 }).status).toBe(1);
+  await expect(lstat(join(dir, 'wrong-output'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(inspectEmittedRuntimeMaterial({ ...complete.input, profile: 'runtime-only' })).rejects.toThrow();
+  await expect(inspectEmittedRuntimeMaterial({ ...input, profile: 'deployment-complete' })).rejects.toThrow();
+  await expect(prepareEmittedRuntimeCandidate({ ...complete.input, expectedMaterialSha256: complete.material.materialSha256, evidence })).rejects.toThrow('execution material binding mismatch');
+}, 60_000);
 });
 
 test('admits the real material and pins the exact package, manifest and runtime', async () => {
@@ -610,8 +791,9 @@ type MaterialRow = { path: string; role: string; mode: string; sha256: string; b
 
 // Independently frame a signed contract-test variant. Its new report and all four
 // logs explicitly describe a synthetic fixture; they never reuse execution logs.
-async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: number) {
-  const env = JSON.parse(await readFile(packagePath,'utf8'));
+async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: number,
+  fixture = { packagePath, expected, policy }, variant?: 'omit' | 'extra' | 'alias' | 'duplicate' | 'role' | 'mode' | 'substitute' | 'under-web' | 'version') {
+  const env = JSON.parse(await readFile(fixture.packagePath,'utf8'));
   const manifest = env.manifest;
   const original = manifest.identity;
   const payload = new Map<string, Buffer>(env.files.map((f: {path:string;data:string}) => [f.path, Buffer.from(f.data,'base64')]));
@@ -631,6 +813,24 @@ async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: 
   if (omitEntry) {
     for (const map of [runtime,payload,descriptors]) map.delete('runtime/cli.mjs');
   }
+  if (variant) {
+    const caddy = 'deploy/Caddyfile';
+    const originalRow = runtime.get(caddy)!;
+    if (variant === 'omit' || variant === 'alias') {
+      for (const map of [runtime,payload,descriptors]) map.delete(caddy);
+    }
+    if (['alias', 'extra', 'under-web'].includes(variant)) {
+      const path = variant === 'alias' ? 'deploy/caddyfile' : variant === 'extra' ? 'deploy/lima/second.yaml' : 'web/fonts/shadow.txt';
+      runtime.set(path, put(path, await readFile(join(root, 'deploy/lima/executor.yaml')), variant === 'under-web' ? 'web-asset' : 'lima-executor-template'));
+    }
+    if (variant === 'role' || variant === 'mode') {
+      const row = { ...originalRow, ...(variant === 'role' ? { role: 'lima-executor-template' } : { mode: '100755' }) };
+      runtime.set(caddy, row);
+      descriptors.set(caddy, row);
+    }
+    if (variant === 'substitute') runtime.set(caddy, put(caddy, Buffer.from('unregistered.example.test'), originalRow.role));
+    if (variant === 'version') inv.schemaVersion = 3;
+  }
   const nodes = new Set<string>(['.']);
   function count(key:string) {
     for (let p = key; !nodes.has(p); p = dirname(p)) nodes.add(p);
@@ -647,6 +847,7 @@ async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: 
     return [...rows].sort((a,b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   }
   inv.files = sorted(runtime.values()).filter(r=>r.path!==meta);
+  if (variant === 'duplicate') inv.files = sorted([...inv.files, runtime.get('deploy/Caddyfile')!]);
   const inventory = put(meta,bytes(inv),'runtime-inventory');
   runtime.set(meta,inventory);
   observed.totals = {};
@@ -673,8 +874,8 @@ async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: 
   env.signatures = [signature(bytes(manifest))];
   const raw = bytes(env);
   await writeFile(path,raw);
-  return {nodes:nodes.size,expected:{...expected,materialSha256,inventorySha256:inventory.sha256,toolchainSha256:toolchain.sha256,packageSha256:sha256(raw)},
-    policy:{...policy,executionReportSha256:execution.sha256,requiredScenarios},staging};
+  return {nodes:nodes.size,expected:{...fixture.expected,materialSha256,inventorySha256:inventory.sha256,toolchainSha256:toolchain.sha256,packageSha256:sha256(raw)},
+    policy:{...fixture.policy,executionReportSha256:execution.sha256,requiredScenarios},staging};
 }
 
 test('rejects an uncontrolled nested directory before enumerating its empty descendant', async () => {

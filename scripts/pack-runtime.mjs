@@ -23,7 +23,7 @@ async function snapshot(input, evidence, expectedMaterialSha256) {
     }
     await include(paths.lock, options.lockPath, options.expectedSource.lockSha256);
     await include(paths.toolchain, options.toolchain.path, options.toolchain.sha256);
-    const result = inspectBytes(files, { version: options.version, target: options.target, schema: options.schema,
+    const result = inspectBytes(files, { profile: options.profile, version: options.version, target: options.target, schema: options.schema,
       source: options.expectedSource, inventorySha256: options.expectedInventorySha256, toolchainSha256: options.toolchain.sha256 });
     const { identity, materialSha256, sbom } = result;
     compareTree(tree, identity.materials);

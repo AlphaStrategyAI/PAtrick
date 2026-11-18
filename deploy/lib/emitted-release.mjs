@@ -4,6 +4,8 @@ import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
 
+import { checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile } from './deployment-templates.mjs';
+
 export const paths = Object.freeze({
   inventory: 'metadata/runtime-materials.json', lock: 'provenance/package-lock.json',
   toolchain: 'provenance/toolchain-observed.json', sbom: 'provenance/runtime-sbom.json', report: 'evidence/runtime-execution.json',
@@ -69,7 +71,8 @@ closure.set('node_modules/bindings/bindings.js', 'runtime-package-code');
 closure.set('node_modules/file-uri-to-path/index.js', 'runtime-package-code');
 closure.set(addon, 'native-addon');
 const fixed = new Map([...closure, ...entries.map(path => [path, 'runtime-entry']), ['migrations/manifest.json', 'storage-migration-manifest'], ['web/index.html', 'web-entry']]);
-function role(path) {
+function role(path, profile) {
+  if (profile === 'deployment-complete' && deploymentRole(path)) return deploymentRole(path);
   if (fixed.has(path)) return fixed.get(path);
   if (/^runtime\/chunk-[A-Z0-9]+\.mjs$/.test(path)) return 'runtime-shared-chunk';
   if (/^migrations\/\d{4}_[a-z0-9_]+\.sql$/.test(path)) return 'storage-migration';
@@ -158,12 +161,14 @@ function makeSbom(files, inventory, lock, version) {
 }
 
 // Pure validation shared by the packer and the independently trusted host verifier.
-export function inspectBytes(files, { version, source, target, schema, inventorySha256, toolchainSha256 }) {
+export function inspectBytes(files, { version, source, target, schema, inventorySha256, toolchainSha256, profile: selection }) {
+  const profile = releaseProfile(selection);
+  const complete = profile === 'deployment-complete';
   const raw = files.get(paths.inventory);
   check(raw && sha256(raw) === inventorySha256, 'inventory digest mismatch');
   const inv = json(raw);
-  shape(inv, 'schemaVersion materialKind source tools observed packages native files', 'inventory');
-  check(inv.schemaVersion === 1 && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
+  shape(inv, 'schemaVersion materialKind source tools observed packages native files' + (complete ? ' profile' : ''), 'inventory');
+  check(inv.schemaVersion === (complete ? 2 : 1) && (!complete || inv.profile === profile) && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
   shape(inv.source, 'kind commit snapshotSha256 lockSha256', 'source');
   check(['commit','pinned-snapshot'].includes(inv.source.kind) && typeof inv.source.commit === 'string' && /^[0-9a-f]{40}$/.test(inv.source.commit) &&
     isHash(inv.source.snapshotSha256) && isHash(inv.source.lockSha256), 'invalid source identity');
@@ -178,8 +183,13 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   equal(inv.tools, { esbuild: '0.28.2', vite: '7.3.8' }, 'unsupported build tools');
   equal(inv.packages, Object.entries(versions).map(([name, version]) => ({ name, version })), 'unsupported package closure');
   table(inv.files);
+  if (complete) {
+    const materialPaths = new Set(inv.files.map(row => row.path));
+    for (const path of Object.values(deploymentPaths)) check(materialPaths.has(path), 'missing deployment template ' + path);
+  }
   for (const r of inv.files) {
-    check(r.role === role(r.path) && r.mode === (r.path === addon ? '100755' : '100644'), 'material role/mode mismatch ' + r.path);
+    checkDeploymentRecord(profile, r.path, r.mode, r.sha256);
+    check(r.role === role(r.path, profile) && r.mode === (r.path === addon ? '100755' : '100644'), 'material role/mode mismatch ' + r.path);
     const data = files.get(r.path);
     check(data && data.length === r.bytes && sha256(data) === r.sha256, 'runtime material mismatch ' + r.path);
   }
@@ -199,7 +209,8 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   const sbom = makeSbom(files, inv, lock, version);
   const materials = ordered([...inv.files, descriptor(paths.inventory, 'runtime-inventory', '100644', raw)]);
   table(materials);
-  const identity = { format: 'patrick-emitted-runtime-material-identity-v1', version, source: inv.source, target, schema,
+  const identity = { ...(complete ? { format: 'patrick-emitted-runtime-material-identity-v2', profile } :
+    { format: 'patrick-emitted-runtime-material-identity-v1' }), version, source: inv.source, target, schema,
     runtime: { node, modules, npm, native }, toolchainSha256, inventorySha256, sbomSha256: sha256(sbom), materials };
   return { identity, materialSha256: sha256(encode(identity)), sbom };
 }
@@ -452,7 +463,11 @@ function decodePackage(data, expected, policy) {
   check(m.kind === 'emitted-runtime-candidate' && m.format === 'patrick-emitted-runtime-manifest-v1', 'unsupported emitted manifest');
   table(m.artifacts);
   const identity = m.identity;
-  shape(identity, 'format version source target schema runtime toolchainSha256 inventorySha256 sbomSha256 materials', 'material identity');
+  const profile = releaseProfile(expected.profile);
+  const complete = profile === 'deployment-complete';
+  check(complete ? identity?.format === 'patrick-emitted-runtime-material-identity-v2' && identity.profile === profile :
+    identity?.format === 'patrick-emitted-runtime-material-identity-v1' && !own(identity, 'profile'), 'independent release profile mismatch');
+  shape(identity, 'format version source target schema runtime toolchainSha256 inventorySha256 sbomSha256 materials' + (complete ? ' profile' : ''), 'material identity');
   table(identity.materials);
   runtimeDirectories(identity.materials);
   for (const key of ['version','source','target','schema','toolchainSha256','inventorySha256']) equal(identity[key], expected[key], 'independent expectation mismatch ' + key);
@@ -485,7 +500,7 @@ export async function verifyEmittedRuntimeCandidate(path, { staging, expected, p
     const { data, binding } = await readLeased(lease, path, limits.packageBytes);
     const { identity, manifestSha256, packageSha256, materialSha256 } = decodePackage(data, pins.expected, pins.policy);
     const { version, source, target, schema, runtime, inventorySha256, toolchainSha256, materials } = identity;
-    return { binding, projection: { kind: 'emitted-runtime-candidate', version, source, target, schema, runtime, packageSha256,
+    return { binding, projection: { kind: 'emitted-runtime-candidate', profile: releaseProfile(identity.profile), version, source, target, schema, runtime, packageSha256,
       manifestSha256, materialSha256, inventorySha256, toolchainSha256, nativeSha256: runtime.native.sha256, materials } };
   });
   const receipt = freeze(projection);
@@ -688,7 +703,7 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
     checkLeaf(lease, record.path, record.binding);
     return { nodes: tree.nodes, boundary: tree.boundary, leaseRoot: lease.root };
   });
-  const token = freeze({ packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256 });
+  const token = freeze({ profile: receipt.profile, packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256 });
   staged.set(token, { receipt, destination, capture });
   return token;
 }
@@ -709,8 +724,18 @@ export async function withStagedEmittedRuntime(receipt, token, use) {
     await readback();
     const root = stage.destination;
     try {
-      return await use(freeze({ root, entrypoints: Object.fromEntries(entryNames.map(name => [name, join(root, 'runtime', name + '.mjs')])),
+      const deployment = receipt.profile === 'deployment-complete' ? {
+        templates: Object.fromEntries(Object.entries(deploymentPaths).map(([key, path]) => [key, join(root, path)])),
+      } : {};
+      return await use(freeze({ root, profile: receipt.profile, ...deployment, entrypoints: Object.fromEntries(entryNames.map(name => [name, join(root, 'runtime', name + '.mjs')])),
         runtime: receipt.runtime, packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256, inventorySha256: receipt.inventorySha256 }));
     } finally { await readback(); }
   });
+}
+
+// Install consumers require a genuine complete profile in addition to the original
+// same-instance receipt, stage and leased readback checks.
+export async function withStagedDeployment(receipt, token, use) {
+  check(verified.has(receipt) && receipt.profile === 'deployment-complete', 'complete deployment profile required');
+  return withStagedEmittedRuntime(receipt, token, use);
 }

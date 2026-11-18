@@ -1,0 +1,21 @@
+{
+	admin off
+	persist_config off
+	auto_https off
+	servers {
+		strict_sni_host on
+	}
+	skip_install_trust
+	storage file_system {
+		root "@@STORAGE@@"
+	}
+}
+
+@@ORIGIN@@ {
+	tls "@@CERT@@" "@@KEY@@"
+	@registered expression `{http.request.hostport} == "@@AUTHORITY@@"`
+	route {
+		reverse_proxy @registered @@UPSTREAM@@
+		respond 421
+	}
+}
