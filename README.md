@@ -85,7 +85,7 @@ Review recent activity, completed work, and the knowledge and standards you have
 
 ## Knowledge and standards
 
-Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, follow the exact revision from collection to knowledge verification or standards evaluation, through adoption and the update to the generated Vault view. A saved file starts that process. Adoption requires verification or evaluation, and PAtrick reports the Vault update separately.
+Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, follow the exact revision from collection to knowledge verification or standards evaluation, through adoption and the update to the generated Vault view. The planned workflow starts with file changes in an approved scope. Directory collection is currently unavailable, and authorization and automatic dispatch for directory-triggered work are still pending. Adoption requires verification or evaluation, and PAtrick reports the Vault update separately.
 
 ![Adopted standard and Vault update status](docs/designs/设计资产/v2/Figma-en-edit-standard-adopted.png)
 
@@ -93,7 +93,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 
 ## Settings
 
-- **Collection** lets authorized users add RSS feeds and web pages, preview their scope, and enable, pause, or disconnect them. Existing GitHub and directory sources can be viewed. Activation and the first successful collection have separate receipts.
+- **Collection** lets authorized users add RSS feeds and web pages, preview their scope, and enable, pause, or disconnect them. Existing GitHub and directory sources can be viewed. Directory content collection is temporarily unavailable because a trusted reader is not yet available. Activation and the first successful collection have separate receipts.
 - **Work materials** reviews an already registered Obsidian Vault connection and its permission checks before confirmation.
 - **Execution** shows whether an executor inspection handler is registered. The built-in service does not register one yet.
 - **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow.
