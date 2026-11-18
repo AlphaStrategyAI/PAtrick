@@ -262,7 +262,7 @@ describe('T14 review regressions', () => {
     const browserOrigin = new URL(`http://${server.host}:${server.port}`).origin;
     expect(browserOrigin).toBe(ORIGIN);
     expect(server.strictPort).toBe(true);
-    expect(server.proxy?.['/api']).toEqual({ target: 'http://127.0.0.1:4194' });
+    expect(server.proxy?.['/api']).toEqual({ target: 'http://127.0.0.1:4194', configure: expect.any(Function) });
     expect(() => assertBrowserOrigin(new Request(browserOrigin + '/api/v1/session', {
       method: 'DELETE', headers: { origin: browserOrigin },
     }))).not.toThrow();

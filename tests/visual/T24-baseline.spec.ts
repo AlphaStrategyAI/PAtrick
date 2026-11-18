@@ -7,12 +7,14 @@ import lock from '../../design-inputs.lock.json' with { type: 'json' };
 import rendering from '../../apps/web/rendering.lock.json' with { type: 'json' };
 import environment from '../../fixtures/screens/visual-environment.json' with { type: 'json' };
 import { messages } from './T24-edit-fixture.js';
-import { stamp, withVault } from './T24-vault-fixture.js';
-import { digest, edgeDeltas, measureSettings, pixelDiff } from './T24-baseline-fixture.js';
+import { stamp } from './T24-vault-fixture.js';
+import { digest, edgeDeltas, measureSettings, pixelDiff, withHealthService } from './T24-baseline-fixture.js';
 
 const file = (path: string) => new URL('../../' + path, import.meta.url);
 const require = createRequire(import.meta.url);
 const groups = ['collection', 'materials', 'execution', 'operation', 'interaction', 'preferences'] as const;
+const facts = { connections: { vault: { status: 'needs_permission', revision: 1, epoch: 1 }, feishu: null },
+  edits: { pending: 0, failed: 0 } };
 
 for (const locale of ['en', 'zh'] as const) {
   test.describe(locale + ' settings index', () => {
@@ -29,6 +31,7 @@ for (const locale of ['en', 'zh'] as const) {
       expect(require('@playwright/test/package.json').version).toBe(rendering.playwright);
       expect(digest(readFileSync(file('apps/web/rendering.lock.json')))).toBe(environment.renderingLockSha256);
       expect(digest(readFileSync(file('tests/visual/T24-vault-fixture.ts')))).toBe(environment.fixtureSha256);
+      expect(digest(readFileSync(file('tests/visual/T24-baseline-fixture.ts')))).toBe(environment.healthFixtureSha256);
       expect(environment.limits).toEqual({ edgePx: 2, pixelRatio: 0.005 });
       expect(environment).toMatchObject({ chromium: rendering.chromium.version, playwright: rendering.playwright,
         viewport: rendering.viewports.desktop, deviceScaleFactor: rendering.deviceScaleFactor });
@@ -41,12 +44,19 @@ for (const locale of ['en', 'zh'] as const) {
         const name = basename(new URL(response.url()).pathname);
         fonts.push(response.body().then(bytes => ({ name, sha256: digest(bytes) })));
       });
-      await withVault(page, environment.vaultId, async () => {
+      await withHealthService(page, async service => {
+        const transport = { port: Number(process.env.PATRICK_OVERVIEW_PROXY_PORT), directory: process.env.PATRICK_OVERVIEW_DIRECTORY,
+          controlPort: Number(process.env.PATRICK_OVERVIEW_CONTROL_PORT), backendPort: service.backendPort, owner: Number(process.env.PATRICK_OVERVIEW_PROXY_OWNER), worker: process.pid, parent: process.ppid, observedAt: new Date().toISOString() };
+        expect(transport.owner).toBe(transport.parent);
+        expect(new Set([transport.port, transport.controlPort, transport.backendPort, 43155]).size).toBe(4);
+        writeFileSync(info.outputPath('overview-transport.json'), JSON.stringify(transport, null, 2));
         await page.goto(environment.route);
         const t = messages[locale];
         await expect(page.getByRole('heading', { level: 1, name: t['nav.settings'], exact: true })).toBeVisible();
-        await expect(page.locator('.brand').getByRole('status')).toHaveText(t['status.offline']);
-        await expect(page.locator('.brand time')).toHaveAttribute('datetime', environment.healthAsOf);
+        await expect(page.locator('.brand').getByRole('status')).toHaveText(t['status.running'], { timeout: 22_000 });
+        const overview = page.getByRole('region', { name: t['settings.overview.title'] });
+        await expect(overview).toContainText(t['settings.overview.vaultPermission']);
+        await expect(overview.locator('time')).toHaveAttribute('datetime', environment.healthAsOf);
         await expect(page.locator('.curious-logo img')).toBeVisible();
         await page.evaluate(async () => {
           await document.fonts.ready;
@@ -73,7 +83,7 @@ for (const locale of ['en', 'zh'] as const) {
           font.familyName.includes(locale === 'en' ? 'Inter' : 'Noto Sans SC'))).toBe(true);
         const shot = await page.screenshot({ path: info.outputPath('runtime.png'), animations: 'disabled', scale: 'css' });
         const designPixels = await pixelDiff(page, shot, exportBytes);
-        const designEdges = edgeDeltas(measured.edges, environment.figmaEdges);
+        const designEdges = edgeDeltas(measured.edges, { ...environment.figmaEdges, ...frame.figmaEdges });
         writeFileSync(info.outputPath('design-comparison.json'), JSON.stringify({ frame: design, measured, loaded, headingFonts,
           designEdges, designPixels, geometryWithinTolerance: Object.values(designEdges).every(d => Math.abs(d) <= environment.limits.edgePx),
           pixelsWithinTolerance: designPixels.ratio <= environment.limits.pixelRatio }, null, 2));
@@ -93,7 +103,7 @@ for (const locale of ['en', 'zh'] as const) {
             expect.soft(Math.abs(delta), key + ' Figma drift').toBeLessThanOrEqual(environment.limits.edgePx);
           expect.soft(designPixels.ratio, 'Figma pixel ratio').toBeLessThanOrEqual(environment.limits.pixelRatio);
         }
-      });
+      }, { freshness: 'fresh', at: environment.healthAsOf, facts });
     });
   });
 }

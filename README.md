@@ -100,9 +100,9 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 - **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport.
 - **Preferences** saves language and reduced motion for the account.
 
-![Six Settings rows](fixtures/screens/baselines/en-settings-rows.png)
+![Settings overview with a Vault permission issue](fixtures/screens/baselines/en-settings-overview.png)
 
-*T24 runtime reference showing the six Settings rows in a synthetic account.* [Settings capture record](fixtures/screens/visual-environment.json) · [Feishu setup and current evidence](docs/operations/feishu-setup-report.md)
+*T24 runtime reference: a fresh service projection and a Vault permission issue in a synthetic fixture.* [Settings capture record](fixtures/screens/visual-environment.json) · [Feishu setup and current evidence](docs/operations/feishu-setup-report.md)
 
 ## Install and run
 
@@ -143,7 +143,7 @@ The service runtime is built separately. Running it against real data requires a
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
 - Collected source revisions do not automatically create work. Approved trigger rules and the source-to-work dispatcher are not yet available; local tests exercise individual components rather than a complete source-to-PR flow.
-- The Settings index shows the six groups. The design’s global checks panel and per-category readiness summary are still pending.
+- Settings shows the service snapshot and six groups. Running the full checks and per-category readiness summaries are still pending.
 - Adding GitHub and local-directory sources in Settings, the work-directory editor, built-in Settings executor and host inspection handlers, and notification preferences are still pending. The System page does not yet provide separate network, executor, and source status summaries.
 - The current Feishu setup covers initial connection and pairing. Rotating credentials or re-pairing an existing connection still needs the authorized change flow in the design.
 - The native Feishu round trip still needs transport provisioning and live acceptance. Real GitHub delivery and Codex CLI, Grok Build, and DSH under their intended host identities also need live acceptance. The local browser and service fixtures exercise their documented contracts.

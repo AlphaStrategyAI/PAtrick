@@ -4,6 +4,7 @@ import { NotificationPanel } from '../features/system/NotificationPanel.js';
 import { DiagnosticsPanel } from '../features/system/DiagnosticsPanel.js';
 import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
+import { SettingsOverview } from '../features/settings/SettingsOverview.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
 import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
 import { WorkPage as LiveWorkPage } from '../features/work/WorkPage.js';
@@ -20,6 +21,7 @@ import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
 import { useLocale } from '../i18n/LocaleProvider.js';
 import type { MessageKey } from '../i18n/locale.js';
 import { AppShell, LanguageSelect } from './AppShell.js';
+import type { ShellHealthContext } from './AppShell.js';
 import { demoWork, isDemo } from './demo.js';
 import { navigation, settingsNavigation, workDetailPath } from './navigation.js';
 import type { NavigationItem } from './navigation.js';
@@ -83,14 +85,9 @@ function WorkDetailPage() {
   </>;
 }
 
-type HealthContext = {
-  healthStatus: MessageKey;
-  health: { data?: { data: { as_of: string } }; error: Error | null; isFetching: boolean; refetch: () => unknown };
-};
-
 function SystemPage() {
   const { t } = useLocale();
-  const { health, healthStatus } = useOutletContext<HealthContext>();
+  const { health, healthStatus } = useOutletContext<ShellHealthContext>();
   return <PageFrame item={navigation[5]}><Authenticated>
     <section className="card">
       {isDemo ? <p>{t('empty.demo')}</p> : <>
@@ -111,6 +108,7 @@ function SystemPage() {
 function SettingsPage() {
   const { t } = useLocale();
   return <PageFrame item={navigation[7]}><Authenticated>
+    <SettingsOverview />
     <nav className="settings-grid" aria-label={t('aria.settings')}>
       {settingsNavigation.map(item => <Link key={item.path} to={item.path} className="settings-row"
         aria-labelledby={item.label} aria-describedby={item.description}>

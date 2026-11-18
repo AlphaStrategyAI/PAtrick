@@ -100,9 +100,9 @@ PAtrick 旨在围绕手头的工作展开研究，只在确实需要你权衡时
 - **交互**在所需主机能力已登记时支持飞书首次设置、配对和样例测试预览。发送和核验测试需要传输通道。
 - **偏好**保存账户的语言和减少动效设置。
 
-![设置首页的六组入口](fixtures/screens/baselines/zh-settings-rows.png)
+![设置概览中的资料库权限问题](fixtures/screens/baselines/zh-settings-overview.png)
 
-*T24 运行界面参考：合成账号下的六组设置。* [设置截图记录](fixtures/screens/visual-environment.json) · [飞书设置与当前证据](docs/operations/feishu-setup-report.md)
+*T24 运行界面参考：服务投影为最新，资料库需要权限（合成测试场景）。* [设置截图记录](fixtures/screens/visual-environment.json) · [飞书设置与当前证据](docs/operations/feishu-setup-report.md)
 
 ## 安装与运行
 
@@ -143,7 +143,7 @@ npm run test:unit
 
 - 交付止于经核验的方案 PR。本版不负责合并、部署业务成果或执行 L3 多步骤委托。 [技术设计 v2.1](docs/designs/PAtrick技术设计-v2.md)
 - 收录来源修订不会自动创建工作；获准触发规则和来源到工作的调度尚未接通。本地测试覆盖各个组件，尚未验证从来源到 PR 的完整流程。
-- 设置首页显示六组入口。设计中的全局检查面板和各组就绪摘要仍待实现。
+- 设置首页显示服务快照与六组入口；运行完整检查和各组就绪摘要仍待实现。
 - 设置中新增 GitHub 和本地目录来源、工作目录编辑器、设置页的内置执行器及主机检查处理器、通知偏好仍待实现。系统页尚未提供独立的网络、执行器和来源状态摘要。
 - 当前飞书设置覆盖首次连接和配对。已有连接的凭据轮换和重新配对仍需要设计中的独立授权变更流程。
 - 飞书原生往返仍需配置传输通道并完成真实验收。GitHub 交付，以及 Codex CLI、Grok Build 和 DSH 各自在目标宿主身份下运行，也需实测验收。本地浏览器和服务夹具覆盖各自的实现合同。

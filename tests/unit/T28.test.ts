@@ -123,7 +123,7 @@ for (const fixture of fixtures) {
     }
     for (const key of settings) expect(document[4]?.body).toContain(`**${messages['settings.' + key]}**`);
     expect(document[4]?.body).toContain(fixture.settingsCaption);
-    const expectedSettings = baseline + fixture.locale + '-settings-rows.png';
+    const expectedSettings = baseline + fixture.locale + '-settings-overview.png';
     expect(settingsRuntime.route).toBe('/settings');
     expect(settingsRuntime.frames[fixture.locale].asset).toBe(expectedSettings);
     const topicImages = [

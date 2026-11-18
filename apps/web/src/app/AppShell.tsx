@@ -14,6 +14,13 @@ import { demoScope, isDemo } from './demo.js';
 import { navigation, settingsNavigation } from './navigation.js';
 import type { NavigationItem } from './navigation.js';
 
+export type ShellHealthContext = {
+  health: ReturnType<typeof useScopedSnapshot<ReturnType<typeof healthSnapshotSchema.parse>>>;
+  healthStatus: MessageKey;
+  connected: boolean | undefined;
+  verifiedAsOf?: string;
+};
+
 export function AppShell() {
   const { scope, accessGeneration } = useService();
   const identity = isDemo ? 'demo' : scope ? `account:${scope.account_id}` : null;
@@ -25,7 +32,7 @@ export function AppShell() {
 
 function Shell() {
   const { locale, t } = useLocale();
-  const { scope, accessError, signOut } = useService();
+  const { scope, accessGeneration, accessError, signOut } = useService();
   const [drawer, setDrawer] = useState(false);
   const [consulting, setConsulting] = useState<string | null>(null);
   const [hidden, setHidden] = useState(document.hidden);
@@ -35,6 +42,14 @@ function Shell() {
   const health = useScopedSnapshot('getSystemHealth', {}, healthSnapshotSchema.parse, { enabled: !isDemo, refetchInterval: 15_000, projection: true });
   const connected = useSnapshotEvents(health.data);
   const latestHealth = health.data;
+  const scopeKey = scope ? JSON.stringify([scope.account_id, scope.data_domain, scope.permission_epoch, accessGeneration]) : null;
+  const [lastVerified, setLastVerified] = useState<{ scopeKey: string; asOf: string }>();
+  const trustedAsOf = latestHealth?.freshness === 'fresh' && latestHealth.data.freshness === 'fresh' &&
+    Number.isFinite(Date.parse(latestHealth.as_of)) ? latestHealth.as_of : undefined;
+  useEffect(() => {
+    if (scopeKey && trustedAsOf) setLastVerified({ scopeKey, asOf: trustedAsOf });
+  }, [scopeKey, trustedAsOf]);
+  const verifiedAsOf = trustedAsOf ?? (lastVerified?.scopeKey === scopeKey ? lastVerified.asOf : undefined);
   const healthError = health.error ? asClientError(health.error) : null;
   const liveHealth = !isDemo && !healthError && connected === true && latestHealth?.freshness === 'fresh'
     ? latestHealth.data : undefined;
@@ -76,7 +91,7 @@ function Shell() {
       <main id="main-content" className="page" tabIndex={-1} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
         {isDemo && <p className="demo-banner">{t('app.demo')}</p>}
         {scope && accessError && <LocalizedError code={accessError.code} />}
-        <Outlet context={{ health, healthStatus }} />
+        <Outlet context={{ health, healthStatus, connected, verifiedAsOf } satisfies ShellHealthContext} />
       </main>
     </div>
     {consulting && <ConsultationPanel sourceRoute={consulting} returnTo={() => setConsulting(null)}

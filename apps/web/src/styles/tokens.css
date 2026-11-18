@@ -109,6 +109,19 @@ h2 { font-size: 23px; line-height: 30px; }
 .status-evidence { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .status-pill { display: inline-flex; align-items: center; gap: 8px; }
 .status-pill::before { content: ""; width: 7px; height: 7px; background: currentColor; border-radius: 50%; }
+.settings-overview {
+  display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 24px;
+  padding-block: 12px; border-block: 1px solid var(--border);
+}
+.settings-overview-copy { display: grid; align-content: start; gap: 2px; overflow-wrap: anywhere; }
+.settings-overview-copy h2 { margin: 0; }
+.settings-overview-copy > p { line-height: 22px; }
+.settings-overview-scope, .settings-overview-evidence, .settings-overview-actions p {
+  color: var(--secondary); font-size: 15px; line-height: 22px;
+}
+.settings-overview-evidence { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.settings-overview-actions { display: grid; grid-template-columns: auto auto; align-content: start; align-items: center; justify-items: start; gap: 4px 8px; }
+.settings-overview-actions a { min-height: 44px; display: inline-flex; align-items: center; }
 .settings-grid { display: grid; }
 .settings-row {
   display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 24px; align-items: center;
@@ -122,8 +135,13 @@ h2 { font-size: 23px; line-height: 30px; }
 .settings-row:hover, .settings-row:focus-visible { background: var(--soft); }
 @media (min-width: 68.01rem) {
   .page:has(> .settings-grid) { width: min(100%, 1212px); padding-inline: 46px; }
+  .page:has(> .settings-grid) > .page-title { margin-block-end: 24px; }
+  .settings-overview { min-height: 153px; }
+  .settings-overview + .settings-grid { margin-block-start: 27px; }
 }
 @media (max-width: 48rem) {
+  .settings-overview { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .settings-overview-actions { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
   .settings-row { min-height: 76px; padding-inline: 8px; gap: 12px; }
 }
 .language-select { display: inline-grid; gap: 4px; justify-items: start; }

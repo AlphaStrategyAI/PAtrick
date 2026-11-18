@@ -1,6 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 import rendering from '../../apps/web/rendering.lock.json' with { type: 'json' };
+import { overviewProxyTarget } from './T24-baseline-fixture.js';
+
+const serviceTarget = await overviewProxyTarget();
 
 export default defineConfig({
   testDir: '.',
@@ -14,6 +17,7 @@ export default defineConfig({
   },
   webServer: {
     cwd: fileURLToPath(new URL('../..', import.meta.url)),
+    env: { PATRICK_LOCAL_SERVICE: serviceTarget },
     command: 'npm run dev -w @patrick/web -- --host 127.0.0.1 --port 4196 --strictPort',
     url: 'http://127.0.0.1:4196', reuseExistingServer: false,
   },

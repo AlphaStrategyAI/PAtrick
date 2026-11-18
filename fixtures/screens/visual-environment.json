@@ -2,9 +2,8 @@
   "renderingLockSha256": "436f021a8d8f134cc8e3decd3de22084d4d9dd493fbaefcd687730f304c6dffc",
   "fixtureSha256": "5574ce3c085d7b27d40cd34bb50f5575ccd0dbb9273bc318f2593c55cb73816d",
   "route": "/settings",
-  "healthAsOf": "1970-01-01T00:00:00.000Z",
+  "healthAsOf": "2026-11-17T05:00:00.000Z",
   "clock": "2026-11-17T05:00:00.000Z",
-  "vaultId": "t24-settings-baseline",
   "figmaEdges": {
     "sidebarRight": 228,
     "headerBottom": 64,
@@ -13,87 +12,113 @@
     "executionBottom": 683,
     "operationBottom": 782,
     "interactionBottom": 880,
-    "preferencesBottom": 978
+    "preferencesBottom": 978,
+    "overviewTop": 208,
+    "overviewBottom": 361
   },
   "frames": {
     "en": {
       "key": "en-settings",
       "id": "26:2361",
-      "baselineSha256": "b6feeb218103b495906fbab17b6a8723b5feb365f2c6606936a000c5c9cf0590",
+      "baselineSha256": "5f56cfccd734652a26cb8cca111bd2b0e304c13c81102ae61f458ae635705aed",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
         "headingLeft": 274,
+        "overviewTop": 208,
+        "overviewBottom": 361,
+        "runChecksLeft": 880.3125,
+        "runChecksRight": 998.65625,
+        "runChecksTop": 221,
+        "runChecksBottom": 265,
         "collectionLeft": 274,
         "collectionRight": 1394,
-        "collectionTop": 216,
-        "collectionBottom": 314.390625,
+        "collectionTop": 388,
+        "collectionBottom": 486.390625,
         "materialsLeft": 274,
         "materialsRight": 1394,
-        "materialsTop": 314.390625,
-        "materialsBottom": 412.78125,
+        "materialsTop": 486.390625,
+        "materialsBottom": 584.78125,
         "executionLeft": 274,
         "executionRight": 1394,
-        "executionTop": 412.78125,
-        "executionBottom": 511.171875,
+        "executionTop": 584.78125,
+        "executionBottom": 683.171875,
         "operationLeft": 274,
         "operationRight": 1394,
-        "operationTop": 511.171875,
-        "operationBottom": 609.5625,
+        "operationTop": 683.171875,
+        "operationBottom": 781.5625,
         "interactionLeft": 274,
         "interactionRight": 1394,
-        "interactionTop": 609.5625,
-        "interactionBottom": 707.953125,
+        "interactionTop": 781.5625,
+        "interactionBottom": 879.953125,
         "preferencesLeft": 274,
         "preferencesRight": 1394,
-        "preferencesTop": 707.953125,
-        "preferencesBottom": 806.34375
+        "preferencesTop": 879.953125,
+        "preferencesBottom": 978.34375
       },
-      "asset": "fixtures/screens/baselines/en-settings-rows.png",
+      "asset": "fixtures/screens/baselines/en-settings-overview.png",
       "exportAsset": "Figma-en-settings.png",
       "exportVersion": "2.6",
-      "exportSha256": "1fb62f5232273b0ecd84a107b5f99cc53672c0b7b3402ad061708e50502c7be3"
+      "exportSha256": "1fb62f5232273b0ecd84a107b5f99cc53672c0b7b3402ad061708e50502c7be3",
+      "figmaEdges": {
+        "runChecksLeft": 1277,
+        "runChecksRight": 1394,
+        "runChecksTop": 104,
+        "runChecksBottom": 151
+      }
     },
     "zh": {
       "key": "zh-settings",
       "id": "26:2477",
-      "baselineSha256": "da009c4df1d51c5ef0a9827ad2d70a8499dded78f0440fc3aeb3b98463699a58",
+      "baselineSha256": "d80bf320830efaf4666f19ceff8bff8dc46b32df0cd4090758ba5948ef5e3163",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
         "headingLeft": 274,
+        "overviewTop": 208,
+        "overviewBottom": 361,
+        "runChecksLeft": 1123,
+        "runChecksRight": 1217,
+        "runChecksTop": 221,
+        "runChecksBottom": 265,
         "collectionLeft": 274,
         "collectionRight": 1394,
-        "collectionTop": 216,
-        "collectionBottom": 314.390625,
+        "collectionTop": 388,
+        "collectionBottom": 486.390625,
         "materialsLeft": 274,
         "materialsRight": 1394,
-        "materialsTop": 314.390625,
-        "materialsBottom": 412.78125,
+        "materialsTop": 486.390625,
+        "materialsBottom": 584.78125,
         "executionLeft": 274,
         "executionRight": 1394,
-        "executionTop": 412.78125,
-        "executionBottom": 511.171875,
+        "executionTop": 584.78125,
+        "executionBottom": 683.171875,
         "operationLeft": 274,
         "operationRight": 1394,
-        "operationTop": 511.171875,
-        "operationBottom": 609.5625,
+        "operationTop": 683.171875,
+        "operationBottom": 781.5625,
         "interactionLeft": 274,
         "interactionRight": 1394,
-        "interactionTop": 609.5625,
-        "interactionBottom": 707.953125,
+        "interactionTop": 781.5625,
+        "interactionBottom": 879.953125,
         "preferencesLeft": 274,
         "preferencesRight": 1394,
-        "preferencesTop": 707.953125,
-        "preferencesBottom": 806.34375
+        "preferencesTop": 879.953125,
+        "preferencesBottom": 978.34375
       },
-      "asset": "fixtures/screens/baselines/zh-settings-rows.png",
+      "asset": "fixtures/screens/baselines/zh-settings-overview.png",
       "exportAsset": "Figma-zh-settings.png",
       "exportVersion": "2.6",
-      "exportSha256": "52e5d0c9b18232b812bbdac938d777a8d47a70cbe209b6a562edfd53a71e44bd"
+      "exportSha256": "52e5d0c9b18232b812bbdac938d777a8d47a70cbe209b6a562edfd53a71e44bd",
+      "figmaEdges": {
+        "runChecksLeft": 1300,
+        "runChecksRight": 1394,
+        "runChecksTop": 104,
+        "runChecksBottom": 151
+      }
     }
   },
-  "scope": "Desktop Settings index. Runtime regression references only. Design review is open for both frames.",
+  "scope": "Desktop Settings overview and index. Runtime regression references only; strict locked Figma review remains separate.",
   "renderHost": "macOS 27.2.1 (26B131), arm64",
   "chromium": "156.0.8078.4",
   "playwright": "1.64.1",
@@ -105,26 +130,41 @@
   "timezone": "UTC",
   "colorScheme": "light",
   "reducedMotion": "reduce",
-  "phase": "Static ServiceLogo, SSE unavailable",
-  "scenario": "Authenticated owner in the personal domain, one connected synthetic Vault, no published health projection; the reused fixture returns 503 for SSE.",
+  "phase": "Static ServiceLogo (reduced motion), fresh scoped snapshot and connected local SSE",
+  "scenario": "Authenticated owner in the personal domain with a fresh synthetic service projection; the real service reports one Vault permission issue.",
   "pixelComparison": "All 1,440,000 decoded sRGB RGBA pixels, including text and antialiasing; no masks.",
-  "figmaEdgeMethod": "CSS boundary coordinates use the exclusive end of the border. In both locked PNGs the sidebar ends at x=228. At x=1000 the topbar and six category-row separators end at the recorded vertical coordinates.",
+  "figmaEdgeMethod": "Sidebar and row separators use exclusive CSS-like pixel boundaries. Overview boundaries are horizontal rules. Run checks bounds are measured from its locked export fill and antialiased perimeter; language-specific positions are recorded separately.",
   "limits": {
     "edgePx": 2,
     "pixelRatio": 0.005
   },
   "previousRuntimeBaseline": {
-    "commit": "ee340543593aa09b019166e8e808f9c3ea38c05b",
+    "commit": "56d3435ab5096ddbf1bb8b6cfb8639dbde436d79",
     "environment": "fixtures/screens/visual-environment.json",
     "frames": {
       "en": {
-        "asset": "fixtures/screens/baselines/en-settings.png",
-        "sha256": "ae462dc58447260dfd31f37ff1117cb81d367fc7b3e76f96219866fba1552055"
+        "asset": "fixtures/screens/baselines/en-settings-rows.png",
+        "sha256": "b6feeb218103b495906fbab17b6a8723b5feb365f2c6606936a000c5c9cf0590"
       },
       "zh": {
-        "asset": "fixtures/screens/baselines/zh-settings.png",
-        "sha256": "f81b6b194151d14d97564a105447386fe35816ba4d0e44cabe05362d40284c81"
+        "asset": "fixtures/screens/baselines/zh-settings-rows.png",
+        "sha256": "da009c4df1d51c5ef0a9827ad2d70a8499dded78f0440fc3aeb3b98463699a58"
+      }
+    },
+    "earlier": {
+      "commit": "ee340543593aa09b019166e8e808f9c3ea38c05b",
+      "environment": "fixtures/screens/visual-environment.json",
+      "frames": {
+        "en": {
+          "asset": "fixtures/screens/baselines/en-settings.png",
+          "sha256": "ae462dc58447260dfd31f37ff1117cb81d367fc7b3e76f96219866fba1552055"
+        },
+        "zh": {
+          "asset": "fixtures/screens/baselines/zh-settings.png",
+          "sha256": "f81b6b194151d14d97564a105447386fe35816ba4d0e44cabe05362d40284c81"
+        }
       }
     }
-  }
+  },
+  "healthFixtureSha256": "791efea9e4f0c749c95e283f9f47b21d56eb365be7dfb99014d252a677eb20ae"
 }
