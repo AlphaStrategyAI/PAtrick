@@ -1,6 +1,6 @@
 # 发布候选包与验签记录
 
-当前 T23 已实现发布候选的打包和验证合同。`source-candidate` 是源码候选，`installable: false`；安装器、服务启动、TLS、launchd、Lima 和目标原生 SQLite 运行时仍待后续实现与主机验收。
+T23 已实现源码候选的打包和验签，以及 macOS arm64 和 x64 部署材料的构建与归档读回。`source-candidate` 的 `installable` 仍为 `false`。目标主机的安装、启动和升级仍待验收。
 
 ## 生成候选
 
@@ -27,10 +27,19 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 源码候选首次增加签名后，envelope 摘要会改变。T25 验收与 T26 发布必须锁定最终已签名 envelope 的精确摘要，并发布同一字节；不能用未签名候选的摘要代替，也不能验收后重建。
 
-## CI 与验收边界
+## 双架构构建与产物读回
 
-`.github/workflows/release-darwin.yml` 分别配置 arm64 与 x64 候选，先核对实际 Node 平台/架构，使用只读仓库权限，checkout 不保留凭据，并上传候选、receipt 和 SHA256SUMS。工作流没有签名或发布密钥。真实签名/发布须由独立、显式调用且受保护的后续流程完成。
+`.github/workflows/release-darwin.yml` 使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 24.9.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。
 
-本次在当前 Mac 上通过 `tests/admission/T23.test.ts` 的 35 项文件往返与拒绝场景、lint、typecheck 和语法检查。最终回归测试对原始有缺陷的实现重放时出现 7 项预期失败，覆盖 Git replacement/环境重定向、FIFO、祖先链接与目录替换；原始失败与修复验证记录均保留。另有 3 项空目录数量、跨目录总量和目录深度红测，在增加遍历限制后通过。相同 arm64 源码候选重复生成字节一致，x64 也生成了独立候选。这些证据不等于 x64 原生运行、Node 24.9.0 兼容或 GitHub runner 执行。CI 标签的实际可调度性及工作流运行仍未验收。
+提交 `bee6c9e9f7eed417aef7d47cc4cd256aac715e50` 的两个托管构建均通过。下载后独立核对了 GitHub ZIP 的摘要、内层 tar 的摘要、每个归档的 452 个载荷文件和清单，以及 SQLite 扩展的 Mach-O 架构。两种架构均记录了 Node ABI 137 和 SQLite 3.53.2。[GitHub Actions 构建记录](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/44285957621)
 
-尚待完成：真实 release signer 的登记与独立 pinned policy、安装 schema 权威范围、可执行 service/hub/worker bootstrap、原生 SQLite 打包、CLI/doctor/生命周期组合、空机安装/重启/升级保数验收、T25/T26 的最终签名包验证与发布。
+| 架构 | 部署材料 tar SHA-256 | 运行时清单 SHA-256 |
+| --- | --- | --- |
+| arm64 | `30248b00eeefb5b1c34a3ae51d8bece5dca53180e1968fecadbaceacb58019ff` | `a9a09478bf2a22706cd1e349abd3bb2c6ab79ac2b3759ee4fbd130b92c898ac0` |
+| x64 | `7550e9244cba9a7fcff0bf75b51de29151e98330b2f9c1b51397171cbec3cc36` | `7f5a1602b2e66236fcea66b7f64684d54d610ebc4a008c68fd02a3e52ae566e6` |
+
+这些是交给后续签名和 T25 验收的构建材料。签名由独立的受保护流程执行。T25 记录通过验收的最终签名 envelope 摘要，T26 使用相同字节发布。真实签名人登记、目标主机的空机安装、重启及升级保留数据仍需实测。
+
+## 源码候选回归
+
+本机通过 `tests/admission/T23.test.ts` 的 35 项文件往返与拒绝场景、lint、typecheck 和语法检查。最终回归测试对原始有缺陷的实现重放时出现 7 项预期失败，覆盖 Git replacement/环境重定向、FIFO、祖先链接与目录替换；原始失败与修复验证记录均保留。另有 3 项空目录数量、跨目录总量和目录深度红测，在增加遍历限制后通过。相同 arm64 源码候选重复生成字节一致，x64 也生成了独立候选。
