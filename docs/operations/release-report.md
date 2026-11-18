@@ -43,3 +43,14 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 ## 源码候选回归
 
 本机通过 `tests/admission/T23.test.ts` 的 35 项文件往返与拒绝场景、lint、typecheck 和语法检查。最终回归测试对原始有缺陷的实现重放时出现 7 项预期失败，覆盖 Git replacement/环境重定向、FIFO、祖先链接与目录替换；原始失败与修复验证记录均保留。另有 3 项空目录数量、跨目录总量和目录深度红测，在增加遍历限制后通过。相同 arm64 源码候选重复生成字节一致，x64 也生成了独立候选。
+
+## 2026-11-18 安装初始化后的构建
+
+提交 `c6867783f3f6f2c93c44d3be13b75c4770b033dd` 的 [GitHub Actions 构建](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/44324514306) 中，Intel 任务首次通过；Apple Silicon 任务首次排队后被取消，单独重试后通过。下载两种 `deployment-complete` 产物后，独立核对了 GitHub ZIP 摘要、内层 tar 摘要、各自 452 个载荷的字节与模式，以及原生 SQLite 扩展的 Mach-O 架构。两者均记录 Node 24.9.0、ABI 137 和 SQLite 3.53.2。
+
+| 架构 | GitHub ZIP SHA-256 | 部署材料 tar SHA-256 | 运行时清单 SHA-256 |
+| --- | --- | --- | --- |
+| arm64 | `6ec0ed70dab427945067e875f8c3be6f580711d9458561ff25c92d004865e94d` | `1d63d9c554f13fd28611dc285e28652d9f021aecbb869432871b411871fc5765` | `b48c7b8bc29a766b879df8a90dcc994686c56eeffe18c179d05f13428a8fc24c` |
+| x64 | `ea6497920175379818611e368e915afe1577dbcb69653c737631eff068e0b7c2` | `55d4d4f8e86ae18a012313c79c0a4eed91b6696ced9a54cdc5a662bca0458ea7` | `cee9cf07008d0f80a10b5225fdf4d8d5e542e73bfed1b8d95af0791787a1958a` |
+
+以上为未签名构建材料，不是通过 T25 的发布资产。签名人登记、真实主机安装与启动、重启和升级验收仍待完成。
