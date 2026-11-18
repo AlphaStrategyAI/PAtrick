@@ -592,6 +592,145 @@ test('doctor reads existing signed backup and drill completion without invoking 
   expect(readdirSync(join(f.root, 'operations'))).toEqual(before);
 });
 
+test('installed doctor verifies a signed backup when only its cold reader remains enrolled', async () => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const { backupReadback } = verificationOnlyHost(f);
+  f.closeSources();
+  const provisioning = createRuntimeProvisioning({
+    registration: {
+      identity: f.host.identity, captureHost: f.host.captureHost, serviceUid: f.host.serviceUid,
+      dataRoot: f.root, minimumFreeBytes: 1, profile: 'test', origin: 'http://localhost', rpId: 'localhost',
+      listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' },
+    },
+    hostCapabilities: { backupReadback, recoveryReadbacks: [
+      { targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! },
+    ] },
+    service: {
+      databasePath: join(f.root, 'service.sqlite'), credentialDirectory: f.root,
+      recoveryRuntime: { attach() { throw new Error('Unexpected service startup'); } },
+      bindRecoveryOperations() { throw new Error('Unexpected live recovery'); },
+    },
+  });
+  const journal = backupReadback.root.path;
+  const before = readdirSync(journal).sort().map((file) => [file, digest(readFileSync(join(journal, file)))]);
+  const result = await createRuntimeCli(provisioning).run(['doctor']);
+  expect(result.checks?.recovery_backup).toMatchObject({ status: 'ready', evidence: { localSet: 'completed', offHostProtection: 'unverified' } });
+  expect(result.checks?.recovery_drill).toMatchObject({ status: 'unavailable', evidence: { code: 'SIGNED_DRILL_READBACK_REQUIRED' } });
+  expect(result.checks?.recovery).toMatchObject({ status: 'unavailable' });
+  expect(readdirSync(journal).sort().map((file) => [file, digest(readFileSync(join(journal, file)))])).toEqual(before);
+  expect(JSON.stringify(result)).not.toContain(f.root);
+  writeFileSync(join(journal, 'backup.terminal.json'), canonical({ invalid: f.root }));
+  expect((await createRuntimeCli(provisioning).run(['doctor'])).checks?.recovery_backup)
+    .toMatchObject({ status: 'blocked', evidence: { code: 'SIGNED_RECOVERY_READBACK_FAILED' } });
+  expect(f.captures()).toBe(1);
+});
+
+test('doctor refuses a replacement cold verifier installed during an early network probe', async () => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const cold = verificationOnlyHost(f);
+  f.closeSources();
+  const verifier = cold.backupReadback.authority;
+  let replacementCalls = 0;
+  const host: RegisteredHost = {
+    ...cold, origin: 'https://patrick.test', rpId: 'patrick.test',
+    runtime: { ...cold.runtime, createNetworkInspector },
+    recoveryReadbacks: [{ targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! }],
+    network: {
+      identity: cold.identity, origin: 'https://patrick.test', originTargetId: 'origin',
+      policy: { schema_version: '1.0', device_id: 'device', revision: 1, targets: [{ id: 'origin', role: 'hub' }, { id: 'peer', role: 'peer' }],
+        vpn_paths: [], repairs: [], limits: { maximum_attempts: 1, cooldown_ms: 5000, deadline_ms: 5000 }, fallback: 'none' },
+      ports: {
+        async interfaces() {
+          cold.backupReadback.authority = { keyId: verifier.keyId, async verify(...args) {
+            replacementCalls++;
+            return verifier.verify(...args);
+          } };
+          return 'passed';
+        },
+        dns: async () => 'passed', tcp: async () => 'passed', tls: async () => 'passed',
+        http: async () => ({ status: 200, identity: 'verified' }),
+      },
+    },
+  };
+  const result = await createPatrickCli(host).run(['doctor']);
+  expect(cold.backupReadback.authority).not.toBe(verifier);
+  expect.soft(replacementCalls).toBe(0);
+  expect(result.checks?.recovery_backup).toMatchObject({ status: 'blocked', evidence: { code: 'HOST_IDENTITY_MISMATCH' } });
+});
+
+test('doctor invalidates an authenticated backup when a later probe changes a class verifier', async () => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const cold = verificationOnlyHost(f);
+  f.closeSources();
+  class Verifier {
+    #original = cold.backupReadback.authority;
+    keyId = this.#original.keyId;
+    calls = 0;
+    async verify(...args: Parameters<typeof cold.backupReadback.authority.verify>) {
+      this.calls++;
+      return this.#original.verify(...args);
+    }
+  }
+  const verifier = new Verifier();
+  cold.backupReadback.targets.target.authority = verifier;
+  const host: RegisteredHost = {
+    ...cold,
+    recoveryReadbacks: [{ targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! }],
+  };
+  expect((await createPatrickCli(host).run(['doctor'])).checks?.recovery_backup?.status).toBe('ready');
+  let callsBeforeMutation = 0;
+  verifier.calls = 0;
+  host.readiness = { executor: { identity: cold.identity, async inspect() {
+    callsBeforeMutation = verifier.calls;
+    verifier.verify = async () => false;
+    return { capability: 'ready' };
+  } } };
+  const result = await createPatrickCli(host).run(['doctor']);
+  expect(callsBeforeMutation).toBeGreaterThan(0);
+  expect(result.checks?.executor?.status).toBe('ready');
+  expect(result.checks?.recovery_backup).toMatchObject({ status: 'blocked', evidence: { code: 'HOST_IDENTITY_MISMATCH' } });
+});
+
+test.each(['receipt digest', 'target identity'] as const)('doctor invalidates an authenticated backup after a later change to the class-backed %s', async (field) => {
+  const f = fixture();
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const cold = verificationOnlyHost(f);
+  f.closeSources();
+  class BackupReference {
+    targetId = 'target';
+    backupOperationId = 'backup';
+    drillOperationId = 'drill';
+    manifestHash = completed.manifestHash!;
+  }
+  class TargetIdentity {
+    accountId = f.host.identity.accountId;
+    scopeId = f.host.identity.scopeId;
+    domains = [...f.host.identity.domains];
+    deviceId = f.host.identity.deviceId;
+    configRevision = f.host.identity.configRevision;
+  }
+  const reference = new BackupReference();
+  const identity = new TargetIdentity();
+  cold.backupReadback.targets.target.identity = identity;
+  const host: RegisteredHost = { ...cold, recoveryReadbacks: [reference] };
+  expect((await createPatrickCli(host).run(['doctor'])).checks?.recovery_backup?.status).toBe('ready');
+  host.readiness = { executor: { identity: cold.identity, async inspect() {
+    if (field === 'receipt digest') reference.manifestHash = 'f'.repeat(64);
+    else identity.configRevision = '2';
+    return { capability: 'ready' };
+  } } };
+  const result = await createPatrickCli(host).run(['doctor']);
+  expect(result.checks?.executor?.status).toBe('ready');
+  expect(result.checks?.recovery_backup).toMatchObject({ status: 'blocked', evidence: { code: 'HOST_IDENTITY_MISMATCH' } });
+});
+
 test('registered service UID mismatch blocks recovery execution before authority use', async () => {
   const f = fixture(); f.host.serviceUid++;
   expect(await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup'])).toMatchObject({ status: 'blocked', code: 'HOST_SERVICE_IDENTITY_MISMATCH' });

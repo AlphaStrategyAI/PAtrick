@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { access, lstat, realpath, statfs } from 'node:fs/promises';
 import { hostname, platform, arch } from 'node:os';
 import { isAbsolute } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 const states = new Set(['ready', 'blocked', 'unavailable', 'unknown']);
 const identityName = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
@@ -149,12 +150,57 @@ export async function inspectLocalHost(registeredHost) {
   try { binding.validate(); } catch { mismatch(checks, Object.keys(checks).filter((name) => name !== 'node_runtime')); }
   return checks;
 }
+function backupReadiness(completed) {
+  return check(completed ? 'ready' : 'unknown', 'core',
+    { localSet: completed ? 'completed' : 'unconfirmed', offHostProtection: 'unverified' },
+    'Verify retained off-host copies and recovery credential independence.');
+}
+
+function bindColdData(read) {
+  const value = structuredClone(read());
+  return { value, validate() {
+    if (!isDeepStrictEqual(value, structuredClone(read()))) throw new Error('HOST_IDENTITY_MISMATCH');
+  } };
+}
+
+function bindColdBackup(host) {
+  const cold = host?.backupReadback;
+  if (!cold) return;
+  const readbacks = bindColdData(() => host.recoveryReadbacks.map(({ targetId, backupOperationId, manifestHash }) =>
+    ({ targetId, backupOperationId, manifestHash })));
+  const data = [readbacks, bindColdData(() => cold.root)];
+  const verifierFields = (read) => [read, () => read()?.keyId, () => read()?.verify];
+  const fields = [() => cold.root, () => cold.targets, ...verifierFields(() => cold.authority)];
+  for (const targetId of new Set(readbacks.value.map((readback) => readback.targetId))) {
+    const read = () => cold.targets && Object.hasOwn(cold.targets, targetId) ? cold.targets[targetId] : undefined;
+    fields.push(read, () => read()?.root, () => read()?.scope, () => read()?.identity, () => read()?.readDatabase,
+      ...verifierFields(() => read()?.authority), () => read()?.protection, () => read()?.protection?.kind);
+    data.push(bindColdData(() => read()?.scope), bindColdData(() => read()?.identity));
+    if (read()?.protection?.kind === 'off_host') fields.push(() => read()?.protection?.verify);
+  }
+  const bindings = [...fields.map(bindRegistration), ...data];
+  // The reader needs the actual verifier receivers, including class instances.
+  return { options: cold, readbacks: readbacks.value, validate() {
+    if (host.backupReadback !== cold) throw new Error('HOST_IDENTITY_MISMATCH');
+    for (const binding of bindings) binding.validate();
+  } };
+}
+
 export async function doctor(host, vaultId) {
   const hostBinding = bindHostRegistration(host);
   const identity = hostBinding.value ? projectIdentity(hostBinding.value.identity) : undefined;
   const networkBinding = bindRegistration(() => host?.network);
   const recoveryBinding = bindRegistration(() => host?.recovery);
   const readbacksBinding = bindRegistration(() => host?.recoveryReadbacks);
+  const runtime = hostBinding.value?.runtime;
+  const recovery = recoveryBinding.value;
+  const readbacks = readbacksBinding.value;
+  let coldBinding;
+  let coldBindingFailed = false;
+  if (!recovery && runtime?.createRecoveryBackupReader && readbacks?.length > 0 && readbacks.length <= 16) {
+    try { coldBinding = bindColdBackup(host); }
+    catch { coldBindingFailed = true; }
+  }
   const vaultBinding = bindRegistration(() => host?.vaults && Object.hasOwn(host.vaults, vaultId) ? host.vaults[vaultId] : undefined);
   const originBinding = bindRegistration(() => host?.origin);
   const rpBinding = bindRegistration(() => host?.rpId);
@@ -165,7 +211,6 @@ export async function doctor(host, vaultId) {
     mismatch(checks, Object.keys(checks).filter((name) => name !== 'node_runtime'));
     return { ...(identity ? { identity } : {}), checks };
   }
-  const runtime = hostBinding.value?.runtime;
   const validateNetwork = () => { hostBinding.validate(); networkBinding.validate(); originBinding.validate(); rpBinding.validate(); };
   const validateRecovery = () => { hostBinding.validate(); recoveryBinding.validate(); readbacksBinding.validate(); };
   const validateVault = () => { hostBinding.validate(); vaultBinding.validate(); };
@@ -208,8 +253,6 @@ export async function doctor(host, vaultId) {
       }
     }
   }
-  const recovery = recoveryBinding.value;
-  const readbacks = readbacksBinding.value;
   checks.recovery = check('unavailable', 'core', { code: 'RECOVERY_RUNTIME_REQUIRED' }, 'Provision registered signed recovery targets, freeze authority and isolated drill ports.');
   if (runtime?.createRecoveryOperations && recovery) {
     const targets = Object.values(recovery.targets);
@@ -235,8 +278,7 @@ export async function doctor(host, vaultId) {
           drill: drill.status === 'completed' && drill.outcome.manifestHash === readback.manifestHash && drill.outcome.receipt?.external_writes === 0 };
       })));
       validateRecovery();
-      checks.recovery_backup = check(reports.every((report) => report.backup) ? 'ready' : 'unknown', 'core',
-        { localSet: reports.every((report) => report.backup) ? 'completed' : 'unconfirmed', offHostProtection: 'unverified' }, 'Verify retained off-host copies and recovery credential independence.');
+      checks.recovery_backup = backupReadiness(reports.every((report) => report.backup));
       checks.recovery_drill = check(reports.every((report) => report.drill) ? 'ready' : 'unknown', 'core',
         { isolatedDrill: reports.every((report) => report.drill) ? 'completed' : 'unconfirmed', writerActivation: 'unavailable' }, 'Retain the signed isolated drill receipt and separately provision activation authorities.');
     } catch (error) {
@@ -245,6 +287,33 @@ export async function doctor(host, vaultId) {
         checks.recovery_backup = check('blocked', 'core', { code: 'SIGNED_RECOVERY_READBACK_FAILED' }, 'Reconcile the signed operation, manifest and registered identity.');
         checks.recovery_drill = check('blocked', 'core', { code: 'SIGNED_RECOVERY_READBACK_FAILED' }, 'Reconcile the signed drill receipt and consumed manifest identity.');
       }
+    }
+  }
+  if (coldBindingFailed) mismatch(checks, ['recovery_backup']);
+  if (coldBinding) {
+    const { options: cold, readbacks: coldReadbacks } = coldBinding;
+    const validateCold = () => { validateRecovery(); coldBinding.validate(); };
+    validations.push([validateCold, ['recovery_backup']]);
+    try {
+      validateCold();
+      if (hostBinding.value.captureHost !== hostname() || hostBinding.value.serviceUid !== process.geteuid?.()
+        || !coldReadbacks.every(({ targetId }) => Object.hasOwn(cold.targets, targetId) && sameIdentity(identity, cold.targets[targetId].identity))) {
+        throw new Error('HOST_IDENTITY_MISMATCH');
+      }
+      const reader = runtime.createRecoveryBackupReader(cold);
+      validateCold();
+      const verified = await bounded(() => Promise.all(coldReadbacks.map(async ({ targetId, backupOperationId, manifestHash }) => {
+        validateCold();
+        const backup = await reader.read({ operationId: backupOperationId, targetId, mode: 'backup' });
+        validateCold();
+        return backup.status === 'completed' && backup.outcome.manifestHash === manifestHash;
+      })));
+      validateCold();
+      checks.recovery_backup = backupReadiness(verified.every(Boolean));
+    } catch (error) {
+      if (error?.message === 'HOST_IDENTITY_MISMATCH') mismatch(checks, ['recovery_backup']);
+      else checks.recovery_backup = check('blocked', 'core', { code: 'SIGNED_RECOVERY_READBACK_FAILED' },
+        'Reconcile the signed operation, manifest and registered identity.');
     }
   }
   for (const name of ['obsidian_app', 'vault', 'vault_activity', 'vault_sync']) checks[name] = check('unavailable', name === 'obsidian_app' ? 'editor' : 'task',
