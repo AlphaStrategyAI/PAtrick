@@ -27,7 +27,17 @@ export async function measureSettings(page: Page) {
       }
       Object.assign(edges, { [name + 'Left']: left, [name + 'Right']: right, [name + 'Top']: top, [name + 'Bottom']: bottom });
     }
-    return { edges, links: links.map(a => ({ path: a.pathname, label: a.innerText })), clock: new Date().toISOString(),
+    const categories = links.map(a => {
+      const labelledBy = a.getAttribute('aria-labelledby');
+      if (labelledBy === null) return { path: a.pathname, label: a.innerText };
+      const label = labelledBy.trim().split(/\s+/u).map(id => {
+        const source = document.getElementById(id);
+        if (!source) throw new Error('Missing Settings link label ' + id);
+        return source.innerText.trim();
+      }).join(' ');
+      return { path: a.pathname, label };
+    });
+    return { edges, links: categories, clock: new Date().toISOString(),
       width: innerWidth, height: innerHeight, dpr: devicePixelRatio, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       htmlLang: document.documentElement.lang, light: matchMedia('(prefers-color-scheme: light)').matches,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, logoRunners: document.querySelectorAll('.logo-runner').length };

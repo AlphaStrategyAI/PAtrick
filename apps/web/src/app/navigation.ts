@@ -13,12 +13,12 @@ export const navigation = [
 ] as const satisfies readonly NavigationItem[];
 
 export const settingsNavigation = [
-  { path: '/settings/collection', label: 'settings.collection', summary: 'summary.settings', icon: 'settings-collection' },
-  { path: '/settings/materials', label: 'settings.materials', summary: 'summary.settings', icon: 'settings-materials' },
-  { path: '/settings/execution', label: 'settings.execution', summary: 'summary.settings', icon: 'settings-execution' },
-  { path: '/settings/operation', label: 'settings.operation', summary: 'summary.settings', icon: 'settings-operation' },
-  { path: '/settings/interaction', label: 'settings.interaction', summary: 'summary.settings', icon: 'settings-interaction' },
-  { path: '/settings/preferences', label: 'settings.preferences', summary: 'summary.preferences', icon: 'settings-preferences' },
-] as const satisfies readonly NavigationItem[];
+  { path: '/settings/collection', label: 'settings.collection', description: 'settings.description.collection', summary: 'summary.settings', icon: 'settings-collection' },
+  { path: '/settings/materials', label: 'settings.materials', description: 'settings.description.materials', summary: 'summary.settings', icon: 'settings-materials' },
+  { path: '/settings/execution', label: 'settings.execution', description: 'settings.description.execution', summary: 'summary.settings', icon: 'settings-execution' },
+  { path: '/settings/operation', label: 'settings.operation', description: 'settings.description.operation', summary: 'summary.settings', icon: 'settings-operation' },
+  { path: '/settings/interaction', label: 'settings.interaction', description: 'settings.description.interaction', summary: 'summary.settings', icon: 'settings-interaction' },
+  { path: '/settings/preferences', label: 'settings.preferences', description: 'settings.description.preferences', summary: 'summary.preferences', icon: 'settings-preferences' },
+] as const satisfies readonly (NavigationItem & { description: MessageKey })[];
 
 export const workDetailPath = '/work/:id';

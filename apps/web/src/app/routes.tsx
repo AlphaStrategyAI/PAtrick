@@ -1,3 +1,4 @@
+import { Icon } from '../components/icons.js';
 import { StatsPage } from '../features/stats/StatsPage.js';
 import { NotificationPanel } from '../features/system/NotificationPanel.js';
 import { DiagnosticsPanel } from '../features/system/DiagnosticsPanel.js';
@@ -18,7 +19,7 @@ import { StandardsPage } from '../features/standards/StandardsPage.js';
 import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
 import { useLocale } from '../i18n/LocaleProvider.js';
 import type { MessageKey } from '../i18n/locale.js';
-import { AppShell, LanguageSelect, NavigationLink } from './AppShell.js';
+import { AppShell, LanguageSelect } from './AppShell.js';
 import { demoWork, isDemo } from './demo.js';
 import { navigation, settingsNavigation, workDetailPath } from './navigation.js';
 import type { NavigationItem } from './navigation.js';
@@ -111,7 +112,15 @@ function SettingsPage() {
   const { t } = useLocale();
   return <PageFrame item={navigation[7]}><Authenticated>
     <nav className="settings-grid" aria-label={t('aria.settings')}>
-      {settingsNavigation.map((item) => <NavigationLink key={item.path} item={item} />)}
+      {settingsNavigation.map(item => <Link key={item.path} to={item.path} className="settings-row"
+        aria-labelledby={item.label} aria-describedby={item.description}>
+        <Icon name={item.icon} />
+        <span className="settings-row-copy">
+          <strong id={item.label}>{t(item.label)}</strong>
+          <span id={item.description}>{t(item.description)}</span>
+        </span>
+        <span aria-hidden="true">→</span>
+      </Link>)}
     </nav>
   </Authenticated></PageFrame>;
 }

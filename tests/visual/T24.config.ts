@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 import rendering from '../../apps/web/rendering.lock.json' with { type: 'json' };
 
 export default defineConfig({
-  testDir: '.', testMatch: ['T24.spec.ts', 'T24-edit.spec.ts', 'T24-feishu.spec.ts', 'T24-baseline.spec.ts'], workers: 1, timeout: 60_000,
+  testDir: '.', testMatch: ['T24.spec.ts', 'T24-edit.spec.ts', 'T24-feishu.spec.ts', 'T24-baseline.spec.ts', 'T24-settings-index.spec.ts'], workers: 1, timeout: 60_000,
   use: {
     actionTimeout: 8000, navigationTimeout: 15000, baseURL: 'http://localhost', browserName: 'chromium', viewport: rendering.viewports.desktop,
     deviceScaleFactor: rendering.deviceScaleFactor, timezoneId: rendering.rendering.timezone,
