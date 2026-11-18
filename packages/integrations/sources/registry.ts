@@ -206,6 +206,7 @@ type NormalizedDraft = {
 };
 
 type PendingObject = { locator: string; bytes: Uint8Array; hash: string };
+type DirectorySnapshot = { source: SourceRecord; cursor: CursorRecord; generation: number };
 
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
 const HISTORY_TTL_MS = 10 * 60 * 1000;
@@ -256,11 +257,18 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     return 'PAUSED';
   }
 
-  function setStatus(sourceId: string, status: SourceStatus): CollectionReceipt {
+  function setStatus(sourceId: string, status: SourceStatus, directory?: DirectorySnapshot): CollectionReceipt {
     return withImmediateTransaction(db, () => {
       const current = load(sourceId);
       if (!current) throw new Error('SOURCE_NOT_FOUND');
       const cursor = loadCursor(sourceId);
+      if (directory) {
+        const live = finalCollection(directory.source, directory.source.config_revision, clock());
+        if (isReceipt(live)) return live;
+        if (directoryGeneration(live.source) !== directory.generation) {
+          return rejected(live.source, sourceId, live.source.config_revision, cursor.cursor, 'STALE_COLLECTION');
+        }
+      }
       if (current.status === status) return rejected(current, sourceId, current.config_revision, cursor.cursor, statusReason(status));
       const next = current.config_revision + 1;
       const observedAt = clock();
@@ -328,6 +336,24 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
 
   function isReceipt(value: { source: SourceRecord; cursor: CursorRecord } | CollectionReceipt): value is CollectionReceipt {
     return 'accepted' in value;
+  }
+
+  function directoryGeneration(source: SourceRecord): number {
+    const row = db.prepare(`SELECT commit_generation FROM directory_commit_generations
+      WHERE source_id=? AND account_id=? AND data_domain=? AND connector_type='directory'`)
+      .get(source.source_id, source.account_id, source.data_domain) as { commit_generation: number } | undefined;
+    if (!row || !Number.isSafeInteger(row.commit_generation) || row.commit_generation < 0) {
+      throw new Error('SOURCE_GENERATION_MISSING');
+    }
+    return row.commit_generation;
+  }
+
+  function directorySnapshot(source: SourceRecord, configRevision: number): DirectorySnapshot | CollectionReceipt {
+    return withImmediateTransaction(db, () => {
+      const live = finalCollection(source, configRevision, clock());
+      if (isReceipt(live)) return live;
+      return { ...live, generation: directoryGeneration(live.source) };
+    });
   }
 
   async function normalize(principal: Principal, draft: SourceDraft): Promise<NormalizedDraft> {
@@ -584,6 +610,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     deliveryId?: string;
     evidenceRef: string | null;
     guard?: CollectionGuard;
+    directoryGeneration?: number;
     httpEvidence?: { url: string; hash: string; length: number; contentType: string; baseline: HttpBaselineEntry[]; baselineAlreadyObserved: boolean };
   }): CollectionReceipt {
     return withImmediateTransaction(db, () => {
@@ -601,6 +628,18 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       const { source: current, cursor } = live;
       if (!leaseLive) {
         return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'SOURCE_LEASE_CHANGED', observedAt);
+      }
+      if (current.connector_type === 'directory') {
+        if (input.directoryGeneration === undefined) throw new Error('SOURCE_GENERATION_MISSING');
+        const generation = directoryGeneration(current);
+        if (generation !== input.directoryGeneration) {
+          return rejected(current, current.source_id, current.config_revision, cursor.cursor, 'STALE_COLLECTION', observedAt);
+        }
+        if (generation === Number.MAX_SAFE_INTEGER) throw new Error('SOURCE_GENERATION_EXHAUSTED');
+        const advanced = db.prepare(`UPDATE directory_commit_generations SET commit_generation=commit_generation+1
+          WHERE source_id=? AND account_id=? AND data_domain=? AND commit_generation=?`)
+          .run(current.source_id, current.account_id, current.data_domain, generation);
+        if (advanced.changes !== 1) throw new Error('SOURCE_GENERATION_CONFLICT');
       }
       let baseline: Map<string, string> | null = null;
       if (input.httpEvidence) {
@@ -892,9 +931,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     }
     const root = scope.root;
     if (!root) throw new Error('SOURCE_SCOPE_INVALID');
+    const directory = directorySnapshot(source, configRevision);
+    if (isReceipt(directory)) return directory;
     const scan = await scanDirectory(root, excludes);
-    if (scan.state === 'offline') return setStatus(source.source_id, 'offline');
-    if (scan.state === 'placeholder') return setStatus(source.source_id, 'placeholder');
+    if (scan.state === 'offline') return setStatus(source.source_id, 'offline', directory);
+    if (scan.state === 'placeholder') return setStatus(source.source_id, 'placeholder', directory);
     const staged = await stage(source.source_id, scan.files.map((file) => ({
       locator: file.relativePath,
       stable: file.stable,
@@ -906,6 +947,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       ...staged,
       confirmDeletes: true,
       evidenceRef: staged.changed[0]?.hash ?? null,
+      directoryGeneration: directory.generation,
     });
   }
 
@@ -1343,6 +1385,8 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       if (!source || source.connector_type !== 'directory') throw new Error('SOURCE_NOT_FOUND');
       assertRecoveryWriteAllowed(db, source.data_domain);
       if (source.status !== 'enabled') return { read: false, receipt: null };
+      const directory = directorySnapshot(source, source.config_revision);
+      if (isReceipt(directory)) return { read: false, receipt: directory };
       const root = parseScope(source.scope_json).root;
       if (!root) throw new Error('SOURCE_SCOPE_INVALID');
       const locator = normalizeGithubPath(relativePath);
@@ -1353,7 +1397,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       if (!isInside(root, full)) throw new Error('SOURCE_PATH_NOT_APPROVED');
       const sample = await samplePath(full);
       if (sample.offline || sample.placeholder) {
-        return { read: false, receipt: setStatus(sourceId, sample.offline ? 'offline' : 'placeholder') };
+        return { read: false, receipt: setStatus(sourceId, sample.offline ? 'offline' : 'placeholder', directory) };
       }
       if (!sample.exists) return { read: false, receipt: null };
       const key = `${sourceId}\0${locator}`;
@@ -1370,6 +1414,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         ...staged,
         confirmDeletes: false,
         evidenceRef: staged.changed[0]?.hash ?? null,
+        directoryGeneration: directory.generation,
       });
       return { read: receipt.accepted && receipt.count > 0, receipt };
     },

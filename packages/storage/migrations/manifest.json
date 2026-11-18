@@ -78,5 +78,9 @@
   {
     "file": "0025_source_revision_provenance.sql",
     "sha256": "05560b8e45ad2f5b05a6197ce465d19854d67534c851d01664b6820d2683018c"
+  },
+  {
+    "file": "0026_directory_commit_generations.sql",
+    "sha256": "20093754fd2934db069f29ee8ad8e2c9f4a052c0268603723c19133ad0bc8987"
   }
 ]

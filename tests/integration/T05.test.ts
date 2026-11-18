@@ -686,6 +686,7 @@ test('the source migration appends without changing earlier files', () => {
     '0023_recovery.sql',
     '0024_settings_recoveries.sql',
     '0025_source_revision_provenance.sql',
+    '0026_directory_commit_generations.sql',
   ]);
   for (const [file, hash] of Object.entries(HASHES)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);

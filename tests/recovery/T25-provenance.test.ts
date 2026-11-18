@@ -12,7 +12,8 @@ import { quarantineRestoredAuthority } from '../../packages/host/src/recovery/re
 const migrations = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
 const manifest = JSON.parse(readFileSync(join(migrations, 'manifest.json'), 'utf8')) as MigrationEntry[];
 const newest = '0025_source_revision_provenance.sql';
-const previousManifest = manifest.slice(0, -1);
+const provenanceIndex = manifest.findIndex((entry) => entry.file === newest);
+const previousManifest = manifest.slice(0, provenanceIndex);
 const at = '2026-11-17T06:00:00.000Z';
 
 test('a real prior-schema SQLite backup opens raw, quarantines, and migrates without inventing old provenance', async () => {
@@ -23,7 +24,7 @@ test('a real prior-schema SQLite backup opens raw, quarantines, and migrates wit
   let restored: InstanceType<typeof Database> | undefined;
   let migrated: ReturnType<typeof openDatabase> | undefined;
   try {
-    expect(manifest.at(-1)?.file).toBe(newest);
+    expect(provenanceIndex).toBeGreaterThan(0);
     prior = openDatabase(originalPath, { manifest: previousManifest });
     const directory = join(root, 'source');
     mkdirSync(directory);
