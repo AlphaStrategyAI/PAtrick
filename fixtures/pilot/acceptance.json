@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "description": "Inventory of the three required provider-backed pilot paths. The real target observations have not yet been supplied.",
+  "routes": [
+    { "route": "direct-pr", "status": "pending", "evidenceRefs": [] },
+    { "route": "answered-pr", "status": "pending", "evidenceRefs": [] },
+    { "route": "stale-blocked", "status": "pending", "evidenceRefs": [] }
+  ]
+}
