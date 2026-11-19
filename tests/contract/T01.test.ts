@@ -170,6 +170,7 @@ test('openapi-sdk-no-drift', () => {
     'POST /api/v1/settings/control-proposals',
     'POST /api/v1/settings/inspections',
     'POST /api/v1/settings/validations',
+    'POST /api/v1/sources/credentials',
     'POST /api/v1/sources/detect',
     'POST /api/v1/sources/{id}/history/preview',
     'POST /api/v1/standard-candidates',

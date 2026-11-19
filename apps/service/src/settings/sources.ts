@@ -119,6 +119,48 @@ export function sourceSettingsHandlers({ db, credentials, now, registry }: Optio
       planHash: input.plan_hash };
   }
 
+  /** Adds a GitHub source over the live API.
+   *
+   * The token itself is staged by the credential endpoint and never travels
+   * through the draft; only the reference does. The validation reads the
+   * approved branch, so an unusable token or an unreachable branch is refused
+   * before anything is written.
+   */
+  const enableGithub: SettingsHandler = {
+    binding(principal, draft) {
+      const input = githubInput(draft);
+      return { revision: 0, deviceId, identityId: draft.target,
+        scopeHash: hash([principal.account_id, draft.target, input.credential_ref, input.repo, input.branch, input.path]) };
+    },
+    async validate(principal, draft) {
+      const input = githubInput(draft);
+      try {
+        await registry.detectSource(actor(principal, draft.domain), githubDraft(input));
+        return { valid: true };
+      } catch {
+        return { valid: false };
+      }
+    },
+    authorize,
+    async apply(principal, draft, _proof, beforeWrite) {
+      const input = githubInput(draft);
+      const owner = actor(principal, draft.domain);
+      const sourceDraft = githubDraft(input);
+      const preview = await registry.detectSource(owner, sourceDraft);
+      const receipt = await registry.enableSource(owner, sourceDraft, { draftHash: preview.draftHash, beforeWrite });
+      return { revision: receipt.configRevision,
+        effects: [{ item: 'source_enable', outcome: 'applied', revision: receipt.configRevision }] };
+    },
+    async recheck(principal, draft, applied) {
+      const input = githubInput(draft);
+      const row = db.prepare(`SELECT config_revision FROM source_configs
+        WHERE account_id=? AND data_domain=? AND normalized_target=?`).get(
+        principal.account_id, draft.domain, githubTarget(input)) as { config_revision: number } | undefined;
+      const verified = row?.config_revision === applied.revision;
+      return { verified, ...(!verified ? { issue: 'source_recheck' } : {}) };
+    },
+  };
+
   const history: SettingsHandler = {
     binding(principal, draft) {
       const { actor, planHash } = historyInput(principal, draft);
@@ -150,7 +192,43 @@ export function sourceSettingsHandlers({ db, credentials, now, registry }: Optio
   };
 
   return { enable_http_source: enable, modify_http_source: handlerFor('modify'), pause_http_source: handlerFor('pause'),
-    resume_http_source: handlerFor('resume'), disconnect_http_source: handlerFor('disconnect'), import_rss_history: history };
+    resume_http_source: handlerFor('resume'), disconnect_http_source: handlerFor('disconnect'), import_rss_history: history,
+    enable_github_source: enableGithub };
+}
+
+type GithubInput = { credential_ref: string; repo: string; branch: string; path: string };
+
+function githubInput(draft: SettingsDraft): GithubInput {
+  const input = draft.input;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid();
+  const record = input as Record<string, unknown>;
+  if (Object.keys(record).length !== 4) invalid();
+  for (const key of ['credential_ref', 'repo', 'branch', 'path'] as const) {
+    if (typeof record[key] !== 'string' || !(record[key] as string).trim()) invalid();
+  }
+  return {
+    credential_ref: record.credential_ref as string,
+    repo: record.repo as string,
+    branch: record.branch as string,
+    path: record.path as string,
+  };
+}
+
+function githubTarget(input: GithubInput): string {
+  return `github://${input.repo}@${input.branch}/${input.path}`;
+}
+
+function githubDraft(input: GithubInput) {
+  return {
+    type: 'github' as const,
+    target: githubTarget(input),
+    repo: input.repo,
+    branch: input.branch,
+    path: input.path,
+    credentialRef: input.credential_ref,
+    frequency: 'poll' as const,
+    history: 'none' as const,
+  };
 }
 
 function checkedSource<T>(read: () => T): T {

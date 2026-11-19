@@ -1,19 +1,21 @@
 import { createHash } from 'node:crypto';
 import type { Hono } from 'hono';
-import { commandEnvelope, detectHttpSourcePayload, rssHistoryPreviewPayload, type Json, type BrowserCreationScope } from '@patrick/contracts';
+import { commandEnvelope, detectSourcePayload, rssHistoryPreviewPayload, type Json, type BrowserCreationScope } from '@patrick/contracts';
 import { commandFingerprint, recordCommand, withDeferredTransaction, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { directoryReaderCapability, type RssHistoryActor, type SourceRegistry } from '@patrick/integrations/sources/registry';
+import type { CredentialStore } from '@patrick/host';
 import { assertDomainPermission, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
 import { assertBusinessWrite } from '../recovery-runtime.js';
 import { ApiError } from '../errors.js';
-import { assertPayloadHash, assertWriteOrigin, handle, readJson, routeId } from './http.js';
+import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermission, routeId } from './http.js';
 import { oneValue } from './work.js';
 
-type Ready = () => { db: SqliteDatabase; now: () => Date; registry: SourceRegistry };
+type Ready = () => { db: SqliteDatabase; now: () => Date; registry: SourceRegistry;
+  sourceCredentials?: CredentialStore };
 type SourceRow = { source_id: string; connector_type: string; normalized_target: string; frequency: string;
   config_revision: number; status: string; updated_at: string };
 type StoredCommand = { command_fingerprint: string; snapshot: string | null };
-const detectHttpSourceSchema = commandEnvelope(detectHttpSourcePayload);
+const detectSourceSchema = commandEnvelope(detectSourcePayload);
 const select = 'source_id,connector_type,normalized_target,frequency,config_revision,status,updated_at';
 const operation = 'detectSources';
 const historyOperation = 'previewRssHistory';
@@ -21,6 +23,22 @@ const historyPayload = commandEnvelope(rssHistoryPreviewPayload);
 
 export function mountSourceRoutes(app: Hono, ready: Ready) {
   const inFlight = new Map<string, { fingerprint: string; reply: Promise<string> }>();
+  app.post('/api/v1/sources/credentials', (c) => handle(c, async () => {
+    assertWriteOrigin(c.req.raw);
+    await requirePermission(c.req.raw, 'owner');
+    const { sourceCredentials } = ready();
+    if (!sourceCredentials) throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_provider_not_configured' });
+    const body = await readJson(c.req.raw) as { token?: unknown } | null;
+    if (typeof body?.token !== 'string' || !body.token.trim() || body.token.length > 4096) {
+      throw new ApiError(422, 'UNPROCESSABLE', { reason: 'credential' });
+    }
+    // The token is staged here and only the reference travels with a change.
+    const secret = new TextEncoder().encode(body.token);
+    c.header('Cache-Control', 'no-store');
+    try {
+      return c.json({ credential_ref: sourceCredentials.put(secret, 10 * 60 * 1000), version: 1 });
+    } finally { secret.fill(0); }
+  }));
   app.get('/api/v1/source-reader-capabilities', (c) => handle(c, async () => {
     c.header('Cache-Control', 'no-store');
     const principal = await requireSession(c.req.raw);
@@ -138,7 +156,7 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
 
   app.post('/api/v1/sources/detect', (c) => handle(c, async () => {
     assertWriteOrigin(c.req.raw);
-    const checked = detectHttpSourceSchema.safeParse(await readJson(c.req.raw));
+    const checked = detectSourceSchema.safeParse(await readJson(c.req.raw));
     if (!checked.success || checked.data.expected_revision !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'source_draft' });
     const { payload, payload_hash, client_request_id } = checked.data;
     assertPayloadHash(payload as Json, payload_hash);
@@ -167,7 +185,8 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
     const reply = (async () => {
       let preview;
       try { preview = await registry.detectSource({ accountId: principal.account_id, dataDomain: domain },
-        { type: payload.type, target: payload.target }, { signal: c.req.raw.signal,
+        { type: payload.type, target: payload.target, repo: payload.repo, branch: payload.branch,
+          path: payload.path, credentialRef: payload.credential_ref }, { signal: c.req.raw.signal,
           async assertLive() {
             bindScope(db, await requireSession(c.req.raw), payload.request_scope);
             assertBusinessWrite(db, domain);

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -16,12 +17,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, vi } from 'vitest';
-import { GITHUB_LIVE_NETWORK, verifyGithubSignature } from '../../packages/integrations/sources/github.js';
+import { createGithubApi, verifyGithubSignature } from '../../packages/integrations/sources/github.js';
 import { admitChange, createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 import { dispatchSourceWork, sourceWorkId } from '../../packages/integrations/sources/work-dispatch.js';
 import type { HubWireEvent } from '../../packages/integrations/autoloop/client.js';
 import { createBlobStore, type BlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { sourceSettingsHandlers } from '../../apps/service/src/settings/sources.js';
+import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 // Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
@@ -580,7 +583,8 @@ test('a signed local github fixture collects only the approved object and does n
     throw new Error('GITHUB_NETWORK_NOT_USED');
   }) as typeof globalThis.fetch;
   try {
-    expect(GITHUB_LIVE_NETWORK).toBe('not-used');
+    // Without an admitted API port the reader stays on the fixture tree and
+    // never reaches the network.
     expect(verifyGithubSignature(rawBody, signature, WEBHOOK_SECRET)).toBe(true);
     expect(verifyGithubSignature(rawBody, `sha256=${'0'.repeat(64)}`, WEBHOOK_SECRET)).toBe(false);
     const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW, githubFixtureRoot: tree });
@@ -880,4 +884,141 @@ test('an explicit trigger rule selects the mandate type the work runs under', as
   } finally {
     fx.close();
   }
+});
+
+test('the live GitHub reader lists a complete tree and reads a blob with the token', async () => {
+  const seen: Array<{ url: string; authorization: string | undefined; version: string | undefined }> = [];
+  const server = createServer((request, response) => {
+    seen.push({ url: request.url ?? '', authorization: request.headers.authorization,
+      version: request.headers['x-github-api-version'] as string | undefined });
+    if ((request.url ?? '').includes('/git/trees/')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ truncated: false, tree: [
+        { path: 'docs', type: 'tree', sha: 'sha-dir', size: 0 },
+        { path: 'docs/note.txt', type: 'blob', sha: 'sha-1', size: 12 },
+      ] }));
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ content: Buffer.from('hello world\n').toString('base64'), encoding: 'base64' }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  try {
+    const api = createGithubApi({ baseUrl: `http://127.0.0.1:${port}` });
+    const entries = await api.listTree({ repo: 'fixture/notes', branch: 'main', token: 'token-fixture' });
+    expect(entries).toEqual([
+      { path: 'docs', type: 'tree', sha: 'sha-dir', size: 0 },
+      { path: 'docs/note.txt', type: 'blob', sha: 'sha-1', size: 12 },
+    ]);
+    const bytes = await api.readBlob({ repo: 'fixture/notes', sha: 'sha-1', token: 'token-fixture' });
+    expect(Buffer.from(bytes).toString('utf8')).toBe('hello world\n');
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.authorization).toBe('Bearer token-fixture');
+    expect(seen[0]?.version).toBe('2022-11-28');
+    expect(seen[0]?.url).toContain('/repos/fixture%2Fnotes/git/trees/main?recursive=1');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('the live GitHub reader refuses a truncated tree and reports a failed status', async () => {
+  const server = createServer((request, response) => {
+    if ((request.url ?? '').includes('/git/trees/')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ truncated: true, tree: [] }));
+      return;
+    }
+    response.writeHead(403, { 'content-type': 'application/json' });
+    response.end('{}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  try {
+    const api = createGithubApi({ baseUrl: `http://127.0.0.1:${port}` });
+    await expect(api.listTree({ repo: 'fixture/notes', branch: 'main', token: 'token-fixture' }))
+      .rejects.toThrow('GITHUB_TREE_TRUNCATED');
+    await expect(api.readBlob({ repo: 'fixture/notes', sha: 'sha-1', token: 'token-fixture' }))
+      .rejects.toThrow('GITHUB_API_STATUS_403');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('a GitHub source with an admitted API port collects the approved branch over the API', async () => {
+  const fx = temporaryDatabase();
+  const requested: string[] = [];
+  const api = {
+    async listTree(input: { repo: string; branch: string; token: string }) {
+      requested.push(`tree ${input.repo} ${input.branch} ${input.token}`);
+      return [
+        { path: 'docs', type: 'tree' as const, sha: 'sha-dir', size: 0 },
+        { path: 'docs/note.txt', type: 'blob' as const, sha: 'sha-1', size: 12 },
+        { path: 'other/secret.txt', type: 'blob' as const, sha: 'sha-2', size: 6 },
+      ];
+    },
+    async readBlob(input: { repo: string; sha: string; token: string }) {
+      requested.push(`blob ${input.repo} ${input.sha} ${input.token}`);
+      return new TextEncoder().encode(input.sha === 'sha-1' ? 'live note\n' : 'secret\n');
+    },
+  };
+  try {
+    const registry = createSourceRegistry(fx.db, {
+      blobs: fx.blobs,
+      now: () => NOW,
+      githubApi: api,
+      credentials: { resolve: (reference) => reference === 'cred_github' ? new TextEncoder().encode('token-live') : null },
+    });
+    const draft = { ...githubDraft(), credentialRef: 'cred_github' };
+    const preview = await registry.detectSource(PRINCIPAL, draft);
+    expect(preview.samples).toEqual([{ locator: 'docs/note.txt', byteLength: 12 }]);
+    const enabled = await registry.enableSource(PRINCIPAL, draft);
+    const receipt = await registry.collectSource(enabled.sourceId, 1);
+    expect(receipt.accepted).toBe(true);
+    expect(requested).toContain('tree fixture/notes main token-live');
+    expect(requested).toContain('blob fixture/notes sha-1 token-live');
+    const revisions = contentRevisions(fx.db, enabled.sourceId);
+    expect(revisions).toHaveLength(1);
+    const objects = fx.db.prepare('SELECT locator FROM source_objects WHERE source_id = ?').all(enabled.sourceId) as
+      Array<{ locator: string }>;
+    expect(objects.map((row) => row.locator)).toEqual(['docs/note.txt']);
+  } finally { fx.close(); }
+});
+
+test('a GitHub source is added through the trusted change with a staged token', async () => {
+  const fx = temporaryDatabase();
+  const api = {
+    async listTree() {
+      return [{ path: 'docs/note.txt', type: 'blob' as const, sha: 'sha-1', size: 12 }];
+    },
+    async readBlob() {
+      return new TextEncoder().encode('live note\n');
+    },
+  };
+  try {
+    const registry = createSourceRegistry(fx.db, {
+      blobs: fx.blobs,
+      now: () => NOW,
+      githubApi: api,
+      credentials: { resolve: (reference) => reference === 'cred_github' ? new TextEncoder().encode('token-live') : null },
+    });
+    const handlers = sourceSettingsHandlers({ db: fx.db, credentials: createCredentialStore(join(fx.dir, 'creds'), () => new Date(NOW)),
+      now: () => new Date(NOW), registry });
+    const handler = handlers.enable_github_source;
+    const owner = { account_id: 'owner', caller_id: 'web', auth_epoch: 1, domains: ['personal'],
+      operations: ['owner'], authenticated_at: NOW };
+    const draft = { operation: 'enable_github_source', domain: 'personal', target: 'github://fixture/notes@main/docs',
+      input: { credential_ref: 'cred_github', repo: 'fixture/notes', branch: 'main', path: 'docs' } };
+    expect(handler.binding(owner, draft))
+      .toMatchObject({ revision: 0, identityId: 'github://fixture/notes@main/docs' });
+    await expect(handler.validate(owner, draft)).resolves.toEqual({ valid: true });
+    const applied = await handler.apply(owner, draft, { base_revision: 0, draft_hash: 'a'.repeat(64), validation_id: 'v', valid: true, device_id: 'desktop',
+        identity_id: 'github://fixture/notes@main/docs', scope_hash: 'b'.repeat(64), checked_at: NOW, expires_at: NOW }, () => NOW);
+    expect(applied.effects).toEqual([{ item: 'source_enable', outcome: 'applied', revision: 1 }]);
+    const row = fx.db.prepare('SELECT connector_type,normalized_target,credential_ref,status FROM source_configs').get();
+    expect(row).toMatchObject({ connector_type: 'github', normalized_target: 'github://fixture/notes@main/docs',
+      credential_ref: 'cred_github', status: 'enabled' });
+  } finally { fx.close(); }
 });

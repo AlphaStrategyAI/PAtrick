@@ -11,6 +11,7 @@ import { startConsultationWorker, type ConsultationWorkerOptions } from '@patric
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import type { FeishuTestOutbound } from '../../../packages/integrations/feishu/outbound.js';
 import { createSourceRegistry, type RegistryOptions } from '@patrick/integrations/sources/registry';
+import type { GithubApiPort } from '@patrick/integrations/sources/github';
 import { createVaultApi } from '@patrick/integrations/vault/drafts';
 import { createBlobStore, openDatabase, type SqliteDatabase } from '@patrick/storage';
 import { createAnswerGate } from '../../../packages/domain/src/answer-gate.js';
@@ -82,6 +83,10 @@ export type CreateAppOptions = {
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
   /** Backend probes used by the settings and system inspections. */
   executorProbes?: typeof probeExecutorReadiness;
+  /** The live GitHub reader. Without it the connector stays on the fixture tree. */
+  githubApi?: GithubApiPort;
+  /** The provider that holds the GitHub token a source references. */
+  sourceCredentialStore?: CredentialStore;
   sourceWorkDispatch?: SourceWorkDispatchOptions;
 };
 
@@ -324,8 +329,12 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
         blobs: createBlobStore(join(dirname(state.databasePath ?? ''), 'blobs')),
         now: () => current.now().toISOString(),
         http: options.httpSources,
+        githubApi: options.githubApi,
+        credentials: options.sourceCredentialStore
+          ? { resolve: (reference) => options.sourceCredentialStore!.resolve(reference) }
+          : undefined,
       });
-      return { ...current, registry: state.sourceRegistry };
+      return { ...current, registry: state.sourceRegistry, sourceCredentials: options.sourceCredentialStore };
     }
 
     if (options.httpSourceWorker) {

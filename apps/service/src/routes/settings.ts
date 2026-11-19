@@ -14,7 +14,7 @@ import type { probeExecutorReadiness } from '@patrick/executor/readiness';
 const INSPECT_ONLY_OPERATIONS = new Set(['inspect_executor', 'inspect_host']);
 
 export const settingsGroups = [
-  { id: 'collection', operations: ['configure_source'] },
+  { id: 'collection', operations: ['configure_source', 'enable_github_source'] },
   { id: 'materials', operations: ['connect_vault', 'change_vault'] },
   { id: 'execution', operations: ['inspect_executor'] },
   { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
@@ -183,6 +183,7 @@ function registeredTargets(db: SqliteDatabase, principal: Principal, domain: str
 function originOf(db: SqliteDatabase, principal: Principal, domain: string, operation: string):
 'detected' | 'suggested' | 'user' | 'inherited' {
   if (['inspect_executor', 'inspect_host', 'repair_network', 'start_backup', 'start_restore'].includes(operation)) return 'inherited';
+  if (operation === 'enable_github_source') return 'detected';
   if (operation === 'configure_source') {
     const sources = db.prepare('SELECT COUNT(*) AS n FROM source_configs WHERE account_id=? AND data_domain=?')
       .get(principal.account_id, domain) as { n: number };

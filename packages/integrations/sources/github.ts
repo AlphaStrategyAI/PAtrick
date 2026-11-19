@@ -2,8 +2,100 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-/** Local fixture reader. This task does not call the live GitHub network. */
-export const GITHUB_LIVE_NETWORK = 'not-used' as const;
+/** The GitHub REST version this reader speaks. */
+export const GITHUB_API_VERSION = '2022-11-28' as const;
+
+export type GithubTreeEntry = {
+  path: string;
+  type: 'blob' | 'tree';
+  sha: string;
+  size: number;
+};
+
+export type GithubApiPort = {
+  /** Lists every object under the branch, so the reader never sees a partial tree. */
+  listTree(input: { repo: string; branch: string; token: string }): Promise<GithubTreeEntry[]>;
+  readBlob(input: { repo: string; sha: string; token: string }): Promise<Uint8Array>;
+};
+
+export type GithubApiOptions = {
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  maxEntries?: number;
+  maxBlobBytes?: number;
+};
+
+/** Reads objects from the live GitHub API.
+ *
+ * The token only ever travels in the Authorization header, the base URL is fixed,
+ * and every response is bounded in size and time. A tree the API had to truncate
+ * is refused rather than read as if it were complete.
+ */
+export function createGithubApi(options: GithubApiOptions = {}): GithubApiPort {
+  const baseUrl = (options.baseUrl ?? 'https://api.github.com').replace(/\/+$/u, '');
+  const doFetch = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const maxEntries = options.maxEntries ?? 20_000;
+  const maxBlobBytes = options.maxBlobBytes ?? 4 * 1024 * 1024;
+
+  async function request(path: string, token: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
+    try {
+      const response = await doFetch(`${baseUrl}${path}`, {
+        method: 'GET',
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Bearer ${token}`,
+          'user-agent': 'patrick-source-reader',
+          'x-github-api-version': GITHUB_API_VERSION,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`GITHUB_API_STATUS_${response.status}`);
+      const text = await response.text();
+      if (text.length > maxBlobBytes * 4) throw new Error('GITHUB_RESPONSE_TOO_LARGE');
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw new Error('GITHUB_RESPONSE_INVALID');
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    async listTree({ repo, branch, token }) {
+      const body = await request(`/repos/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
+      if (!body || typeof body !== 'object') throw new Error('GITHUB_RESPONSE_INVALID');
+      const record = body as { tree?: unknown; truncated?: unknown };
+      if (record.truncated === true) throw new Error('GITHUB_TREE_TRUNCATED');
+      if (!Array.isArray(record.tree)) throw new Error('GITHUB_RESPONSE_INVALID');
+      if (record.tree.length > maxEntries) throw new Error('GITHUB_TREE_TOO_LARGE');
+      const entries: GithubTreeEntry[] = [];
+      for (const entry of record.tree) {
+        if (!entry || typeof entry !== 'object') throw new Error('GITHUB_RESPONSE_INVALID');
+        const row = entry as { path?: unknown; type?: unknown; sha?: unknown; size?: unknown };
+        if (typeof row.path !== 'string' || typeof row.sha !== 'string') throw new Error('GITHUB_RESPONSE_INVALID');
+        if (row.type !== 'blob' && row.type !== 'tree') continue;
+        entries.push({ path: row.path, type: row.type, sha: row.sha, size: typeof row.size === 'number' ? row.size : 0 });
+      }
+      return entries;
+    },
+    async readBlob({ repo, sha, token }) {
+      const body = await request(`/repos/${encodeURIComponent(repo)}/git/blobs/${encodeURIComponent(sha)}`, token);
+      if (!body || typeof body !== 'object') throw new Error('GITHUB_RESPONSE_INVALID');
+      const record = body as { content?: unknown; encoding?: unknown };
+      if (record.encoding !== 'base64' || typeof record.content !== 'string') throw new Error('GITHUB_RESPONSE_INVALID');
+      const bytes = Buffer.from(record.content, 'base64');
+      if (bytes.length > maxBlobBytes) throw new Error('GITHUB_BLOB_TOO_LARGE');
+      return new Uint8Array(bytes);
+    },
+  };
+}
 
 export type GithubScope = {
   repo: string;

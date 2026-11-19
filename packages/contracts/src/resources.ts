@@ -90,8 +90,15 @@ const feishuTestSendPayload = z.strictObject({
 });
 const scopedIdSchema = idSchema.extend(domainSchema.shape);
 const learningPageQuery = pageQuerySchema.extend(domainSchema.shape);
-export const detectHttpSourcePayload = z.strictObject({
-  type: z.enum(['rss', 'webpage']), target: z.string().min(1).max(2048), request_scope: browserCreationScopeSchema,
+export const detectSourcePayload = z.strictObject({
+  type: z.enum(['rss', 'webpage', 'github', 'directory']),
+  target: z.string().min(1).max(2048),
+  /** GitHub scope; the token itself only ever travels through the credential endpoint. */
+  repo: z.string().min(1).max(200).optional(),
+  branch: z.string().min(1).max(200).optional(),
+  path: z.string().min(1).max(1024).optional(),
+  credential_ref: z.string().min(1).max(160).optional(),
+  request_scope: browserCreationScopeSchema,
 });
 export const sourceEntrySchema = z.strictObject({
   source_id: z.string().min(1), connector_type: z.enum(['github', 'directory', 'rss', 'webpage']),
@@ -102,7 +109,7 @@ export const sourceReaderCapabilitiesSchema = z.strictObject({
   directory: z.strictObject({ state: z.literal('blocked'), reason: z.literal('DIRECTORY_READER_UNAVAILABLE') }),
 });
 export const sourcePreviewSchema = z.strictObject({
-  preview_id: z.string().min(1), target: z.string().min(1), type: detectHttpSourcePayload.shape.type,
+  preview_id: z.string().min(1), target: z.string().min(1), type: detectSourcePayload.shape.type,
   duplicate_source_id: z.string().min(1).nullable(), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
   allowed_urls: z.array(z.string().min(1).max(2048)).min(1).max(32),
   samples: z.array(z.strictObject({ locator: z.string().min(1), byteLength: z.number().int().nonnegative() })).max(8),
@@ -577,8 +584,11 @@ export const routes: RouteDefinition[] = [
   read('getSourceReaderCapabilities', '/source-reader-capabilities', 'sources.read', domainSchema, sourceReaderCapabilitiesSchema),
   read('getSourceReceipts', '/sources/:id/receipts', 'sources.read', scopedIdSchema,
     z.strictObject({ items: z.array(sourceReceiptSchema) })),
-  write('detectSources', 'POST', '/sources/detect', 'sources.detect', commandEnvelope(detectHttpSourcePayload),
+  write('detectSources', 'POST', '/sources/detect', 'sources.detect', commandEnvelope(detectSourcePayload),
     snapshotEnvelope(sourcePreviewSchema)),
+  write('putSourceCredential', 'POST', '/sources/credentials', 'owner',
+    z.strictObject({ token: z.string().min(1).max(4096) }),
+    z.strictObject({ credential_ref: z.string().min(1), version: z.number().int().positive() })),
   write('previewRssHistory', 'POST', '/sources/:id/history/preview', 'owner',
     commandEnvelope(rssHistoryPreviewPayload).extend({ expected_revision: z.number().int().positive() }),
     snapshotEnvelope(rssHistoryViewSchema), [...writeErrors, 'VALIDATION_STALE']),

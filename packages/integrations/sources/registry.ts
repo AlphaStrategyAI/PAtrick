@@ -17,6 +17,7 @@ import {
   normalizeGithubPath,
   readApprovedGithubObject,
   verifyGithubSignature,
+  type GithubApiPort,
   type GithubScope,
 } from './github.js';
 
@@ -160,6 +161,10 @@ export type RegistryOptions = {
   blobs: BlobStore;
   now?: () => string;
   githubFixtureRoot?: string;
+  /** The live GitHub reader. Without it the connector stays on the fixture tree. */
+  githubApi?: GithubApiPort;
+  /** The provider that holds the GitHub token a source references. */
+  credentials?: { resolve(reference: string): Uint8Array | null };
   beforeCursorCommit?: () => void;
   http?: {
     approvedUrls(principal: Principal, target: string, type: HttpConnectorType): readonly string[] | null;
@@ -511,11 +516,48 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       return (await listSamples(root, draft.excludes)).map((sample) => ({ locator: sample.relativePath, byteLength: sample.byteLength }));
     }
     const scope = githubScope(draft.scope);
+    if (options.githubApi) {
+      const token = githubToken(draft.credentialRef);
+      const entries = await options.githubApi.listTree({ repo: scope.repo, branch: scope.branch, token });
+      const prefix = normalizeGithubPath(scope.path);
+      return entries
+        .filter((entry) => entry.type === 'blob' && entry.path.startsWith(`${prefix}/`) && !draft.excludes.includes(entry.path))
+        .map((entry) => ({ locator: entry.path, byteLength: entry.size }));
+    }
     const root = githubRoot(scope);
     return (await listGithubFixtureSamples(root, draft.excludes)).map((sample) => ({
       locator: `${scope.path}/${sample.relativePath}`,
       byteLength: sample.byteLength,
     }));
+  }
+
+  /** Reads every approved object of a branch over the live GitHub API. */
+  async function githubLiveObjects(scope: GithubScope, excludes: Set<string>, token: string):
+  Promise<Array<{ locator: string; bytes: Uint8Array }>> {
+    const api = options.githubApi;
+    if (!api) throw new Error('GITHUB_API_REQUIRED');
+    const entries = await api.listTree({ repo: scope.repo, branch: scope.branch, token });
+    const prefix = normalizeGithubPath(scope.path);
+    if (!prefix) throw new Error('SOURCE_SCOPE_INVALID');
+    const objects: Array<{ locator: string; bytes: Uint8Array }> = [];
+    for (const entry of entries) {
+      if (entry.type !== 'blob') continue;
+      const relative = normalizeGithubPath(entry.path);
+      if (!relative || relative !== prefix && !relative.startsWith(`${prefix}/`)) continue;
+      if (excludes.has(relative)) continue;
+      objects.push({ locator: relative, bytes: await api.readBlob({ repo: scope.repo, sha: entry.sha, token }) });
+    }
+    return objects;
+  }
+
+  /** Resolves the token of a GitHub source from the credential provider. */
+  function githubToken(credentialRef: string | null): string {
+    if (!credentialRef) throw new Error('GITHUB_CREDENTIAL_REQUIRED');
+    const secret = options.credentials?.resolve(credentialRef);
+    if (!secret) throw new Error('GITHUB_CREDENTIAL_UNAVAILABLE');
+    const token = Buffer.from(secret).toString('utf8').trim();
+    if (!token) throw new Error('GITHUB_CREDENTIAL_UNAVAILABLE');
+    return token;
   }
 
   function githubRoot(scope: GithubScope): string {
@@ -922,6 +964,24 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     if (isHttpConnector(source.connector_type)) return collectHttp(source, configRevision, source.connector_type, scope);
     if (source.connector_type === 'github') {
       const github = githubScope(scope);
+      if (options.githubApi) {
+        // The live reader collects the approved branch over the API and confirms
+        // deletions the same way the local scan does.
+        const objects = await githubLiveObjects(github, new Set(excludes), githubToken(source.credential_ref));
+        const staged = await stage(source.source_id, objects.map((object) => ({
+          locator: object.locator,
+          stable: true,
+          bytes: object.bytes,
+        })));
+        const hash = staged.changed[0]?.hash ?? null;
+        return commitSweep({
+          source,
+          configRevision,
+          ...staged,
+          confirmDeletes: true,
+          evidenceRef: hash ? `github-api:${hash}` : null,
+        });
+      }
       const scan = await scanGithubFixture(githubRoot(github), excludes);
       if (scan.state === 'offline') return setStatus(source.source_id, 'offline');
       if (scan.state === 'placeholder') return setStatus(source.source_id, 'placeholder');
@@ -1248,7 +1308,15 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         assertDirectoryReaderAvailable();
       }
       const prepared = await normalize(principal, frozen);
-      if (prepared.connectorType === 'github' && !sameRoot(principal, prepared)) await stat(githubRoot(githubScope(prepared.scope)));
+      if (prepared.connectorType === 'github' && !sameRoot(principal, prepared)) {
+        const github = githubScope(prepared.scope);
+        if (options.githubApi) {
+          // The live branch has to answer before the source is admitted.
+          await options.githubApi.listTree({ repo: github.repo, branch: github.branch, token: githubToken(frozen.credentialRef ?? null) });
+        } else {
+          await stat(githubRoot(github));
+        }
+      }
       return withImmediateTransaction(db, () => {
         const normalized = isHttpConnector(frozen.type) ? normalizeHttp(principal, { ...frozen, type: frozen.type }) : prepared;
         const draftHash = hashDraft(principal, normalized);
@@ -1393,10 +1461,20 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       const scope = githubScope(parseScope(source.scope_json));
       const excludes = new Set(JSON.parse(source.excludes_json) as string[]);
       const files: Array<{ locator: string; stable: boolean; bytes?: Uint8Array }> = [];
+      const liveTree = options.githubApi
+        ? await options.githubApi.listTree({ repo: scope.repo, branch: scope.branch, token: githubToken(source.credential_ref) })
+        : undefined;
       for (const change of classified.changes) {
         if (change.kind === 'delete') continue;
         const approved = approvedGithubPath(scope, { repo: classified.repo, branch: classified.branch, path: change.path });
         if (!approved || excludes.has(approved)) continue;
+        if (liveTree) {
+          const entry = liveTree.find((item) => item.type === 'blob' && item.path === approved);
+          if (!entry) continue;
+          files.push({ locator: approved, stable: true,
+            bytes: await options.githubApi!.readBlob({ repo: scope.repo, sha: entry.sha, token: githubToken(source.credential_ref) }) });
+          continue;
+        }
         try {
           files.push({ locator: approved, stable: true, bytes: readApprovedGithubObject(options.githubFixtureRoot ?? '', scope, approved) });
         } catch (error) {
@@ -1413,7 +1491,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         ...staged,
         confirmDeletes: false,
         deliveryId: input.deliveryId,
-        evidenceRef: `local-fixture:${staged.changed[0]!.hash}`,
+        evidenceRef: `${liveTree ? 'github-api' : 'local-fixture'}:${staged.changed[0]!.hash}`,
       });
     },
 
