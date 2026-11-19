@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@patrick/contracts": "*",
+    "@patrick/executor": "*",
     "@patrick/host": "*",
     "@patrick/integrations": "*",
     "@patrick/storage": "*",

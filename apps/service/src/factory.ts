@@ -49,6 +49,7 @@ import { mountStatsRoutes } from './routes/stats.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
 import { mountProjectionEventRoutes } from './routes/events.js';
 import { createSourceWorkDispatch, type SourceWorkDispatchOptions } from './source-work.js';
+import type { probeExecutorReadiness } from '@patrick/executor/readiness';
 
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
@@ -79,6 +80,8 @@ export type CreateAppOptions = {
   httpSourceWorker?: HttpCollectionWorkerOptions;
   settingsHandlers?: Readonly<Partial<Record<string, SettingsHandler>>>;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
+  /** Backend probes used by the settings and system inspections. */
+  executorProbes?: typeof probeExecutorReadiness;
   sourceWorkDispatch?: SourceWorkDispatchOptions;
 };
 
@@ -361,7 +364,8 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
       });
       return { ...current, engine: state.settings,
         recoveryTargets: (principal, domain, operation) => registeredRecoveryTargets(recoveryOperations, principal, domain, operation),
-        networkTargets: (principal, domain) => registeredNetworkTargets(current.db, networkRepair, principal, domain) };
+        networkTargets: (principal, domain) => registeredNetworkTargets(current.db, networkRepair, principal, domain),
+        executorProbes: options.executorProbes };
     });
     mountSourceRoutes(app, sourceResources);
     mountDiagnosticsRoutes(app, context);

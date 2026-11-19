@@ -194,6 +194,48 @@ test('settings and system return the same scoped change receipt after trusted ap
   }
 });
 
+test('running the settings checks reports what each one observed without claiming readiness', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'patrick-t17-inspection-'));
+  const databasePath = join(root, 'settings.sqlite');
+  const credentialDirectory = join(root, 'creds');
+  const now = () => new Date(initial);
+  const db = openDatabase(databasePath);
+  try {
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(owner.account_id, 1, 1, initial);
+    const session = issueCallerSession(db, { accountId: owner.account_id, callerId: owner.caller_id,
+      domain: 'personal', permissions: ['owner'] }, now, createCredentialStore(credentialDirectory, now));
+    const probes = vi.fn(async () => [
+      { backend: 'codex' as const, status: 'verified' as const, command: 'codex --version', version: '1.2.3',
+        reason: null, observation: 'codex --version\n1.2.3', evidenceSha256: 'a'.repeat(64) },
+      { backend: 'grok' as const, status: 'blocked' as const, command: 'grok --version', version: null,
+        reason: 'blocked: executor is not inside the lima guest', observation: 'blocked', evidenceSha256: 'b'.repeat(64) },
+    ]);
+    const app = createApp({ databasePath, credentialDirectory, now, executorProbes: probes });
+    const headers = { authorization: session.authorization, origin: ORIGIN, 'content-type': 'application/json' };
+    const payload = {} as Json;
+    const response = await app.request('/api/v1/settings/inspections?domain=personal', { method: 'POST', headers,
+      body: JSON.stringify({ client_request_id: 'inspect-1', expected_revision: null, payload_hash: createHash('sha256')
+        .update(canonicalPayload(payload)).digest('hex'), payload }) });
+    expect(response.status).toBe(200);
+    const { data } = await response.json() as { data: { records: Array<{ target: string; observed: string }> } };
+    const records = new Map(data.records.map((record) => [record.target, record.observed]));
+    expect(records.get('executor:codex')).toBe('ready 1.2.3');
+    expect(records.get('executor:grok')).toBe('blocked blocked: executor is not inside the lima guest');
+    expect(records.get('host')).toMatch(/node v/u);
+    expect(records.get('sources')).toBe('no source configured');
+    expect(records.get('recovery')).toBe('no domain closed');
+    expect(probes).toHaveBeenCalledTimes(1);
+
+    const dashboard = await app.request('/api/v1/settings?domain=personal', { headers: { authorization: session.authorization } });
+    const groups = (await dashboard.json() as { data: { groups: Array<{ id: string; operations: Array<{ operation: string; kind: string }> }> } }).data.groups;
+    const execution = groups.find((group) => group.id === 'execution');
+    expect(execution?.operations).toEqual([{ operation: 'inspect_executor', registered: true, kind: 'inspect', targets: [] }]);
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test.each(['still-bound', 'revoked', 'remapped', 'expired', 'replaced', 'logged-out'] as const)(
   'Vault confirmation only writes with live root, mapping and authorization: %s', async (change) => {
   const root = mkdtempSync(join(tmpdir(), 'patrick-t17-vault-'));

@@ -184,6 +184,15 @@ export class ApiClient {
   async command(name: string, parameters: QueryValues, intent: Intent, options?: RequestOptions): Promise<Receipt> {
     const route = operation(name, 'write');
     if (route.response !== commandAcceptedSchema) throw new ClientError('INVALID_REQUEST');
+    return this.submit(name, parameters, intent, options) as Promise<Receipt>;
+  }
+
+  /** Sends a command envelope and returns the response the route declares.
+   *
+   * A command that answers with a snapshot instead of a receipt goes through
+   * this path; the envelope is hashed the same way the receipt path hashes it.
+   */
+  async submit(name: string, parameters: QueryValues, intent: Intent, options?: RequestOptions): Promise<unknown> {
     if (!this.scope) throw new ClientError('UNAUTHENTICATED', 401);
     const signal = this.accessSignal(options);
     const payload = structuredClone(intent.payload);
@@ -191,7 +200,7 @@ export class ApiClient {
     const hash = await crypto.subtle.digest('SHA-256', bytes);
     const payload_hash = Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
     signal.throwIfAborted();
-    return this.write(name, parameters, { ...intent, payload, payload_hash }, { signal }) as Promise<Receipt>;
+    return this.write(name, parameters, { ...intent, payload, payload_hash }, { signal });
   }
 
   async subscribe(snapshot: Snapshot<unknown>, options: SubscribeOptions): Promise<void> {

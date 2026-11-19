@@ -1,12 +1,17 @@
 import { createHash } from 'node:crypto';
 import type { Hono } from 'hono';
-import { commandEnvelope, settingsChangePayload, settingsControlPayload, settingsDraftSchema } from '@patrick/contracts';
+import { commandEnvelope, emptySchema, settingsChangePayload, settingsControlPayload, settingsDraftSchema } from '@patrick/contracts';
 import { domainsWithPermission, readPresentedToken, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import type { SqliteDatabase } from '@patrick/storage';
 import { assertPayloadHash, assertWriteOrigin, handle, readJson, routeId } from './http.js';
 import { oneValue } from './work.js';
 import type { createSettingsChanges } from '../settings/changes.js';
+import { runSettingsInspections } from '../settings/inspections.js';
+import type { probeExecutorReadiness } from '@patrick/executor/readiness';
+
+/** Operations that only report what the service observed; they never change a setting. */
+const INSPECT_ONLY_OPERATIONS = new Set(['inspect_executor', 'inspect_host']);
 
 export const settingsGroups = [
   { id: 'collection', operations: ['configure_source'] },
@@ -17,11 +22,13 @@ export const settingsGroups = [
   { id: 'preferences', operations: [] },
 ] as const;
 const draftRequest = commandEnvelope(settingsDraftSchema);
+const inspectionRequest = commandEnvelope(emptySchema);
 const changeRequest = commandEnvelope(settingsChangePayload);
 const controlRequest = commandEnvelope(settingsControlPayload);
 type Ready = () => { db: SqliteDatabase; now: () => Date; engine: ReturnType<typeof createSettingsChanges>;
   recoveryTargets?: (principal: Principal, domain: string, operation: string) => readonly unknown[];
-  networkTargets?: (principal: Principal, domain: string) => readonly unknown[] };
+  networkTargets?: (principal: Principal, domain: string) => readonly unknown[];
+  executorProbes?: typeof probeExecutorReadiness };
 
 export function mountSettingsRoutes(app: Hono, ready: Ready): void {
   app.get('/api/v1/settings', (c) => handle(c, async () => {
@@ -29,9 +36,24 @@ export function mountSettingsRoutes(app: Hono, ready: Ready): void {
     const { db, now, engine, networkTargets, recoveryTargets } = ready();
     const domain = getDomain(db, principal, 'settings.read', oneValue(new URL(c.req.url).searchParams, 'domain'));
     const groups = settingsGroups.map(({ id, operations }) => ({ id, operations: operations.map((operation) => ({
-      operation, registered: engine.isRegistered(operation), targets: registeredTargets(db, principal, domain, operation, networkTargets, recoveryTargets),
+      operation, registered: INSPECT_ONLY_OPERATIONS.has(operation) ? true : engine.isRegistered(operation),
+      kind: INSPECT_ONLY_OPERATIONS.has(operation) ? 'inspect' : 'change',
+      targets: registeredTargets(db, principal, domain, operation, networkTargets, recoveryTargets),
     })) }));
     return c.json(snapshot({ ...principal, domains: [domain] }, { groups }, now(), db));
+  }));
+
+  app.post('/api/v1/settings/inspections', (c) => handle(c, async () => {
+    assertWriteOrigin(c.req.raw);
+    const parsed = inspectionRequest.safeParse(await readJson(c.req.raw));
+    if (!parsed.success) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_inspection' });
+    const { payload, payload_hash } = parsed.data;
+    assertPayloadHash(payload, payload_hash);
+    const principal = await requireSession(c.req.raw);
+    const { db, now, networkTargets, recoveryTargets, executorProbes } = ready();
+    const domain = getDomain(db, principal, 'settings.inspect', oneValue(new URL(c.req.url).searchParams, 'domain'));
+    const result = await runSettingsInspections({ db, principal, domain, networkTargets, recoveryTargets, executorProbes });
+    return c.json(snapshot({ ...principal, domains: [domain] }, result, now(), db));
   }));
 
   app.post('/api/v1/settings/validations', (c) => handle(c, async () => {

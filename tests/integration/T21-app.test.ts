@@ -42,7 +42,7 @@ test('settings discover only fixed registered repairs for the current owner scop
       const { data } = await response.json() as { data: unknown };
       return settingsDashboardSchema.parse(data).groups.flatMap((g) => g.operations).find((op) => op.operation === 'repair_network');
     };
-    expect(await read(owner.authorization, 'personal')).toEqual({ operation: 'repair_network', registered: true,
+    expect(await read(owner.authorization, 'personal')).toEqual({ operation: 'repair_network', registered: true, kind: 'change',
       targets: [{ target: 'test-mac', device: 'test-mac', status: 'registered', revision: 0,
         label: 'work / fixed-dns', input: { target_id: 'work', repair_id: 'fixed-dns' } }] });
     expect((await read(reader.authorization, 'personal'))?.targets).toEqual([]);
@@ -51,6 +51,6 @@ test('settings discover only fixed registered repairs for the current owner scop
     const response = await unconfigured.request('/api/v1/settings?domain=personal', { headers: { authorization: owner.authorization } });
     const { data } = await response.json() as { data: unknown };
     expect(settingsDashboardSchema.parse(data).groups.flatMap((g) => g.operations).find((op) => op.operation === 'repair_network'))
-      .toEqual({ operation: 'repair_network', registered: false, targets: [] });
+      .toEqual({ operation: 'repair_network', registered: false, kind: 'change', targets: [] });
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });

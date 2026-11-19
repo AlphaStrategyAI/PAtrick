@@ -120,7 +120,7 @@ test.each(['success', 'already-healthy', 'revoked', 'logged-out', 'wrong-device'
       expect(db.prepare('SELECT COUNT(*) AS n FROM network_target_blockers').get()).toEqual({ n: 0 });
       expect(await read('/api/v1/settings?domain=personal')).toMatchObject({
         groups: expect.arrayContaining([{ id: 'operation', operations: expect.arrayContaining([{
-          operation: 'repair_network', registered: true, targets: [{
+          operation: 'repair_network', registered: true, kind: 'change', targets: [{
             target: policy.device_id, device: policy.device_id, status: 'registered', revision: epoch,
             label: 'work / work-dns', input: { target_id: 'work', repair_id: 'work-dns' },
           }],

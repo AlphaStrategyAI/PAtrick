@@ -67,7 +67,7 @@ const writeErrors = [
   'RATE_LIMITED',
   'UNAVAILABLE',
 ] as const;
-const emptySchema = z.strictObject({});
+export const emptySchema = z.strictObject({});
 const idSchema = z.strictObject({ id: z.string().min(1) });
 const listDataSchema = z.strictObject({ items: z.array(z.unknown()) });
 const pageQuerySchema = z.strictObject({
@@ -447,9 +447,13 @@ export const settingsRecoveryReceiptSchema = z.strictObject({
 });
 export const settingsDashboardSchema = z.strictObject({ groups: z.array(z.strictObject({
   id: z.string(), operations: z.array(z.strictObject({
-    operation: z.string(), registered: z.boolean(), targets: z.array(settingsTargetSchema),
+    operation: z.string(), registered: z.boolean(), kind: z.enum(['change', 'inspect']),
+    targets: z.array(settingsTargetSchema),
   })),
 })) });
+export const settingsInspectionSchema = z.strictObject({
+  records: z.array(z.strictObject({ target: z.string().min(1).max(160), observed: z.string().min(1).max(2048) })).max(64),
+});
 
 const statsQuerySchema = z.strictObject({
   ...domainSchema.shape,
@@ -577,7 +581,8 @@ export const routes: RouteDefinition[] = [
     scopedIdSchema.extend({ planId: z.string().min(1) }), rssHistoryViewSchema),
   errors: [...readErrors, 'NOT_FOUND', 'UNPROCESSABLE', 'VALIDATION_STALE'] },
   read('getSettings', '/settings', 'settings.read', domainSchema, settingsDashboardSchema),
-  command('inspectSettings', '/settings/inspections', 'settings.inspect', emptySchema),
+  write('inspectSettings', 'POST', '/settings/inspections', 'settings.inspect',
+    commandEnvelope(emptySchema), snapshotEnvelope(settingsInspectionSchema)),
   write('validateSettings', 'POST', '/settings/validations', 'settings.validate', commandEnvelope(settingsDraftSchema),
     snapshotEnvelope(settingsValidationSchema), [...writeErrors, 'VALIDATION_STALE']),
   write('prepareSettingsControl', 'POST', '/settings/control-proposals', 'owner', commandEnvelope(settingsControlPayload),

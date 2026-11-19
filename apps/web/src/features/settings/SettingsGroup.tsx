@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { settingsDashboardSchema, settingsReceiptSchema, settingsRecoveryOfferSchema } from '@patrick/contracts/resources';
-import { asClientError, useScopedSnapshot } from '../../api/query.js';
+import { settingsDashboardSchema, settingsInspectionSchema, settingsReceiptSchema, settingsRecoveryOfferSchema } from '@patrick/contracts/resources';
+import { ClientError } from '../../api/client.js';
+import { asClientError, useScopedSnapshot, useService } from '../../api/query.js';
 import { LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate, type MessageKey } from '../../i18n/locale.js';
@@ -19,21 +21,45 @@ const operationKeys: Record<string, MessageKey> = {
 
 export function SettingsGroup({ group }: { group: string }) {
   const { locale, t } = useLocale();
+  const { api } = useService();
   const settings = useScopedSnapshot('getSettings', {}, settingsDashboardSchema.parse);
   const snapshot = settings.data;
   const current = snapshot?.data.groups.find((entry) => entry.id === group);
+  const [records, setRecords] = useState<Array<{ target: string; observed: string }>>();
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string>();
+  async function runChecks() {
+    setChecking(true);
+    setCheckError(undefined);
+    try {
+      const response = await api.submit('inspectSettings', {}, {
+        client_request_id: crypto.randomUUID(), expected_revision: null, payload: {},
+      });
+      setRecords(settingsInspectionSchema.parse((response as { data: unknown }).data).records);
+    } catch (error) {
+      setCheckError(error instanceof ClientError ? error.code : 'UNAVAILABLE');
+    } finally {
+      setChecking(false);
+    }
+  }
   return <section className="card">
     {settings.error && <LocalizedError code={asClientError(settings.error).code} onRetry={() => { void settings.refetch(); }} />}
     {!settings.error && !current && <p role="status">{t('status.unknown')}</p>}
     {snapshot && current && <>
       {group === 'interaction' && <FeishuSetup key={JSON.stringify(snapshot.scope)} onChanged={() => { void settings.refetch(); }} />}
       <ul>
-        {current.operations.map(({ operation, registered, targets }) => <li key={operation}>
+        {current.operations.map(({ operation, registered, kind, targets }) => <li key={operation}>
           {t(operationKeys[operation] ?? 'status.unknown')}: {t(registered ? 'settings.registered' : 'settings.notConfigured')}
-          {registered && targets.length > 0 && <SettingsChangeWizard operation={operation} targets={targets}
+          {registered && kind === 'change' && targets.length > 0 && <SettingsChangeWizard operation={operation} targets={targets}
             entryLabel={operationKeys[operation] ?? 'status.unknown'} onChanged={() => { void settings.refetch(); }} />}
+          {registered && kind === 'inspect' && <button type="button" disabled={checking}
+            onClick={() => { void runChecks(); }}>{t(checking ? 'status.refreshing' : 'settings.runChecks')}</button>}
         </li>)}
       </ul>
+      {checkError && <LocalizedError code={checkError} onRetry={() => { void runChecks(); }} />}
+      {records && <ul data-testid="settings-inspection-records">
+        {records.map((record) => <li key={record.target}><code>{record.target}</code>: {record.observed}</li>)}
+      </ul>}
       <p>{t('settings.snapshotAsOf')}: <time dateTime={snapshot.as_of}>{formatDate(locale, snapshot.as_of)}</time></p>
       <ChangeReceipt />
     </>}

@@ -32,7 +32,12 @@ async function setup(page: Page, withVault = false, permissions = ['owner']) {
   const credentials = createCredentialStore(credentialDirectory, now);
   const { token } = issueCallerSession(db, { accountId: 'owner', callerId: 'web', domain: 'personal', permissions }, now, credentials);
   await page.context().addCookies([{ name: 'patrick_session', value: token, url: 'http://localhost', httpOnly: true, sameSite: 'Strict' }]);
-  const app = createApp({ databasePath, credentialDirectory, now });
+  const app = createApp({ databasePath, credentialDirectory, now, executorProbes: async () => [
+    { backend: 'codex' as const, status: 'verified' as const, command: 'codex --version', version: '1.2.3',
+      reason: null, observation: 'codex --version\n1.2.3', evidenceSha256: 'a'.repeat(64) },
+    { backend: 'grok' as const, status: 'blocked' as const, command: 'grok --version', version: null,
+      reason: 'blocked: the executor is not inside the lima guest', observation: 'blocked', evidenceSha256: 'b'.repeat(64) },
+  ] });
   await page.route('**/api/v1/**', async (route) => {
     const browser = route.request();
     if (browser.url().includes('/api/v1/events')) {
@@ -87,7 +92,8 @@ test('settings offer six groups and distinguish unconfigured host actions from t
     await page.goto('/settings/materials');
     await expect(page.getByText('Connect a Vault: Available')).toBeVisible();
     await page.goto('/settings/operation');
-    await expect(page.getByText('Check the host: Unavailable in this installation')).toBeVisible();
+    await expect(page.getByText('Check the host: Available')).toBeVisible();
+    await expect(page.getByText('Repair a registered network target: Unavailable in this installation')).toBeVisible();
   } finally { await fx.close(); }
 });
 
@@ -1092,4 +1098,18 @@ test('same-origin Vite returns 503 when an in-flight GET loses its backend', asy
     expect(cleanup).toEqual({ databaseOpen: false, runtimeStatus: 'closed', serviceListening: false });
     expect(readdirSync(scratch)).toEqual([]);
   } finally { rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test('running the settings checks shows what each one observed', async ({ page }) => {
+  const fx = await setup(page);
+  try {
+    await page.goto('/settings/execution');
+    await page.getByRole('button', { name: 'Run checks' }).click({ timeout: 3000 });
+    const records = page.getByTestId('settings-inspection-records');
+    await expect(records).toBeVisible();
+    await expect(records).toContainText('executor:codex');
+    await expect(records).toContainText('ready 1.2.3');
+    await expect(records).toContainText('executor:grok');
+    await expect(records).toContainText('blocked: the executor is not inside the lima guest');
+  } finally { await fx.close(); }
 });

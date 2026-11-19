@@ -342,5 +342,6 @@
   "delegations.typeId": "Delegation type",
   "delegations.level": "Capability level",
   "delegations.scopeDomain": "Data domain",
-  "learning.connectSource": "Connect a source"
+  "learning.connectSource": "Connect a source",
+  "settings.runChecks": "Run checks"
 }
