@@ -123,6 +123,20 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
     return connection;
   };
 
+  function currentCandidate(connection: ConnectionRow, principal: Principal, pairingId: string, stamped: string) {
+    const pairing = db.prepare('SELECT * FROM channel_pairings WHERE pairing_id = ?').get(pairingId) as PairingRow | undefined;
+    if (!pairing || pairing.connection_id !== connectionId) throw new Error('NOT_FOUND');
+    if (principal.account_id !== pairing.account_id || principal.caller_id !== 'web' || !principal.operations.includes('owner')) {
+      throw new Error('FORBIDDEN');
+    }
+    if (pairing.expires_at <= stamped) throw new Error('PAIRING_EXPIRED');
+    if (pairing.status === 'consumed' || pairing.consumed_at) throw new Error('PAIRING_CONSUMED');
+    if (pairing.status !== 'candidate' || !pairing.candidate_open_id || !pairing.candidate_chat_id) throw new Error('BINDING_STALE');
+    assertSnap(connection, snapFromPairing(pairing));
+    if (connection.current_pairing_id !== pairing.pairing_id) throw new Error('BINDING_STALE');
+    return pairing;
+  }
+
   return {
     async prepareSentTest() {
       const stamped = stamp();
@@ -427,14 +441,20 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       });
     },
 
-    createPairing() {
+    createPairing(rejected?: { principal: Principal; pairingId: string }) {
       const stamped = stamp();
       const code = randomBytes(18).toString('base64url');
       const pairingId = `pair_${randomBytes(8).toString('hex')}`;
       const expires = new Date(options.now().getTime() + PAIRING_TTL_MS).toISOString();
       withImmediateTransaction(db, () => {
         const connection = writableConnection();
-        db.prepare(`UPDATE channel_pairings SET status = 'expired' WHERE connection_id = ? AND status IN ('open', 'candidate')`).run(connectionId);
+        if (rejected) {
+          const pairing = currentCandidate(connection, rejected.principal, rejected.pairingId, stamped);
+          if (pairing.binding_revision !== connection.binding_revision) throw new Error('BINDING_STALE');
+          db.prepare("UPDATE channel_pairings SET status = 'expired' WHERE pairing_id = ?").run(pairing.pairing_id);
+        } else {
+          db.prepare("UPDATE channel_pairings SET status = 'expired' WHERE connection_id = ? AND status IN ('open', 'candidate')").run(connectionId);
+        }
         db.prepare(`INSERT INTO channel_pairings (
           pairing_id, connection_id, account_id, data_domain, code_hash, expires_at, consumed_at, candidate_open_id,
           candidate_chat_id, app_id, tenant_key, config_revision, credential_version, binding_revision, incarnation, epoch,
@@ -486,16 +506,7 @@ export function createFeishuChannel(db: SqliteDatabase, options: FeishuChannelOp
       const stamped = stamp();
       withImmediateTransaction(db, () => {
         const connection = writableConnection();
-        const pairing = db.prepare('SELECT * FROM channel_pairings WHERE pairing_id = ?').get(pairingId) as PairingRow | undefined;
-        if (!pairing || pairing.connection_id !== connectionId) throw new Error('NOT_FOUND');
-        if (principal.account_id !== pairing.account_id || principal.caller_id !== 'web' || !principal.operations.includes('owner')) {
-          throw new Error('FORBIDDEN');
-        }
-        if (pairing.expires_at <= stamped) throw new Error('PAIRING_EXPIRED');
-        if (pairing.status === 'consumed' || pairing.consumed_at) throw new Error('PAIRING_CONSUMED');
-        if (pairing.status !== 'candidate' || !pairing.candidate_open_id || !pairing.candidate_chat_id) throw new Error('BINDING_STALE');
-        assertSnap(connection, snapFromPairing(pairing));
-        if (connection.current_pairing_id !== pairing.pairing_id) throw new Error('BINDING_STALE');
+        const pairing = currentCandidate(connection, principal, pairingId, stamped);
         const nextRevision = connection.binding_revision + 1;
         const info = db.prepare(`UPDATE channel_pairings SET status = 'consumed', consumed_at = ? WHERE pairing_id = ? AND consumed_at IS NULL`).run(
           stamped,

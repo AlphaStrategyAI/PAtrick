@@ -141,6 +141,7 @@ test('openapi-sdk-no-drift', () => {
     'POST /api/v1/auth/challenge',
     'POST /api/v1/auth/verify',
     'POST /api/v1/channels/feishu/bindings',
+    'POST /api/v1/channels/feishu/bindings/reject',
     'POST /api/v1/channels/feishu/bindings/{id}/confirm',
     'POST /api/v1/channels/feishu/credentials',
     'POST /api/v1/channels/feishu/inspections',

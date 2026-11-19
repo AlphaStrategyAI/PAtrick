@@ -21,6 +21,8 @@ const pairingSchema = z.strictObject({
   credential_setup_available: z.boolean(),
   transport_available: z.boolean(),
   owner_actions_available: z.boolean(),
+  pairing_start_available: z.boolean().default(false),
+  reject_pairing_available: z.boolean().default(false),
 });
 const sample = 'PAtrick 连接测试，不含业务资料。';
 
@@ -82,8 +84,10 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
       await Promise.all([connection.refetch(), pairing.refetch()]);
       if (testId) await report.refetch();
       if (!signal.aborted) onChanged();
-    }).catch((error: unknown) => {
-      if (!signal.aborted) setFailure(asClientError(error).code);
+    }).catch(async (error: unknown) => {
+      if (signal.aborted) return;
+      setFailure(asClientError(error).code);
+      await Promise.allSettled([connection.refetch(), pairing.refetch()]);
     }).finally(() => {
       action.current = false;
       if (!signal.aborted) setBusy(false);
@@ -112,18 +116,21 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
     });
   }
 
-  function startPairing() {
+  function startPairing(rejectedId?: string) {
     act(async (signal) => {
       setPairCode(undefined);
-      const result = await command('createFeishuBinding', signal);
+      const result = rejectedId
+        ? await command('rejectFeishuBinding', signal, { pairing_id: rejectedId })
+        : await command('createFeishuBinding', signal);
       const id = result.receipt_url.match(/^\/api\/v1\/channels\/feishu\/bindings\/(pair_[a-f0-9]{16})$/u)?.[1];
-      if (!id || signal.aborted) return;
+      if (signal.aborted) return;
+      if (!id) throw new Error('Invalid pairing receipt');
       const snapshot = await api.read('getFeishuBinding', { id }, { signal });
       const receipt = pairingSchema.parse(snapshot.data);
       const duration = receipt.expires_at ? Date.parse(receipt.expires_at) - Date.parse(snapshot.as_of) : 0;
-      if (receipt.pairing_id === id && receipt.code && duration > 0 && !signal.aborted) {
-        setPairCode({ pairingId: id, code: receipt.code, duration });
-      }
+      if (signal.aborted) return;
+      if (receipt.pairing_id !== id || !receipt.code || !(duration > 0)) throw new Error('Pairing code unavailable');
+      setPairCode({ pairingId: id, code: receipt.code, duration });
     });
   }
 
@@ -171,11 +178,13 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
                 <button type="button" disabled={busy} onClick={() => {
                   act(async (signal) => { await command('confirmFeishuBinding', signal, {}, details.pairing_id ?? undefined); });
                 }}>{copy.confirm}</button>
+                {details.reject_pairing_available && <button type="button" disabled={busy}
+                  onClick={() => { if (details.pairing_id) startPairing(details.pairing_id); }}>{copy.reject}</button>}
               </div> :
               <div>
                 {pairCode && canShowCode && <p>{copy.pairingSend}: <code>{pairCode.code}</code></p>}
                 {details.status === 'open' && details.expires_at && <p>{copy.expires}: {formatDate(locale, details.expires_at)}</p>}
-                <button type="button" disabled={busy || !canConfigure || nativeProbeRequired} onClick={startPairing}>{copy.pairingStart}</button>
+                <button type="button" disabled={busy || !details.pairing_start_available} onClick={() => startPairing()}>{copy.pairingStart}</button>
               </div>
           )}
           {(status === 'needs_test' || status === 'needs_enable') && details.destination && <>

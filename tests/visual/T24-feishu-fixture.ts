@@ -43,7 +43,7 @@ export async function withSecureWeb(run: (origin: string) => Promise<void>) {
 export async function withChannel(page: Page, origin: string, admitted: boolean, run: (fx: {
   db: ReturnType<typeof openDatabase>; receive: (code: string) => Promise<void>;
   requests: Array<{ method: string; path: string; status: number }>;
-}) => Promise<void>) {
+}) => Promise<void>, options: { withoutCredentials?: boolean; loseRejectResponse?: boolean; seedCandidate?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t24-feishu-'));
   const databasePath = join(dir, 'local.sqlite');
   const credentialDirectory = join(dir, 'session');
@@ -65,7 +65,7 @@ export async function withChannel(page: Page, origin: string, admitted: boolean,
       now, createCredentialStore(credentialDirectory, now));
     await page.context().addCookies([{ name: 'patrick_session', value: token, url: origin, httpOnly: true, secure: true, sameSite: 'Strict' }]);
     runtime = createServiceRuntime({ databasePath, credentialDirectory, now, browserAuthority: { origin, rpId: host },
-      feishuCredentials: createCredentialStore(join(dir, 'fixture-store'), now) });
+      feishuCredentials: options.withoutCredentials ? undefined : createCredentialStore(join(dir, 'fixture-store'), now) });
     const { app } = runtime;
     const requests: Array<{ method: string; path: string; status: number }> = [];
     await page.route('**/*', async route => {
@@ -76,9 +76,16 @@ export async function withChannel(page: Page, origin: string, admitted: boolean,
       const response = await app.request(req.url(), { method: req.method(), headers: await req.allHeaders(), body: req.postData() });
       const text = await response.text();
       requests.push({ method: req.method(), path: url.pathname, status: response.status });
+      if (options.loseRejectResponse && url.pathname === '/api/v1/channels/feishu/bindings/reject' && response.status === 202) {
+        return route.abort('failed');
+      }
       await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: text });
     });
     const channel = createFeishuChannel(db, { connectionId: id, hub, encode: encodeHubAnswer, domain: 'personal', now });
+    if (options.seedCandidate) {
+      const pair = channel.createPairing();
+      await channel.receivePairingMessage({ code: pair.code, open_id: synthetic.owner, chat_id: synthetic.chat });
+    }
     await run({ db, requests, receive: code => channel.receivePairingMessage({ code, open_id: synthetic.owner, chat_id: synthetic.chat }) });
   } finally {
     try { await page.unrouteAll({ behavior: 'wait' }); }

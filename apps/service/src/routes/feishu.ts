@@ -21,9 +21,13 @@ type PairingCodes = Map<string, { code: string; expires_at: string; connection_i
 function secureSetupOrigin(): string {
   return browserAuthority().origin.replace(/^http:/u, 'https:');
 }
+function requireSecureSetup(request: Request) {
+  if (new URL(request.url).origin !== secureSetupOrigin() || request.headers.get('origin') !== secureSetupOrigin()) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'tls_required' });
+  }
+}
 type Envelope<T> = { client_request_id: string; expected_revision: number | null; payload_hash: string; payload: T };
 
-const bindingRequest = routeRequest('createFeishuBinding');
 const confirmRequest = routeRequest('confirmFeishuBinding');
 const testRequest = routeRequest('createFeishuTest');
 const sendRequest = routeRequest('sendFeishuTest');
@@ -44,6 +48,7 @@ export function mountFeishuRoutes(app: Hono, ready: Ready): void {
   app.post('/api/v1/channels/feishu/inbound', (c) => handle(c, () => postInbound(c, ready)));
   app.post('/api/v1/channels/feishu/credentials', (c) => handle(c, () => putCredential(c, ready)));
   app.post('/api/v1/channels/feishu/bindings', (c) => handle(c, () => createBinding(c, ready, pairingCodes)));
+  app.post('/api/v1/channels/feishu/bindings/reject', (c) => handle(c, () => createBinding(c, ready, pairingCodes, 'rejectFeishuBinding')));
   app.post('/api/v1/channels/feishu/bindings/:id/confirm', (c) => handle(c, () => confirmBinding(c, ready)));
   app.get('/api/v1/channels/feishu/bindings/:id', (c) => handle(c, () => readBinding(c, ready, pairingCodes)));
   app.post('/api/v1/channels/feishu/tests', (c) => handle(c, () => createTest(c, ready)));
@@ -64,9 +69,7 @@ async function readChannel(c: Context, ready: Ready): Promise<Response> {
 async function putCredential(c: Context, ready: Ready): Promise<Response> {
   assertFeishuOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
-  if (new URL(c.req.url).origin !== secureSetupOrigin() || c.req.header('origin') !== secureSetupOrigin()) {
-    throw new ApiError(409, 'CONFLICT', { reason: 'tls_required' });
-  }
+  requireSecureSetup(c.req.raw);
   const { feishuCredentials, db, now } = ready();
   // The general session credential store is not an admitted system provider for Feishu.
   if (!feishuCredentials) throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_provider_not_configured' });
@@ -110,31 +113,52 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
   }
 }
 
-async function createBinding(c: Context, ready: Ready, codes: PairingCodes): Promise<Response> {
+async function createBinding(c: Context, ready: Ready, codes: PairingCodes,
+  operation: 'createFeishuBinding' | 'rejectFeishuBinding' = 'createFeishuBinding'): Promise<Response> {
+  if (operation === 'rejectFeishuBinding' || new URL(c.req.url).protocol === 'https:') requireSecureSetup(c.req.raw);
   let transient: { pairing_id: string; code: string; expires_at: string; connection_id: string } | undefined;
-  const response = await command(c, ready, 'createFeishuBinding', bindingRequest, 'channels/feishu/bindings', (resources, principal) => {
+  const response = await command(c, ready, operation, routeRequest(operation), 'channels/feishu/bindings', (resources, principal, payload) => {
     const row = assertProbe(resources.db, principal, 'needs_binding');
     assertPairingProbe(row);
-    const pairing = feishu(resources, principal).createPairing();
+    const rejected = operation === 'rejectFeishuBinding' ? { principal, pairingId: (payload as { pairing_id: string }).pairing_id } : undefined;
+    const pairing = pairingOutcome(() => feishu(resources, principal).createPairing(rejected));
     transient = { ...pairing, connection_id: row.connection_id };
     return pairing.pairing_id;
   }, { atomic: true });
-  if (transient) {
-    const now = ready().now().toISOString();
-    for (const [id, entry] of codes) {
-      if (entry.expires_at <= now || entry.connection_id === transient.connection_id) codes.delete(id);
-    }
-    if (codes.size >= 1000) codes.delete(codes.keys().next().value!);
-    codes.set(transient.pairing_id, transient);
-  }
+  if (transient) publishPairingCode(ready(), codes, transient);
   return response;
+}
+
+export function publishPairingCode(resources: Pick<ReturnType<Ready>, 'db' | 'now'>, codes: PairingCodes,
+  transient: { pairing_id: string; code: string; expires_at: string; connection_id: string }) {
+  const now = resources.now().toISOString();
+  const current = resources.db.prepare('SELECT current_pairing_id FROM channel_connections WHERE connection_id=?').pluck().get(transient.connection_id);
+  if (current !== transient.pairing_id || transient.expires_at <= now) return;
+  for (const [id, entry] of codes) {
+    if (entry.expires_at <= now || entry.connection_id === transient.connection_id) codes.delete(id);
+  }
+  if (codes.size >= 1000) codes.delete(codes.keys().next().value!);
+  codes.set(transient.pairing_id, transient);
+}
+
+function pairingOutcome<T>(run: () => T): T {
+  try { return run(); } catch (error) {
+    if (error instanceof Error) {
+      if (['BINDING_STALE', 'PAIRING_CONSUMED', 'PAIRING_EXPIRED'].includes(error.message)) {
+        throw new ApiError(409, 'CONFLICT', { reason: error.message.toLowerCase() });
+      }
+      if (error.message === 'NOT_FOUND') throw new ApiError(404, 'NOT_FOUND');
+      if (error.message === 'FORBIDDEN') throw new ApiError(403, 'FORBIDDEN');
+    }
+    throw error;
+  }
 }
 
 async function confirmBinding(c: Context, ready: Ready): Promise<Response> {
   const pairingId = routeId(c.req.param('id'));
   return command(c, ready, 'confirmFeishuBinding', confirmRequest, `channels/feishu/bindings/${pairingId}`, (resources, principal) => {
     assertPairingProbe(assertProbe(resources.db, principal, 'needs_binding'));
-    feishu(resources, principal).confirmPairing(principal, pairingId);
+    pairingOutcome(() => feishu(resources, principal).confirmPairing(principal, pairingId));
     return pairingId;
   }, { atomic: true, pathResourceId: pairingId });
 }
@@ -163,15 +187,20 @@ async function readBinding(c: Context, ready: Ready, codes: PairingCodes): Promi
   const isCurrent = !!pairing && pairing.pairing_id === connection?.current_pairing_id;
   const expired = !!pairing && pairing.status !== 'consumed' &&
     (!isCurrent || pairing.status === 'expired' || pairing.expires_at <= stamped.toISOString());
-  const disclose = !current && isCurrent && pairing.status === 'open' && !expired && owner &&
-    new URL(c.req.url).origin === secureSetupOrigin();
+  const origin = c.req.header('origin');
+  const secureView = new URL(c.req.url).origin === secureSetupOrigin() && (origin === undefined || origin === secureSetupOrigin());
+  const pairingAvailable = owner && secureView && connection?.status === 'needs_binding' &&
+    connection.transport_mode === 'probe' && admittedPairingProbe(connection);
+  const disclose = !current && isCurrent && pairing.status === 'open' && !expired && owner && secureView;
   const code = disclose && pairingId ? codes.get(pairingId)?.code ?? null : null;
   if ((code || expired) && pairingId) codes.delete(pairingId);
   const summary = {
-    credential_setup_available: owner && !!feishuCredentials && new URL(c.req.url).origin === secureSetupOrigin(),
+    credential_setup_available: owner && !!feishuCredentials && secureView,
     transport_available: owner && !!feishuTestOutbound && !!feishuOutboundLifetime && !feishuOutboundLifetime.signal.aborted &&
       !!connection?.owner_open_id && connection.transport_mode === 'probe' &&
       (connection.status === 'needs_test' || connection.status === 'needs_enable') && admittedPairingProbe(connection),
+    pairing_start_available: pairingAvailable,
+    reject_pairing_available: pairingAvailable && isCurrent && !expired && pairing?.status === 'candidate',
     owner_actions_available: owner,
     data_domain: domain, app_id: connection?.app_id ?? null, destination: connection?.owner_open_id ?? null,
     current_test_id: connection?.current_test_id ?? null, code,
@@ -497,21 +526,26 @@ async function command(
   assertPayloadHash((body.payload ?? {}) as Json, body.payload_hash);
   const resources = ready();
   const domain = channelDomain(resources.db, principal, 'owner');
-  const prior = findCommand(resources.db, principal, body.client_request_id);
-  if (prior) {
+  function priorReceipt() {
+    const prior = findCommand(resources.db, principal, body.client_request_id);
+    if (!prior) return;
+    if (operation === 'rejectFeishuBinding' && principal.caller_id !== 'web') throw new ApiError(403, 'FORBIDDEN');
     assertReplay(prior, operation, domain, body.expected_revision, body.payload_hash, options.pathResourceId);
-    return c.json(accepted(prior.command_id, receiptPath, prior.resource_id), 202);
+    return accepted(prior.command_id, receiptPath, prior.resource_id);
   }
   if (options.atomic) {
-    let resourceId = '';
-    const commandId = withImmediateTransaction(resources.db, () => {
-      const outcome = run(resources, principal, body.payload);
-      if (typeof outcome !== 'string') throw new Error('ASYNC_COMMAND_HANDLER');
-      resourceId = outcome;
-      return storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);
+    const receipt = withImmediateTransaction(resources.db, () => {
+      const existing = priorReceipt();
+      if (existing) return existing;
+      const resourceId = run(resources, principal, body.payload);
+      if (typeof resourceId !== 'string') throw new Error('ASYNC_COMMAND_HANDLER');
+      const commandId = storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);
+      return accepted(commandId, receiptPath, resourceId);
     });
-    return c.json(accepted(commandId, receiptPath, resourceId), 202);
+    return c.json(receipt, 202);
   }
+  const existing = priorReceipt();
+  if (existing) return c.json(existing, 202);
   const resourceId = await run(resources, principal, body.payload);
   const commandId = storeCommand(resources, principal, operation, resourceId, domain, body.client_request_id, body.expected_revision, body.payload_hash);
   return c.json(accepted(commandId, receiptPath, resourceId), 202);
@@ -602,6 +636,7 @@ function authorityCommandTarget(db: SqliteDatabase, principal: Principal, operat
   let query: string;
   switch (operation) {
     case 'createFeishuBinding':
+    case 'rejectFeishuBinding':
     case 'confirmFeishuBinding':
       query = 'SELECT c.data_domain FROM channel_pairings p JOIN channel_connections c USING(connection_id) WHERE p.pairing_id=? AND c.account_id=?';
       break;

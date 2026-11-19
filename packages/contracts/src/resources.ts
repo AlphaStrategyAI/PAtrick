@@ -600,6 +600,7 @@ export const routes: RouteDefinition[] = [
     z.strictObject({ credential_ref: z.string().min(1), version: z.number().int().positive() }),
   ),
   command('createFeishuBinding', '/channels/feishu/bindings', 'owner', emptySchema),
+  command('rejectFeishuBinding', '/channels/feishu/bindings/reject', 'owner', z.strictObject({ pairing_id: z.string().regex(/^pair_[a-f0-9]{16}$/u) })),
   command('confirmFeishuBinding', '/channels/feishu/bindings/:id/confirm', 'owner', emptySchema),
   read('getFeishuBinding', '/channels/feishu/bindings/:id', 'channels.read', idSchema, z.unknown()),
   command('createFeishuTest', '/channels/feishu/tests', 'owner', z.strictObject({ destination: z.string().min(1) })),

@@ -14,10 +14,10 @@ const prefix = '/api/v1/channels/feishu';
 const rows = {
   en: { 'settings:group:interaction': ['175:6549', '26:2361', '172:5101'], 'v26:fs-connect': ['175:5480', '172:5101', '187:18986'],
     'v26:fs-poll-pair': ['187:20029', '187:19703', '187:20378'], 'v26:fs-confirm-owner': ['187:20714', '187:20378', '188:5972'],
-    'v26:fs-test-preview': ['188:6332', '188:5972', '188:6715'] },
+    'v26:fs-reject-owner': ['187:20718', '187:20378', '187:19703'], 'v26:fs-test-preview': ['188:6332', '188:5972', '188:6715'] },
   zh: { 'settings:group:interaction': ['175:5750', '172:5457', '187:18656'], 'v26:fs-connect': ['187:18965', '187:18656', '187:19343'],
     'v26:fs-poll-pair': ['187:20368', '187:20039', '188:5623'], 'v26:fs-confirm-owner': ['188:5962', '188:5623', '188:6342'],
-    'v26:fs-test-preview': ['188:6705', '188:6342', '188:7158'] },
+    'v26:fs-reject-owner': ['188:5966', '188:5623', '187:20039'], 'v26:fs-test-preview': ['188:6705', '188:6342', '188:7158'] },
 } as const;
 type Action = keyof typeof rows.en;
 type Checkpoint = { frame: string; route: string; visible: string };
@@ -47,7 +47,7 @@ async function state(page: Page, locale: Locale): Promise<Checkpoint> {
 
 function verify(edges: Edge[]) {
   const frames = new Map(audit.frames.map(f => [f.key, f.id]));
-  expect(edges).toHaveLength(10);
+  expect(edges).toHaveLength(12);
   for (const locale of locales) for (const action of Object.keys(rows[locale]) as Action[]) {
     const [node, from, to] = rows[locale][action];
     const matches = edges.filter(edge => edge.locale === locale && edge.action === action);
@@ -161,7 +161,8 @@ async function pairing(page: Page, origin: string, locale: Locale, edges: Edge[]
     expect(shown).toMatch(/^[A-Za-z0-9_-]{24}$/u);
     const open = db.prepare('SELECT pairing_id,status,code_hash FROM channel_pairings').get() as { pairing_id: string; status: string; code_hash: string };
     expect(open).toMatchObject({ status: 'open', code_hash: hash(shown) });
-    const id = open.pairing_id, pairStage = await state(page, locale);
+    let id = open.pairing_id;
+    const pairStage = await state(page, locale);
     expect(create.command.receipt_url).toBe(prefix + '/bindings/' + id);
     await receive(shown);
     const candidate = db.prepare('SELECT status,candidate_open_id,candidate_chat_id FROM channel_pairings WHERE pairing_id=?').get(id);
@@ -181,8 +182,34 @@ async function pairing(page: Page, origin: string, locale: Locale, edges: Edge[]
     expect(db.prepare('SELECT count(*) FROM channel_bindings').pluck().get()).toBe(0);
     const owner = await state(page, locale);
     edges.push({ locale, action: 'v26:fs-poll-pair', from: pairStage, to: owner, clicks: [copy.refresh], variance: 'one-click read of a locally delivered candidate' });
-    const reject = locale === 'en' ? 'This is not me' : '这不是我';
-    await expect(region.getByRole('button', { name: reject, exact: true })).toHaveCount(0);
+    const rejectedId = id;
+    const rejectButton = button(copy.reject);
+    await rejectButton.focus();
+    await expect(rejectButton).toBeFocused();
+    const reject = await clickCommand(page, () => rejectButton.press('Enter'), prefix + '/bindings/reject');
+    expect(reject.request.payload).toEqual({ pairing_id: rejectedId });
+    await expect(code).toBeVisible();
+    const replacementCode = await code.innerText();
+    expect(replacementCode).not.toBe(shown);
+    id = db.prepare('SELECT current_pairing_id FROM channel_connections').pluck().get() as string;
+    expect(id).not.toBe(rejectedId);
+    expect(reject.command.receipt_url).toBe(prefix + '/bindings/' + id);
+    expect(requests.filter(req => req.path === reject.command.receipt_url && req.method === 'GET')).toEqual([
+      { path: reject.command.receipt_url, method: 'GET', status: 200 },
+    ]);
+    expect(db.prepare('SELECT status,code_hash FROM channel_pairings WHERE pairing_id=?').get(id)).toEqual({ status: 'open', code_hash: hash(replacementCode) });
+    expect(db.prepare('SELECT status FROM channel_pairings WHERE pairing_id=?').pluck().get(rejectedId)).toBe('expired');
+    expect(db.prepare('SELECT count(*) FROM channel_bindings').pluck().get()).toBe(0);
+    expect(db.prepare('SELECT count(*) FROM channel_tests').pluck().get()).toBe(0);
+    edges.push({ locale, action: 'v26:fs-reject-owner', from: owner, to: await state(page, locale), clicks: [copy.reject],
+      variance: 'keyboard rejection of a synthetic candidate and one-read replacement code' });
+    await page.reload();
+    await region.getByText(copy.setup, { exact: true }).click();
+    await expect(button(copy.pairingStart)).toBeEnabled();
+    await expect(code).toHaveCount(0);
+    await receive(replacementCode);
+    await button(copy.refresh).click();
+    await expect(button(copy.confirm)).toBeEnabled();
     const confirm = await clickCommand(page, () => button(copy.confirm).click(), prefix + '/bindings/' + id + '/confirm');
     expect(confirm.command.receipt_url).toBe(prefix + '/bindings/' + id);
     await expect(region.getByRole('status')).toHaveText(copy.connection.needs_test);
@@ -220,7 +247,7 @@ async function pairing(page: Page, origin: string, locale: Locale, edges: Edge[]
     await expect(button(copy.send)).toBeDisabled();
     expect(db.prepare('SELECT status,transport_mode,owner_open_id FROM channel_connections').get())
       .toEqual({ status: 'needs_test', transport_mode: 'probe', owner_open_id: synthetic.owner });
-    expect(writes.map(req => req.path)).toEqual([prefix + '/bindings', prefix + '/bindings/' + id + '/confirm', prefix + '/tests']);
+    expect(writes.map(req => req.path)).toEqual([prefix + '/bindings', prefix + '/bindings/reject', prefix + '/bindings/' + id + '/confirm', prefix + '/tests']);
     const environment = await page.evaluate(async () => {
       await document.fonts.ready;
       return { width: innerWidth, height: innerHeight, dpr: devicePixelRatio, language: document.documentElement.lang,
@@ -228,7 +255,77 @@ async function pairing(page: Page, origin: string, locale: Locale, edges: Edge[]
         light: matchMedia('(prefers-color-scheme: light)').matches, fonts: [...new Set([...document.fonts].filter(f => f.status === 'loaded').map(f => f.family))] };
     });
     expect(environment).toMatchObject({ ...rendering.viewports.desktop, dpr: rendering.deviceScaleFactor, clock: stamp, timezone: rendering.rendering.timezone, reduced: true, light: true });
-    await capture(info, locale + '-probe', { environment, origin, pairId: id, initialPairingStatus: open.status, candidate, polled, rejectControlAbsent: reject, commands: { create, confirm, prepare }, binding, saved, writes, requests });
+    await capture(info, locale + '-probe', { environment, origin, pairId: id, initialPairingStatus: open.status, candidate, polled, rejectedId, commands: { create, reject, confirm, prepare }, binding, saved, writes, requests });
+  });
+}
+
+async function staleRejection(page: Page, origin: string, locale: Locale) {
+  const copy = feishuSetupCopy[locale], region = bot(page, locale);
+  const button = (name: string) => region.getByRole('button', { name, exact: true });
+  await withChannel(page, origin, true, async ({ db, requests, receive }) => {
+    await page.goto(origin + '/settings/interaction');
+    await region.getByText(copy.setup, { exact: true }).click();
+    await button(copy.pairingStart).click();
+    const code = region.locator('code');
+    await expect(code).toBeVisible();
+    await receive(await code.innerText());
+    await button(copy.refresh).click();
+    await expect(button(copy.reject)).toBeEnabled();
+    const path = prefix + '/bindings/reject';
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**' + path, async route => { await held; await route.fallback(); });
+    const checkpoint = requests.length;
+    try {
+      await button(copy.reject).click();
+      await expect(button(copy.confirm)).toBeDisabled();
+      await expect(button(copy.reject)).toBeDisabled();
+      db.prepare("UPDATE channel_pairings SET expires_at='2020-01-01T00:00:00.000Z'").run();
+    } finally { release(); }
+    await expect(button(copy.pairingStart)).toBeEnabled();
+    await expect(region.getByRole('alert')).toBeVisible();
+    await expect(code).toHaveCount(0);
+    const after = requests.slice(checkpoint);
+    expect(after.filter(r => r.method === 'POST')).toEqual([{ method: 'POST', path, status: 409 }]);
+    expect(after.filter(r => r.method === 'GET').map(r => r.path)).toEqual(expect.arrayContaining([prefix, prefix + '/bindings/current']));
+    expect(db.prepare('SELECT count(*) FROM channel_pairings').pluck().get()).toBe(1);
+  });
+}
+
+for (const locale of locales) {
+  test(locale + ' owner manually recovers pairing after a lost rejection response without a credential provider', async ({ browser }) => {
+    await withSecureWeb(async origin => inBrowser(browser, locale, true, async page => {
+      const region = bot(page, locale), copy = feishuSetupCopy[locale];
+      const button = (name: string) => region.getByRole('button', { name, exact: true });
+      await withChannel(page, origin, true, async ({ db, requests }) => {
+        await page.goto(origin + '/settings/interaction');
+        await region.getByText(copy.setup, { exact: true }).click();
+        const start = button(copy.pairingStart);
+        const code = region.locator('code');
+        await button(copy.reject).click();
+        await expect(region.getByRole('alert')).toBeVisible();
+        await expect(start).toBeEnabled();
+        await expect(code).toHaveCount(0);
+        const lost = db.prepare('SELECT current_pairing_id FROM channel_connections').pluck().get();
+        expect(db.prepare('SELECT status FROM channel_pairings ORDER BY rowid').pluck().all()).toEqual(['expired', 'open']);
+        await page.reload();
+        await region.getByText(copy.setup, { exact: true }).click();
+        await expect(start).toBeEnabled();
+        await expect(code).toHaveCount(0);
+        await expect(region.getByLabel(copy.secret)).toHaveCount(0);
+        expect(requests.filter(r => r.method === 'POST').map(r => [r.path, r.status])).toEqual([
+          [prefix + '/bindings/reject', 202],
+        ]);
+        await start.click();
+        await expect(code).toBeVisible();
+        const current = db.prepare("SELECT pairing_id,code_hash FROM channel_pairings WHERE status='open'").get() as { pairing_id: string; code_hash: string };
+        expect(current.pairing_id).not.toBe(lost);
+        expect(current.code_hash).toBe(hash(await code.innerText()));
+        expect(db.prepare('SELECT status FROM channel_pairings ORDER BY rowid').pluck().all()).toEqual(['expired', 'expired', 'open']);
+        expect(db.prepare('SELECT count(*) FROM channel_bindings').pluck().get()).toBe(0);
+        expect(db.prepare('SELECT count(*) FROM channel_tests').pluck().get()).toBe(0);
+      }, { withoutCredentials: true, loseRejectResponse: true, seedCandidate: true });
+    }));
   });
 }
 
@@ -242,6 +339,7 @@ test('frame-coverage · bilingual Feishu navigation, setup, pairing, owner and p
       await inBrowser(browser, locale, false, page => settingsNavigation(page, locale, edges, info));
       await inBrowser(browser, locale, true, page => form(page, origin, locale, edges, info));
       await inBrowser(browser, locale, true, page => pairing(page, origin, locale, edges, info));
+      await inBrowser(browser, locale, true, page => staleRejection(page, origin, locale));
     }
   });
   verify(edges);
