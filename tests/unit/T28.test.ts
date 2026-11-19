@@ -212,12 +212,12 @@ it.each([
       'add RSS feeds, web pages, GitHub repositories and approved folders', 'already registered Obsidian Vault connection',
       'runs a check of the three backends',
       'registration and targets for host, network repair, backup, and restore actions',
-      'a sample test preview', 'language and reduced motion',
+      'a sample test preview', 'language, reduced motion, the notification level, and quiet hours',
       'Re-pairing an existing connection goes through a trusted change',
     ],
     pending: [
-      'The work-directory editor and notification preferences are still pending.',
-      'notification preferences', 'native Feishu round trip',
+      'The work-directory editor is still pending.',
+      'native Feishu round trip',
     ],
   },
   {
@@ -225,11 +225,11 @@ it.each([
     system: '查看服务状态、通知、变更回执以及当前范围的诊断预览。运行检查会分别给出网络、三个执行器、采集来源、恢复门禁以及主机与备份目标的状态。',
     settings: [
       '新增 RSS 订阅、网页、GitHub 仓库与获准目录', '已登记的 Obsidian 资料库连接', '运行三个后端的检查',
-      '主机检查、网络修复、备份与恢复操作的登记状态和目标', '样例测试预览', '语言和减少动效',
+      '主机检查、网络修复、备份与恢复操作的登记状态和目标', '样例测试预览', '语言、减少动效、通知范围和免打扰时段',
       '已有连接重新配对要走可信变更',
     ],
     pending: [
-      '工作目录编辑器和通知偏好仍待实现', '飞书原生往返',
+      '工作目录编辑器仍待实现', '飞书原生往返',
     ],
   },
 ])('$file describes the current System and Settings capabilities and pending controls', ({ file, system, settings, pending }) => {
@@ -252,7 +252,7 @@ it('ties the documented Settings limits to the current operation and UI entry po
   expect(builtin).not.toContain('inspect_executor:');
   expect(builtin).not.toContain('inspect_host:');
   const preferences = read('apps/web/src/features/settings/AccountPreferences.tsx');
-  expect(preferences).toContain('changes: { mode, reduced_motion: reducedMotion }');
+  expect(preferences).toContain('changes: { mode, reduced_motion: reducedMotion, notifications, quiet_hours: quiet }');
   expect(read('apps/web/src/features/settings/FeishuSetup.tsx')).toContain('disabled={busy || !transportAvailable}');
 });
 

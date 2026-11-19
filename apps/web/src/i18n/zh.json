@@ -363,5 +363,11 @@
   "collection.token": "访问令牌",
   "collection.stageToken": "暂存令牌",
   "collection.tokenStaged": "令牌已暂存，可以预览来源。",
-  "collection.directoryReaderReady": "目录读取可用。"
+  "collection.directoryReaderReady": "目录读取可用。",
+  "settings.notifications": "通知",
+  "settings.notificationsNecessary": "仅必要通知",
+  "settings.notificationsAll": "全部通知",
+  "settings.quietHours": "免打扰时段",
+  "settings.quietHoursStart": "开始时间",
+  "settings.quietHoursEnd": "结束时间"
 }

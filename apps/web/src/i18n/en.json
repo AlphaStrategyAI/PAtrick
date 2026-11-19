@@ -363,5 +363,11 @@
   "collection.token": "Access token",
   "collection.stageToken": "Stage the token",
   "collection.tokenStaged": "The token is staged; the source can be previewed.",
-  "collection.directoryReaderReady": "Directory reading is available."
+  "collection.directoryReaderReady": "Directory reading is available.",
+  "settings.notifications": "Notifications",
+  "settings.notificationsNecessary": "Necessary notifications only",
+  "settings.notificationsAll": "All notifications",
+  "settings.quietHours": "Quiet hours",
+  "settings.quietHoursStart": "Start",
+  "settings.quietHoursEnd": "End"
 }

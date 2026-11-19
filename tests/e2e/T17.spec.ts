@@ -63,20 +63,28 @@ test('account preferences read back after reload and a failed save keeps the loc
     const button = page.getByRole('button', { name: 'Save to account' });
     await expect(button).toBeEnabled();
     const pane = page.locator('main');
-    await pane.getByRole('checkbox').check();
+    await pane.getByRole('checkbox', { name: 'Reduce motion' }).check();
+    // The notification choice and the quiet hours are saved with the account.
+    await pane.getByRole('combobox', { name: 'Notifications' }).selectOption('all');
+    await pane.getByRole('checkbox', { name: 'Quiet hours' }).check();
+    await pane.getByRole('textbox', { name: 'Start' }).fill('22:00');
+    await pane.getByRole('textbox', { name: 'End' }).fill('08:00');
     const committed = page.waitForResponse((response) => response.url().endsWith('/api/v1/preferences') && response.request().method() === 'PATCH');
     await button.click();
     expect((await committed).status()).toBe(200);
     await expect(page.getByText('Saved to your account')).toBeVisible();
     await page.reload();
     await expect(button).toBeEnabled();
-    await expect(pane.getByRole('checkbox')).toBeChecked();
+    await expect(pane.getByRole('checkbox', { name: 'Reduce motion' })).toBeChecked();
+    await expect(pane.getByRole('combobox', { name: 'Notifications' })).toHaveValue('all');
+    await expect(pane.getByRole('textbox', { name: 'Start' })).toHaveValue('22:00');
+    await expect(pane.getByRole('textbox', { name: 'End' })).toHaveValue('08:00');
     await page.route('**/api/v1/preferences', async (route) => {
       if (route.request().method() !== 'PATCH') return route.fallback();
       await route.fulfill({ status: 503, contentType: 'application/json',
         body: JSON.stringify({ code: 'UNAVAILABLE', params: {}, retryable: true, correlation_id: 'test-unavailable' }) });
     });
-    await pane.getByRole('combobox').selectOption('zh');
+    await pane.getByRole('combobox', { name: 'Interface language' }).selectOption('zh');
     await page.getByRole('button', { name: '保存到账户' }).click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     await expect(pane.getByRole('alert')).toBeVisible();
@@ -308,7 +316,7 @@ test('the first account read does not overwrite a language choice made while it 
       await route.fallback();
     });
     await page.goto('/settings/preferences');
-    await page.locator('main').getByRole('combobox').selectOption('zh');
+    await page.locator('main').getByRole('combobox', { name: 'Interface language' }).selectOption('zh');
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     release();
     await expect(page.getByRole('button', { name: '保存到账户' })).toBeEnabled();

@@ -98,7 +98,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 - **Execution** runs a check of the three backends. Each record says what was observed; a backend outside the isolated guest stays blocked with that reason, and the check never starts a backend run because a run spends the budget.
 - **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow. The host check reports the registered targets and the last observation.
 - **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport. Re-pairing an existing connection goes through a trusted change that drains the active connection first.
-- **Preferences** saves language and reduced motion for the account.
+- **Preferences** saves language, reduced motion, the notification level, and quiet hours for the account.
 - The settings home ends with a readiness summary that says where each entry comes from: detected on this device, suggested and still missing, your own choice, or inherited from the host.
 
 ![Settings overview with a Vault permission issue](fixtures/screens/baselines/en-settings-overview.png)
@@ -143,7 +143,7 @@ The service runtime is built separately. Running it against real data requires a
 ## This version does not
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
-- The work-directory editor and notification preferences are still pending.
+- The work-directory editor is still pending.
 - Re-pairing and rotating the credential of an existing Feishu connection both go through an authorized change: the new secret is staged by the secure credential endpoint, and the change drains the active connection and clears the old binding before it applies.
 - The native Feishu round trip still needs transport provisioning and live acceptance. Real GitHub delivery and Codex CLI, Grok Build, and DSH under their intended host identities also need live acceptance. The local browser and service fixtures exercise their documented contracts.
 - The Obsidian rehearsal covered a synthetic Vault under the current desktop account. A separate production service identity, native reboot, cross-device sync, and upgrade and uninstall preservation are still pending acceptance.

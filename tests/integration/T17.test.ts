@@ -131,6 +131,13 @@ test('preferences are account scoped, whitelisted and replay their original CAS 
     expect((await patch('prefs-4', 2, { budget: 42 })).status).toBe(422);
     expect(await (await read(ownerAuth)).json()).toMatchObject({ data: { revision: 2, mode: 'zh', reduced_motion: true } });
     expect(await (await read(otherAuth)).json()).toMatchObject({ data: { revision: 0, mode: 'system', reduced_motion: false } });
+    // The notification choices and the quiet hours are part of the same
+    // whitelist, stay with the account and never reach another one.
+    const notified = await patch('prefs-notify', 2, { notifications: 'all', quiet_hours: { start: '22:00', end: '08:00' } });
+    expect(notified.status).toBe(200);
+    expect(await (await read(ownerAuth)).json()).toMatchObject({ data: { notifications: 'all',
+      quiet_hours: { start: '22:00', end: '08:00' } } });
+    expect(await (await read(otherAuth)).json()).toMatchObject({ data: { notifications: 'necessary', quiet_hours: null } });
   } finally {
     db.close();
     rmSync(root, { recursive: true, force: true });
