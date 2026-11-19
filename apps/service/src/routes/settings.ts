@@ -18,7 +18,7 @@ export const settingsGroups = [
   { id: 'materials', operations: ['connect_vault', 'change_vault'] },
   { id: 'execution', operations: ['inspect_executor'] },
   { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
-  { id: 'interaction', operations: ['enable_feishu', 'disable_feishu', 'rebind_feishu'] },
+  { id: 'interaction', operations: ['enable_feishu', 'disable_feishu', 'rebind_feishu', 'rotate_feishu_credential'] },
   { id: 'preferences', operations: [] },
 ] as const;
 const draftRequest = commandEnvelope(settingsDraftSchema);
@@ -193,7 +193,7 @@ function originOf(db: SqliteDatabase, principal: Principal, domain: string, oper
       .get(principal.account_id, domain) as { n: number };
     return vaults.n > 0 ? 'detected' : 'suggested';
   }
-  if (['enable_feishu', 'disable_feishu', 'rebind_feishu'].includes(operation)) {
+  if (['enable_feishu', 'disable_feishu', 'rebind_feishu', 'rotate_feishu_credential'].includes(operation)) {
     const channels = db.prepare('SELECT COUNT(*) AS n FROM channel_connections WHERE account_id=? AND data_domain=?')
       .get(principal.account_id, domain) as { n: number };
     return channels.n > 0 ? 'detected' : 'suggested';

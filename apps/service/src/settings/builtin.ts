@@ -11,7 +11,9 @@ import { ApiError } from '../errors.js';
 import { assertSettingsControl } from './authority.js';
 import { SettingsApplyBlocked, type SettingsDraft, type SettingsHandler } from './changes.js';
 
-type Input = { db: SqliteDatabase; credentials: CredentialStore; now: () => Date; hub: () => LocalHubPort; host?: string };
+type Input = { db: SqliteDatabase; credentials: CredentialStore; now: () => Date; hub: () => LocalHubPort; host?: string;
+  /** The provider that holds the Feishu app secret; the session store is not one. */
+  feishuCredentials?: CredentialStore };
 type VaultClient = { device_id: string; mapping_revision: number };
 type Channel = { connection_id: string; status: string; transport_mode: string; config_revision: number; binding_revision: number;
   app_id: string; tenant_key: string; credential_ref: string; owner_open_id: string | null; chat_id: string | null;
@@ -27,7 +29,7 @@ const device = (value: Json): string => {
 };
 
 export function builtinSettingsHandlers(options: Input): Record<string, SettingsHandler> {
-  const { db, credentials, now, hub } = options;
+  const { db, credentials, now, hub, feishuCredentials } = options;
   const host = options.host ?? hostname();
   const authorize: SettingsHandler['authorize'] = (principal, draft, proof, receiptId) => assertSettingsControl(
     db, credentials, principal, now(), receiptId,
@@ -75,8 +77,8 @@ export function builtinSettingsHandlers(options: Input): Record<string, Settings
     },
   };
 
-  function channelFor(principal: Principal, draft: SettingsDraft) {
-    if (draft.input !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_input' });
+  function channelFor(principal: Principal, draft: SettingsDraft, allowInput = false) {
+    if (!allowInput && draft.input !== null) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_input' });
     const row = db.prepare(`SELECT c.connection_id,c.status,c.transport_mode,c.config_revision,c.binding_revision,c.credential_version,
       c.app_id,c.tenant_key,c.credential_ref,c.owner_open_id,c.chat_id,c.channel_incarnation,c.connection_epoch,c.current_test_id,
       t.binding_id AS test_binding_id,t.message_id AS test_message_id,t.inbound_evidence AS test_inbound_evidence,
@@ -166,9 +168,94 @@ export function builtinSettingsHandlers(options: Input): Record<string, Settings
       return { verified, ...(!verified ? { issue: 'feishu_recheck' } : {}) };
     },
   };
-  return { connect_vault: existingVault, enable_feishu: enabledChannel, disable_feishu: disabledChannel, rebind_feishu: reboundChannel };
+
+  /** Rotates the credential of an existing connection.
+   *
+   * The candidate secret is staged by the dedicated credential endpoint and
+   * never travels through a setting draft. The rotation drains an active
+   * connection first, swaps the credential, and clears the binding so the old
+   * pairing and test receipts cannot make the new configuration ready.
+   */
+  const rotatedChannel: SettingsHandler = {
+    binding(principal, draft) {
+      const row = channelFor(principal, draft, true);
+      const candidate = candidateCredential(draft);
+      return { revision: row.config_revision, deviceId: host, identityId: row.connection_id,
+        scopeHash: hash([row.credential_version, row.binding_revision, row.channel_incarnation,
+          row.connection_epoch, row.app_id, candidate]) };
+    },
+    async validate(principal, draft) {
+      channelFor(principal, draft, true);
+      const candidate = candidateCredential(draft);
+      if (!feishuCredentials) return { valid: false };
+      // The candidate must still resolve: a staged secret that expired cannot be
+      // proven and must not be swapped in.
+      return { valid: feishuCredentials.resolve(candidate) !== null };
+    },
+    authorize,
+    async apply(principal, draft, proof, beforeWrite) {
+      const row = channelFor(principal, draft, true);
+      const candidate = candidateCredential(draft);
+      if (row.config_revision !== proof.base_revision) throw new SettingsApplyBlocked('confirmation_changed');
+      if (!feishuCredentials || feishuCredentials.resolve(candidate) === null) {
+        throw new SettingsApplyBlocked('candidate_credential_unavailable');
+      }
+      const endpoint = createFeishuChannel(db, { domain: draft.domain, connectionId: row.connection_id, now, hub: hub(), encode: encodeHubAnswer });
+      let drained = false;
+      if (row.status === 'ready' && row.transport_mode === 'active') {
+        const result = await endpoint.disableTrusted({ accountId: principal.account_id, configRevision: row.config_revision,
+          epoch: row.connection_epoch }, { beforeWrite });
+        if (result.status === 'draining') {
+          return { revision: result.epoch, effects: [{ item: 'feishu_draining', outcome: 'applied', revision: result.epoch }] };
+        }
+        drained = true;
+      }
+      const stamped = beforeWrite();
+      const current = channelFor(principal, draft, true);
+      if (current.config_revision !== row.config_revision || current.credential_version !== row.credential_version) {
+        throw new SettingsApplyBlocked('confirmation_changed');
+      }
+      const next = current.config_revision + 1;
+      // The drain already fenced the old permits with its own epoch; without one the
+      // rotation has to move the epoch itself so the old permits stop counting.
+      const epoch = drained ? current.connection_epoch : current.connection_epoch + 1;
+      const updated = db.prepare(`UPDATE channel_connections SET credential_ref=?, credential_version=?, config_revision=?,
+        binding_revision=?, channel_incarnation=?, connection_epoch=?, status='needs_binding', transport_mode='probe',
+        reason_code='CREDENTIAL_ROTATED', current_pairing_id=NULL, current_test_id=NULL, owner_open_id=NULL, chat_id=NULL,
+        cutoff_seq=NULL, updated_at=? WHERE connection_id=? AND config_revision=? AND credential_version=?`).run(
+        candidate, current.credential_version + 1, next, current.binding_revision + 1, current.channel_incarnation + 1,
+        epoch, stamped, current.connection_id, current.config_revision, current.credential_version);
+      if (updated.changes !== 1) throw new SettingsApplyBlocked('confirmation_changed');
+      db.prepare(`INSERT INTO channel_receipts(receipt_id,connection_id,kind,status,created_at) VALUES (?,?,'rotate','applied',?)`)
+        .run(`ch_${hash([current.connection_id, 'rotate', next]).slice(0, 16)}`, current.connection_id, stamped);
+      return { revision: next, effects: [{ item: 'feishu_credential', outcome: 'applied', revision: next }] };
+    },
+    async recheck(principal, draft, applied) {
+      const row = channelFor(principal, draft, true);
+      const verified = row.config_revision === applied.revision && row.status === 'needs_binding';
+      return { verified, ...(!verified ? { issue: 'feishu_recheck' } : {}) };
+    },
+  };
+  return { connect_vault: existingVault, enable_feishu: enabledChannel, disable_feishu: disabledChannel,
+    rebind_feishu: reboundChannel, rotate_feishu_credential: rotatedChannel };
 }
 
 function denied(): never {
   throw new ApiError(403, 'FORBIDDEN', { reason: 'settings_target' });
+}
+
+/** Reads the staged candidate credential reference out of a draft.
+ *
+ * The secret itself never travels through a setting draft; only the reference
+ * the dedicated credential endpoint handed back does.
+ */
+function candidateCredential(draft: SettingsDraft): string {
+  const input = draft.input;
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 ||
+      typeof (input as { credential_ref?: unknown }).credential_ref !== 'string') {
+    throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
+  }
+  const reference = (input as { credential_ref: string }).credential_ref;
+  if (!/^cred_[A-Za-z0-9_-]+$/u.test(reference)) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
+  return reference;
 }

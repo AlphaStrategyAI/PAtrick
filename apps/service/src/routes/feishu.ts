@@ -83,13 +83,21 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
   const appId = body.app_id.trim();
   c.header('Cache-Control', 'no-store');
   try {
-    const ref = withImmediateTransaction(db, () => {
+    const staged = withImmediateTransaction(db, () => {
       const domain = channelDomain(db, principal, 'owner');
       assertBusinessWrite(db, domain);
-      // Bootstrap never rotates credentials or modifies an existing binding. Those
-      // transitions need a separate Settings proof and a live connection fence.
+      // Bootstrap never modifies an existing binding. A rotation stages the
+      // candidate credential here and applies it through a separate Settings
+      // proof and a live connection fence.
       if (db.prepare('SELECT 1 FROM channel_connections WHERE account_id = ?').get(principal.account_id)) {
-        throw new ApiError(409, 'CONFLICT', { reason: 'connection_already_exists' });
+        // The connection stays on its current credential until the owner proves
+        // the change; only the candidate is staged here.
+        let candidate: string;
+        try { candidate = feishuCredentials.put(secret, 10 * 60 * 1000); }
+        catch { throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_store' }); }
+        const row = db.prepare(`SELECT credential_version FROM channel_connections WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1`)
+          .get(principal.account_id) as { credential_version: number } | undefined;
+        return { credential_ref: candidate, version: (row?.credential_version ?? 0) + 1 };
       }
       const stamped = now().toISOString();
       assertBusinessWrite(db, domain);
@@ -105,9 +113,9 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
         'needs_binding', 'probe', 'NATIVE_PROBE_REQUIRED', NULL, '1.0', ?, ?)`).run(
         connectionIdFor(principal), principal.account_id, domain, appId, credentialRef, stamped, stamped,
       );
-      return credentialRef;
+      return { credential_ref: credentialRef, version: 1 };
     });
-    return c.json({ credential_ref: ref, version: 1 });
+    return c.json({ credential_ref: staged.credential_ref, version: staged.version });
   } finally {
     secret.fill(0);
   }

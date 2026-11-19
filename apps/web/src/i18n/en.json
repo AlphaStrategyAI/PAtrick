@@ -355,5 +355,6 @@
   "settings.origin.detected": "Detected on this device",
   "settings.origin.suggested": "Suggested, still missing",
   "settings.origin.user": "Your choice",
-  "settings.origin.inherited": "From this host"
+  "settings.origin.inherited": "From this host",
+  "settings.feishuRotate": "Rotate the Feishu credential"
 }

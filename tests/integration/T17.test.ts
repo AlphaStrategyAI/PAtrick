@@ -432,6 +432,56 @@ test('a Feishu rebind refuses a base revision that moved', async () => {
   } finally { fx.dispose(); }
 });
 
+test('a Feishu credential rotation swaps the credential and clears the old binding', async () => {
+  const fx = fixture();
+  try {
+    const at = initial;
+    fx.db.prepare(`INSERT INTO channel_connections(connection_id,account_id,data_domain,app_id,tenant_key,credential_ref,
+      credential_version,config_revision,channel_incarnation,connection_epoch,binding_revision,current_pairing_id,current_test_id,
+      owner_open_id,chat_id,status,transport_mode,schema_version,created_at,updated_at)
+      VALUES ('rotate-channel','owner','personal','rotate-app','rotate-tenant','cred_existing',3,7,1,9,2,'pair-old','test-old',
+        'ou-owner','oc-owner','ready','active','1.0',?,?)`).run(at, at);
+    const credentials = createCredentialStore(join(fx.root, 'creds'), () => new Date(at));
+    const candidate = credentials.put(new TextEncoder().encode('candidate-secret'), 10 * 60 * 1000);
+    const hub = createLocalHubPort(join(fx.root, 'unused-hub'));
+    const handler = builtinSettingsHandlers({ db: fx.db, credentials, now: () => new Date(at), hub: () => hub,
+      host: 'test-host', feishuCredentials: credentials }).rotate_feishu_credential;
+    const draft = { operation: 'rotate_feishu_credential', domain: 'personal', target: 'rotate-channel',
+      input: { credential_ref: candidate } };
+    await expect(handler.validate(owner, draft)).resolves.toEqual({ valid: true });
+    const proof = { base_revision: 7, draft_hash: 'a'.repeat(64), validation_id: 'v', valid: true,
+      device_id: 'test-host', identity_id: 'rotate-channel', scope_hash: 'b'.repeat(64),
+      checked_at: at, expires_at: at };
+    const applied = await handler.apply(owner, draft, proof, () => at);
+    expect(applied.effects).toEqual([{ item: 'feishu_credential', outcome: 'applied', revision: 8 }]);
+    expect(fx.db.prepare(`SELECT credential_ref,credential_version,config_revision,binding_revision,channel_incarnation,
+      connection_epoch,status,transport_mode,reason_code,current_pairing_id,current_test_id,owner_open_id,chat_id
+      FROM channel_connections WHERE connection_id='rotate-channel'`).get()).toEqual({
+      credential_ref: candidate, credential_version: 4, config_revision: 8, binding_revision: 3, channel_incarnation: 2,
+      connection_epoch: 10, status: 'needs_binding', transport_mode: 'probe', reason_code: 'CREDENTIAL_ROTATED',
+      current_pairing_id: null, current_test_id: null, owner_open_id: null, chat_id: null,
+    });
+    await expect(handler.recheck(owner, draft, applied)).resolves.toEqual({ verified: true });
+  } finally { fx.dispose(); }
+});
+
+test('a Feishu credential rotation refuses a candidate that no longer resolves', async () => {
+  const fx = fixture();
+  try {
+    const at = initial;
+    fx.db.prepare(`INSERT INTO channel_connections(connection_id,account_id,data_domain,app_id,tenant_key,credential_ref,
+      credential_version,config_revision,channel_incarnation,connection_epoch,binding_revision,status,transport_mode,schema_version,created_at,updated_at)
+      VALUES ('rotate-expired','owner','personal','rotate-app','rotate-tenant','cred_existing',1,7,1,9,1,'needs_binding','probe','1.0',?,?)`).run(at, at);
+    const credentials = createCredentialStore(join(fx.root, 'creds'), () => new Date(at));
+    const hub = createLocalHubPort(join(fx.root, 'unused-hub'));
+    const handler = builtinSettingsHandlers({ db: fx.db, credentials, now: () => new Date(at), hub: () => hub,
+      host: 'test-host', feishuCredentials: credentials }).rotate_feishu_credential;
+    const draft = { operation: 'rotate_feishu_credential', domain: 'personal', target: 'rotate-expired',
+      input: { credential_ref: 'cred_missing' } };
+    await expect(handler.validate(owner, draft)).resolves.toEqual({ valid: false });
+  } finally { fx.dispose(); }
+});
+
 const channelRaces = ['enable_feishu', 'disable_feishu'].flatMap((operation) =>
   ['none', 'permission', 'binding'].map((race) => ({ operation, race })));
 

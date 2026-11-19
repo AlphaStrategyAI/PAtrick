@@ -357,7 +357,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     mountSettingsRoutes(app, () => {
       const current = context();
       state.settings ??= createSettingsChanges({ ...current,
-        handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub }),
+        handlers: { ...builtinSettingsHandlers({ ...current, hub: durableHub, feishuCredentials: options.feishuCredentials }),
           ...networkSettingsHandlers({ ...current, networkRepair }),
           ...recoverySettingsHandlers({ ...current, recoveryOperations }),
           ...sourceSettingsHandlers(sourceResources()), ...options.settingsHandlers },

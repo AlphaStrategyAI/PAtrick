@@ -355,5 +355,6 @@
   "settings.origin.detected": "本机已检测到",
   "settings.origin.suggested": "建议补齐",
   "settings.origin.user": "你的选择",
-  "settings.origin.inherited": "继承自本机"
+  "settings.origin.inherited": "继承自本机",
+  "settings.feishuRotate": "轮换飞书凭据"
 }

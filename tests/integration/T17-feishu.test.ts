@@ -79,11 +79,17 @@ test('Feishu credentials require authenticated TLS and cannot replace an existin
     expect(fx.credentials.resolve(ref.credential_ref)).toEqual(new TextEncoder().encode(credentials.app_secret));
     fx.db.prepare("UPDATE channel_connections SET status = 'ready', transport_mode = 'active', connection_epoch = 8").run();
     const baseline = fx.db.prepare('SELECT * FROM channel_connections').get();
-    const files = readdirSync(fx.credentialDirectory);
-    expect((await fx.request('/credentials', { app_id: 'cli_replacement', app_secret: 'different-synthetic-only' })).status).toBe(409);
+    // A second secret cannot replace the connection. It is only staged as a
+    // candidate; the rotation applies it after the owner proves the change.
+    const replacement = await fx.request('/credentials', { app_id: 'cli_replacement', app_secret: 'different-synthetic-only' });
+    expect(replacement.status).toBe(200);
+    const candidate = await replacement.json() as { credential_ref: string; version: number };
+    expect(JSON.stringify(candidate)).not.toContain('different-synthetic-only');
+    expect(fx.credentials.resolve(candidate.credential_ref)).toEqual(new TextEncoder().encode('different-synthetic-only'));
     expect((await fx.command('/bindings', 'old-tab-start-pair')).status).toBe(409);
-    expect(fx.db.prepare('SELECT * FROM channel_connections').get()).toEqual(baseline);
-    expect(readdirSync(fx.credentialDirectory)).toEqual(files);
+    const after = fx.db.prepare('SELECT * FROM channel_connections').get();
+    expect(after).toEqual(baseline);
+    expect((after as { credential_ref: string }).credential_ref).toBe((baseline as { credential_ref: string }).credential_ref);
   } finally { fx.close(); }
 });
 

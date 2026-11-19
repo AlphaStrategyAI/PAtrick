@@ -12,11 +12,11 @@ import { SettingsChangeWizard } from './SettingsChangeWizard.js';
 const effectKeys: Record<string, MessageKey> = {
   vault_connection: 'settings.connectVault', feishu_mode: 'settings.enableFeishu',
   feishu_draining: 'settings.feishuDraining', feishu_disabled: 'settings.feishuDisabled',
-  feishu_rebind: 'settings.feishuRebind',
+  feishu_rebind: 'settings.feishuRebind', feishu_credential: 'settings.feishuRotate',
 };
 const operationKeys: Record<string, MessageKey> = {
   configure_source: 'settings.configureSource', connect_vault: 'settings.connectVault', change_vault: 'settings.changeVault',
-  rebind_feishu: 'settings.feishuRebind',
+  rebind_feishu: 'settings.feishuRebind', rotate_feishu_credential: 'settings.feishuRotate',
   inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', repair_network: 'settings.repairNetwork', start_backup: 'settings.startBackup',
   start_restore: 'settings.startRestore', enable_feishu: 'settings.enableFeishu', disable_feishu: 'settings.disableFeishu',
 };
