@@ -28,7 +28,7 @@
         "search"
       ],
       "baseline_asset": "fixtures/screens/baselines/zh-knowledge.png",
-      "baseline_sha256": "850d478afbc55a0fe0596967f08089834fec08bcd9955618ef5f7291689a1d48",
+      "baseline_sha256": "625afdf5f4e69a4d13d03337387443a3d72a85097812e818a8c7ef4a93603b4c",
       "design_comparison": "export_unavailable"
     },
     {
@@ -47,7 +47,7 @@
       "test_id": "Chinese desktop runtime reference for zh-delegation",
       "expected_actions": [],
       "baseline_asset": "fixtures/screens/baselines/zh-delegation.png",
-      "baseline_sha256": "2a1d9bc13a2cef13ed4d4aed243af88bd1564f3f0e257966dd9f77d711b580ac",
+      "baseline_sha256": "003f8e064960e988eebdb3f3e2f562dc9cb5ba5ec810ab7268f8e78c4f0ed36b",
       "design_comparison": "export_unavailable"
     },
     {
@@ -69,7 +69,7 @@
         "preview-diagnostics"
       ],
       "baseline_asset": "fixtures/screens/baselines/zh-system.png",
-      "baseline_sha256": "c33fdf693efa77f2096a798c05aa40ee3c0de54656e7588007d7c3f05828df1a",
+      "baseline_sha256": "b00ce872fd93b733d8c7216e9e98aad409b841d3f44a7c685ccf96d70500c3d5",
       "design_comparison": "export_unavailable"
     }
   ]

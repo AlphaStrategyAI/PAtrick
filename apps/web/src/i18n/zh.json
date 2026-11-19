@@ -30,6 +30,7 @@
   "summary.system": "查看服务状态和影响。",
   "summary.stats": "查看近期活动和已有积累。",
   "summary.settings": "管理来源、工具和偏好。",
+  "summary.settingsHome": "接入所需资料，让必要设置保持简单。",
   "summary.preferences": "选择 PAtrick 在此设备上的呈现方式。",
   "empty.decisions": "目前没有需要你决定的事项。",
   "empty.work": "目前没有可显示的工作。",

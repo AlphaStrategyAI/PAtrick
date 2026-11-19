@@ -20,7 +20,7 @@
     "en": {
       "key": "en-settings",
       "id": "26:2361",
-      "baselineSha256": "f25761ddf8bbc29c7785f8911020c855c900d19285b2ec5ac2dbda1c5bf5ec64",
+      "baselineSha256": "56fa14ff457a31950c04b07c55222a116fd86a8fee39662a1aee1375ee07c082",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
@@ -70,7 +70,7 @@
     "zh": {
       "key": "zh-settings",
       "id": "26:2477",
-      "baselineSha256": "3c367a9c31eb4adb5d68506cedf2bffc3037b2692e74d6ca1c4840f81f9469e7",
+      "baselineSha256": "621579b8bcb001c0b98c82d2b0db632fecc8b1bf25a2d773ae2ed092c48768a8",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,

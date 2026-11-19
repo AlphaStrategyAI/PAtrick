@@ -30,6 +30,7 @@
   "summary.system": "Check service status and what it affects.",
   "summary.stats": "See recent activity and what has accumulated.",
   "summary.settings": "Manage sources, tools, and preferences.",
+  "summary.settingsHome": "Connect your inputs. Keep the essentials simple.",
   "summary.preferences": "Choose how PAtrick looks and behaves on this device.",
   "empty.decisions": "No decisions need your attention.",
   "empty.work": "There is no work to show.",

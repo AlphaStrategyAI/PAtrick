@@ -14,6 +14,11 @@ const filenames = {
   zh: '季度产品需求讨论会纪要与客户支持团队共同核对的知识资料以及待确认的后续问题与键盘操作验收记录.md',
 };
 const scenarios = { mobile: rendering.viewports.mobile, tablet: rendering.viewports.tablet, desktop: rendering.viewports.desktop };
+const sidebarPaths = ['/decisions', '/work', '/standards', '/knowledge', '/delegations', '/system', '/stats', '/settings'];
+const settingsSummaries = {
+  en: { index: 'Connect your inputs. Keep the essentials simple.', collection: 'Manage sources, tools, and preferences.' },
+  zh: { index: '接入所需资料，让必要设置保持简单。', collection: '管理来源、工具和偏好。' },
+};
 const controls = 'a[href]:visible,button:enabled:visible,select:enabled:visible,input:enabled:visible,textarea:enabled:visible';
 
 async function environment(page: Page) {
@@ -137,7 +142,28 @@ async function flow(page: Page, locale: Locale, info: TestInfo, width: number, z
       samples.sidebar = await layout(page, page.getByRole('complementary'));
     }
     const nav = compact ? drawer.getByRole('navigation') : page.getByRole('navigation', { name: t['aria.navigation'] });
-    await tabTo(page, nav.getByRole('link', { name: t['nav.knowledge'] }), trace);
+    const links = nav.getByRole('link');
+    const navigation = await links.evaluateAll(nodes => nodes.map(node => {
+      const { top, bottom, height, width } = node.getBoundingClientRect();
+      return { path: node.getAttribute('href'), top, bottom, height, width };
+    }));
+    expect(navigation.map(item => item.path)).toEqual(sidebarPaths);
+    for (const [index, item] of navigation.entries()) {
+      expect(item.height).toBeGreaterThanOrEqual(44);
+      expect(item.width).toBeGreaterThanOrEqual(44);
+      if (index > 0 && index < sidebarPaths.length - 1) {
+        expect.soft(item.top - navigation[index - 1].bottom, 'sidebar link gap').toBe(10);
+      }
+    }
+    await expect(nav.getByRole('link', { name: t['nav.standards'] })).toHaveAttribute('aria-current', 'page');
+    await tabTo(page, links.first(), trace);
+    for (const [index, link] of (await links.all()).entries()) {
+      if (index > 0) await page.keyboard.press('Tab');
+      await expect(link).toBeFocused();
+      expect(await link.evaluate(el => el.matches(':focus-visible') && parseFloat(getComputedStyle(el).outlineWidth) >= 2)).toBe(true);
+    }
+    const knowledge = nav.getByRole('link', { name: t['nav.knowledge'] });
+    await tabTo(page, knowledge, trace);
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL('http://localhost/knowledge');
     await expect(drawer).toHaveCount(0);
@@ -180,7 +206,7 @@ async function flow(page: Page, locale: Locale, info: TestInfo, width: number, z
     await expect(edit).toBeFocused();
     for (const [name, sample] of Object.entries(samples)) problems.push(...issues(name, sample));
     await info.attach('responsive-observations', { contentType: 'application/json',
-      body: JSON.stringify({ env, zoom, locale, relativePath, receiptPath, focusAfterReceipt, trace, samples, problems }, null, 2) });
+      body: JSON.stringify({ env, zoom, locale, relativePath, receiptPath, focusAfterReceipt, navigation, trace, samples, problems }, null, 2) });
     return problems;
   } finally {
     await page.unrouteAll({ behavior: 'wait' });
@@ -198,6 +224,23 @@ for (const locale of ['en', 'zh'] as const) {
         expect(await flow(page, locale, info, viewport.width)).toEqual([]);
       });
     }
+    test('Settings home and Collection have distinct localized summaries', async ({ page }) => {
+      const t = messages[locale];
+      const fx = await t16Fixture(page);
+      try {
+        await page.goto('/settings');
+        const title = page.locator('.page-title');
+        await expect(title.getByRole('heading', { name: t['nav.settings'], exact: true })).toBeVisible();
+        await expect.soft(title.locator('h1 + p')).toHaveText(settingsSummaries[locale].index);
+        await page.getByRole('link', { name: t['settings.collection'], exact: true }).click();
+        await expect(page).toHaveURL('http://localhost/settings/collection');
+        await expect(title.getByRole('heading', { name: t['settings.collection'], exact: true })).toBeVisible();
+        await expect(title.locator('h1 + p')).toHaveText(settingsSummaries[locale].collection);
+      } finally {
+        await page.unrouteAll({ behavior: 'wait' });
+        fx.close();
+      }
+    });
     test('200% browser zoom in an isolated profile', async ({ browserName }, info) => {
       expect(browserName).toBe('chromium');
       const profile = mkdtempSync(join(tmpdir(), 'patrick-t24-browser-zoom-'));

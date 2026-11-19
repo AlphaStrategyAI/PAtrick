@@ -72,7 +72,7 @@ h2 { font-size: 23px; line-height: 30px; }
 .desktop-sidebar { position: sticky; inset-block-start: 0; height: 100dvh; overflow: auto; display: flex; flex-direction: column; padding: 28px 16px 16px; }
 .brand { display: grid; justify-items: center; text-align: center; gap: 8px; margin-block-end: 28px; }
 .slogan { margin-inline: 8px; }
-.navigation { display: flex; flex: 1; flex-direction: column; gap: 4px; }
+.navigation { display: flex; flex: 1; flex-direction: column; gap: 10px; }
 .nav-link {
   display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 10px;
   border-radius: 8px; font-size: 15px; line-height: 24px; color: var(--text); text-decoration: none;

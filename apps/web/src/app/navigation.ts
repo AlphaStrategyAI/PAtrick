@@ -9,7 +9,7 @@ export const navigation = [
   { path: '/delegations', label: 'nav.delegations', summary: 'summary.delegations', icon: 'delegations' },
   { path: '/system', label: 'nav.system', summary: 'summary.system', icon: 'system' },
   { path: '/stats', label: 'nav.stats', summary: 'summary.stats', icon: 'stats' },
-  { path: '/settings', label: 'nav.settings', summary: 'summary.settings', icon: 'settings' },
+  { path: '/settings', label: 'nav.settings', summary: 'summary.settingsHome', icon: 'settings' },
 ] as const satisfies readonly NavigationItem[];
 
 export const settingsNavigation = [
