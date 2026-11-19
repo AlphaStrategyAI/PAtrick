@@ -209,14 +209,14 @@ it.each([
     file: 'README.md',
     system: 'Review service health, notifications, change receipts, and a scoped diagnostic preview. Running the checks reports the status of the network, the three executors, the collection sources, the recovery gate and the host with its backup targets.',
     settings: [
-      'add RSS feeds and web pages', 'already registered Obsidian Vault connection',
+      'add RSS feeds, web pages and GitHub repositories', 'already registered Obsidian Vault connection',
       'runs a check of the three backends',
       'registration and targets for host, network repair, backup, and restore actions',
       'a sample test preview', 'language and reduced motion',
       'Re-pairing an existing connection goes through a trusted change',
     ],
     pending: [
-      'Adding GitHub and local-directory sources in Settings', 'work-directory editor',
+      'Adding a local-directory source', 'work-directory editor',
       'notification preferences', 'native Feishu round trip',
     ],
   },
@@ -229,7 +229,7 @@ it.each([
       '已有连接重新配对要走可信变更',
     ],
     pending: [
-      '设置中新增 GitHub 和本地目录来源', '工作目录编辑器',
+      '设置中新增本地目录来源', '工作目录编辑器',
       '通知偏好', '飞书原生往返',
     ],
   },

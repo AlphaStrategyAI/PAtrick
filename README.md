@@ -93,7 +93,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 
 ## Settings
 
-- **Collection** lets authorized users add RSS feeds and web pages, preview their scope, and enable, pause, or disconnect them. Existing GitHub and directory sources can be viewed. Directory content collection is temporarily unavailable because a trusted reader is not yet available. Activation and the first successful collection have separate receipts.
+- **Collection** lets authorized users add RSS feeds, web pages and GitHub repositories, preview their scope, and enable, pause, or disconnect them. A GitHub source reads the live GitHub API with a staged token; directory content collection is temporarily unavailable because a trusted reader is not yet available. Activation and the first successful collection have separate receipts.
 - **Work materials** reviews an already registered Obsidian Vault connection and its permission checks before confirmation.
 - **Execution** runs a check of the three backends. Each record says what was observed; a backend outside the isolated guest stays blocked with that reason, and the check never starts a backend run because a run spends the budget.
 - **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow. The host check reports the registered targets and the last observation.
@@ -143,7 +143,7 @@ The service runtime is built separately. Running it against real data requires a
 ## This version does not
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
-- Adding GitHub and local-directory sources in Settings, the work-directory editor, and notification preferences are still pending. The GitHub connector reads a local fixture tree rather than the live GitHub API, and a directory source still needs an admitted native reader.
+- Adding a local-directory source, the work-directory editor, and notification preferences are still pending. A GitHub source is added from the collection settings with a staged token and read from the live GitHub API; a directory source still needs an admitted native reader.
 - Re-pairing and rotating the credential of an existing Feishu connection both go through an authorized change: the new secret is staged by the secure credential endpoint, and the change drains the active connection and clears the old binding before it applies.
 - The native Feishu round trip still needs transport provisioning and live acceptance. Real GitHub delivery and Codex CLI, Grok Build, and DSH under their intended host identities also need live acceptance. The local browser and service fixtures exercise their documented contracts.
 - The Obsidian rehearsal covered a synthetic Vault under the current desktop account. A separate production service identity, native reboot, cross-device sync, and upgrade and uninstall preservation are still pending acceptance.
