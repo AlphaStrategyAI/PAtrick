@@ -207,27 +207,29 @@ it('matches each Chinese runtime reference to its T24 route, state, and caption'
 it.each([
   {
     file: 'README.md',
-    system: 'Review service health, notifications, change receipts, and a scoped diagnostic preview.',
+    system: 'Review service health, notifications, change receipts, and a scoped diagnostic preview. Running the checks reports the status of the network, the three executors, the collection sources, the recovery gate and the host with its backup targets.',
     settings: [
       'add RSS feeds and web pages', 'already registered Obsidian Vault connection',
-      'whether an executor inspection handler is registered',
+      'runs a check of the three backends',
       'registration and targets for host, network repair, backup, and restore actions',
       'a sample test preview', 'language and reduced motion',
+      'Re-pairing an existing connection goes through a trusted change',
     ],
     pending: [
       'Adding GitHub and local-directory sources in Settings', 'work-directory editor',
-      'executor and host inspection', 'notification preferences', 'native Feishu round trip',
+      'notification preferences', 'native Feishu round trip',
     ],
   },
   {
     file: 'README.zh-CN.md',
-    system: '查看服务状态、通知、变更回执以及当前范围的诊断预览。',
+    system: '查看服务状态、通知、变更回执以及当前范围的诊断预览。运行检查会分别给出网络、三个执行器、采集来源、恢复门禁以及主机与备份目标的状态。',
     settings: [
-      '新增 RSS 订阅和网页', '已登记的 Obsidian 资料库连接', '执行器检查处理器是否已登记',
+      '新增 RSS 订阅和网页', '已登记的 Obsidian 资料库连接', '运行三个后端的检查',
       '主机检查、网络修复、备份与恢复操作的登记状态和目标', '样例测试预览', '语言和减少动效',
+      '已有连接重新配对要走可信变更',
     ],
     pending: [
-      '设置中新增 GitHub 和本地目录来源', '工作目录编辑器', '执行器及主机检查',
+      '设置中新增 GitHub 和本地目录来源', '工作目录编辑器',
       '通知偏好', '飞书原生往返',
     ],
   },

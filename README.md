@@ -69,7 +69,7 @@ Review the scope, actions, budget, and expiry you authorized and preview changes
 
 ### System
 
-Review service health, notifications, change receipts, and a scoped diagnostic preview.
+Review service health, notifications, change receipts, and a scoped diagnostic preview. Running the checks reports the status of the network, the three executors, the collection sources, the recovery gate and the host with its backup targets.
 
 ![System page](docs/designs/设计资产/v2/Figma-en-system.png)
 
@@ -95,9 +95,9 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 
 - **Collection** lets authorized users add RSS feeds and web pages, preview their scope, and enable, pause, or disconnect them. Existing GitHub and directory sources can be viewed. Directory content collection is temporarily unavailable because a trusted reader is not yet available. Activation and the first successful collection have separate receipts.
 - **Work materials** reviews an already registered Obsidian Vault connection and its permission checks before confirmation.
-- **Execution** shows whether an executor inspection handler is registered. The built-in service does not register one yet.
-- **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow.
-- **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport.
+- **Execution** runs a check of the three backends. Each record says what was observed; a backend outside the isolated guest stays blocked with that reason, and the check never starts a backend run because a run spends the budget.
+- **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow. The host check reports the registered targets and the last observation.
+- **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport. Re-pairing an existing connection goes through a trusted change that drains the active connection first.
 - **Preferences** saves language and reduced motion for the account.
 
 ![Settings overview with a Vault permission issue](fixtures/screens/baselines/en-settings-overview.png)
@@ -142,10 +142,8 @@ The service runtime is built separately. Running it against real data requires a
 ## This version does not
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
-- Collected source revisions do not automatically create work. Approved trigger rules and the source-to-work dispatcher are not yet available; local tests exercise individual components rather than a complete source-to-PR flow.
-- Settings shows the service snapshot and six groups. Running the full checks and per-category readiness summaries are still pending.
-- Adding GitHub and local-directory sources in Settings, the work-directory editor, built-in Settings executor and host inspection handlers, and notification preferences are still pending. The System page does not yet provide separate network, executor, and source status summaries.
-- The current Feishu setup covers initial connection and pairing. Rotating credentials or re-pairing an existing connection still needs the authorized change flow in the design.
+- Adding GitHub and local-directory sources in Settings, the work-directory editor, and notification preferences are still pending. The GitHub connector reads a local fixture tree rather than the live GitHub API, and a directory source still needs an admitted native reader.
+- Credential rotation for an existing Feishu connection still needs the authorized change flow; re-pairing an existing connection now goes through one.
 - The native Feishu round trip still needs transport provisioning and live acceptance. Real GitHub delivery and Codex CLI, Grok Build, and DSH under their intended host identities also need live acceptance. The local browser and service fixtures exercise their documented contracts.
 - The Obsidian rehearsal covered a synthetic Vault under the current desktop account. A separate production service identity, native reboot, cross-device sync, and upgrade and uninstall preservation are still pending acceptance.
 - Pilot quality and maintenance timing require observed, authorized work. Local tests and design examples cover implementation cases. [Pilot maintenance and release criteria](docs/operations/维护手册.md)
