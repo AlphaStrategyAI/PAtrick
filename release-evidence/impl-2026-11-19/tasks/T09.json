@@ -1,6 +1,6 @@
 {
   "task": "T09",
-  "completedAt": "2026-11-19T15:44:31.772Z",
+  "completedAt": "2026-11-19T16:56:26.356Z",
   "productClauses": [
     "C7"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -21,13 +21,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T09/executor-terminal-contract.log",
-      "evidenceSha256": "f25310fb4353b5a0ec4e0c0326d3c09bcd3f65326ab99eff0e4d75b60b47dcbf",
-      "durationMs": 2735
+      "evidenceSha256": "40a5d314b992c7f89b8b2074a93d060eb7ebb487135ac41262afbc844d5bea98",
+      "durationMs": 2859
     },
     {
       "id": "executor-production-admission",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -45,13 +45,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T09/executor-production-admission.log",
-      "evidenceSha256": "9ce0ccfa74baec3ed73b302fd98e2b4edef9aa0b28cf518be4550849a9f69c3d",
-      "durationMs": 4678,
+      "evidenceSha256": "378f8782dcd4f6f4b6a55c4b32cd1ecb988d75092893dabc0fdbc6377e8d98fc",
+      "durationMs": 4644,
       "blockedReason": "三执行器准入要求在 T09 交付的 Lima 隔离虚拟机内运行；本机不是该虚拟机的来宾，探针记录 blocked。"
     }
   ]

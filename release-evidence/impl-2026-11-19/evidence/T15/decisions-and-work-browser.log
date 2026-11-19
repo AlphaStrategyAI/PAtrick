@@ -1,43 +1,44 @@
 $ npm exec -- playwright test --config tests/e2e/T15.config.ts --reporter=line
-exit=0 signal=none durationMs=22999
+exit=0 signal=none durationMs=24308
 --- stdout ---
 
 
-Running 8 tests using 1 worker
+Running 9 tests using 1 worker
 
 
 
-[1/8] tests/e2e/T15.spec.ts:4:1 › same-work: consultation stays separate and the explicit decision reads its verified receipt
+[1/9] tests/e2e/T15.spec.ts:4:1 › same-work: consultation stays separate and the explicit decision reads its verified receipt
 
-[2/8] tests/e2e/T15.spec.ts:66:1 › small screen: a replacement card preserves the original draft without using it as an answer
-[3/8] tests/e2e/T15.spec.ts:111:1 › two tabs fence a late private response when the session is revoked during reconnect
-[4/8] tests/e2e/T15.spec.ts:143:1 › frozen question options are available only in the authorized domain
-[5/8] tests/e2e/T15.spec.ts:160:1 › the decision card shows each option risk first and keeps the full detail one layer down
-[6/8] tests/e2e/T15.spec.ts:176:1 › pause is shown only after the exact work control receipt is read
-[7/8] tests/e2e/T15.spec.ts:193:1 › an accepted consultation with a lost reply is retried exactly once under the same verified scope after a stream reset
+[2/9] tests/e2e/T15.spec.ts:66:1 › small screen: a replacement card preserves the original draft without using it as an answer
+[3/9] tests/e2e/T15.spec.ts:111:1 › two tabs fence a late private response when the session is revoked during reconnect
+[4/9] tests/e2e/T15.spec.ts:143:1 › frozen question options are available only in the authorized domain
+[5/9] tests/e2e/T15.spec.ts:160:1 › the decision card shows each option risk first and keeps the full detail one layer down
+[6/9] tests/e2e/T15.spec.ts:176:1 › pause is shown only after the exact work control receipt is read
+[7/9] tests/e2e/T15.spec.ts:193:1 › an accepted consultation with a lost reply is retried exactly once under the same verified scope after a stream reset
 
-[8/8] tests/e2e/T15.spec.ts:244:1 › a different authenticated caller on the same account cannot revive a quarantined consultation
+[8/9] tests/e2e/T15.spec.ts:244:1 › a different authenticated caller on the same account cannot revive a quarantined consultation
 
-  8 passed (22.3s)
+[9/9] tests/e2e/T15.spec.ts:270:1 › the consultation streams its answer and stays answering until the result is saved
+  9 passed (23.7s)
 
 --- stderr ---
-[WebServer] (node:36809) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:60830) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:36811) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:60833) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
-[WebServer] 11:45:14 PM [vite] http proxy error: /api/v1/questions/Q-017/answers
+[WebServer] 12:57:08 AM [vite] http proxy error: /api/v1/questions/Q-017/answers
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)
 [WebServer]     at endReadableNT (node:internal/streams/readable:2147:12)
 [WebServer]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
-[WebServer] 11:45:22 PM [vite] http proxy error: /api/v1/consultations
+[WebServer] 12:57:17 AM [vite] http proxy error: /api/v1/consultations
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)
 [WebServer]     at endReadableNT (node:internal/streams/readable:2147:12)
 [WebServer]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
-[WebServer] 11:45:26 PM [vite] http proxy error: /api/v1/consultations
+[WebServer] 12:57:21 AM [vite] http proxy error: /api/v1/consultations
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)

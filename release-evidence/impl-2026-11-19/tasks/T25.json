@@ -1,6 +1,6 @@
 {
   "task": "T25",
-  "completedAt": "2026-11-19T15:50:54.607Z",
+  "completedAt": "2026-11-19T17:02:50.233Z",
   "productClauses": [
     "C1",
     "C2",
@@ -18,7 +18,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -27,13 +27,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/pilot-trace-consistency.log",
-      "evidenceSha256": "8e3da4419d41b8a11382d3afc74a99c6a0a7afe9e1e9e4b89cd9b37e4b3bfcd7",
-      "durationMs": 1238
+      "evidenceSha256": "95ed8bf3d9ab1f5f7bb9f8a57c64777ca273273ee007108b66b1b5abc7c3878d",
+      "durationMs": 1168
     },
     {
       "id": "directory-block-browser",
@@ -42,7 +42,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -51,13 +51,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/directory-block-browser.log",
-      "evidenceSha256": "634088d477bf391886a2c1c9e4a52f801ad1956d561f043d2a0698987a7a7b81",
-      "durationMs": 4951
+      "evidenceSha256": "276455b6930487879d0d40ddf83ca46fd824ab3a5a4c88f7731120d82e3e17bf",
+      "durationMs": 5228
     },
     {
       "id": "provider-backed-work-routes",
@@ -66,7 +66,7 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -75,13 +75,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/provider-backed-work-routes.log",
-      "evidenceSha256": "e91b65245a3bac42fa03085b6ab8947461f3afa38526ec388376dfd032a670fa",
-      "durationMs": 951,
+      "evidenceSha256": "2b02e8746e6c218a565ee9e252ea83d1d45e9f84dec3befff5ff16686865d6c3",
+      "durationMs": 916,
       "pendingReason": "三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。"
     }
   ]

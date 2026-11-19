@@ -1,6 +1,6 @@
 {
   "task": "T24",
-  "completedAt": "2026-11-19T15:50:47.465Z",
+  "completedAt": "2026-11-19T17:02:42.918Z",
   "productClauses": [
     "C9"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -21,13 +21,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T24/frame-coverage-and-visual-baselines.log",
-      "evidenceSha256": "46233a3119a2fafb74aafe84c62d49ebb1abc9ca3df6e32a57e6d0544ecc69f2",
-      "durationMs": 40421
+      "evidenceSha256": "dfa4566441ac9d8d0647d220255144ed52873fb0ee59a2a2a732215711b7a612",
+      "durationMs": 40049
     },
     {
       "id": "motion-and-accessibility",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -45,13 +45,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T24/motion-and-accessibility.log",
-      "evidenceSha256": "d700f94e70d846235a7a8b991af8f9a66137bed9fcd231f30b9210d58a9a8c37",
-      "durationMs": 19849
+      "evidenceSha256": "959a8068e30634c69e6a8806acf6b36647ae0eef6cb0f894778a29082fe81e80",
+      "durationMs": 19726
     },
     {
       "id": "responsive-and-zoom",
@@ -60,7 +60,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -69,13 +69,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T24/responsive-and-zoom.log",
-      "evidenceSha256": "a1edc4fa9868f5137cb3106b6aeee9acf3ad363a64d399d4d51e263cb347f4a6",
-      "durationMs": 12703
+      "evidenceSha256": "26af9b016779664e227cd17501163b4f714359e76e47fc6c5a411396bdbc5bca",
+      "durationMs": 12874
     }
   ]
 }

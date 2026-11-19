@@ -1,6 +1,6 @@
 {
   "task": "T13",
-  "completedAt": "2026-11-19T15:45:02.578Z",
+  "completedAt": "2026-11-19T16:56:57.206Z",
   "productClauses": [
     "C2",
     "C3"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,13 +22,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T13/work-and-health-projections.log",
-      "evidenceSha256": "e700e589a2bcda84d656de686d8f17a1620009a530686d9645ebb7bdd9cb71b3",
-      "durationMs": 2039
+      "evidenceSha256": "6438b8dbcc8651acb68dfd211f851a27fe3571d640e6397dbd2c9963b2bec6bd",
+      "durationMs": 1814
     }
   ]
 }

@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/contract/T11.hub.test.ts
-exit=0 signal=none durationMs=1397
+exit=0 signal=none durationMs=1433
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=1397
 
  Test Files  1 passed (1)
       Tests  1 passed (1)
-   Start at  23:44:36
-   Duration  885ms (tests 61%, import 29%, transform 10%)
+   Start at  00:56:31
+   Duration  920ms (tests 62%, import 28%, transform 10%)
 
 
 --- stderr ---

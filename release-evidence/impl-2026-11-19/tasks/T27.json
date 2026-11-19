@@ -1,6 +1,6 @@
 {
   "task": "T27",
-  "completedAt": "2026-11-19T15:51:17.786Z",
+  "completedAt": "2026-11-19T17:03:13.383Z",
   "productClauses": [
     "C4"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -21,13 +21,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T27/obsidian-install-rehearsal.log",
-      "evidenceSha256": "fb71474925ded972ecaf3cd48ed2c4b7d5f9d2ddde3b49ccbe9336be4991f478",
-      "durationMs": 7830
+      "evidenceSha256": "696d562447ad3dedcbd4c07616055b4529dc541d7af89a460de9c55b837a10cb",
+      "durationMs": 7863
     },
     {
       "id": "production-service-identity-round-trip",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
+        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -45,13 +45,13 @@
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
-        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T27/production-service-identity-round-trip.log",
-      "evidenceSha256": "769346aadd3add9578b84a7bda13ccb76e54a7d58b15131b44d1b1446a4d661f",
-      "durationMs": 5083,
+      "evidenceSha256": "9919b9f6f2ce62e8deca0331c2430d43bf2b9d7f21ce72eed20d08dcd5f6538e",
+      "durationMs": 5063,
       "blockedReason": "生产服务身份下的 Vault 往返、原生重启与跨设备同步需要已安装的服务身份；本机没有该安装目录。"
     }
   ]

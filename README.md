@@ -99,6 +99,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 - **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow. The host check reports the registered targets and the last observation.
 - **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport. Re-pairing an existing connection goes through a trusted change that drains the active connection first.
 - **Preferences** saves language and reduced motion for the account.
+- The settings home ends with a readiness summary that says where each entry comes from: detected on this device, suggested and still missing, your own choice, or inherited from the host.
 
 ![Settings overview with a Vault permission issue](fixtures/screens/baselines/en-settings-overview.png)
 
