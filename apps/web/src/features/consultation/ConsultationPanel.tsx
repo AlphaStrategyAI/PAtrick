@@ -100,6 +100,7 @@ function LiveConsultation({ sourceRoute }: { sourceRoute: string }) {
         <p role="status">{t[actual.status]}</p>
         {actual.parent_work_id && <p>{t.relatedWork}: {actual.parent_work_id}</p>}
         {actual.status === 'answered' && actual.final_result && <SafeMarkdown>{actual.final_result.text}</SafeMarkdown>}
+        {actual.status !== 'answered' && actual.partial_text && <SafeMarkdown>{actual.partial_text}</SafeMarkdown>}
         {(actual.status === 'pending' || actual.status === 'waiting_user') && <button type="button"
           disabled={!!pendingCancel && pendingCancel.phase !== 'declined'} onClick={() => {
             commands.start(cancelKey, { operation: 'cancelConsultation', parameters: { id: actual.request_id },

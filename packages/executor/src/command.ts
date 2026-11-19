@@ -12,6 +12,10 @@ export type CommandOptions = {
   stdinText?: string;
   timeoutMs?: number;
   beforeSpawn?: () => void;
+  /** Reports each output chunk as it arrives, before the process closes. */
+  onStdout?: (chunk: string) => void;
+  /** Reports each error chunk as it arrives, before the process closes. */
+  onStderr?: (chunk: string) => void;
 };
 
 export function findExecutable(command: string, pathEnv = process.env.PATH ?? ''): string | null {
@@ -66,9 +70,11 @@ export function runClosed(
     stderrStream.setEncoding('utf8');
     stdoutStream.on('data', (chunk: string) => {
       stdout += chunk;
+      options.onStdout?.(chunk);
     });
     stderrStream.on('data', (chunk: string) => {
       stderr += chunk;
+      options.onStderr?.(chunk);
     });
     child.on('spawn', () => {
       if (options.pipeStdin && child.stdin) {

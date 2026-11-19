@@ -14,7 +14,7 @@ test('same-work: consultation stays separate and the explicit decision reads its
     await page.getByRole('button', { name: '问个问题' }).click();
     await page.getByRole('textbox', { name: '咨询草稿' }).fill('同意');
     await page.getByRole('button', { name: '发送咨询' }).click();
-    await expect(page.getByText('等待咨询结果')).toBeVisible();
+    await expect(page.getByText('正在回答')).toBeVisible();
     const started = fixture.db.prepare('SELECT request_id,result_version,raw_text,parent_work_id FROM consultations').get() as {
       request_id: string; result_version: number; raw_text: string; parent_work_id: string | null;
     };
@@ -22,7 +22,7 @@ test('same-work: consultation stays separate and the explicit decision reads its
     await page.keyboard.press('Escape');
     await page.getByRole('combobox', { name: '界面语言' }).selectOption('en');
     await page.getByRole('button', { name: 'Ask a question' }).click();
-    await expect(page.getByText('Waiting for the consultation result')).toBeVisible();
+    await expect(page.getByText('Answering')).toBeVisible();
     expect(await fixture.completeConsultation(started.request_id, started.result_version, '保留咨询原话')).toBe(true);
     await expect(page.getByText('Consultation answered')).toBeVisible();
     await expect(page.getByRole('dialog')).toContainText('保留咨询原话');
@@ -222,7 +222,7 @@ test('an accepted consultation with a lost reply is retried exactly once under t
     if (!await page.getByRole('dialog').count()) await page.getByRole('button', { name: '问个问题' }).click();
     expect(submissions()).toHaveLength(1);
     await page.getByRole('dialog').getByRole('button', { name: '重试' }).click();
-    await expect(page.getByText('等待咨询结果')).toBeVisible();
+    await expect(page.getByText('正在回答')).toBeVisible();
     expect(submissions()).toHaveLength(2);
     expect(submissions()[1].body).toEqual(submissions()[0].body);
     expect(fixture.db.prepare('SELECT COUNT(*) AS n FROM consultations').get()).toEqual({ n: 1 });
@@ -264,5 +264,23 @@ test('a different authenticated caller on the same account cannot revive a quara
     await expect(page.getByRole('dialog').getByRole('button', { name: '重试' })).toHaveCount(0);
     await expect(page.getByRole('textbox', { name: '咨询草稿' })).toHaveValue('');
     expect(fixture.requests.filter(({ method, path }) => method === 'POST' && path === '/api/v1/consultations')).toHaveLength(1);
+  } finally { await fixture.close(); }
+});
+
+test('the consultation streams its answer and stays answering until the result is saved', async ({ page }) => {
+  const fixture = await t15Fixture({ paidConsultation: true });
+  try {
+    await fixture.signIn(page);
+    await page.goto('/work/W-017');
+    await expect(page.getByTestId('work-id')).toHaveText('W-017');
+    await page.getByRole('button', { name: '问个问题' }).click();
+    await page.getByRole('textbox', { name: '咨询草稿' }).fill('答案是什么');
+    await page.getByRole('button', { name: '发送咨询' }).click();
+    await expect(page.getByText('正在回答')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('这是同一咨询的测试')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('咨询已回答')).toHaveCount(0);
+    expect(fixture.db.prepare("SELECT status FROM consultations WHERE status='answered'").get()).toBeUndefined();
+    expect(fixture.db.prepare('SELECT partial_text FROM consultations').get())
+      .toEqual({ partial_text: '这是同一咨询的测试' });
   } finally { await fixture.close(); }
 });

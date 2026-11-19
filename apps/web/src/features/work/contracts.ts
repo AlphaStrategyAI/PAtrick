@@ -52,6 +52,8 @@ export type Consultation = {
   status: 'pending' | 'waiting_user' | 'answered' | 'cancelled' | 'failed';
   result_version: number;
   final_result: { text: string } | null;
+  /** The answer produced so far, while the consultation is still running. */
+  partial_text: string;
 };
 export type Messages = { items: { message_id: string; raw_text: string; role: 'user' | 'assistant' }[] };
 
@@ -139,7 +141,8 @@ export function parseConsultation(value: unknown): Consultation {
   const row = data(value);
   return { request_id: id(row.request_id), conversation_id: id(row.conversation_id),
     parent_work_id: nullable(row.parent_work_id, id), status: choice(row.status, ['pending', 'waiting_user', 'answered', 'cancelled', 'failed']),
-    result_version: number(row.result_version), final_result: nullable(row.final_result, (result) => ({ text: text(data(result).text) })) };
+    result_version: number(row.result_version), final_result: nullable(row.final_result, (result) => ({ text: text(data(result).text) })),
+    partial_text: typeof row.partial_text === 'string' ? row.partial_text : '' };
 }
 
 export function parseMessages(value: unknown): Messages {

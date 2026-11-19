@@ -23,6 +23,9 @@ const DAY_MS = 86_400_000;
 
 export type ConsultationStatus = 'pending' | 'waiting_user' | 'answered' | 'cancelled' | 'failed';
 
+/** The partial answer is capped so a long run cannot grow the row without bound. */
+const MAX_PARTIAL_TEXT = 8000;
+
 export type ConsultationRequest = {
   client_request_id: string;
   text: string;
@@ -45,6 +48,8 @@ export type ConsultationReceipt = {
 export type ConsultationView = ConsultationReceipt & {
   caller_id: string;
   final_result: ConsultationAnswer | null;
+  /** The answer as it has been produced so far, while the consultation is still running. */
+  partial_text: string;
 };
 
 export type ConversationReceipt = {
@@ -121,6 +126,7 @@ type ConsultationRow = {
   raw_text: string | null;
   final_result: string | null;
   conversation_id: string | null;
+  partial_text: string | null;
 };
 
 type ConversationRow = {
@@ -771,7 +777,7 @@ function visibleWork(db: SqliteDatabase, principal: AdmissionPrincipal, workId: 
 
 function findConsultation(db: SqliteDatabase, principal: AdmissionPrincipal, clientRequestId: string): ConsultationRow | undefined {
   return db.prepare(`SELECT request_id, account_id, caller_id, data_domain, parent_work_id, result_version, status,
-    request_fingerprint, raw_text, final_result, conversation_id
+    request_fingerprint, raw_text, final_result, conversation_id, partial_text
     FROM consultations WHERE account_id = ? AND caller_id = ? AND caller_request_id = ?`).get(
     principal.account_id,
     principal.caller_id,
@@ -781,7 +787,7 @@ function findConsultation(db: SqliteDatabase, principal: AdmissionPrincipal, cli
 
 function loadConsultation(db: SqliteDatabase, requestId: string): ConsultationRow | undefined {
   return db.prepare(`SELECT request_id, account_id, caller_id, data_domain, parent_work_id, result_version, status,
-    request_fingerprint, raw_text, final_result, conversation_id
+    request_fingerprint, raw_text, final_result, conversation_id, partial_text
     FROM consultations WHERE request_id = ?`).get(requestId) as ConsultationRow | undefined;
 }
 
@@ -824,7 +830,24 @@ function viewOf(row: ConsultationRow): ConsultationView {
     ...receiptOf(row),
     caller_id: row.caller_id,
     final_result: parseAnswer(row.final_result),
+    partial_text: row.partial_text ?? '',
   };
+}
+
+/** Records the answer produced so far, so the owner can read it while it runs.
+ *
+ * Only a pending consultation accepts a partial answer. The text is capped so a
+ * long run cannot grow the row without bound, and the final answer always wins:
+ * once the result is persisted the partial text is cleared.
+ */
+export function recordConsultationPartial(db: SqliteDatabase, requestId: string, text: string, at: string): void {
+  const row = loadConsultation(db, requestId);
+  if (!row) throw new Error('NOT_FOUND');
+  if (row.status !== 'pending') return;
+  const capped = text.slice(0, MAX_PARTIAL_TEXT);
+  if (capped === (row.partial_text ?? '')) return;
+  db.prepare('UPDATE consultations SET partial_text = ?, partial_updated_at = ? WHERE request_id = ? AND status = ?')
+    .run(capped, at, requestId, 'pending');
 }
 
 function parseAnswer(value: string | null): ConsultationAnswer | null {

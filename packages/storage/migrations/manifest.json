@@ -86,5 +86,9 @@
   {
     "file": "0027_source_work_dispatch.sql",
     "sha256": "188391610bee17547a32228917465858c1ec4fd3e11c3386900d73785c717624"
+  },
+  {
+    "file": "0028_consultation_stream.sql",
+    "sha256": "5df8da9d7a274b59a8d5f5788b2e61e80e5cd8c35c7ecb6d774f71914f9c24d1"
   }
 ]

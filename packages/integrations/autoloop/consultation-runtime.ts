@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { SqliteDatabase } from '@patrick/storage';
+import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createBudgetApi } from '../../domain/src/budget.js';
 import {
   admittedConsultation, consultationAwaitingHubReceipt,
@@ -7,6 +7,8 @@ import {
 } from '../../domain/src/consultations.js';
 import { createDelegationApi } from '../../domain/src/delegation.js';
 import { consultationBackendAdmitted, consultationBackendMatches, runPaidConsultation, type ConsultationBackend } from '../../executor/src/consultation.js';
+import { parseTerminal } from '../../executor/src/wrapper.js';
+import { recordConsultationPartial } from '../../domain/src/consultations.js';
 import type { CredentialStore } from '../../host/src/credentials.js';
 import { CONSULTATION_RULE, type HubClient, type HubJob } from './client.js';
 import { consultationHubResult, createConsultationHubReceipts } from './consultation-hub-receipts.js';
@@ -185,8 +187,19 @@ export function startConsultationWorker(
       const attemptId = `attempt:${requestId}`;
       const grant = await delegation.authorizeConsultation(requestId, attemptId);
       const budget = createBudgetApi(db, principal, { now });
+      let produced = '';
       const outcome = await runPaidConsultation({
         backend, grant, scope, text, signal,
+        // The answer is recorded as it is produced, so the owner can read it while
+        // the consultation is still running. Only the parsed answer text is kept.
+        onPartial: (chunk) => {
+          produced += chunk;
+          const parsed = parseTerminal(backend.admission.backend, produced);
+          if (!parsed.answerText) return;
+          withImmediateTransaction(db, () => {
+            recordConsultationPartial(db, requestId, parsed.answerText ?? '', now().toISOString());
+          });
+        },
         billing: {
           reserveCall: budget.reserveCall,
           claimPaidDispatch: (...args) => budget.claimPaidDispatch(...args,

@@ -236,14 +236,18 @@ function paidConsultationFixture(signal: AbortSignal) {
   const terms = { accountId: owner.account_id, dataDomain: 'personal', backend: admission.backend,
     admissionSha256: admission.evidenceSha256, routeId: 't15-local', chargeMicros: 137, providerQuoteRef: 't15-fixture' };
   const answer = '这是同一咨询的测试结果。';
+  const partial = '这是同一咨询的测试';
   const backend: ConsultationBackend = {
     scope: { accountId: owner.account_id, dataDomain: 'personal' },
     admission,
     route: { sdkMaxRetries: 0, implicitResend: false, perHttpAccounted: false, verifiedMaxSends: null },
     routeId: terms.routeId,
     pricing: { kind: 'fixed', terms, evidenceSha256: fixedConsultationQuoteHash(terms) },
-    async send() {
+    async send(input) {
       sends += 1;
+      // The answer is produced in two steps, so the owner can read the first part
+      // while the consultation is still running.
+      input.onPartial?.(JSON.stringify({ type: 'final', sessionId: 't15-local', text: partial, reason: { kind: 'completed' } }) + '\n');
       await gate.promise;
       return {
         usage: { usage_id: 't15-local-usage', amount_micros: 137, proof: 't15-local-meter' },
@@ -257,7 +261,7 @@ function paidConsultationFixture(signal: AbortSignal) {
   };
   const errors: unknown[] = [];
   return { worker: { hub, backend, signal, intervalMs: 10, heartbeatIntervalMs: 10, onError: (error: unknown) => errors.push(error) },
-    sends: () => sends, release: gate.resolve, errors, answer };
+    sends: () => sends, release: gate.resolve, errors, answer, partial };
 }
 
 function barrier() {

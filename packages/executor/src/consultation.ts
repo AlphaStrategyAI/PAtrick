@@ -41,6 +41,8 @@ export type ConsultationBackend = {
     text: string;
     fixedQuote: Readonly<{ chargeMicros: number; providerQuoteRef: string; evidenceSha256: string }>;
     signal: AbortSignal;
+    /** Reports each output chunk while the answer is still being produced. */
+    onPartial?: (chunk: string) => void;
   } & ConsultationScope): Promise<{ terminal: ObservedProcess; usage: Usage | null }>;
 };
 
@@ -72,6 +74,8 @@ export async function runPaidConsultation(input: {
   text: string;
   billing: BillingBridge;
   signal: AbortSignal;
+  /** Receives each output chunk while the answer is still being produced. */
+  onPartial?: (chunk: string) => void;
   settleResult(reservationId: string, usage: Usage, terminal: ConsultationPaidTerminal): Promise<BudgetReceipt>;
 }) {
   const { backend, grant } = input;
@@ -114,6 +118,7 @@ export async function runPaidConsultation(input: {
           const { terminal, usage } = await sendUntilAborted(backend, {
             ...input.scope, requestId: grant.request_id, resultVersion: grant.result_version,
             callId: permit.callId, reservationId: permit.reservationId, text: input.text, fixedQuote, signal: input.signal,
+            onPartial: input.onPartial,
           });
           const verifiedUsage = usage && usage.amount_micros === call.amountMicros && usage.proof.length > 0 && usage.usage_id.length > 0;
           if (!verifiedUsage) return { usage: null };
