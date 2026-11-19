@@ -10,6 +10,7 @@ import { asClientError, useScopedSnapshot, useService } from '../../api/query.js
 import { LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate, type MessageKey } from '../../i18n/locale.js';
+import type { Json } from '@patrick/contracts';
 import { ChangeReceipt } from '../settings/SettingsGroup.js';
 import { SettingsChangeWizard } from '../settings/SettingsChangeWizard.js';
 import { RssHistoryPanel, RssHistoryReceiptFromUrl } from './RssHistoryPanel.js';
@@ -127,7 +128,10 @@ function ScopedCollection() {
   const owner = scopeOperations.includes('owner');
   const canPreview = owner || scopeOperations.includes('sources.detect');
   const [target, setTarget] = useState('');
-  const [type, setType] = useState<'rss' | 'webpage'>('rss');
+  const [type, setType] = useState<'rss' | 'webpage' | 'github'>('rss');
+  const [github, setGithub] = useState({ repo: '', branch: 'main', path: '' });
+  const [token, setToken] = useState('');
+  const [credentialRef, setCredentialRef] = useState<string>();
   const [frequency, chooseFrequency] = useState<string>('poll');
   const [preview, showPreview] = useState<Preview>();
   const [loading, setLoading] = useState(false);
@@ -147,7 +151,24 @@ function ScopedCollection() {
   const log = useScopedSnapshot('getSourceReceipts', { id: source?.source_id }, receipts.parse,
     { enabled: !!source, refetchInterval: 10_000 });
 
-  function changeType(next: 'rss' | 'webpage') { setType(next); clearPreview(); }
+  function changeType(next: 'rss' | 'webpage' | 'github') { setType(next); clearPreview(); }
+
+  /** Stages the GitHub token so the secret never travels with the change. */
+  async function stageToken() {
+    if (!token.trim() || loading) return;
+    setLoading(true);
+    setFailure(undefined);
+    try {
+      const staged = await api.write('putSourceCredential', {}, { token }) as { credential_ref?: string };
+      if (!staged.credential_ref) throw new ClientError('INVALID_RESPONSE');
+      setCredentialRef(staged.credential_ref);
+      setToken('');
+    } catch (error) {
+      setFailure(asClientError(error).code);
+    } finally {
+      setLoading(false);
+    }
+  }
   function clearPreview() { showPreview(undefined); setFailure(undefined); attempt.current = null; }
 
   async function detect(event: FormEvent<HTMLFormElement>) {
@@ -163,7 +184,10 @@ function ScopedCollection() {
       attempt.current = { type, url, id: crypto.randomUUID() };
     }
     try {
-      const intent = await safeEnvelope({ type, target: url, request_scope: { ...scope, caller_id: callerId } }, null, attempt.current.id);
+      const draft: Json = type === 'github'
+        ? { type, target: url, repo: github.repo, branch: github.branch, path: github.path, credential_ref: credentialRef ?? '' }
+        : { type, target: url };
+      const intent = await safeEnvelope({ ...draft, request_scope: { ...scope, caller_id: callerId } }, null, attempt.current.id);
       pending.signal.throwIfAborted();
       const result = await api.write('detectSources', {}, intent, { signal: pending.signal }) as Snapshot<Preview>;
       pending.signal.throwIfAborted();
@@ -191,15 +215,41 @@ function ScopedCollection() {
       <p>{t('collection.previewHint')}</p>
       <form onSubmit={(event) => { void detect(event); }}>
         <label>{t('collection.type')}
-          <select value={type} disabled={loading} onChange={(event) => changeType(event.target.value === 'webpage' ? 'webpage' : 'rss')}>
+          <select value={type} disabled={loading}
+            onChange={(event) => changeType(event.target.value === 'webpage' ? 'webpage' : event.target.value === 'github' ? 'github' : 'rss')}>
             <option value="rss">{t('collection.rss')}</option><option value="webpage">{t('collection.webpage')}</option>
+            <option value="github">{t('collection.github')}</option>
           </select>
         </label>
-        <label>{t('collection.url')}
+        {type === 'github' ? <>
+          <label>{t('collection.repo')}
+            <input required maxLength={200} value={github.repo} disabled={loading}
+              onChange={(event) => { setGithub({ ...github, repo: event.target.value }); clearPreview(); }} />
+          </label>
+          <label>{t('collection.branch')}
+            <input required maxLength={200} value={github.branch} disabled={loading}
+              onChange={(event) => { setGithub({ ...github, branch: event.target.value }); clearPreview(); }} />
+          </label>
+          <label>{t('collection.path')}
+            <input required maxLength={1024} value={github.path} disabled={loading}
+              onChange={(event) => { setGithub({ ...github, path: event.target.value }); clearPreview(); }} />
+          </label>
+          <label>{t('collection.token')}
+            <input type="password" maxLength={4096} value={token} disabled={loading} autoComplete="new-password"
+              onChange={(event) => setToken(event.target.value)} />
+          </label>
+          <button type="button" disabled={loading || !token.trim()} onClick={() => { void stageToken(); }}>
+            {t('collection.stageToken')}
+          </button>
+          {credentialRef && <p role="status">{t('collection.tokenStaged')}</p>}
+        </> : <label>{t('collection.url')}
           <input type="url" required maxLength={2048} value={target} disabled={loading}
             onChange={(event) => { setTarget(event.target.value); clearPreview(); }} />
-        </label>
-        <button className="primary" type="submit" disabled={loading || !target.trim()}>{t('collection.preview')}</button>
+        </label>}
+        <button className="primary" type="submit" disabled={loading || !target.trim()
+          || type === 'github' && (!github.repo.trim() || !github.branch.trim() || !github.path.trim() || !credentialRef)}>
+          {t('collection.preview')}
+        </button>
       </form>
       {failure && <LocalizedError code={failure} />}
       {preview && <section className="receipt" aria-label={t('collection.preview')}>
@@ -219,9 +269,14 @@ function ScopedCollection() {
             <label>{t('collection.frequency')}
               <Frequency value={frequency} onChange={chooseFrequency} />
             </label>
-            <SettingsChangeWizard key={[preview.preview_id, frequency].join(':')} operation="enable_http_source"
-              targets={[{ target: preview.preview_id, label: preview.target, device: null, revision: 0, input: { frequency } }]}
+            {type === 'github' && credentialRef ? <SettingsChangeWizard key={[preview.preview_id, credentialRef].join(':')}
+              operation="enable_github_source"
+              targets={[{ target: preview.target, label: preview.target, device: null, revision: 0,
+                input: { credential_ref: credentialRef, repo: github.repo, branch: github.branch, path: github.path } }]}
               entryLabel="collection.enable" onChanged={() => { clearPreview(); page(undefined); refresh(); }} />
+              : <SettingsChangeWizard key={[preview.preview_id, frequency].join(':')} operation="enable_http_source"
+                targets={[{ target: preview.preview_id, label: preview.target, device: null, revision: 0, input: { frequency } }]}
+                entryLabel="collection.enable" onChanged={() => { clearPreview(); page(undefined); refresh(); }} />}
           </>}
       </section>}
     </section>}

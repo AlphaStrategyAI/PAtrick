@@ -243,9 +243,11 @@ it.each([
 
 it('ties the documented Settings limits to the current operation and UI entry points', () => {
   const collection = read('apps/web/src/features/collection/CollectionPage.tsx');
-  expect(collection).toContain("useState<'rss' | 'webpage'>('rss')");
+  expect(collection).toContain("useState<'rss' | 'webpage' | 'github'>('rss')");
   expect(collection).toContain('<option value="rss">');
   expect(collection).toContain('<option value="webpage">');
+  expect(collection).toContain('<option value="github">');
+  expect(collection).toContain("operation=\"enable_github_source\"");
   const builtin = read('apps/service/src/settings/builtin.ts');
   expect(builtin).toContain('connect_vault: existingVault');
   expect(builtin).not.toContain('inspect_executor:');

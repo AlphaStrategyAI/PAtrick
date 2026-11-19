@@ -356,5 +356,11 @@
   "settings.origin.suggested": "建议补齐",
   "settings.origin.user": "你的选择",
   "settings.origin.inherited": "继承自本机",
-  "settings.feishuRotate": "轮换飞书凭据"
+  "settings.feishuRotate": "轮换飞书凭据",
+  "collection.repo": "仓库",
+  "collection.branch": "分支",
+  "collection.path": "路径",
+  "collection.token": "访问令牌",
+  "collection.stageToken": "暂存令牌",
+  "collection.tokenStaged": "令牌已暂存，可以预览来源。"
 }

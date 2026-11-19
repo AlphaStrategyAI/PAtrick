@@ -356,5 +356,11 @@
   "settings.origin.suggested": "Suggested, still missing",
   "settings.origin.user": "Your choice",
   "settings.origin.inherited": "From this host",
-  "settings.feishuRotate": "Rotate the Feishu credential"
+  "settings.feishuRotate": "Rotate the Feishu credential",
+  "collection.repo": "Repository",
+  "collection.branch": "Branch",
+  "collection.path": "Path",
+  "collection.token": "Access token",
+  "collection.stageToken": "Stage the token",
+  "collection.tokenStaged": "The token is staged; the source can be previewed."
 }
