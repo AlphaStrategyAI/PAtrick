@@ -69,7 +69,7 @@
         "preview-diagnostics"
       ],
       "baseline_asset": "fixtures/screens/baselines/zh-system.png",
-      "baseline_sha256": "b00ce872fd93b733d8c7216e9e98aad409b841d3f44a7c685ccf96d70500c3d5",
+      "baseline_sha256": "2cc1a37584c037558874f64acd3babce0682cdd06eefb63d3bfd5909dc4ee07f",
       "design_comparison": "export_unavailable"
     }
   ]

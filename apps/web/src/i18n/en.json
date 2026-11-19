@@ -343,5 +343,11 @@
   "delegations.level": "Capability level",
   "delegations.scopeDomain": "Data domain",
   "learning.connectSource": "Connect a source",
-  "settings.runChecks": "Run checks"
+  "settings.runChecks": "Run checks",
+  "system.categories": "Status by category",
+  "system.category.network": "Network",
+  "system.category.executor": "Executors",
+  "system.category.sources": "Collection sources",
+  "system.category.recovery": "Recovery gate",
+  "system.category.host": "Host and backup"
 }

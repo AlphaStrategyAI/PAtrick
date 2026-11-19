@@ -1,6 +1,7 @@
 import { Icon } from '../components/icons.js';
 import { StatsPage } from '../features/stats/StatsPage.js';
 import { NotificationPanel } from '../features/system/NotificationPanel.js';
+import { SystemCategories } from '../features/system/SystemCategories.js';
 import { DiagnosticsPanel } from '../features/system/DiagnosticsPanel.js';
 import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
@@ -99,6 +100,7 @@ function SystemPage() {
           {t(health.isFetching ? 'status.refreshing' : 'button.refreshStatus')}
         </button>
         <ChangeReceipt system />
+        <SystemCategories />
         <NotificationPanel />
         <DiagnosticsPanel writeAttachment={(api, request, signal) =>
           api.writeAttachment('exportDiagnostics', {}, request, { signal })} />

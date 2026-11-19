@@ -343,5 +343,11 @@
   "delegations.level": "能力阶段",
   "delegations.scopeDomain": "资料域",
   "learning.connectSource": "接通来源",
-  "settings.runChecks": "运行检查"
+  "settings.runChecks": "运行检查",
+  "system.categories": "分类状态",
+  "system.category.network": "网络",
+  "system.category.executor": "执行器",
+  "system.category.sources": "采集来源",
+  "system.category.recovery": "恢复门禁",
+  "system.category.host": "主机与备份"
 }

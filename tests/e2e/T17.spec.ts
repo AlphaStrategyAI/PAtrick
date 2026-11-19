@@ -1113,3 +1113,20 @@ test('running the settings checks shows what each one observed', async ({ page }
     await expect(records).toContainText('blocked: the executor is not inside the lima guest');
   } finally { await fx.close(); }
 });
+
+test('the System page shows the status of each category', async ({ page }) => {
+  const fx = await setup(page);
+  try {
+    await page.goto('/system');
+    const categories = page.getByTestId('system-categories');
+    await expect(categories).toBeVisible();
+    await categories.getByRole('button', { name: 'Run checks' }).click({ timeout: 3000 });
+    await expect(categories).toContainText('Network');
+    await expect(categories).toContainText('Executors');
+    await expect(categories).toContainText('Collection sources');
+    await expect(categories).toContainText('Recovery gate');
+    await expect(categories).toContainText('Host and backup');
+    await expect(categories).toContainText('ready 1.2.3');
+    await expect(categories).toContainText('blocked: the executor is not inside the lima guest');
+  } finally { await fx.close(); }
+});
