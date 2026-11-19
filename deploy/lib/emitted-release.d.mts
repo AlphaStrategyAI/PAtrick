@@ -8,18 +8,29 @@ export type EmittedNativeIdentity = Readonly<{
   path: string; sha256: string; bytes: number; format: 'mach-o'; architecture: DarwinTarget['arch'];
   observedArchitecture: DarwinTarget['arch']; observedNode: string; observedModules: string; observedLoad: true; sqlite: string;
 }>;
+export type NativeByteProfile = 'deployment-complete-native-v3';
+type StageableProfile = Exclude<EmittedReleaseProfile, NativeByteProfile>;
+export type DirectoryNativeIdentity = Readonly<{
+  path: 'native/patrick-directory.node'; role: 'directory-diagnostic-addon'; mode: '100755'; sha256: string; bytes: number;
+  format: 'mach-o'; fileType: 'MH_BUNDLE'; architecture: DarwinTarget['arch']; deploymentTarget: '14.0'; sdk: '27.0';
+  dependencies: readonly ['/usr/lib/libSystem.B.dylib', '/usr/lib/libc++.1.dylib']; interfaceVersion: 1; napiVersion: 8;
+}>;
 export type EmittedRuntimeIdentity = Readonly<{ node: string; modules: string; npm: string; native: EmittedNativeIdentity }>;
+export type NativeByteRuntimeIdentity = EmittedRuntimeIdentity & Readonly<{
+  node: 'v24.9.0'; modules: '137'; napi: '10'; directoryNative: DirectoryNativeIdentity;
+}>;
 export type EmittedRuntimeMaterial = Readonly<{
   path: string; mode: '100644' | '100755'; bytes: number; sha256: string;
   role: DeploymentRole | 'runtime-entry' | 'runtime-shared-chunk' | 'storage-migration-manifest' | 'storage-migration' | 'web-entry' |
-    'web-asset' | 'runtime-package-code' | 'runtime-package-metadata' | 'runtime-package-license' | 'native-addon' | 'runtime-inventory';
+    'web-asset' | 'runtime-package-code' | 'runtime-package-metadata' | 'runtime-package-license' | 'native-addon' | 'directory-diagnostic-addon' | 'runtime-inventory';
 }>;
 export type EmittedMaterialIdentity = Readonly<{
   version: string; source: EmittedSourceIdentity; target: DarwinTarget;
   schema: SchemaInterval; runtime: EmittedRuntimeIdentity; toolchainSha256: string; inventorySha256: string; sbomSha256: string;
   materials: readonly EmittedRuntimeMaterial[]; materialSha256: string;
 } & ({ format: 'patrick-emitted-runtime-material-identity-v1'; profile?: never } |
-  { format: 'patrick-emitted-runtime-material-identity-v2'; profile: 'deployment-complete' })>;
+  { format: 'patrick-emitted-runtime-material-identity-v2'; profile: 'deployment-complete' } |
+  { format: 'patrick-emitted-runtime-material-identity-v3'; profile: NativeByteProfile; runtime: NativeByteRuntimeIdentity; directoryAuthoritySha256: string })>;
 /** Provisioned by the trusted host. Writers are excluded through callback completion, including awaited use. */
 export interface ExclusiveRuntimeStaging {
   /** Optional trusted registration. Both canonical directories must exist apart from
@@ -39,9 +50,12 @@ export function leased<T>(owner: ExclusiveRuntimeStaging, work: (lease: RuntimeL
 export function deriveRuntimeStaging(parent: RuntimeLease, root: string,
   publication?: NonNullable<ExclusiveRuntimeStaging['publication']>): ExclusiveRuntimeStaging;
 export type EmittedReleaseExpectation = Readonly<{
-  profile?: EmittedReleaseProfile; version: string; target: DarwinTarget; schema: SchemaInterval; activeSchema: number; source: EmittedSourceIdentity;
+  profile?: StageableProfile; version: string; target: DarwinTarget; schema: SchemaInterval; activeSchema: number; source: EmittedSourceIdentity;
   runtime: Readonly<{ node: string; modules: string }>; toolchainSha256: string; inventorySha256: string;
   materialSha256: string; packageSha256: string;
+}>;
+export type NativeByteReleaseExpectation = Omit<EmittedReleaseExpectation, 'profile'> & Readonly<{
+  profile: NativeByteProfile; directoryAuthoritySha256: string; directoryNativeSha256: string;
 }>;
 export type EmittedReleaseTrustPolicy = Readonly<{
   keys: readonly Readonly<{ id: string; publicKey: string }>[];
@@ -51,9 +65,12 @@ export type EmittedReleaseTrustPolicy = Readonly<{
 declare const verified: unique symbol;
 declare const staged: unique symbol;
 export type VerifiedEmittedRuntimeCandidate = Readonly<Omit<EmittedMaterialIdentity, 'format' | 'sbomSha256' | 'profile'> & {
-  profile: EmittedReleaseProfile; [verified]: true; kind: 'emitted-runtime-candidate'; packageSha256: string; manifestSha256: string; nativeSha256: string;
+  profile: StageableProfile; [verified]: true; kind: 'emitted-runtime-candidate'; packageSha256: string; manifestSha256: string; nativeSha256: string;
 }>;
-export type StagedEmittedRuntime = Readonly<{ [staged]: true; profile: EmittedReleaseProfile; packageSha256: string; materialSha256: string }>;
+export type VerifiedNativeByteCandidate = Omit<VerifiedEmittedRuntimeCandidate, 'profile' | 'runtime'> & Readonly<{
+  profile: NativeByteProfile; runtime: NativeByteRuntimeIdentity; directoryAuthoritySha256: string; directoryNativeSha256: string;
+}>;
+export type StagedEmittedRuntime = Readonly<{ [staged]: true; profile: StageableProfile; packageSha256: string; materialSha256: string }>;
 type StagedRuntimePaths = Readonly<{
   root: string; entrypoints: Readonly<Record<'composition' | 'service' | 'cli' | 'worker', string>>;
   packageSha256: string; materialSha256: string; inventorySha256: string; runtime: EmittedRuntimeIdentity;
@@ -70,6 +87,9 @@ export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate
 export function withPublishedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, options: {
   staging: ExclusiveRuntimeStaging; releasesRoot: string;
 }, use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
+export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
+  staging: ExclusiveRuntimeStaging; expected: NativeByteReleaseExpectation; policy: EmittedReleaseTrustPolicy;
+}): Promise<VerifiedNativeByteCandidate>;
 export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
   staging: ExclusiveRuntimeStaging; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
 }): Promise<VerifiedEmittedRuntimeCandidate>;

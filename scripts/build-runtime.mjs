@@ -16,11 +16,13 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { machine } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const recipePaths = ['scripts/build-runtime.mjs', 'deploy/lib/release.mjs', 'deploy/lib/deployment-templates.mjs'];
 let LIMITS;
 let validatePaths;
+let canonicalize;
 let deployment;
 
 async function loadRecipe(sourceRoot) {
@@ -40,6 +42,7 @@ async function loadRecipe(sourceRoot) {
   deployment = await import(pathToFileURL(resolve(checkout, recipePaths[2])).href);
   LIMITS = helper.RELEASE_LIMITS;
   validatePaths = helper.validatePaths;
+  canonicalize = helper.canonicalize;
   await verifyRecipe(checkout, observed);
   return observed;
 }
@@ -120,7 +123,7 @@ function parse(command, argv) {
   const required = command === 'verify'
     ? ['artifact-root']
     : ['source-root', 'source-commit', ...(command === 'build' ? ['output-root'] : [])];
-  const allowed = new Set([...required, 'profile', ...(command === 'build' ? ['source-snapshot'] : [])]);
+  const allowed = new Set([...required, 'profile', ...(command === 'build' ? ['source-snapshot', 'directory-authority', 'directory-authority-sha256', 'node-headers'] : [])]);
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -235,7 +238,7 @@ async function captureSource(root, commit, profile) {
     fail('RUNTIME_GIT_ENVIRONMENT_FORBIDDEN');
   }
   await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
-  const templatePaths = profile === 'deployment-complete' ? Object.values(deployment.deploymentPaths) : [];
+  const templatePaths = deployment.completeProfile(profile) ? Object.values(deployment.deploymentPaths) : [];
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', ...templatePaths];
@@ -265,6 +268,8 @@ async function captureSource(root, commit, profile) {
     }
     const blob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
     const prior = committed.get(path);
+    if (profile === deployment.nativeProfile && deployment.nativeSources.includes(path) &&
+        (prior?.blob !== blob || prior?.mode !== '100644' || mode !== '100644')) fail('RUNTIME_DIRECTORY_SOURCE_UNCOMMITTED');
     changed ||= prior?.blob !== blob || prior?.mode !== mode;
     files.push({ path, bytes, mode, sha });
   }
@@ -465,14 +470,15 @@ function nativeLoad(outputRoot) {
 }
 
 function role(path, profile) {
-  if (profile === 'deployment-complete' && deployment.deploymentRole(path)) return deployment.deploymentRole(path);
+  if (profile === deployment.nativeProfile && path === deployment.directoryPath) return deployment.directoryRole;
+  if (deployment.completeProfile(profile) && deployment.deploymentRole(path)) return deployment.deploymentRole(path);
   if (/^runtime\/(composition|service|cli|worker)\.mjs$/.test(path)) return 'runtime-entry';
   if (/^runtime\/chunk-[A-Z0-9]+\.mjs$/.test(path)) return 'runtime-shared-chunk';
   if (path === 'migrations/manifest.json') return 'storage-migration-manifest';
   if (/^migrations\/[0-9]{4}_[a-z0-9_]+\.sql$/.test(path)) return 'storage-migration';
   if (path === 'web/index.html') return 'web-entry';
   if (path.startsWith('web/')) {
-    if (profile === 'deployment-complete' &&
+    if (deployment.completeProfile(profile) &&
         !/^web\/(?:assets\/[A-Za-z0-9_.-]+\.(?:js|css|woff2?)|fonts\/[A-Za-z0-9_./-]+\.(?:woff2?|txt))$/.test(path)) {
       fail('RUNTIME_MATERIAL_ROLE_UNKNOWN');
     }
@@ -531,13 +537,25 @@ async function verifyArtifact(root, profile) {
   let inventory;
   try { inventory = JSON.parse(inventoryBytes.toString('utf8')); }
   catch { fail('RUNTIME_INVENTORY_INVALID'); }
-  const complete = profile === 'deployment-complete';
-  if (inventory?.schemaVersion !== (complete ? 2 : 1) ||
+  const complete = deployment.completeProfile(profile);
+  const v3 = profile === deployment.nativeProfile;
+  if (inventory?.schemaVersion !== deployment.inventoryVersion(profile) ||
       (complete ? inventory.profile !== profile : Object.hasOwn(inventory, 'profile')) || inventory?.materialKind !== 'emitted-runtime-materials' ||
       !Array.isArray(inventory.files) || inventory.files.length > LIMITS.files) fail('RUNTIME_INVENTORY_INVALID');
   const expectedPaths = inventory.files.map((record) => record?.path);
   validateMaterialPaths(expectedPaths);
   const { source, native, observed, tools } = inventory;
+  const keys = value => value && Object.keys(value).sort().join(' ');
+  const commonKeys = 'files materialKind native observed packages';
+  const inventoryKeys = (v3 ? 'directoryBuildSha256 directoryNative ' : '') + commonKeys +
+    (complete ? ' profile' : '') + ' schemaVersion source tools';
+  if (keys(inventory) !== inventoryKeys || keys(source) !== 'commit kind lockSha256 snapshotSha256' ||
+      keys(tools) !== 'esbuild vite' || keys(observed) !== (v3 ? 'arch modules napi node npm platform' : 'arch modules node npm platform') ||
+      keys(native) !== 'architecture bytes format observedArchitecture observedLoad observedModules observedNode path sha256 sqlite') {
+    fail('RUNTIME_INVENTORY_INVALID');
+  }
+  if (v3) deployment.checkDirectoryTarget({ os: observed.platform, arch: observed.arch });
+  if (native.format !== (observed.platform === 'darwin' ? 'mach-o' : 'elf')) fail('RUNTIME_NATIVE_PLATFORM_MISMATCH');
   if (!gitHashPattern.test(source?.commit) || !digestPattern.test(source?.snapshotSha256) ||
       !digestPattern.test(source?.lockSha256) || !['commit', 'pinned-snapshot'].includes(source?.kind) ||
       tools?.esbuild !== '0.28.2' || tools?.vite !== '7.3.8' ||
@@ -555,6 +573,7 @@ async function verifyArtifact(root, profile) {
   if (actualPaths.some((path) => !expected.has(path))) fail('RUNTIME_MATERIAL_EXTRA');
   const required = [
     ...(complete ? Object.values(deployment.deploymentPaths) : []),
+    ...(v3 ? [deployment.directoryPath] : []),
     ...Object.keys(entries).map((name) => 'runtime/' + name + '.mjs'),
     'migrations/manifest.json',
     'web/index.html',
@@ -575,6 +594,13 @@ async function verifyArtifact(root, profile) {
   }
   const addon = actual.find((record) => record.path === nativePath);
   const nativeBytes = await readFile(resolve(root, nativePath));
+  if (v3) {
+    const directory = actual.find(row => row.path === deployment.directoryPath);
+    const expected = deployment.directoryIdentity(await readFile(resolve(root, deployment.directoryPath)), observed.arch);
+    if (observed.platform !== 'darwin' || observed.node !== 'v24.9.0' || observed.modules !== '137' ||
+        observed.napi !== '10' || canonicalize(expected) !== canonicalize(inventory.directoryNative) ||
+        directory.mode !== '100755' || addon.mode !== '100755' || !digestPattern.test(inventory.directoryBuildSha256)) fail('RUNTIME_INVENTORY_INVALID');
+  }
   const architecture = nativeIdentity(nativeBytes);
   if (addon.sha256 !== native.sha256 || addon.bytes !== native.bytes ||
       architecture.format !== native.format || architecture.architecture !== native.architecture) {
@@ -596,8 +622,104 @@ function packageInventory() {
   return Object.entries(runtimeVersions).map(([name, version]) => ({ name, version }));
 }
 
+// The caller supplies a separately approved canonical recipe and SQLite observation.
+// The candidate has no input into the selection of these bytes or their digest.
+async function readDirectoryAuthority(values, buildHost) {
+  const path = values['directory-authority'], pin = values['directory-authority-sha256'];
+  if (!path || !digestPattern.test(pin) || !values['node-headers']) fail('RUNTIME_DIRECTORY_AUTHORITY_REQUIRED');
+  // The builder always targets the running Node architecture. The approved
+  // host additionally binds the machine reported by the operating system.
+  const target = { os: buildHost.os, arch: buildHost.processArch };
+  deployment.checkDirectoryTarget(target);
+  if (process.version !== 'v24.9.0' || process.versions.modules !== '137' || process.versions.napi !== '10') fail('RUNTIME_DIRECTORY_TARGET_UNSUPPORTED');
+  const info = await regularFile(path);
+  if (info.size > LIMITS.artifactBytes) fail('RUNTIME_DIRECTORY_AUTHORITY_INVALID');
+  const raw = await readFile(path);
+  if (sha256(raw) !== pin) fail('RUNTIME_DIRECTORY_AUTHORITY_MISMATCH');
+  const authority = JSON.parse(raw.toString('utf8'));
+  if (canonicalize(authority) !== raw.toString('utf8')) fail('RUNTIME_DIRECTORY_AUTHORITY_INVALID');
+  deployment.checkDirectoryAuthority(authority, target, buildHost);
+  return authority;
+}
+
+async function buildDirectoryModule(staging, values, authority, buildHost, snapshot) {
+  const developer = '/Library/Developer/CommandLineTools';
+  const sdk = join(developer, 'SDKs/MacOSX27.0.sdk');
+  const resource = join(developer, 'usr/lib/clang/21/include');
+  const linkerRoot = join(staging, 'approved-linker');
+  const tools = { compiler: join(developer, 'usr/bin/clang++'), linker: join(linkerRoot, 'bin/ld'), nm: join(developer, 'usr/bin/nm') };
+  for (const [key, path] of Object.entries({ compiler: tools.compiler, nm: tools.nm, node: process.execPath })) {
+    if (sha256(await readFile(path)) !== authority.tools[key]) fail('RUNTIME_DIRECTORY_TOOL_MISMATCH');
+  }
+  // Snapshot the checked bytes together. The approved ld resolves its only
+  // non-system dylibs relative to this exact private executable.
+  await mkdir(join(linkerRoot, 'bin'), { recursive: true });
+  await mkdir(join(linkerRoot, 'lib'));
+  const linker = await readFile(join(developer, 'usr/bin/ld'));
+  if (sha256(linker) !== authority.tools.linker) fail('RUNTIME_DIRECTORY_TOOL_MISMATCH');
+  await writeFile(tools.linker, linker, { flag: 'wx', mode: 0o500 });
+  for (const name of deployment.directoryLinkerLibraries) {
+    const library = await readFile(join(developer, 'usr/lib', name));
+    if (sha256(library) !== authority.linkerLibraries[name]) fail('RUNTIME_DIRECTORY_LINKER_LIBRARY_MISMATCH');
+    await writeFile(join(linkerRoot, 'lib', name), library, { flag: 'wx', mode: 0o500 });
+  }
+  const archivePath = values['node-headers'];
+  if ((await regularFile(archivePath)).size > LIMITS.artifactBytes) fail('RUNTIME_DIRECTORY_HEADERS_MISMATCH');
+  const archive = await readFile(archivePath);
+  if (sha256(archive) !== deployment.directoryHeadersSha256) fail('RUNTIME_DIRECTORY_HEADERS_MISMATCH');
+  await writeFile(join(staging, 'headers.tar.xz'), archive, { flag: 'wx', mode: 0o600 });
+  function run(tool, args) {
+    const result = spawnSync(tool, args, { cwd: staging, timeout: 60_000, encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', LC_ALL: 'C', TMPDIR: staging, DEVELOPER_DIR: developer, ZERO_AR_DATE: '1' } });
+    if (result.status !== 0) fail('RUNTIME_DIRECTORY_TOOL_FAILED');
+    return result.stdout;
+  }
+  run('/usr/bin/tar', ['-xf', 'headers.tar.xz', 'node-v24.9.0/include/node']);
+  for (const input of authority.inputs) {
+    const slash = input.path.indexOf('/');
+    const root = input.path.startsWith('sdk/') ? sdk : resource;
+    const absolute = await realpath(join(root, input.path.slice(slash + 1)));
+    if (!absolute.startsWith(root + sep) || (await regularFile(absolute)).size !== input.bytes) fail('RUNTIME_DIRECTORY_INPUT_MISMATCH');
+    const bytes = await readFile(absolute);
+    if (sha256(bytes) !== input.sha256) fail('RUNTIME_DIRECTORY_INPUT_MISMATCH');
+    const destination = join(staging, 'tools', input.path);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, bytes, { flag: 'wx', mode: 0o400 });
+  }
+  const sources = [];
+  for (const path of deployment.nativeSources) {
+    const input = snapshot.files.find(file => file.path === path);
+    const bytes = await readFile(join(staging, 'inputs', path));
+    if (input?.mode !== '100644' || input.sha !== sha256(bytes)) fail('RUNTIME_DIRECTORY_INPUT_MISMATCH');
+    sources.push({ path, mode: input.mode, sha256: input.sha, bytes: bytes.length });
+  }
+  await mkdir(join(staging, 'materials/native'));
+  const commands = deployment.directoryCommands(authority.target.arch);
+  const objects = [];
+  let exportLogSha256;
+  for (const { tool, argv } of commands) {
+    const stdout = run(tools[tool], argv);
+    if (tool === 'compiler') {
+      const path = argv.at(-1);
+      const bytes = await readFile(join(staging, path));
+      objects.push({ path, sha256: sha256(bytes), bytes: bytes.length });
+    } else if (tool === 'nm') {
+      if (stdout !== deployment.directoryExports.join('\n') + '\n') fail('RUNTIME_DIRECTORY_EXPORT_MISMATCH');
+      exportLogSha256 = sha256(stdout);
+    }
+  }
+  const outputPath = join(staging, 'materials', deployment.directoryPath);
+  await chmod(outputPath, 0o755);
+  const output = deployment.directoryIdentity(await readFile(outputPath), authority.target.arch);
+  return { authority, authoritySha256: values['directory-authority-sha256'], buildHost, sources, commands, objects, exportLogSha256, output };
+}
+
 async function buildRuntime(values, recipe) {
   const profile = values.profile;
+  const v3 = profile === deployment.nativeProfile;
+  const buildHost = v3 ? { os: process.platform, processArch: process.arch, machine: machine() } : undefined;
+  const authority = v3 ? await readDirectoryAuthority(values, buildHost) : undefined;
+  if (!v3 && ['directory-authority','directory-authority-sha256','node-headers'].some(key => Object.hasOwn(values, key))) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
   const toolRoot = values['source-root'];
   const outputRoot = values['output-root'];
   const commit = values['source-commit'];
@@ -664,7 +786,7 @@ async function buildRuntime(values, recipe) {
         },
       }],
     });
-    if (profile === 'deployment-complete') await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
+    if (deployment.completeProfile(profile)) await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
     await copyMigrations(sourceRoot, materials);
     await buildWeb(sourceRoot, materials, vite, exports);
     await copyRuntimePackages(toolRoot, materials, lock);
@@ -672,11 +794,18 @@ async function buildRuntime(values, recipe) {
     const native = nativeIdentity(nativeBytes);
     if (native.architecture !== process.arch ||
         native.format !== (process.platform === 'darwin' ? 'mach-o' : 'elf')) fail('RUNTIME_NATIVE_ARCHITECTURE_MISMATCH');
-    const nativeObservation = nativeLoad(materials);
+    const directoryBuild = v3 ? await buildDirectoryModule(staging, values, authority, buildHost, snapshot) : undefined;
+    const nativeObservation = v3 ? authority.sqliteObservation.native : nativeLoad(materials);
     const files = await materialRecords(materials, profile);
+    if (v3 && (nativeObservation.sha256 !== sha256(nativeBytes) || nativeObservation.bytes !== nativeBytes.length ||
+        authority.sqliteObservation.source.lockSha256 !== sha256(lockBytes) ||
+        authority.sqliteObservation.packageFilesSha256 !== sha256(canonicalize(files.filter(file => file.path.startsWith('node_modules/')))))) {
+      fail('RUNTIME_DIRECTORY_SQLITE_OBSERVATION_MISMATCH');
+    }
     const inventory = {
-      schemaVersion: profile === 'deployment-complete' ? 2 : 1,
-      ...(profile === 'deployment-complete' && { profile }),
+      schemaVersion: deployment.inventoryVersion(profile),
+      ...(deployment.completeProfile(profile) && { profile }),
+      ...(v3 && { directoryNative: directoryBuild.output, directoryBuildSha256: sha256(canonicalize(directoryBuild)) }),
       materialKind: 'emitted-runtime-materials',
       source: {
         kind: pinnedSnapshot === undefined ? 'commit' : 'pinned-snapshot',
@@ -691,6 +820,7 @@ async function buildRuntime(values, recipe) {
         node: process.version,
         modules: process.versions.modules,
         npm: await npmVersion(staging),
+        ...(v3 && { napi: process.versions.napi }),
       },
       packages: packageInventory(),
       native: {
@@ -720,6 +850,7 @@ async function buildRuntime(values, recipe) {
       sourceCommit: commit,
       sourceSnapshotSha256: snapshot.digest,
       artifactRoot: outputRoot,
+      ...(v3 && { directoryBuild }),
     };
   } finally {
     await rm(staging, { recursive: true, force: true });

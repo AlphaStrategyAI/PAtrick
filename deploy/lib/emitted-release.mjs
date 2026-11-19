@@ -4,7 +4,9 @@ import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
 
-import { checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile } from './deployment-templates.mjs';
+import { checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile, nativeProfile, completeProfile,
+  inventoryVersion, directoryPath, directoryRole, directoryIdentity, checkDirectoryTarget, checkDirectoryAuthority, directoryExports,
+  directoryCommands, nativeSources, directoryHandshake } from './deployment-templates.mjs';
 
 export const paths = Object.freeze({
   inventory: 'metadata/runtime-materials.json', lock: 'provenance/package-lock.json',
@@ -76,7 +78,8 @@ closure.set('node_modules/file-uri-to-path/index.js', 'runtime-package-code');
 closure.set(addon, 'native-addon');
 const fixed = new Map([...closure, ...entries.map(path => [path, 'runtime-entry']), ['migrations/manifest.json', 'storage-migration-manifest'], ['web/index.html', 'web-entry']]);
 function role(path, profile) {
-  if (profile === 'deployment-complete' && deploymentRole(path)) return deploymentRole(path);
+  if (profile === nativeProfile && path === directoryPath) return directoryRole;
+  if (completeProfile(profile) && deploymentRole(path)) return deploymentRole(path);
   if (fixed.has(path)) return fixed.get(path);
   if (/^runtime\/chunk-[A-Z0-9]+\.mjs$/.test(path)) return 'runtime-shared-chunk';
   if (/^migrations\/\d{4}_[a-z0-9_]+\.sql$/.test(path)) return 'storage-migration';
@@ -116,9 +119,40 @@ function materialGraph(files, rows) {
     }
   }
 }
-function checkToolchain(raw, inventory, inventoryBytes, lock) {
+function checkDirectoryBuild(t, inventory, inventoryBytes, target) {
+  const b = t.directoryBuild;
+  shape(b, 'authority authoritySha256 buildHost sources commands objects exportLogSha256 output', 'directory build');
+  // Use the signed build observation and independent output target. The
+  // machine performing this byte-only check may differ from the builder.
+  checkDirectoryAuthority(b.authority, target, b.buildHost);
+  check(b.buildHost.os === inventory.observed.platform && b.buildHost.processArch === inventory.observed.arch, 'directory build host mismatch');
+  check(b.authoritySha256 === sha256(encode(b.authority)) && inventory.directoryBuildSha256 === sha256(encode(b)), 'directory build identity mismatch');
+  equal(t.repeatDirectoryBuild, b, 'repeat directory build mismatch');
+  check(t.inventory.path !== t.repeatInventory.path && t.repeatInventory.sha256 === sha256(inventoryBytes), 'distinct repeat inventory required');
+  equal(t.directoryNative, inventory.directoryNative, 'toolchain directory observation');
+  equal(b.output, inventory.directoryNative, 'directory build output mismatch');
+  equal(b.commands, directoryCommands(target.arch), 'directory recipe arguments');
+  equal(b.authority.sqliteObservation.native, inventory.native, 'independent SQLite observation mismatch');
+  check(b.authority.tools.node === t.node.sha256 && b.authority.sqliteObservation.source.lockSha256 === inventory.source.lockSha256 &&
+    b.authority.sqliteObservation.packageFilesSha256 === sha256(encode(t.packageFiles)), 'independent directory toolchain/SQLite mismatch');
+  check(b.exportLogSha256 === sha256(directoryExports.join('\n') + '\n'), 'directory export observation');
+  equal(b.sources.map(row => row.path), nativeSources, 'directory build source list');
+  equal(b.objects.map(row => row.path), ['directory-module.o','directory-core.o'], 'directory link inputs');
+  for (const row of b.sources) {
+    shape(row, 'path mode sha256 bytes', 'directory source');
+    check(row.mode === '100644' && isHash(row.sha256) && uint(row.bytes) && row.bytes > 0, 'directory source identity');
+  }
+  for (const row of b.objects) {
+    shape(row, 'path sha256 bytes', 'directory object');
+    check(isHash(row.sha256) && uint(row.bytes) && row.bytes > 0, 'directory object identity');
+  }
+  return b;
+}
+
+function checkToolchain(raw, inventory, inventoryBytes, lock, target) {
   const t = json(raw);
-  shape(t, 'observed node npm git esbuild esbuildBinary vite viteEsbuild viteRollup source inventory repeatInventory totals largestRecord native packages packageFiles runtimeFiles', 'toolchain');
+  shape(t, 'observed node npm git esbuild esbuildBinary vite viteEsbuild viteRollup source inventory repeatInventory totals largestRecord native packages packageFiles runtimeFiles' +
+    (inventory.profile === nativeProfile ? ' directoryBuild repeatDirectoryBuild directoryNative' : ''), 'toolchain');
   for (const key of ['observed', 'source', 'packages']) equal(t[key], inventory[key], 'toolchain ' + key + ' mismatch');
   const totals = {};
   for (const row of inventory.files) {
@@ -147,8 +181,9 @@ function checkToolchain(raw, inventory, inventoryBytes, lock) {
   equal(native, inventory.native, 'toolchain native observation');
   const archName = inventory.observed.arch === 'arm64' ? 'arm64' : 'x86_64';
   check(fileMode === '755' && typeof binaryDescription === 'string' && binaryDescription.includes('Mach-O') && binaryDescription.includes(archName), 'native tool observation');
+  if (inventory.profile === nativeProfile) return checkDirectoryBuild(t, inventory, inventoryBytes, target);
 }
-function makeSbom(files, inventory, lock, version) {
+function makeSbom(files, inventory, lock, version, directoryBuild) {
   check(lock.lockfileVersion === 3 && lock.version === version && lock.packages['']?.version === version && lock.name === 'patrick' && lock.packages[''].name === 'patrick', 'lock release mismatch');
   const packages = inventory.packages.map(({ name, version }) => {
     const prefix = 'node_modules/' + name;
@@ -161,26 +196,33 @@ function makeSbom(files, inventory, lock, version) {
     return { name, version, integrity: record.integrity, resolved: record.resolved, dependencies: Object.keys(dependencies[name]).filter(n => own(versions,n)),
       files: inventory.files.filter(r => r.path.startsWith(prefix + '/')) };
   });
+  if (directoryBuild) return encode({ format: 'patrick-emitted-runtime-sbom-v2', packages,
+    firstParty: [{ name: 'patrick-directory-module', source: inventory.source, sources: directoryBuild.sources,
+      material: inventory.files.find(row => row.path === directoryPath) }] });
   return encode({ format: 'patrick-emitted-runtime-sbom-v1', packages });
 }
 
 // Pure validation shared by the packer and the independently trusted host verifier.
 export function inspectBytes(files, { version, source, target, schema, inventorySha256, toolchainSha256, profile: selection }) {
   const profile = releaseProfile(selection);
-  const complete = profile === 'deployment-complete';
+  const complete = completeProfile(profile);
+  const v3 = profile === nativeProfile;
   const raw = files.get(paths.inventory);
   check(raw && sha256(raw) === inventorySha256, 'inventory digest mismatch');
   const inv = json(raw);
-  shape(inv, 'schemaVersion materialKind source tools observed packages native files' + (complete ? ' profile' : ''), 'inventory');
-  check(inv.schemaVersion === (complete ? 2 : 1) && (!complete || inv.profile === profile) && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
+  shape(inv, 'schemaVersion materialKind source tools observed packages native files' + (complete ? ' profile' : '') +
+    (v3 ? ' directoryNative directoryBuildSha256' : ''), 'inventory');
+  check(inv.schemaVersion === inventoryVersion(profile) && (!complete || inv.profile === profile) && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
   shape(inv.source, 'kind commit snapshotSha256 lockSha256', 'source');
   check(['commit','pinned-snapshot'].includes(inv.source.kind) && typeof inv.source.commit === 'string' && /^[0-9a-f]{40}$/.test(inv.source.commit) &&
     isHash(inv.source.snapshotSha256) && isHash(inv.source.lockSha256), 'invalid source identity');
   equal(inv.source, source, 'source mismatch');
   shape(target, 'os arch', 'target');
+  if (v3) checkDirectoryTarget(target);
   shape(schema, 'min max', 'schema interval');
   check(typeof version === 'string' && /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version) && uint(schema.min) && uint(schema.max) && schema.max >= schema.min, 'invalid release/schema');
-  shape(inv.observed, 'platform arch node modules npm', 'runtime observation');
+  shape(inv.observed, 'platform arch node modules npm' + (v3 ? ' napi' : ''), 'runtime observation');
+  if (v3) check(inv.observed.node === 'v24.9.0' && inv.observed.modules === '137' && inv.observed.napi === '10', 'directory runtime mismatch');
   const { platform, arch, node, modules, npm } = inv.observed;
   check(platform === 'darwin' && target.os === platform && ['arm64','x64'].includes(arch) && target.arch === arch &&
     typeof node === 'string' && /^v\d+\.\d+\.\d+$/.test(node) && typeof modules === 'string' && /^\d+$/.test(modules) && typeof npm === 'string' && semver.test(npm), 'target/runtime mismatch');
@@ -189,11 +231,12 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   table(inv.files);
   if (complete) {
     const materialPaths = new Set(inv.files.map(row => row.path));
+    if (v3) check(materialPaths.has(addon) && materialPaths.has(directoryPath), 'missing native material');
     for (const path of Object.values(deploymentPaths)) check(materialPaths.has(path), 'missing deployment template ' + path);
   }
   for (const r of inv.files) {
     checkDeploymentRecord(profile, r.path, r.mode, r.sha256);
-    check(r.role === role(r.path, profile) && r.mode === (r.path === addon ? '100755' : '100644'), 'material role/mode mismatch ' + r.path);
+    check(r.role === role(r.path, profile) && r.mode === ((r.path === addon || (v3 && r.path === directoryPath)) ? '100755' : '100644'), 'material role/mode mismatch ' + r.path);
     const data = files.get(r.path);
     check(data && data.length === r.bytes && sha256(data) === r.sha256, 'runtime material mismatch ' + r.path);
   }
@@ -205,17 +248,19 @@ export function inspectBytes(files, { version, source, target, schema, inventory
     binary.readUInt32LE(4) === (arch === 'arm64' ? 0x0100000c : 0x01000007) && native.architecture === arch && native.observedArchitecture === arch &&
     native.observedNode === node && native.observedModules === modules && native.observedLoad === true && typeof native.sqlite === 'string' && semver.test(native.sqlite) &&
     native.bytes === binary.length && native.sha256 === sha256(binary), 'native binary/ABI mismatch');
+  if (v3) equal(inv.directoryNative, directoryIdentity(files.get(directoryPath), arch), 'directory native identity mismatch');
   const lockBytes = files.get(paths.lock);
   const toolBytes = files.get(paths.toolchain);
   check(sha256(lockBytes) === source.lockSha256 && sha256(toolBytes) === toolchainSha256, 'provenance digest mismatch');
   const lock = json(lockBytes);
-  checkToolchain(toolBytes, inv, raw, lock);
-  const sbom = makeSbom(files, inv, lock, version);
+  const directoryBuild = checkToolchain(toolBytes, inv, raw, lock, target);
+  const sbom = makeSbom(files, inv, lock, version, directoryBuild);
   const materials = ordered([...inv.files, descriptor(paths.inventory, 'runtime-inventory', '100644', raw)]);
   table(materials);
-  const identity = { ...(complete ? { format: 'patrick-emitted-runtime-material-identity-v2', profile } :
+  const identity = { ...(complete ? { format: 'patrick-emitted-runtime-material-identity-v' + inventoryVersion(profile), profile } :
     { format: 'patrick-emitted-runtime-material-identity-v1' }), version, source: inv.source, target, schema,
-    runtime: { node, modules, npm, native }, toolchainSha256, inventorySha256, sbomSha256: sha256(sbom), materials };
+    runtime: { node, modules, npm, native, ...(v3 && { napi: inv.observed.napi, directoryNative: inv.directoryNative }) },
+    ...(v3 && { directoryAuthoritySha256: directoryBuild.authoritySha256 }), toolchainSha256, inventorySha256, sbomSha256: sha256(sbom), materials };
   return { identity, materialSha256: sha256(encode(identity)), sbom };
 }
 export const logPath = id => { check(scenarioId(id), 'invalid scenario id'); return 'evidence/logs/' + id + '.log'; };
@@ -223,11 +268,18 @@ export function inspectEvidence(files, identity, materialSha256, policy) {
   const reportBytes = files.get(paths.report);
   check(reportBytes && sha256(reportBytes) === policy.executionReportSha256, 'execution report pin mismatch');
   const report = json(reportBytes);
-  shape(report, 'format materialSha256 inventorySha256 toolchainSha256 nativeSha256 observed native entries scenarios', 'execution report');
+  const v3 = identity.profile === nativeProfile;
+  shape(report, 'format materialSha256 inventorySha256 toolchainSha256 nativeSha256 observed native entries scenarios' +
+    (v3 ? ' directoryNative directoryHandshake' : ''), 'execution report');
   const { runtime, target } = identity;
-  check(report.format === 'patrick-emitted-runtime-execution-v1' && report.materialSha256 === materialSha256 && report.inventorySha256 === identity.inventorySha256 &&
+  check(report.format === (v3 ? 'patrick-emitted-runtime-execution-v2' : 'patrick-emitted-runtime-execution-v1') && report.materialSha256 === materialSha256 && report.inventorySha256 === identity.inventorySha256 &&
     report.toolchainSha256 === identity.toolchainSha256 && report.nativeSha256 === runtime.native.sha256, 'execution material binding mismatch');
-  equal(report.observed, { platform: target.os, arch: target.arch, node: runtime.node, modules: runtime.modules, npm: runtime.npm }, 'execution runtime mismatch');
+  equal(report.observed, { platform: target.os, arch: target.arch, node: runtime.node, modules: runtime.modules, npm: runtime.npm,
+    ...(v3 && { napi: runtime.napi }) }, 'execution runtime mismatch');
+  if (v3) {
+    equal(report.directoryNative, runtime.directoryNative, 'execution directory material mismatch');
+    equal(report.directoryHandshake, directoryHandshake, 'directory handshake mismatch');
+  }
   equal(report.native, runtime.native, 'execution native mismatch');
   equal(report.entries, entries, 'execution entry mismatch');
   const requirements = policy.requiredScenarios;
@@ -238,7 +290,8 @@ export function inspectEvidence(files, identity, materialSha256, policy) {
     check(scenarioId(r.id) && isHash(r.evidenceSha256) && !required.has(r.id), 'invalid or duplicate required scenario');
     required.set(r.id, r.evidenceSha256);
   }
-  check(baseline.every(id => required.has(id)) && Array.isArray(report.scenarios) && report.scenarios.length === required.size, 'required scenario set mismatch');
+  const mandatory = v3 ? [...baseline, 'directory-module-info-relocated'] : baseline;
+  check(mandatory.every(id => required.has(id)) && Array.isArray(report.scenarios) && report.scenarios.length === required.size, 'required scenario set mismatch');
   const logs = [];
   for (const s of report.scenarios) {
     shape(s, 'id argv cwd startedUtc endedUtc status exitCode evidenceSha256', 'scenario');
@@ -600,13 +653,17 @@ function decodePackage(data, expected, policy) {
   table(m.artifacts);
   const identity = m.identity;
   const profile = releaseProfile(expected.profile);
-  const complete = profile === 'deployment-complete';
-  check(complete ? identity?.format === 'patrick-emitted-runtime-material-identity-v2' && identity.profile === profile :
+  const complete = completeProfile(profile);
+  const v3 = profile === nativeProfile;
+  check(complete ? identity?.format === 'patrick-emitted-runtime-material-identity-v' + inventoryVersion(profile) && identity.profile === profile :
     identity?.format === 'patrick-emitted-runtime-material-identity-v1' && !own(identity, 'profile'), 'independent release profile mismatch');
-  shape(identity, 'format version source target schema runtime toolchainSha256 inventorySha256 sbomSha256 materials' + (complete ? ' profile' : ''), 'material identity');
+  shape(identity, 'format version source target schema runtime toolchainSha256 inventorySha256 sbomSha256 materials' + (complete ? ' profile' : '') +
+    (v3 ? ' directoryAuthoritySha256' : ''), 'material identity');
   table(identity.materials);
   runtimeDirectories(identity.materials);
   for (const key of ['version','source','target','schema','toolchainSha256','inventorySha256']) equal(identity[key], expected[key], 'independent expectation mismatch ' + key);
+  if (v3) check(isHash(expected.directoryAuthoritySha256) && identity.directoryAuthoritySha256 === expected.directoryAuthoritySha256 &&
+    isHash(expected.directoryNativeSha256) && identity.runtime.directoryNative.sha256 === expected.directoryNativeSha256, 'independent directory digest mismatch');
   equal({ node: identity.runtime.node, modules: identity.runtime.modules }, expected.runtime, 'expected runtime mismatch');
   check(uint(expected.activeSchema) && expected.activeSchema >= expected.schema.min && expected.activeSchema <= expected.schema.max, 'schema inactive');
   check(m.materialSha256 === expected.materialSha256 && m.materialSha256 === sha256(encode(identity)), 'expected material identity mismatch');
@@ -623,7 +680,7 @@ function decodePackage(data, expected, policy) {
     files.set(r.path, value);
   }
   check(encode(envelope).equals(data), 'noncanonical envelope');
-  const actual = inspectBytes(files, identity);
+  const actual = inspectBytes(files, { ...identity, profile });
   equal(identity, actual.identity, 'material identity projection mismatch');
   check(files.get(paths.sbom)?.equals(actual.sbom), 'SBOM mismatch');
   const logs = inspectEvidence(files, identity, m.materialSha256, policy);
@@ -671,7 +728,8 @@ export async function verifyEmittedRuntimeCandidate(path, { staging, expected, p
     const { version, source, target, schema, runtime, inventorySha256, toolchainSha256, materials } = identity;
     const publication = capturePublication(lease, staging.publication, path);
     return { binding, publication, projection: { kind: 'emitted-runtime-candidate', profile: releaseProfile(identity.profile), version, source, target, schema, runtime, packageSha256,
-      manifestSha256, materialSha256, inventorySha256, toolchainSha256, nativeSha256: runtime.native.sha256, materials } };
+      manifestSha256, materialSha256, inventorySha256, toolchainSha256, nativeSha256: runtime.native.sha256,
+      ...(identity.profile === nativeProfile && { directoryNativeSha256: runtime.directoryNative.sha256, directoryAuthoritySha256: identity.directoryAuthoritySha256 }), materials } };
   });
   const receipt = freeze(projection);
   verified.set(receipt, { path, staging, binding, pins, publication });
@@ -890,6 +948,7 @@ async function createTree(lease, journal, materials, files) {
 export async function stageVerifiedEmittedRuntime(receipt, { staging, destination }) {
   const record = verified.get(receipt);
   check(record && record.staging === staging, 'genuine verified receipt and bound staging required');
+  check(receipt.profile !== nativeProfile, 'byte-only native candidate cannot be staged');
   const capture = await writeUnderLease(staging, 'stage', destination, receipt.packageSha256, async (lease, journal) => {
     if (record.publication) {
       checkPublication(lease, record);

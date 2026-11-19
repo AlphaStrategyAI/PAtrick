@@ -9,8 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
-import { deploymentPaths, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
-import type { EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
+import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
+import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 
@@ -68,6 +68,54 @@ const registration = {
   certificatePath: base+'/caddy/trust/endpoint & chain.pem', keyPath: base+'/caddy/trust/private-key.ref',
 };
 
+// Request tuples only. These Intel and cross-target examples are not build observations.
+const arm64Target = { os: 'darwin', arch: 'arm64' } as const;
+const intelTarget = { os: 'darwin', arch: 'x64' } as const;
+const arm64Host = { os: 'darwin', processArch: 'arm64', machine: 'arm64' } as const;
+const intelHost = { os: 'darwin', processArch: 'x64', machine: 'x86_64' } as const;
+
+test.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('directory recipe approves the observed arm64 host and native target together', async () => {
+  const a = JSON.parse(await readFile(process.env.PATRICK_T25_TEST_RECIPE!, 'utf8'));
+  expect(() => checkDirectoryAuthority(a, arm64Target, arm64Host)).not.toThrow();
+  expect(() => checkDirectoryAuthority(a, arm64Target, intelHost)).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+  expect(() => checkDirectoryAuthority(a, arm64Target, { ...arm64Host, processArch: 'x64' })).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+  expect(() => checkDirectoryAuthority(a, arm64Target, { ...arm64Host, machine: 'x86_64' })).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+  expect(() => checkDirectoryAuthority({ ...a, buildMode: 'cross' }, arm64Target, arm64Host)).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+  expect(() => checkDirectoryAuthority({ ...a, buildHost: intelHost }, arm64Target, arm64Host)).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+  expect(() => checkDirectoryAuthority({ ...a, target: intelTarget }, arm64Target, arm64Host)).toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+});
+test.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('unregistered Intel native and cross-target recipe requests have no approved tool selection', async () => {
+  const a = JSON.parse(await readFile(process.env.PATRICK_T25_TEST_RECIPE!, 'utf8'));
+  expect(() => directoryCommands('x64')).toThrow('RUNTIME_DIRECTORY_TARGET_UNAPPROVED');
+  expect(() => checkDirectoryAuthority(a, intelTarget, arm64Host)).toThrow('RUNTIME_DIRECTORY_TARGET_UNAPPROVED');
+  expect(() => checkDirectoryAuthority(a, intelTarget, intelHost)).toThrow('RUNTIME_DIRECTORY_TARGET_UNAPPROVED');
+});
+
+// Ordinary section metadata; no modified executable or loader is involved.
+test('directory definitions require a concrete file-backed code section and address', () => {
+  const segment = { name: '__TEXT', address: 0x1000n, size: 0x1000n, fileOffset: 0n, fileBytes: 0x800n, protection: 5 };
+  const section = { segment, segmentName: '__TEXT', name: '__text', address: 0x1200n, size: 0x40n, fileOffset: 0x200n, flags: 0x80000400 };
+  const check = (sections = [section], ordinal = 1, value = 0x1210n) =>
+    checkDirectoryDefinition(sections, ordinal, value, 0x80n, 0x800n);
+  expect(() => check()).not.toThrow();
+  expect(() => check([{ ...section, name: '__cstring' }, section], 2, section.address + section.size - 1n)).not.toThrow();
+  expect(() => check([], 1)).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([section], 0)).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([section], 1, section.address + section.size)).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([{ ...section, fileOffset: 0x7f0n }])).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([{ ...section, segment: { ...segment, size: 0x100n } }])).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([{ ...section, segmentName: '__DATA' }])).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([{ ...section, fileOffset: 0x201n }])).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+  expect(() => check([{ ...section, segment: { ...segment, protection: 1 } }])).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+});
+
+test('v3 profile keeps legacy defaults and rejects unrecognized versions', () => {
+  expect(releaseProfile()).toBe('runtime-only');
+  expect(releaseProfile('deployment-complete')).toBe('deployment-complete');
+  expect(releaseProfile('deployment-complete-native-v3')).toBe('deployment-complete-native-v3');
+  expect(() => releaseProfile('deployment-complete-native-v4' as never)).toThrow(/unsupported release profile/);
+});
+
 describe('offline deployment renderer', () => {
   let sources: Parameters<typeof renderDeploymentTemplates>[0];
   beforeAll(async () => {
@@ -116,7 +164,16 @@ beforeAll(async () => {
   ({ input, evidence, prepared, packagePath, expected, policy, material, artifact } = await buildSignedFixture(temporary));
 }, 120_000);
 
+const nativeProfile = 'deployment-complete-native-v3' as const;
+const directoryPath = 'native/patrick-directory.node';
+const directoryScenario = 'directory-module-info-relocated';
 async function buildSignedFixture(temporary: string, profile?: 'deployment-complete') {
+  const fixture = await buildFixture(temporary, profile);
+  return { ...fixture, expected: { ...fixture.expected, ...(profile && { profile }) } };
+}
+
+async function buildFixture(temporary: string, profile?: 'deployment-complete' | typeof nativeProfile) {
+  const v3 = profile === nativeProfile;
   const git = '/usr/bin/git';
   const commit = child(['--no-replace-objects', 'rev-parse', 'HEAD'], root, git).trim();
   const source = ['--source-root', root, '--source-commit', commit, ...(profile ? ['--profile', profile] : [])];
@@ -124,8 +181,14 @@ async function buildSignedFixture(temporary: string, profile?: 'deployment-compl
   const snapshot = JSON.parse(child([build, 'snapshot', ...source]));
   const built = join(temporary, 'original');
   const artifact = join(temporary, 'relocated');
-  child([build, 'build', ...source, '--output-root', built, ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
-  await cp(built, artifact, { recursive: true });
+  const flags = [...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : []),
+    ...(v3 ? ['--directory-authority', process.env.PATRICK_T25_TEST_RECIPE!,
+      '--directory-authority-sha256', process.env.PATRICK_T25_TEST_RECIPE_SHA256!, '--node-headers', process.env.PATRICK_T25_NODE_HEADERS_ARCHIVE!] : [])];
+  const buildAt = (path: string) => JSON.parse(child([build, 'build', ...source, '--output-root', path, ...flags]));
+  const first = buildAt(built);
+  const second = v3 ? buildAt(artifact) : undefined;
+  if (!v3) await cp(built, artifact, { recursive: true });
+  else expect(first.inventorySha256).toBe(second.inventorySha256);
   const metadata = 'metadata/runtime-materials.json';
   const inventory = JSON.parse(await readFile(join(artifact, metadata), 'utf8'));
   type Record = { role: string; bytes: number; path: string };
@@ -140,6 +203,7 @@ async function buildSignedFixture(temporary: string, profile?: 'deployment-compl
   const fromVite = createRequire(vite);
   const npm = await observe(join(dirname(process.execPath), 'npm'));
   const toolchain = {
+    ...(v3 && { directoryBuild: second.directoryBuild, repeatDirectoryBuild: first.directoryBuild, directoryNative: inventory.directoryNative }),
     observed: inventory.observed, source: inventory.source,
     node: await observe(process.execPath), npm: { ...npm, version: child([npm.path, '--global', '--version'], temporary).trim() },
     git: { path: git, version: child(['--version'], root, git).trim() },
@@ -165,19 +229,22 @@ async function buildSignedFixture(temporary: string, profile?: 'deployment-compl
   await writeFile(runner, scenarioRunner);
   const scenarios = [];
   const logs = [];
-  for (const id of ids) {
+  for (const id of v3 ? [...ids, directoryScenario] : ids) {
     const path = join(temporary, id + '.log');
     const argv = ['--permission', '--allow-addons', '--allow-fs-read=' + temporary + '/*', '--allow-fs-write=' + temporary + '/*',
       ...(process.allowedNodeEnvironmentFlags.has('--allow-net') ? ['--allow-net'] : []), runner, id, artifact, material.materialSha256, root];
     const startedUtc = new Date().toISOString();
-    const transcript = child(argv, temporary);
+    const transcript = v3 ? 'SYNTHETIC byte-contract fixture: ' + id + '\n' : child(argv, temporary);
     const endedUtc = new Date().toISOString();
     await writeFile(path, transcript);
     const hash = sha256(Buffer.from(transcript));
-    scenarios.push({ id, argv: [process.execPath, ...argv], cwd: temporary, startedUtc, endedUtc, exitCode: 0, status: 'passed', evidenceSha256: hash });
+    scenarios.push({ id, argv: v3 ? ['synthetic-evidence', id] : [process.execPath, ...argv], cwd: temporary, startedUtc, endedUtc, exitCode: 0, status: 'passed', evidenceSha256: hash });
     logs.push({ id, path, sha256: hash });
   }
-  const report = { format: 'patrick-emitted-runtime-execution-v1', materialSha256: material.materialSha256, inventorySha256: material.inventorySha256,
+  const report = { format: v3 ? 'patrick-emitted-runtime-execution-v2' : 'patrick-emitted-runtime-execution-v1',
+    ...(v3 && { directoryNative: inventory.directoryNative,
+      directoryHandshake: { format: 'patrick-directory-module', interfaceVersion: 1, napiVersion: 8 } }),
+    materialSha256: material.materialSha256, inventorySha256: material.inventorySha256,
     toolchainSha256: material.toolchainSha256, nativeSha256: inventory.native.sha256, observed: inventory.observed, native: inventory.native, entries, scenarios };
   const reportPath = join(temporary, 'report.json');
   await writeFile(reportPath, bytes(report));
@@ -185,17 +252,159 @@ async function buildSignedFixture(temporary: string, profile?: 'deployment-compl
   const prepared: PreparedEmittedRuntimeCandidate = await prepareEmittedRuntimeCandidate({ ...input, expectedMaterialSha256: material.materialSha256, evidence });
   const packagePath: string = join(temporary, 'candidate.json');
   const packed = await packEmittedRuntimeCandidate(prepared, { signatures: [signature(Buffer.from(prepared.signingManifestBase64, 'base64'))], outputPath: packagePath, outputStaging: staging });
-  const expected: EmittedReleaseExpectation = { ...(profile && { profile }), version: input.version, target: input.target, schema: input.schema, activeSchema: 1, source: input.expectedSource,
+  const expected: EmittedReleaseExpectation = { version: input.version, target: input.target, schema: input.schema, activeSchema: 1, source: input.expectedSource,
     runtime: { node: process.version, modules: process.versions.modules }, toolchainSha256: material.toolchainSha256, inventorySha256: material.inventorySha256,
     materialSha256: material.materialSha256, packageSha256: packed.packageSha256 };
   const policy: EmittedReleaseTrustPolicy = { keys: [{ id: 'fixture', publicKey }], executionReportSha256: evidence.report.sha256, requiredScenarios: logs.map(log => ({ id: log.id, evidenceSha256: log.sha256 })) };
-  return { input, evidence, prepared, packagePath, expected, policy, material, artifact };
+  return { input, evidence, prepared, packagePath, expected, policy, material, artifact, built };
 }
 
 afterAll(async () => {
   hook?.deregister();
   if (temporary) await rm(temporary, { recursive: true, force: true });
   expect(candidateLoads).toBe(0);
+});
+
+describe.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('independently configured local native build and synthetic byte admission', () => {
+  let v3: Awaited<ReturnType<typeof buildFixture>>;
+  let pins: NativeByteReleaseExpectation;
+  beforeAll(async () => {
+    const dir = join(temporary, 'native-v3');
+    await mkdir(dir);
+    v3 = await buildFixture(dir, nativeProfile);
+    pins = { ...v3.expected, profile: nativeProfile, directoryAuthoritySha256: process.env.PATRICK_T25_TEST_RECIPE_SHA256!,
+      directoryNativeSha256: sha256(await readFile(join(v3.built, directoryPath))) };
+  }, 120_000);
+
+  test('v3 binds both genuine build outputs and rejects consumption of its byte receipt', async () => {
+    const verifyNative = (expected = pins, policy = v3.policy) =>
+      verifyEmittedRuntimeCandidate(v3.packagePath, { staging, expected, policy });
+    const checked = await verifyNative();
+    const sidecar = JSON.parse(await readFile(v3.input.toolchain.path, 'utf8'));
+    expect(sidecar.directoryBuild.buildHost).toEqual(arm64Host);
+    expect(sidecar.directoryBuild.authority).toMatchObject({ buildHost: arm64Host, buildMode: 'native', target: arm64Target });
+    expect(checked.directoryAuthoritySha256).toBe(sha256(bytes(sidecar.directoryBuild.authority)));
+    expect(checked).toMatchObject({ profile: nativeProfile, directoryNativeSha256: pins.directoryNativeSha256,
+      nativeSha256: checked.runtime.native.sha256, runtime: { node: 'v24.9.0', modules: '137', napi: '10', directoryNative: {
+        path: directoryPath, fileType: 'MH_BUNDLE', architecture: process.arch, interfaceVersion: 1, napiVersion: 8 } } });
+    expect(checked.materials.filter(row => row.path.endsWith('.node')).map(row => [row.path, row.role, row.mode])).toEqual([
+      [directoryPath, 'directory-diagnostic-addon', '100755'], [checked.runtime.native.path, 'native-addon', '100755']]);
+    expect(checked.materials.filter(row => row.path.startsWith('deploy/'))).toHaveLength(5);
+    const binary = await readFile(join(v3.built, directoryPath));
+    expect(() => directoryIdentity(binary, process.arch === 'arm64' ? 'x64' : 'arm64')).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+    expect(() => directoryIdentity(binary.subarray(0, 32), checked.target.arch)).toThrow('RUNTIME_DIRECTORY_MATERIAL_INVALID');
+    const destination = join(temporary, 'native-stage');
+    // @ts-expect-error native byte receipts have no staging authority
+    await expect(stageVerifiedEmittedRuntime(checked, { staging, destination })).rejects.toThrow(/byte-only/);
+    // @ts-expect-error native byte receipts have no published deployment authority
+    await expect(withPublishedDeployment(checked, { staging, releasesRoot: temporary }, async () => 0)).rejects.toThrow(/complete deployment/);
+    await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+    for (const key of ['directoryAuthoritySha256','directoryNativeSha256','materialSha256'] as const)
+      await expect(verifyNative({ ...pins, [key]: '0'.repeat(64) })).rejects.toThrow(/independent|expected material/);
+    await expect(verifyNative(pins, { ...v3.policy, requiredScenarios: v3.policy.requiredScenarios.filter(s => s.id !== directoryScenario) })).rejects.toThrow(/scenario set/);
+    await expect(verifyNative(pins, { ...v3.policy, requiredScenarios: v3.policy.requiredScenarios.map(s =>
+      s.id === directoryScenario ? { ...s, evidenceSha256: '0'.repeat(64) } : s) })).rejects.toThrow(/scenario log/);
+    await expect(verifyNative(pins, { ...v3.policy, keys: [] })).rejects.toThrow();
+    await expect(verify()).resolves.toMatchObject({ profile: 'runtime-only' });
+    for (const profile of ['runtime-only', 'deployment-complete'] as const)
+      await expect(verifyEmittedRuntimeCandidate(v3.packagePath, { staging, policy: v3.policy, expected: { ...v3.expected, profile } })).rejects.toThrow(/profile/);
+    await expect(verifyEmittedRuntimeCandidate(packagePath, { staging, policy, expected: { ...pins, packageSha256: expected.packageSha256 } })).rejects.toThrow(/profile/);
+  }, 120_000);
+
+  test('v3 rejects a newly signed synthetic report for the wrong directory material', async () => {
+    const envelope = JSON.parse(await readFile(v3.packagePath, 'utf8'));
+    const name = 'evidence/runtime-execution.json';
+    const file = envelope.files.find((row: { path: string }) => row.path === name);
+    const report = JSON.parse(Buffer.from(file.data, 'base64').toString());
+    report.directoryNative.sha256 = '0'.repeat(64);
+    const raw = bytes(report);
+    file.data = raw.toString('base64');
+    Object.assign(envelope.manifest.artifacts.find((row: { path: string }) => row.path === name), { bytes: raw.length, sha256: sha256(raw) });
+    envelope.signatures = [signature(bytes(envelope.manifest))];
+    const encoded = bytes(envelope), copy = join(temporary, 'native-wrong-evidence');
+    await writeFile(copy, encoded);
+    await expect(verifyEmittedRuntimeCandidate(copy, { staging, expected: { ...pins, packageSha256: sha256(encoded) },
+      policy: { ...v3.policy, executionReportSha256: sha256(raw) } })).rejects.toThrow(/execution directory material/);
+  }, 60_000);
+
+  test('byte inspection checks the independent target and the observed builder host', async () => {
+    await expect(inspectEmittedRuntimeMaterial({ ...v3.input, target: intelTarget })).rejects.toThrow('RUNTIME_DIRECTORY_TARGET_UNAPPROVED');
+    const path = v3.input.toolchain.path, original = await readFile(path);
+    try {
+      const sidecar = JSON.parse(original.toString());
+      sidecar.directoryBuild.buildHost = { ...arm64Host, machine: 'x86_64' };
+      const raw = bytes(sidecar);
+      await writeFile(path, raw);
+      await expect(inspectEmittedRuntimeMaterial({ ...v3.input, toolchain: { path, sha256: sha256(raw) } }))
+        .rejects.toThrow('RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH');
+    } finally { await writeFile(path, original); }
+  }, 60_000);
+
+  test('standalone v3 verification requires Darwin SQLite metadata', async () => {
+    const path = join(v3.artifact, 'metadata/runtime-materials.json');
+    const original = await readFile(path);
+    const inv = JSON.parse(original.toString());
+    inv.native.format = 'elf';
+    try {
+      await writeFile(path, JSON.stringify(inv));
+      const result = spawnSync(process.execPath, [join(root, 'scripts/build-runtime.mjs'), 'verify',
+        '--profile', nativeProfile, '--artifact-root', v3.artifact], { encoding: 'utf8' });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('RUNTIME_NATIVE_PLATFORM_MISMATCH');
+    } finally { await writeFile(path, original); }
+  });
+
+  test('directory build identity binds the inventory after both sidecar inventory observations match', async () => {
+    const path = join(v3.artifact, 'metadata/runtime-materials.json'), sidecarPath = v3.input.toolchain.path;
+    const [original, originalTool] = await Promise.all([readFile(path), readFile(sidecarPath)]);
+    const inv = JSON.parse(original.toString()), tool = JSON.parse(originalTool.toString());
+    inv.directoryBuildSha256 = '0'.repeat(64);
+    const raw = bytes(inv), sha = sha256(raw);
+    for (const observation of [tool.inventory, tool.repeatInventory]) Object.assign(observation, { sha256: sha, bytes: raw.length });
+    const sidecar = bytes(tool);
+    try {
+      await writeFile(path, raw);
+      await writeFile(sidecarPath, sidecar);
+      await expect(inspectEmittedRuntimeMaterial({ ...v3.input, expectedInventorySha256: sha,
+        toolchain: { path: sidecarPath, sha256: sha256(sidecar) } })).rejects.toThrow('directory build identity mismatch');
+    } finally { await writeFile(path, original); await writeFile(sidecarPath, originalTool); }
+  }, 60_000);
+
+  test('v3 rejects changed role, mode, architecture, version and missing native rows at material inspection', async () => {
+    const path = join(v3.artifact, 'metadata/runtime-materials.json');
+    const original = await readFile(path);
+    const wrong = '0'.repeat(64);
+    type Row = { path: string; mode: string; role: string; sha256: string; bytes: number };
+    try {
+      for (const change of ['role','mode','architecture','missing-directory','missing-sqlite','duplicate','version','unknown-field','toolchain'] as const) {
+        const inv = JSON.parse(original.toString());
+        const row = inv.files.find((row: Row) => row.path === directoryPath);
+        if (change === 'role') row.role = 'native-addon';
+        if (change === 'mode') row.mode = '100644';
+        if (change === 'architecture') inv.directoryNative.architecture = process.arch === 'arm64' ? 'x64' : 'arm64';
+        if (change === 'missing-directory' || change === 'missing-sqlite') inv.files = inv.files.filter((r: Row) => r.path !== (change === 'missing-directory' ? directoryPath : inv.native.path));
+        if (change === 'duplicate') inv.files.splice(inv.files.indexOf(row), 0, { ...row });
+        if (change === 'version') inv.schemaVersion = 2;
+        if (change === 'unknown-field') inv.future = 4;
+        if (change === 'toolchain') inv.directoryBuildSha256 = wrong;
+        const raw = bytes(inv);
+        await writeFile(path, raw);
+        const errors = { role: /role.*mode/, mode: /role.*mode/, architecture: /directory native identity/,
+          'missing-directory': /missing native material/, 'missing-sqlite': /missing native material/, duplicate: /duplicate/,
+          version: /unsupported inventory/, 'unknown-field': /inventory fields/, toolchain: /toolchain inventory mismatch/ };
+        await expect(inspectEmittedRuntimeMaterial({ ...v3.input, expectedInventorySha256: sha256(raw) })).rejects.toThrow(errors[change]);
+      }
+    } finally { await writeFile(path, original); }
+    const tool = await readFile(v3.input.toolchain.path);
+    try {
+      const sidecar = JSON.parse(tool.toString());
+      sidecar.repeatDirectoryBuild.objects[0].sha256 = wrong;
+      const altered = bytes(sidecar);
+      await writeFile(v3.input.toolchain.path, altered);
+      await expect(inspectEmittedRuntimeMaterial({ ...v3.input, toolchain: {
+        path: v3.input.toolchain.path, sha256: sha256(altered) } })).rejects.toThrow(/repeat directory build mismatch/);
+    } finally { await writeFile(v3.input.toolchain.path, tool); }
+  }, 120_000);
 });
 
 describe('signed deployment material', () => {
@@ -206,6 +415,26 @@ beforeAll(async () => {
   await mkdir(dir);
   complete = await buildSignedFixture(dir, 'deployment-complete');
 }, 120_000);
+
+test('legacy profiles keep their own runtime target checks independently of native recipe approval', async () => {
+  const other = process.arch === 'arm64' ? intelTarget : arm64Target;
+  for (const original of [input, complete.input]) {
+    await expect(inspectEmittedRuntimeMaterial({ ...original, target: other })).rejects.toThrow('target/runtime mismatch');
+  }
+}, 60_000);
+
+test('standalone v2 verification rejects v3 runtime observation fields', async () => {
+  const path = join(complete.artifact, 'metadata/runtime-materials.json'), original = await readFile(path);
+  const inv = JSON.parse(original.toString());
+  inv.observed.napi = '10';
+  try {
+    await writeFile(path, JSON.stringify(inv));
+    const result = spawnSync(process.execPath, [join(root, 'scripts/build-runtime.mjs'), 'verify',
+      '--profile', 'deployment-complete', '--artifact-root', complete.artifact], { encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('RUNTIME_INVENTORY_INVALID');
+  } finally { await writeFile(path, original); }
+});
 
 test('requires an independent complete profile pin and the genuine deployment stage', async () => {
   await expect(verify({ profile: 'deployment-complete' })).rejects.toThrow(/profile/);

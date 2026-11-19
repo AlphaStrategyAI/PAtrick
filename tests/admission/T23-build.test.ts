@@ -138,6 +138,85 @@ afterAll(async () => {
 });
 
 describe('T23 installed runtime build and bootstrap', () => {
+  test('v3 requires explicit independent native build authority', () => {
+    const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete-native-v3'];
+    const capture = runNode([buildScript, 'snapshot', ...selection]);
+    expect(capture.status, output(capture)).toBe(0);
+    const snapshot = JSON.parse(String(capture.stdout));
+    expect(snapshot.profile).toBe('deployment-complete-native-v3');
+    const build = runNode([buildScript, 'build', ...selection, '--source-snapshot', snapshot.snapshotSha256,
+      '--output-root', join(temporary, 'missing-v3-authority')]);
+    expect(build.status).toBe(1);
+    expect(output(build)).toContain('RUNTIME_DIRECTORY_AUTHORITY_REQUIRED');
+  });
+
+  test('legacy byte verification rejects a native-v3 version claim on the old graph', async () => {
+    const artifact = await copyArtifact('mixed');
+    const path = join(artifact, 'metadata/runtime-materials.json');
+    const inventory = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(path, JSON.stringify({ ...inventory, directoryBuildSha256: '0'.repeat(64) }));
+    const result = runNode([buildScript, 'verify', '--artifact-root', artifact]);
+    expect(result.status, output(result)).toBe(1);
+    expect(output(result)).toContain('RUNTIME_INVENTORY_INVALID');
+  });
+
+  test('legacy inventory verifies only its declared observation fields', async () => {
+    const artifact = await copyArtifact('legacy-observation');
+    const path = join(artifact, 'metadata/runtime-materials.json');
+    const inv = JSON.parse(await readFile(path, 'utf8'));
+    inv.observed.napi = '10';
+    await writeFile(path, JSON.stringify(inv));
+    const result = runNode([buildScript, 'verify', '--artifact-root', artifact]);
+    expect(result.status, output(result)).toBe(1);
+    expect(output(result)).toContain('RUNTIME_INVENTORY_INVALID');
+  });
+
+  test.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('v3 requires independently supplied linker libraries', async () => {
+    const authority = JSON.parse(await readFile(process.env.PATRICK_T25_TEST_RECIPE!, 'utf8'));
+    delete authority.linkerLibraries;
+    const path = join(temporary, 'no-linker-inputs.json'), raw = JSON.stringify(authority);
+    await writeFile(path, raw);
+    const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete-native-v3'];
+    const snapshot = runNode([buildScript, 'snapshot', ...selection]);
+    expect(snapshot.status, output(snapshot)).toBe(0);
+    const result = runNode([buildScript, 'build', ...selection, '--source-snapshot', JSON.parse(String(snapshot.stdout)).snapshotSha256,
+      '--directory-authority', path, '--directory-authority-sha256', createHash('sha256').update(raw).digest('hex'),
+      '--node-headers', process.env.PATRICK_T25_NODE_HEADERS_ARCHIVE!, '--output-root', join(temporary, 'no-linker-inputs')]);
+    expect(result.status, output(result).slice(0, 160)).toBe(1);
+    expect(output(result)).toContain('RUNTIME_DIRECTORY_LINKER_CLOSURE_INVALID');
+  }, 120_000);
+
+  test.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('v3 rejects an unapproved recipe, compiler or SQLite observation', async () => {
+    const recipePath = process.env.PATRICK_T25_TEST_RECIPE!;
+    const approved = await readFile(recipePath);
+    const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete-native-v3'];
+    const capture = runNode([buildScript, 'snapshot', ...selection]);
+    expect(capture.status, output(capture)).toBe(0);
+    const args = [buildScript, 'build', ...selection, '--source-snapshot', JSON.parse(String(capture.stdout)).snapshotSha256,
+      '--node-headers', process.env.PATRICK_T25_NODE_HEADERS_ARCHIVE!, '--output-root', join(temporary, 'refused-native')];
+    const mismatch = runNode([...args, '--directory-authority', recipePath, '--directory-authority-sha256', '0'.repeat(64)]);
+    expect(output(mismatch)).toContain('RUNTIME_DIRECTORY_AUTHORITY_MISMATCH');
+    // Preserve the canonical key order in this supplied test configuration.
+    for (const [key, code] of [
+      ['recipe', 'RUNTIME_DIRECTORY_MATERIAL_INVALID'], ['compiler', 'RUNTIME_DIRECTORY_TOOL_MISMATCH'],
+      ['unmatched-target', 'RUNTIME_DIRECTORY_RECIPE_TARGET_MISMATCH'], ['linker-library', 'RUNTIME_DIRECTORY_LINKER_LIBRARY_MISMATCH'], ['sqlite', 'RUNTIME_DIRECTORY_SQLITE_OBSERVATION_MISMATCH'],
+    ]) {
+      const a = JSON.parse(approved.toString());
+      if (key === 'recipe') a.recipe = 'unapproved';
+      if (key === 'compiler') a.tools.compiler = '0'.repeat(64);
+      if (key === 'unmatched-target') a.target.arch = 'x64';
+      if (key === 'linker-library') a.linkerLibraries['libtapi.dylib'] = '0'.repeat(64);
+      if (key === 'sqlite') a.sqliteObservation.packageFilesSha256 = '0'.repeat(64);
+      const raw = JSON.stringify(a);
+      const file = join(temporary, key + '.json');
+      await writeFile(file, raw);
+      const run = runNode([...args, '--directory-authority', file, '--directory-authority-sha256',
+        createHash('sha256').update(raw).digest('hex')]);
+      expect(run.status).toBe(1);
+      expect(output(run)).toContain(code);
+    }
+  }, 120_000);
+
   test('emits one exhaustive safe runtime inventory and verifies relocated bytes', async () => {
     const inventory = JSON.parse(await readFile(join(relocated, 'metadata/runtime-materials.json'), 'utf8')) as {
       schemaVersion: number;
