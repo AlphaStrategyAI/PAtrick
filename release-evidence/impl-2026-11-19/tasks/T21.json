@@ -1,6 +1,6 @@
 {
   "task": "T21",
-  "completedAt": "2026-11-19T18:02:07.263Z",
+  "completedAt": "2026-11-19T18:53:11.984Z",
   "productClauses": [
     "C8"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
+        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
-        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
+        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
+        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
       },
       "evidenceFile": "evidence/T21/network-supervisor.log",
-      "evidenceSha256": "9788d71a8c60bdfdf63b291b4ed80dce494b653dacf73b269de904e6f5be5a4f",
-      "durationMs": 2263
+      "evidenceSha256": "8b0ff137a51872b5f8cc5009e6fe7109896148de2c4c245f1ff8ade0e8471476",
+      "durationMs": 2740
     },
     {
       "id": "network-browser",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
+        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
-        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
+        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
+        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
       },
       "evidenceFile": "evidence/T21/network-browser.log",
-      "evidenceSha256": "f9693cde8b266e2848d7f3b92d460f3bd570f489d6b8ba372be6187a6e1e47ce",
-      "durationMs": 6163
+      "evidenceSha256": "0bb1d7236a88bdfc826baf5d2127ad3f5058a584363953608f41faaedf497438",
+      "durationMs": 6177
     },
     {
       "id": "registered-device-vpn-admission",
@@ -60,7 +60,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
+        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -70,12 +70,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
-        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
+        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
+        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
       },
       "evidenceFile": "evidence/T21/registered-device-vpn-admission.log",
-      "evidenceSha256": "4d674e8062b2f595a35deffc8729b2cccdf6c3fa85bb8567c51c0b638e6453ee",
-      "durationMs": 788,
+      "evidenceSha256": "e95062f8b56a553f0cd9c5f7fdd5b67f857fc2a0014ecc2dd094230447627b95",
+      "durationMs": 781,
       "blockedReason": "登记设备的双 VPN 启动顺序、企业 DNS 与重连验收需要实机证据；本机没有登记设备和观测记录，用例按设计跳过。"
     }
   ]
