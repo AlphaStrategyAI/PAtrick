@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "kind": "test-only-intel-directory-inputs",
+  "source": {
+    "path": "packages/integrations/sources/native/directory-module.cc",
+    "gitBlob": "18225180547a5f36a8a569c76b52eb4326d3264e"
+  },
+  "archive": {
+    "name": "node-v24.9.0-headers.tar.xz",
+    "bytes": 577884,
+    "sha256": "4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c157fbf48"
+  },
+  "inputs": [
+    {
+      "name": "directory-module.cc",
+      "destination": "source/directory-module.cc",
+      "bytes": 1983,
+      "sha256": "5f38a196db957b9853cfd89f537827ac578e675f488df63eada7a3ff17d52c7d"
+    },
+    {
+      "name": "node_api.h",
+      "destination": "node/node_api.h",
+      "bytes": 10592,
+      "sha256": "d14db85d16f182045c42745a6e44b96e932dfe6e3bfcaac7a1096fae8412c579",
+      "archivePath": "node-v24.9.0/include/node/node_api.h"
+    },
+    {
+      "name": "node_api_types.h",
+      "destination": "node/node_api_types.h",
+      "bytes": 1603,
+      "sha256": "8d5d854088d5725fec9775510e0aeeeb790a41ad083c49bb721d950b86e6bd61",
+      "archivePath": "node-v24.9.0/include/node/node_api_types.h"
+    },
+    {
+      "name": "js_native_api.h",
+      "destination": "node/js_native_api.h",
+      "bytes": 32399,
+      "sha256": "c024813df81c100be91fa339b57294fbf5cca3a93b9c91775db9e886dedad114",
+      "archivePath": "node-v24.9.0/include/node/js_native_api.h"
+    },
+    {
+      "name": "js_native_api_types.h",
+      "destination": "node/js_native_api_types.h",
+      "bytes": 7033,
+      "sha256": "0410c31e227f81e2981363c4d543f4832ac3df785343ec64cee621742ff8a034",
+      "archivePath": "node-v24.9.0/include/node/js_native_api_types.h"
+    },
+    {
+      "name": "stdbool.h",
+      "destination": "standard/stdbool.h",
+      "bytes": 224,
+      "sha256": "80da6d5f272a5de40dac9a3ceaaf70aebb54926c99fba2b23527b81d2837b61f"
+    },
+    {
+      "name": "stddef.h",
+      "destination": "standard/stddef.h",
+      "bytes": 174,
+      "sha256": "75f5561940143023b072cffad0bad124e7090d5216ec55709a5fc1daaca39f44"
+    },
+    {
+      "name": "stdint.h",
+      "destination": "standard/stdint.h",
+      "bytes": 504,
+      "sha256": "584da626b5dcf10acd2c27d2ef5ffdf4ea8c9157eacd310043aa13be2242526a"
+    },
+    {
+      "name": "abi-check.h",
+      "destination": "checks/abi-check.h",
+      "bytes": 3044,
+      "sha256": "b368cd27bd5a4c6e15ea9825c9d14b1c1e3f823e00f1d1080a591fb1bf4dcca7"
+    }
+  ]
+}
