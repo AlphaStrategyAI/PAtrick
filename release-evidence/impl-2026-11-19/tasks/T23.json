@@ -1,6 +1,6 @@
 {
   "task": "T23",
-  "completedAt": "2026-11-19T17:01:30.267Z",
+  "completedAt": "2026-11-19T18:04:11.204Z",
   "productClauses": [
     "C8"
   ],
@@ -12,22 +12,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T23/release-candidate-admission.log",
-      "evidenceSha256": "7902093e0977fadf0de7c7f0195ad8ebebb6c1a69b51197d3787e66b28fbc20c",
-      "durationMs": 16954
+      "evidenceSha256": "2c740e0f247978b8cef296bc7537679642b4b85d5886267a5598d8ad2be87c51",
+      "durationMs": 16981
     },
     {
       "id": "runtime-build-and-relocate",
@@ -36,22 +36,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T23/runtime-build-and-relocate.log",
-      "evidenceSha256": "6aafa282a568e6e8439481f487cc37cebe059f03b9bb50e396e57f78789bce07",
-      "durationMs": 103047
+      "evidenceSha256": "9c0064b306876fb402e9d502956a608a31874a8fc2cbeb928b15a991b78fdd1f",
+      "durationMs": 103101
     },
     {
       "id": "empty-host-install-and-upgrade",
@@ -60,22 +60,22 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T23/empty-host-install-and-upgrade.log",
-      "evidenceSha256": "52025c2fed0aa8ac3dc285be1878e316097eb4188685620946af5dd2e4e514de",
-      "durationMs": 1394,
+      "evidenceSha256": "d22812dbed863d6a369751965beb8d4e17cb73c7d58564d6b70c0901f45e4cd9",
+      "durationMs": 1392,
       "blockedReason": "空机安装、重启与升级只对真实安装目录有证据；本机没有已安装的 PAtrick.app，候选包的 installable 仍为 false。"
     }
   ]

@@ -1,6 +1,6 @@
 {
   "task": "T09",
-  "completedAt": "2026-11-19T16:56:26.356Z",
+  "completedAt": "2026-11-19T17:59:02.299Z",
   "productClauses": [
     "C7"
   ],
@@ -12,22 +12,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T09/executor-terminal-contract.log",
-      "evidenceSha256": "40a5d314b992c7f89b8b2074a93d060eb7ebb487135ac41262afbc844d5bea98",
-      "durationMs": 2859
+      "evidenceSha256": "b08584630706484ba54856ac6b17fcedd990df73aaafd4a9ab8ac96759cb5c3d",
+      "durationMs": 2792
     },
     {
       "id": "executor-production-admission",
@@ -36,23 +36,48 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T09/executor-production-admission.log",
-      "evidenceSha256": "378f8782dcd4f6f4b6a55c4b32cd1ecb988d75092893dabc0fdbc6377e8d98fc",
-      "durationMs": 4644,
-      "blockedReason": "三执行器准入要求在 T09 交付的 Lima 隔离虚拟机内运行；本机不是该虚拟机的来宾，探针记录 blocked。"
+      "evidenceSha256": "c501dc778d0ef92aa43a0f46bbeba5f30900b123a25fb7170e3d51fcf8d7d749",
+      "durationMs": 4632,
+      "blockedReason": "三执行器准入已在 T09 的 Lima 隔离来宾内跑过，记录见 docs/operations/evidence/executor-admission-guest.json：隔离标记存在，Codex CLI 0.163.0 与 DSH 0.2.2-rc.2 已装在来宾内，但来宾内没有模型凭据，实时终端与 Harness 领域工具调用没有成功；Grok Build 只发布了 macOS aarch64 版本，来宾内没有可安装的 Linux 版本。"
+    },
+    {
+      "id": "executor-guest-evidence",
+      "command": "npm exec -- vitest run tests/admission/T09-evidence.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
+      },
+      "evidenceFile": "evidence/T09/executor-guest-evidence.log",
+      "evidenceSha256": "4d62ddd05ed348d0e1afea16bd7720089222e4595c4461c178fb072f98eef6c9",
+      "durationMs": 3575,
+      "note": "逐后端记录安装版本、隔离状态与受阻原因；来宾内的运行结果见 docs/operations/evidence/executor-admission-guest.json。"
     }
   ]
 }

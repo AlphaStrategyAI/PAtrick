@@ -1,6 +1,6 @@
 {
   "task": "T19",
-  "completedAt": "2026-11-19T16:59:10.447Z",
+  "completedAt": "2026-11-19T18:01:51.218Z",
   "productClauses": [
     "C3",
     "C9"
@@ -13,22 +13,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T19/six-metrics.log",
-      "evidenceSha256": "87a148982765c479f24bb3ef2b08ce97f509641f5645fb9e22c5a6494cf4582f",
-      "durationMs": 1543
+      "evidenceSha256": "067c30ae09afe1b75145001f28b66c3d02a494e42ac1ab503058c0f6c3c4e82a",
+      "durationMs": 1575
     },
     {
       "id": "stats-browser",
@@ -37,22 +37,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T19/stats-browser.log",
-      "evidenceSha256": "e2384d32444e3cc06bcb80e03362bb34548951de011c42d7995e7fe8fa87c525",
-      "durationMs": 3602
+      "evidenceSha256": "0bfd2c24396caa6acbcb76122b20d7aea4c33b47438accb63b55da7391cb0d2a",
+      "durationMs": 3573
     }
   ]
 }

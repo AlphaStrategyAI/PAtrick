@@ -1,6 +1,6 @@
 {
   "task": "T21",
-  "completedAt": "2026-11-19T16:59:26.402Z",
+  "completedAt": "2026-11-19T18:02:07.263Z",
   "productClauses": [
     "C8"
   ],
@@ -12,22 +12,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T21/network-supervisor.log",
-      "evidenceSha256": "0e783c6b9a9bcb77f382b1cc5d8aa4d346b7db31be0a61ee5dbcbfd08288b5ca",
-      "durationMs": 2267
+      "evidenceSha256": "9788d71a8c60bdfdf63b291b4ed80dce494b653dacf73b269de904e6f5be5a4f",
+      "durationMs": 2263
     },
     {
       "id": "network-browser",
@@ -36,22 +36,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T21/network-browser.log",
-      "evidenceSha256": "2588e087895804d8330abe52b82076eef363474fd4a4b547dc7381423bfa50dd",
-      "durationMs": 6058
+      "evidenceSha256": "f9693cde8b266e2848d7f3b92d460f3bd570f489d6b8ba372be6187a6e1e47ce",
+      "durationMs": 6163
     },
     {
       "id": "registered-device-vpn-admission",
@@ -60,22 +60,22 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T21/registered-device-vpn-admission.log",
-      "evidenceSha256": "a26257215f3837f0e05c7e87f9fe21dc8093d91c52ed80ef44eb12fd2c23eceb",
-      "durationMs": 792,
+      "evidenceSha256": "4d674e8062b2f595a35deffc8729b2cccdf6c3fa85bb8567c51c0b638e6453ee",
+      "durationMs": 788,
       "blockedReason": "登记设备的双 VPN 启动顺序、企业 DNS 与重连验收需要实机证据；本机没有登记设备和观测记录，用例按设计跳过。"
     }
   ]

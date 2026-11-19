@@ -1,56 +1,57 @@
 $ npm exec -- playwright test --config tests/visual/T24.config.ts --reporter=line
-exit=0 signal=none durationMs=40049
+exit=0 signal=none durationMs=39903
 --- stdout ---
 
 
-Running 40 tests using 1 worker
+Running 41 tests using 1 worker
 
 
 
-[1/40] tests/visual/T24-baseline.spec.ts:22:5 › en settings index › desktop runtime baseline and locked design comparison
-[2/40] tests/visual/T24-baseline.spec.ts:22:5 › zh settings index › desktop runtime baseline and locked design comparison
-[3/40] tests/visual/T24-edit.spec.ts:212:1 › frame-coverage · paired editing registration, saved file and export transitions
-[4/40] tests/visual/T24-feishu.spec.ts:296:3 › en owner manually recovers pairing after a lost rejection response without a credential provider
-[5/40] tests/visual/T24-feishu.spec.ts:296:3 › zh owner manually recovers pairing after a lost rejection response without a credential provider
-[6/40] tests/visual/T24-feishu.spec.ts:332:1 › frame-coverage · bilingual Feishu navigation, setup, pairing, owner and preview
-[7/40] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › desktop six described keyboard links in one column
-[8/40] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › tablet six described keyboard links in one column
-[9/40] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › mobile six described keyboard links in one column
-[10/40] tests/visual/T24-settings-index.spec.ts:99:5 › en Settings index › demo labels the overview and makes no service request
-[11/40] tests/visual/T24-settings-index.spec.ts:140:5 › en Settings index › 200% browser zoom keeps overview and six links reachable
-[12/40] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › desktop six described keyboard links in one column
-[13/40] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › tablet six described keyboard links in one column
-[14/40] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › mobile six described keyboard links in one column
-[15/40] tests/visual/T24-settings-index.spec.ts:99:5 › zh Settings index › demo labels the overview and makes no service request
-[16/40] tests/visual/T24-settings-index.spec.ts:140:5 › zh Settings index › 200% browser zoom keeps overview and six links reachable
-[17/40] tests/visual/T24-settings-index.spec.ts:256:5 › en live Settings heading layout › places the single disabled checks action at the locked desktop bounds
-[18/40] tests/visual/T24-settings-index.spec.ts:316:5 › en live Settings heading layout › topbar tint is limited to the Settings home route
-[19/40] tests/visual/T24-settings-index.spec.ts:329:5 › en live Settings heading layout › initial session verification keeps the home tint and one status until the real session returns
-[20/40] tests/visual/T24-settings-index.spec.ts:379:5 › en live Settings heading layout › 401 keeps the home tint and one sign-in prompt without checks controls
-[21/40] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › desktop wraps long explanatory text without covering actions
-[22/40] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › tablet wraps long explanatory text without covering actions
-[23/40] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › mobile wraps long explanatory text without covering actions
-[24/40] tests/visual/T24-settings-index.spec.ts:256:5 › zh live Settings heading layout › places the single disabled checks action at the locked desktop bounds
-[25/40] tests/visual/T24-settings-index.spec.ts:316:5 › zh live Settings heading layout › topbar tint is limited to the Settings home route
-[26/40] tests/visual/T24-settings-index.spec.ts:329:5 › zh live Settings heading layout › initial session verification keeps the home tint and one status until the real session returns
-[27/40] tests/visual/T24-settings-index.spec.ts:379:5 › zh live Settings heading layout › 401 keeps the home tint and one sign-in prompt without checks controls
-[28/40] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › desktop wraps long explanatory text without covering actions
-[29/40] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › tablet wraps long explanatory text without covering actions
-[30/40] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › mobile wraps long explanatory text without covering actions
-[31/40] tests/visual/T24-settings-index.spec.ts:450:1 › Settings topbar keeps language, consultation and sign-out working
-[32/40] tests/visual/T24-settings-index.spec.ts:468:1 › unauthenticated Settings keeps its title without a checks action
-[33/40] tests/visual/T24-settings-index.spec.ts:478:1 › all held session requests wait for release and receive real authenticated responses
-[34/40] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on callback failure
-[35/40] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on page close
-[36/40] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on page close then callback failure
-[37/40] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-knowledge
-[38/40] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-delegation
-[39/40] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-system
-[40/40] tests/visual/T24.spec.ts:192:1 › frame-coverage · paired Vault review, back and apply runtime transitions
-  40 passed (39.4s)
+[1/41] tests/visual/T24-baseline.spec.ts:22:5 › en settings index › desktop runtime baseline and locked design comparison
+[2/41] tests/visual/T24-baseline.spec.ts:22:5 › zh settings index › desktop runtime baseline and locked design comparison
+[3/41] tests/visual/T24-edit.spec.ts:212:1 › frame-coverage · paired editing registration, saved file and export transitions
+[4/41] tests/visual/T24-feishu.spec.ts:296:3 › en owner manually recovers pairing after a lost rejection response without a credential provider
+[5/41] tests/visual/T24-feishu.spec.ts:296:3 › zh owner manually recovers pairing after a lost rejection response without a credential provider
+[6/41] tests/visual/T24-feishu.spec.ts:332:1 › frame-coverage · bilingual Feishu navigation, setup, pairing, owner and preview
+[7/41] tests/visual/T24-feishu.spec.ts:352:1 › the owner stages a new credential and rotates it through the trusted change
+[8/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › desktop six described keyboard links in one column
+[9/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › tablet six described keyboard links in one column
+[10/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › mobile six described keyboard links in one column
+[11/41] tests/visual/T24-settings-index.spec.ts:99:5 › en Settings index › demo labels the overview and makes no service request
+[12/41] tests/visual/T24-settings-index.spec.ts:140:5 › en Settings index › 200% browser zoom keeps overview and six links reachable
+[13/41] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › desktop six described keyboard links in one column
+[14/41] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › tablet six described keyboard links in one column
+[15/41] tests/visual/T24-settings-index.spec.ts:28:7 › zh Settings index › mobile six described keyboard links in one column
+[16/41] tests/visual/T24-settings-index.spec.ts:99:5 › zh Settings index › demo labels the overview and makes no service request
+[17/41] tests/visual/T24-settings-index.spec.ts:140:5 › zh Settings index › 200% browser zoom keeps overview and six links reachable
+[18/41] tests/visual/T24-settings-index.spec.ts:256:5 › en live Settings heading layout › places the single disabled checks action at the locked desktop bounds
+[19/41] tests/visual/T24-settings-index.spec.ts:316:5 › en live Settings heading layout › topbar tint is limited to the Settings home route
+[20/41] tests/visual/T24-settings-index.spec.ts:329:5 › en live Settings heading layout › initial session verification keeps the home tint and one status until the real session returns
+[21/41] tests/visual/T24-settings-index.spec.ts:379:5 › en live Settings heading layout › 401 keeps the home tint and one sign-in prompt without checks controls
+[22/41] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › desktop wraps long explanatory text without covering actions
+[23/41] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › tablet wraps long explanatory text without covering actions
+[24/41] tests/visual/T24-settings-index.spec.ts:402:7 › en live Settings heading layout › mobile wraps long explanatory text without covering actions
+[25/41] tests/visual/T24-settings-index.spec.ts:256:5 › zh live Settings heading layout › places the single disabled checks action at the locked desktop bounds
+[26/41] tests/visual/T24-settings-index.spec.ts:316:5 › zh live Settings heading layout › topbar tint is limited to the Settings home route
+[27/41] tests/visual/T24-settings-index.spec.ts:329:5 › zh live Settings heading layout › initial session verification keeps the home tint and one status until the real session returns
+[28/41] tests/visual/T24-settings-index.spec.ts:379:5 › zh live Settings heading layout › 401 keeps the home tint and one sign-in prompt without checks controls
+[29/41] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › desktop wraps long explanatory text without covering actions
+[30/41] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › tablet wraps long explanatory text without covering actions
+[31/41] tests/visual/T24-settings-index.spec.ts:402:7 › zh live Settings heading layout › mobile wraps long explanatory text without covering actions
+[32/41] tests/visual/T24-settings-index.spec.ts:450:1 › Settings topbar keeps language, consultation and sign-out working
+[33/41] tests/visual/T24-settings-index.spec.ts:468:1 › unauthenticated Settings keeps its title without a checks action
+[34/41] tests/visual/T24-settings-index.spec.ts:478:1 › all held session requests wait for release and receive real authenticated responses
+[35/41] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on callback failure
+[36/41] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on page close
+[37/41] tests/visual/T24-settings-index.spec.ts:504:3 › held session requests are released on page close then callback failure
+[38/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-knowledge
+[39/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-delegation
+[40/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-system
+[41/41] tests/visual/T24.spec.ts:192:1 › frame-coverage · paired Vault review, back and apply runtime transitions
+  41 passed (39.2s)
 
 --- stderr ---
-[WebServer] (node:68637) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:93801) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:68641) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:93803) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

@@ -1,6 +1,6 @@
 {
   "task": "T08",
-  "completedAt": "2026-11-19T16:56:18.853Z",
+  "completedAt": "2026-11-19T17:58:51.298Z",
   "productClauses": [
     "C1",
     "C2",
@@ -14,22 +14,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "4cc8e19edff67b47c4a4ccdccd425802b56ea762",
+        "code": "f17f971268b35ec186de02491f6332d36ef3e9ee",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "e476e4c5734e75980d97b92607452216b12c673ee0fd153cc63d3eddd617b1d0",
+        "tests": "bd340e55a759ebca4169c0061b28931e2cb20be392430099aee78006fc20e5c2",
         "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T08/delegation-and-budget.log",
-      "evidenceSha256": "a384ee83b42da4abd3213421a853560773e858f1fa30e984ec9204ad428e711b",
-      "durationMs": 1489
+      "evidenceSha256": "2a99e88368b0411fdc76060c232ec6ad0ae7472669e58af30240108d8afefb89",
+      "durationMs": 1516
     }
   ]
 }
