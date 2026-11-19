@@ -18,8 +18,11 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, vi } from 'vitest';
 import { GITHUB_LIVE_NETWORK, verifyGithubSignature } from '../../packages/integrations/sources/github.js';
 import { admitChange, createSourceRegistry } from '../../packages/integrations/sources/registry.js';
+import { dispatchSourceWork, sourceWorkId } from '../../packages/integrations/sources/work-dispatch.js';
+import type { HubWireEvent } from '../../packages/integrations/autoloop/client.js';
 import { createBlobStore, type BlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 // Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
 vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
@@ -102,6 +105,40 @@ function directoryDraft(target: string, extras: { excludes?: string[]; hasTrigge
     frequency: 'poll',
     history: 'none' as const,
   };
+}
+
+type PublishedEvent = { body: HubWireEvent; duplicate: boolean };
+
+function recordingHub() {
+  const published: PublishedEvent[] = [];
+  return {
+    published,
+    postEvent(body: HubWireEvent) {
+      const duplicate = published.some((entry) => entry.body.id === body.id);
+      published.push({ body, duplicate });
+      return Promise.resolve({ event: published.length, duplicate, routed: ['来源变化'] });
+    },
+  };
+}
+
+function seedMandate(db: SqliteDatabase, domain = 'personal', mandateId = 'mandate-source'): void {
+  db.prepare(`INSERT INTO mandate_types (
+    type_id, account_id, data_domain, actions_json, resources_json, effects_json, domains_json, risk, level,
+    budget_micros, config_version, schema_version, created_at
+  ) VALUES ('type-source', 'owner', ?, '[]', '[]', '[]', '[]', 'low', 'L1', 5000, 1, '1.0', ?)`).run(domain, NOW);
+  db.prepare(`INSERT INTO mandates (
+    mandate_id, type_id, account_id, data_domain, status, actions_json, resources_json, effects_json, domains_json,
+    risk, level, budget_micros, expires_at, revision, scope_hash, config_version, schema_version, created_at, updated_at
+  ) VALUES (?, 'type-source', 'owner', ?, 'active', '[]', '[]', '[]', '[]', 'low', 'L1', 5000,
+    '2027-01-01T00:00:00.000Z', 0, ?, 1, '1.0', ?, ?)`).run(mandateId, domain, 'e'.repeat(64), NOW, NOW);
+}
+
+function seedExternalMethodPolicy(db: SqliteDatabase, domain = 'personal'): void {
+  db.prepare(`INSERT INTO evaluation_policies (
+    policy_id, policy_version, data_domain, dataset_id, min_samples, threshold_thousandths, budget_micros,
+    external_method_id, external_method_revision, external_rules_json, schema_version, created_at
+  ) VALUES ('policy-external', 1, ?, 'dataset-external', 1, 0, 0, 'method-demand-interview', '2026.1', '[]', '1.0', ?)`)
+    .run(domain, NOW);
 }
 
 function githubDraft() {
@@ -672,28 +709,9 @@ test('review and bot deliveries are saved once and do not collect or create work
 test('the source migration appends without changing earlier files', () => {
   const manifest = JSON.parse(readFileSync(join(MIGRATIONS, 'manifest.json'), 'utf8')) as { file: string; sha256: string }[];
   expect(manifest.map((entry) => entry.file)).toEqual([
-    '0002_core.sql',
-    '0003_auth_control.sql',
-    '0004_hub_work.sql',
-    '0005_sources.sql',
-    '0006_vault_evidence.sql',
-    '0007_standards.sql',
-    '0008_admission_budget.sql',
-    '0010_answers_channels.sql',
-    '0011_conversations.sql',
-    '0012_effects_outcomes.sql',
-    '0013_views.sql',
-    '0017_settings.sql',
-    '0018_delegation_control.sql',
-    '0019_stats.sql',
-    '0020_http_sources.sql',
-    '0021_notifications.sql',
-    '0022_network.sql',
-    '0023_recovery.sql',
-    '0024_settings_recoveries.sql',
-    '0025_source_revision_provenance.sql',
-    '0026_directory_commit_generations.sql',
+    ...expectedMigrationManifest(MIGRATIONS).map((entry) => entry.file),
   ]);
+  expect(manifest).toEqual(expectedMigrationManifest(MIGRATIONS));
   for (const [file, hash] of Object.entries(HASHES)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);
     expect(sha256(readFileSync(join(MIGRATIONS, file)))).toBe(hash);
@@ -703,6 +721,162 @@ test('the source migration appends without changing earlier files', () => {
   const fx = temporaryDatabase();
   try {
     expect(fx.db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all()).toEqual(manifest);
+  } finally {
+    fx.close();
+  }
+});
+
+test('an admitted source change becomes one work root dispatched to the hub', async () => {
+  const fx = temporaryDatabase();
+  try {
+    seedMandate(fx.db);
+    seedExternalMethodPolicy(fx.db);
+    const root = mkdtempSync(join(tmpdir(), 'patrick-t05-work-'));
+    const notes = join(root, 'notes');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'idea.md'), '# idea\n');
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const source = await registry.enableSource(PRINCIPAL, directoryDraft(notes));
+    await registry.collectSource(source.sourceId, 1);
+    expect(workCount(fx.db)).toBe(1);
+    const hub = recordingHub();
+    const result = await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) });
+    expect(result.deferred).toEqual([]);
+    expect(result.dispatched).toHaveLength(1);
+
+    const work = fx.db.prepare('SELECT work_id, root_event_id, cause_event_id, source_revision, generation, hub_lane FROM work_refs')
+      .all() as Array<{ work_id: string; root_event_id: string; cause_event_id: string; source_revision: string; generation: number; hub_lane: string }>;
+    expect(work).toHaveLength(1);
+    expect(work[0].work_id).toMatch(/^W-[0-9A-F]{12}$/);
+    const object = fx.db.prepare('SELECT source_id, object_id FROM source_objects LIMIT 1').get() as {
+      source_id: string;
+      object_id: string;
+    };
+    expect(work[0].work_id).toBe(sourceWorkId(object.source_id, object.object_id));
+    expect(work[0].hub_lane).toBe('work');
+    expect(work[0].generation).toBe(1);
+    expect(work[0].root_event_id).toBe(work[0].cause_event_id);
+
+    const generations = fx.db.prepare('SELECT work_id, generation, phase, next_action, mandate_id, control_state FROM work_generations')
+      .all() as Array<{ work_id: string; generation: number; phase: string; next_action: string; mandate_id: string; control_state: string }>;
+    expect(generations).toEqual([{
+      work_id: work[0].work_id,
+      generation: 1,
+      phase: 'judgment',
+      next_action: 'judge',
+      mandate_id: 'mandate-source',
+      control_state: 'running',
+    }]);
+
+    const basis = fx.db.prepare('SELECT work_id, generation, basis_hash, external_method_id FROM judgment_bases').all() as Array<{
+      work_id: string;
+      generation: number;
+      basis_hash: string;
+      external_method_id: string | null;
+    }>;
+    expect(basis).toHaveLength(1);
+    expect(basis[0].work_id).toBe(work[0].work_id);
+    expect(basis[0].external_method_id).toBe('method-demand-interview');
+
+    expect(hub.published).toHaveLength(1);
+    expect(hub.published[0].body.type).toBe('source.changed');
+    expect(hub.published[0].body.summary).toBe('work.requested');
+    expect(JSON.parse(hub.published[0].body.detail)).toMatchObject({
+      root: work[0].root_event_id,
+      cause: work[0].cause_event_id,
+      generation: 1,
+      kind: 'work.requested',
+    });
+    expect(fx.db.prepare("SELECT result FROM outbox WHERE destination = 'source-work'").all())
+      .toEqual([{ result: 'accepted' }]);
+  } finally {
+    fx.close();
+  }
+});
+
+test('replaying the dispatch keeps one work and one generation', async () => {
+  const fx = temporaryDatabase();
+  try {
+    seedMandate(fx.db);
+    seedExternalMethodPolicy(fx.db);
+    const root = mkdtempSync(join(tmpdir(), 'patrick-t05-replay-'));
+    const notes = join(root, 'notes');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'idea.md'), '# idea\n');
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const source = await registry.enableSource(PRINCIPAL, directoryDraft(notes));
+    await registry.collectSource(source.sourceId, 1);
+    const hub = recordingHub();
+    await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) });
+    const before = fx.db.prepare('SELECT work_id, generation FROM work_refs').all();
+    const again = await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) });
+    expect(again.dispatched).toEqual([]);
+    expect(fx.db.prepare('SELECT work_id, generation FROM work_refs').all()).toEqual(before);
+    expect(fx.db.prepare('SELECT COUNT(*) AS n FROM work_generations').get()).toEqual({ n: 1 });
+    expect(hub.published).toHaveLength(1);
+  } finally {
+    fx.close();
+  }
+});
+
+test('a trigger without an active delegation scope defers instead of dispatching', async () => {
+  const fx = temporaryDatabase();
+  try {
+    seedExternalMethodPolicy(fx.db);
+    const root = mkdtempSync(join(tmpdir(), 'patrick-t05-scope-'));
+    const notes = join(root, 'notes');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'idea.md'), '# idea\n');
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const source = await registry.enableSource(PRINCIPAL, directoryDraft(notes));
+    await registry.collectSource(source.sourceId, 1);
+    const hub = recordingHub();
+    const result = await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) });
+    expect(result.dispatched).toEqual([]);
+    expect(result.deferred).toEqual([{ event_id: expect.any(String), reason: 'NO_ACTIVE_MANDATE' }]);
+    expect(hub.published).toEqual([]);
+    expect(fx.db.prepare("SELECT result FROM outbox WHERE destination = 'source-work'").all()).toEqual([{ result: null }]);
+  } finally {
+    fx.close();
+  }
+});
+
+test('an explicit trigger rule selects the mandate type the work runs under', async () => {
+  const fx = temporaryDatabase();
+  try {
+    seedMandate(fx.db);
+    seedExternalMethodPolicy(fx.db);
+    fx.db.prepare(`INSERT INTO mandate_types (
+      type_id, account_id, data_domain, actions_json, resources_json, effects_json, domains_json, risk, level,
+      budget_micros, config_version, schema_version, created_at
+    ) VALUES ('type-other', 'owner', 'personal', '[]', '[]', '[]', '[]', 'high', 'L2', 9000, 1, '1.0', ?)`).run(NOW);
+    fx.db.prepare(`INSERT INTO mandates (
+      mandate_id, type_id, account_id, data_domain, status, actions_json, resources_json, effects_json, domains_json,
+      risk, level, budget_micros, expires_at, revision, scope_hash, config_version, schema_version, created_at, updated_at
+    ) VALUES ('mandate-other', 'type-other', 'owner', 'personal', 'active', '[]', '[]', '[]', '[]', 'high', 'L2', 9000,
+      '2027-01-01T00:00:00.000Z', 0, ?, 1, '1.0', ?, ?)`).run('f'.repeat(64), NOW, NOW);
+    const root = mkdtempSync(join(tmpdir(), 'patrick-t05-rule-'));
+    const notes = join(root, 'notes');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'idea.md'), '# idea\n');
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const source = await registry.enableSource(PRINCIPAL, {
+      ...directoryDraft(notes),
+      triggerMandateTypeId: 'type-other',
+    });
+    const rule = fx.db.prepare('SELECT source_id, mandate_type_id, config_revision FROM source_trigger_rules').get() as {
+      source_id: string;
+      mandate_type_id: string;
+      config_revision: number;
+    };
+    expect(rule).toEqual({ source_id: source.sourceId, mandate_type_id: 'type-other', config_revision: 1 });
+    await registry.collectSource(source.sourceId, 1);
+    const hub = recordingHub();
+    const result = await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) });
+    expect(result.deferred).toEqual([]);
+    expect(result.dispatched).toHaveLength(1);
+    const generation = fx.db.prepare('SELECT mandate_id FROM work_generations').get() as { mandate_id: string };
+    expect(generation.mandate_id).toBe('mandate-other');
   } finally {
     fx.close();
   }

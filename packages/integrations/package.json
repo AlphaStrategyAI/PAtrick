@@ -10,6 +10,7 @@
     "./autoloop/consultation-runtime": "./autoloop/consultation-runtime.ts",
     "./autoloop/observer": "./autoloop/observer.ts",
     "./sources/registry": "./sources/registry.ts",
+    "./sources/work-dispatch": "./sources/work-dispatch.ts",
     "./sources/github": "./sources/github.ts",
     "./sources/directory": "./sources/directory.ts",
     "./vault/connection": "./vault/connection.ts",

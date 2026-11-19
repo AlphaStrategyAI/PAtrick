@@ -18,6 +18,7 @@ import {
   type SqliteDatabase,
 } from '../../packages/storage/src/database.js';
 import { ackOutbox, appendDomainEvent } from '../../packages/storage/src/outbox.js';
+import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 const PACKAGE_JSON = fileURLToPath(new URL('../../package.json', import.meta.url));
 const MANIFEST_PATH = fileURLToPath(new URL('../../packages/storage/migrations/manifest.json', import.meta.url));
@@ -188,6 +189,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'source_preview_receipts',
       'source_revision_provenance',
       'source_revisions',
+      'source_trigger_rules',
       'source_versions',
       'stage_events',
       'standard_candidates',
@@ -208,10 +210,11 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'work_generations',
       'work_pr_builds',
       'work_pr_cases',
+      'work_refs',
       'work_stages',
     ]);
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as MigrationEntry[];
-    expect(manifest.map((entry) => entry.file)).toEqual(['0002_core.sql', '0003_auth_control.sql', '0004_hub_work.sql', '0005_sources.sql', '0006_vault_evidence.sql', '0007_standards.sql', '0008_admission_budget.sql', '0010_answers_channels.sql', '0011_conversations.sql', '0012_effects_outcomes.sql', '0013_views.sql','0017_settings.sql', '0018_delegation_control.sql', '0019_stats.sql', '0020_http_sources.sql', '0021_notifications.sql', '0022_network.sql', '0023_recovery.sql', '0024_settings_recoveries.sql', '0025_source_revision_provenance.sql', '0026_directory_commit_generations.sql']);
+    expect(manifest).toEqual(expectedMigrationManifest(fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url))));
     const applied = db.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     expect(applied).toEqual(manifest);
     expect(() => db.prepare('INSERT INTO outbox (event_id, destination) VALUES (?, ?)').run('missing-event', 'hub')).toThrow();

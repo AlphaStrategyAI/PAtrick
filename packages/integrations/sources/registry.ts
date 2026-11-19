@@ -51,6 +51,8 @@ export type SourceDraft = {
   frequency?: string;
   history?: 'none' | 'backfill';
   hasTriggerRule?: boolean;
+  /** Delegation type the admitted trigger runs under. Required for a trigger to dispatch work. */
+  triggerMandateTypeId?: string | null;
 };
 
 export type SourceScope = {
@@ -206,6 +208,7 @@ type NormalizedDraft = {
   frequency: string;
   history: 'none' | 'backfill';
   hasTriggerRule: boolean;
+  triggerMandateTypeId: string | null;
 };
 
 type PendingObject = { locator: string; bytes: Uint8Array; hash: string };
@@ -369,6 +372,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     const history = draft.history ?? 'none';
     if (history !== 'none' && history !== 'backfill') throw new Error('SOURCE_HISTORY_INVALID');
     const hasTriggerRule = draft.hasTriggerRule ?? false;
+    const triggerMandateTypeId = draft.triggerMandateTypeId ?? null;
     if (isHttpConnector(draft.type)) return normalizeHttp(principal, { ...draft, type: draft.type });
     if (draft.type === 'directory') {
       const root = await realpath(draft.target);
@@ -385,6 +389,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         frequency,
         history,
         hasTriggerRule,
+        triggerMandateTypeId,
       };
     }
     if (draft.type !== 'github') throw new Error('SOURCE_TYPE_INVALID');
@@ -407,6 +412,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       frequency,
       history,
       hasTriggerRule,
+      triggerMandateTypeId,
     };
   }
 
@@ -421,7 +427,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     const httpTargets = approvedHttpTargets(principal, target, draft.type);
     return { connectorType: draft.type, normalizedTarget: target, physicalRoot: 'http-source:' + target,
       scope: { repo: null, branch: null, path: null, root: null, excludes: [], httpTargets }, excludes: [],
-      credentialRef: null, frequency, history, hasTriggerRule };
+      credentialRef: null, frequency, history, hasTriggerRule, triggerMandateTypeId: draft.triggerMandateTypeId ?? null };
   }
 
   function sameRoot(principal: Principal, normalized: NormalizedDraft) {
@@ -779,7 +785,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
         aggregateVersion: seq,
         accountId: source.account_id,
         dataDomain: source.data_domain,
-        payload: { admitted: true, objectId, kind: change.kind },
+        payload: { admitted: true, objectId, kind: change.kind, sourceId: source.source_id, revisionId },
         destination: 'source-work',
       });
     }
@@ -1296,6 +1302,19 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
           created_at: observedAt,
           updated_at: observedAt,
         });
+        if (normalized.hasTriggerRule && normalized.triggerMandateTypeId) {
+          db.prepare(`INSERT INTO source_trigger_rules (
+            source_id, account_id, data_domain, mandate_type_id, config_revision, schema_version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)`).run(
+            sourceId,
+            principal.accountId,
+            principal.dataDomain,
+            normalized.triggerMandateTypeId,
+            SCHEMA_VERSION,
+            observedAt,
+            observedAt,
+          );
+        }
         db.prepare(`INSERT INTO source_cursors (source_id, config_revision, cursor, phase, sweep_count, updated_at)
           VALUES (?, 1, ?, 'baseline', 0, ?)`).run(sourceId, baseline, observedAt);
         if (guard?.httpBaseline) {
@@ -1511,6 +1530,7 @@ function hashDraft(principal: Principal, draft: NormalizedDraft): string {
     draft.frequency,
     draft.history,
     draft.hasTriggerRule ? '1' : '0',
+    draft.triggerMandateTypeId ?? '',
   ].join('\0')));
 }
 

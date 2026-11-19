@@ -48,6 +48,7 @@ import { createProductViewService, startProductViewHubObserver, type ProductView
 import { mountStatsRoutes } from './routes/stats.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
 import { mountProjectionEventRoutes } from './routes/events.js';
+import { createSourceWorkDispatch, type SourceWorkDispatchOptions } from './source-work.js';
 
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
 
@@ -78,6 +79,7 @@ export type CreateAppOptions = {
   httpSourceWorker?: HttpCollectionWorkerOptions;
   settingsHandlers?: Readonly<Partial<Record<string, SettingsHandler>>>;
   prDeliveryWorker?: Omit<PrDeliveryOptions, 'blobs'>;
+  sourceWorkDispatch?: SourceWorkDispatchOptions;
 };
 
 export type ServiceDrainResult = {
@@ -130,6 +132,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     httpSourceWorker: options.httpSourceWorker && { ...options.httpSourceWorker, signal: combined(options.httpSourceWorker.signal) },
     notificationMaintenance: options.notificationMaintenance && { ...options.notificationMaintenance, signal: combined(options.notificationMaintenance.signal) },
     workStopSupervisor: options.workStopSupervisor && { ...options.workStopSupervisor, signal: combined(options.workStopSupervisor.signal) },
+    sourceWorkDispatch: options.sourceWorkDispatch && { ...options.sourceWorkDispatch, signal: combined(options.sourceWorkDispatch.signal) },
   };
   if (options.networkRepair && (!options.databasePath?.trim() || options.databasePath === ':memory:')) {
     throw new Error('NETWORK_SUPERVISOR_DURABLE_POLICY_REQUIRED');
@@ -330,6 +333,11 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     }
     if (options.notificationMaintenance) {
       const worker = createNotificationMaintenance(context().db, now, options.notificationMaintenance);
+      workers.push(worker);
+      starters.unshift(() => { worker.start(); });
+    }
+    if (options.sourceWorkDispatch) {
+      const worker = createSourceWorkDispatch(context().db, now, options.sourceWorkDispatch);
       workers.push(worker);
       starters.unshift(() => { worker.start(); });
     }

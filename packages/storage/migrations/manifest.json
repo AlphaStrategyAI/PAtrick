@@ -82,5 +82,9 @@
   {
     "file": "0026_directory_commit_generations.sql",
     "sha256": "20093754fd2934db069f29ee8ad8e2c9f4a052c0268603723c19133ad0bc8987"
+  },
+  {
+    "file": "0027_source_work_dispatch.sql",
+    "sha256": "188391610bee17547a32228917465858c1ec4fd3e11c3386900d73785c717624"
   }
 ]

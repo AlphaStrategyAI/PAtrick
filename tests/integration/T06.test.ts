@@ -17,6 +17,7 @@ import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/da
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
+import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 // Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
 vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
@@ -976,28 +977,9 @@ test('inspectVault reports a missing editor separately and drops a changed root'
 test('the vault migration appends without changing earlier files', () => {
   const manifest = JSON.parse(readFileSync(join(MIGRATIONS, 'manifest.json'), 'utf8')) as { file: string; sha256: string }[];
   expect(manifest.map((entry) => entry.file)).toEqual([
-    '0002_core.sql',
-    '0003_auth_control.sql',
-    '0004_hub_work.sql',
-    '0005_sources.sql',
-    '0006_vault_evidence.sql',
-    '0007_standards.sql',
-    '0008_admission_budget.sql',
-    '0010_answers_channels.sql',
-    '0011_conversations.sql',
-    '0012_effects_outcomes.sql',
-    '0013_views.sql',
-    '0017_settings.sql',
-    '0018_delegation_control.sql',
-    '0019_stats.sql',
-    '0020_http_sources.sql',
-    '0021_notifications.sql',
-    '0022_network.sql',
-    '0023_recovery.sql',
-    '0024_settings_recoveries.sql',
-    '0025_source_revision_provenance.sql',
-    '0026_directory_commit_generations.sql',
+    ...expectedMigrationManifest(MIGRATIONS).map((entry) => entry.file),
   ]);
+  expect(manifest).toEqual(expectedMigrationManifest(MIGRATIONS));
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);
     expect(sha256(readFileSync(join(MIGRATIONS, file)))).toBe(hash);
