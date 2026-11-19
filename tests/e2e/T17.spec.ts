@@ -19,7 +19,8 @@ async function setup(page: Page, withVault = false, permissions = ['owner']) {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t17-browser-'));
   const databasePath = join(dir, 't17.sqlite');
   const credentialDirectory = join(dir, 'cred');
-  const now = () => new Date('2026-11-17T05:00:00.000Z');
+  let serviceTime = '2026-11-17T05:00:00.000Z';
+  const now = () => new Date(serviceTime);
   const db = openDatabase(databasePath);
   db.prepare("INSERT INTO accounts VALUES ('owner',1,1,?)").run(now().toISOString());
   if (withVault) {
@@ -44,7 +45,7 @@ async function setup(page: Page, withVault = false, permissions = ['owner']) {
     });
     await route.fulfill({ status: upstream.status, headers: Object.fromEntries(upstream.headers), body: await upstream.text() });
   });
-  return { db, async close() {
+  return { db, setTime(at: string) { serviceTime = at; }, async close() {
     try { if (!page.isClosed()) { await page.goto('about:blank'); await page.unrouteAll({ behavior: 'wait' }); } }
     finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
   } };
@@ -113,6 +114,183 @@ test('a registered Vault uses the three-step review before applying and shows th
     await expect(receipt.getByText('Verified after applying')).toBeVisible();
   } finally { await fx.close(); }
 });
+
+const timestampCopy = {
+  en: {
+    target: 'Registered target', next: 'Continue', confirm: 'Confirm and apply', verified: 'Verified after applying',
+    settingsSnapshot: 'Settings snapshot as of', checked: 'Last checked', applying: 'Checking the applied change',
+    healthSnapshot: 'Health projection snapshot as of', lastHealthSnapshot: 'Last verified health projection snapshot',
+    unknown: 'Status unknown', running: 'Running', offline: 'Connection lost', refresh: 'Refresh status', settings: 'Settings',
+  },
+  zh: {
+    target: '已登记目标', next: '继续', confirm: '确认并应用', verified: '应用后复查确认',
+    settingsSnapshot: '设置快照时间', checked: '最近检查', applying: '正在核对变更',
+    healthSnapshot: '健康投影快照时间', lastHealthSnapshot: '上次可验证的健康投影快照',
+    unknown: '状态未知', running: '运行中', offline: '连接中断', refresh: '刷新状态', settings: '设置',
+  },
+} as const;
+
+for (const locale of ['en', 'zh'] as const) {
+  test.describe(locale + ' timestamp provenance', () => {
+    test.use({ locale: locale === 'en' ? 'en-US' : 'zh-CN' });
+    const t = timestampCopy[locale];
+
+    test('distinguishes the settings snapshot and the operation receipt check', async ({ page }) => {
+      const checkedAt = '2026-11-17T05:00:00.000Z';
+      const snapshotAt = '2026-11-17T05:07:00.000Z';
+      const fx = await setup(page, true);
+      try {
+        await page.goto('/settings/materials');
+        await page.getByLabel(t.target).selectOption(JSON.stringify(['t17-browser-vault', 'test-device']));
+        await page.getByRole('button', { name: t.next }).click();
+        await page.getByRole('button', { name: t.next }).click();
+        await page.getByRole('button', { name: t.confirm }).click();
+        const receipt = page.getByTestId('settings-change-receipt');
+        await expect(receipt.getByRole('status')).toHaveText(t.verified);
+        const id = await receipt.locator('code').textContent();
+        const stored = fx.db.prepare('SELECT receipt FROM settings_changes WHERE change_id = ?').get(id) as { receipt: string };
+        expect(JSON.parse(stored.receipt).checked_at).toBe(checkedAt);
+
+        fx.setTime(snapshotAt);
+        await page.reload();
+        await expect(receipt.getByRole('status')).toHaveText(t.verified);
+        const snapshotTime = page.locator('main p').filter({ hasText: t.settingsSnapshot });
+        const receiptTime = receipt.locator('p').filter({ hasText: t.checked });
+        await expect.soft(snapshotTime.locator('time')).toHaveAttribute('datetime', snapshotAt, { timeout: 2_000 });
+        await expect.soft(snapshotTime.locator('time')).toHaveText(/5:07/u, { timeout: 2_000 });
+        await expect.soft(receiptTime.locator('time')).toHaveAttribute('datetime', checkedAt, { timeout: 2_000 });
+        await expect.soft(receiptTime.locator('time')).toHaveText(/5:00/u, { timeout: 2_000 });
+        await expect.soft(page.locator('main').getByText(t.checked)).toHaveCount(1, { timeout: 2_000 });
+
+        // Recreate a persisted applying receipt, before observation sets checked_at.
+        const applying = { ...JSON.parse(stored.receipt), phase: 'applying', applied_revision: null,
+          verified: false, checked_at: null, effects: [] };
+        fx.db.prepare("UPDATE settings_changes SET phase = 'applying', receipt = ? WHERE change_id = ?")
+          .run(JSON.stringify(applying), id);
+        await page.reload();
+        await expect(receipt.getByRole('status')).toHaveText(t.applying);
+        await expect(receipt.locator('time')).toHaveCount(0);
+        await expect(receipt.getByText(t.checked)).toHaveCount(0);
+        await expect.soft(snapshotTime.locator('time')).toHaveAttribute('datetime', snapshotAt, { timeout: 2_000 });
+      } finally { await fx.close(); }
+    });
+
+    test('hides the unobserved health timestamp online and after disconnect', async ({ page }) => {
+      await withHealthService(page, async service => {
+        const events = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/events');
+        await page.goto('/system');
+        expect((await events).status()).toBe(200);
+        const system = page.locator('main .status-evidence');
+        const sidebar = page.locator('.desktop-sidebar .status-evidence');
+        await expect(system).toContainText(t.unknown);
+        await expect.soft(system.locator('time')).toHaveCount(0, { timeout: 2_000 });
+        service.disconnectEvents();
+        await expect(sidebar).toContainText(t.offline);
+        await expect.soft(sidebar.locator('time')).toHaveCount(0, { timeout: 2_000 });
+        await expect.soft(system.locator('time')).toHaveCount(0, { timeout: 2_000 });
+      });
+    });
+
+    test('keeps the verified time historical after an invalid fresh projection timestamp', async ({ page }) => {
+      const freshAt = '2026-11-17T04:58:00.000Z';
+      const invalidAt = 'invalid-projection-timestamp';
+      await withHealthService(page, async service => {
+        await page.goto('/system');
+        const system = page.locator('main .status-evidence');
+        const running = system.getByText(t.running, { exact: true });
+        await expect(running).toBeVisible({ timeout: 22_000 });
+        await expect(system).toContainText(t.healthSnapshot);
+        await expect(system.locator('time')).toHaveAttribute('datetime', freshAt);
+
+        service.setProjection('fresh', invalidAt, overviewFacts);
+        const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/system/health');
+        await page.getByRole('button', { name: t.refresh }).click();
+        const response = await refreshed;
+        expect(response.status()).toBe(200);
+        expect(await response.json()).toMatchObject({ as_of: invalidAt, freshness: 'fresh',
+          data: { as_of: invalidAt, freshness: 'fresh', service: 'running' } });
+        await expect(system).toContainText(t.lastHealthSnapshot);
+        await expect(system).not.toContainText(t.healthSnapshot);
+        await expect(system.locator('time')).toHaveAttribute('datetime', freshAt);
+        await expect(system).not.toContainText(invalidAt);
+        await expect(running).toBeVisible();
+      }, { freshness: 'fresh', at: freshAt, facts: overviewFacts });
+    });
+
+    test('settings overview distinguishes an invalid fresh projection timestamp from verified time', async ({ page }) => {
+      const copy = overviewCopy[locale];
+      const invalidAt = 'invalid-projection-timestamp';
+      const freshAt = '2026-11-17T04:58:00.000Z';
+      const healthPath = '/api/v1/system/health';
+      await withHealthService(page, async service => {
+        const initialRead = page.waitForResponse(response => new URL(response.url()).pathname === healthPath);
+        await page.goto('/settings');
+        const initialResponse = await initialRead;
+        expect(initialResponse.status()).toBe(200);
+        expect(await initialResponse.json()).toMatchObject({ as_of: invalidAt, freshness: 'fresh' });
+
+        const overview = page.getByRole('region', { name: copy.region });
+        await expect(overview).toContainText(copy.current, { timeout: 22_000 });
+        await expect(overview).toContainText(copy.issue);
+        await expect(overview).toContainText(copy.noSnapshot);
+        await expect(overview.locator('time')).toHaveCount(0);
+        await overview.getByRole('link', { name: copy.system }).click();
+        const system = page.locator('main .status-evidence');
+        await expect(system.getByText(t.running, { exact: true })).toBeVisible();
+        await expect(system.locator('time')).toHaveCount(0);
+        await page.locator('.desktop-sidebar').getByRole('link', { name: t.settings, exact: true }).click();
+
+        async function refreshAt(at: string) {
+          service.setProjection('fresh', at, overviewFacts);
+          const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === healthPath);
+          await overview.getByRole('button', { name: copy.refresh }).click();
+          const response = await refreshed;
+          expect(response.status()).toBe(200);
+          expect(await response.json()).toMatchObject({ as_of: at, freshness: 'fresh' });
+        }
+
+        await refreshAt(freshAt);
+        await expect(overview).toContainText(copy.at);
+        await expect(overview.locator('time')).toHaveAttribute('datetime', freshAt);
+        await refreshAt(invalidAt);
+        await expect(overview).toContainText(copy.last);
+        await expect(overview).not.toContainText(copy.at);
+        await expect(overview.locator('time')).toHaveAttribute('datetime', freshAt);
+        await expect(overview).not.toContainText(invalidAt);
+        await expect(overview).toContainText(copy.current);
+        await expect(overview).toContainText(copy.issue);
+      }, { freshness: 'fresh', at: invalidAt, facts: overviewFacts });
+    });
+
+    test('labels the current health projection and retains only verified time offline', async ({ page }) => {
+      const freshAt = '2026-11-17T04:58:00.000Z';
+      await withHealthService(page, async service => {
+        await page.goto('/system');
+        const system = page.locator('main .status-evidence');
+        const sidebar = page.locator('.desktop-sidebar .status-evidence');
+        await expect(system).toContainText(t.running, { timeout: 22_000 });
+        await expect.soft(system).toContainText(t.healthSnapshot, { timeout: 2_000 });
+        await expect(system.locator('time')).toHaveAttribute('datetime', freshAt);
+        await expect(sidebar.locator('time')).toHaveCount(0);
+
+        service.setProjection('stale', '2026-11-17T04:59:00.000Z', overviewFacts);
+        const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/system/health');
+        await page.getByRole('button', { name: t.refresh }).click();
+        expect((await refreshed).status()).toBe(200);
+        await expect(system).toContainText(t.unknown);
+        await expect.soft(system).toContainText(t.lastHealthSnapshot, { timeout: 2_000 });
+        await expect.soft(system.locator('time')).toHaveAttribute('datetime', freshAt, { timeout: 2_000 });
+
+        service.disconnectEvents();
+        for (const evidence of [sidebar, system]) {
+          await expect(evidence).toContainText(t.offline);
+          await expect.soft(evidence).toContainText(t.lastHealthSnapshot, { timeout: 2_000 });
+          await expect.soft(evidence.locator('time')).toHaveAttribute('datetime', freshAt, { timeout: 2_000 });
+        }
+      }, { freshness: 'fresh', at: freshAt, facts: overviewFacts });
+    });
+  });
+}
 
 test('the first account read does not overwrite a language choice made while it is in flight', async ({ page }) => {
   const fx = await setup(page);
@@ -240,11 +418,11 @@ const overviewCopy = {
   en: { region: 'Service projection snapshot', current: 'Service projection status: Current', unknown: 'Service projection status: Unknown',
     device: 'Current device: Unknown', at: 'Snapshot as of', last: 'Last verified snapshot', stale: 'The snapshot is stale.',
     offline: 'The connection is lost.', unavailable: 'The health snapshot is unavailable.', issue: 'Vault needs permission.', issueOther: 'Feishu connection needs attention.',
-    system: 'View in System', refresh: 'Refresh health snapshot' },
+    system: 'View in System', refresh: 'Refresh health snapshot', noSnapshot: 'No verified snapshot available' },
   zh: { region: '服务投影快照', current: '服务投影状态：最新', unknown: '服务投影状态：未知',
     device: '当前设备：未知', at: '快照时间', last: '上次可验证快照', stale: '快照已过期。',
     offline: '连接已断开。', unavailable: '健康快照暂不可用。', issue: '资料库需要权限。', issueOther: '飞书连接需要处理。',
-    system: '前往系统', refresh: '刷新健康快照' },
+    system: '前往系统', refresh: '刷新健康快照', noSnapshot: '暂无可验证的快照' },
 } as const;
 const overviewFacts = { connections: { vault: { status: 'needs_permission', revision: 1, epoch: 1 },
   feishu: { status: 'degraded', revision: 1, epoch: 1 } }, edits: { pending: 0, failed: 2 } };
@@ -368,38 +546,54 @@ test('health fixture cleans up when its TCP port is occupied without touching it
   }
 });
 
-for (const change of ['same-scope revalidation', 'different-domain switch'] as const) {
-  test('settings snapshot time is cleared on ' + change, async ({ page }) => {
-    test.setTimeout(60_000);
-    const oldTime = '2026-11-17T04:58:00.000Z';
-    await withHealthService(page, async service => {
-      await page.goto('/settings');
-      const overview = page.getByRole('region', { name: 'Service projection snapshot' });
-      await expect(page.locator('.desktop-sidebar .brand [role=status]')).toHaveText('Running', { timeout: 22_000 });
-      await expect(overview.locator('time')).toHaveAttribute('datetime', oldTime);
-      const before = await page.evaluate(async () => await (await fetch('/api/v1/session')).json());
-      const held = service.holdNextSession();
-      try {
-        if (change === 'different-domain switch') await service.switchDomain();
-        service.setProjection('stale', '2026-11-17T04:59:00.000Z', overviewFacts);
-        const revalidated = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/session' && response.status() === 200);
-        service.resetProjection();
-        await held.ready;
-        await expect(page.locator(`main time[datetime="${oldTime}"]`)).toHaveCount(0);
-        if (change === 'same-scope revalidation') service.addPermission();
-        held.release();
-        const after = await (await revalidated).json();
-        if (change === 'same-scope revalidation') {
-          expect(after.scope).toEqual(before.scope);
-          expect(before.data.scope_operations).not.toContain('settings.read');
-          expect(after.data.scope_operations).toContain('settings.read');
-        } else expect(after.scope).toMatchObject({ account_id: 'owner', data_domain: 'company', permission_epoch: before.scope.permission_epoch });
-        await expect(overview).toContainText('No verified snapshot available');
-        await expect(overview.locator('time')).toHaveCount(0);
-        expect(service.requests.filter(request => ['/api/v1/session', '/api/v1/system/health', '/api/v1/events'].includes(request.path))
-          .every(request => request.hasCookie)).toBe(true);
-      } finally { held.release(); }
-    }, { freshness: 'fresh', at: oldTime, facts: overviewFacts });
+for (const locale of ['en', 'zh'] as const) {
+  test.describe(locale + ' timestamp scope', () => {
+    test.use({ locale: locale === 'en' ? 'en-US' : 'zh-CN' });
+    for (const change of ['same-scope revalidation', 'different-domain switch'] as const) {
+      test('settings snapshot time is cleared on ' + change, async ({ page }) => {
+        test.setTimeout(60_000);
+        const t = overviewCopy[locale];
+        const status = timestampCopy[locale];
+        const oldTime = '2026-11-17T04:58:00.000Z';
+        await withHealthService(page, async service => {
+          await page.goto('/settings');
+          const overview = page.getByRole('region', { name: t.region });
+          await expect(page.locator('.desktop-sidebar .brand [role=status]')).toHaveText(status.running, { timeout: 22_000 });
+          await expect(overview.locator('time')).toHaveAttribute('datetime', oldTime);
+          const before = await page.evaluate(async () => await (await fetch('/api/v1/session')).json());
+          const held = service.holdNextSession();
+          try {
+            if (change === 'different-domain switch') await service.switchDomain();
+            service.setProjection('stale', '2026-11-17T04:59:00.000Z', overviewFacts);
+            const revalidated = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/session' && response.status() === 200);
+            service.resetProjection();
+            await held.ready;
+            await expect(page.locator(`main time[datetime="${oldTime}"]`)).toHaveCount(0);
+            if (change === 'same-scope revalidation') service.addPermission();
+            held.release();
+            const after = await (await revalidated).json();
+            if (change === 'same-scope revalidation') {
+              expect(after.scope).toEqual(before.scope);
+              expect(before.data.scope_operations).not.toContain('settings.read');
+              expect(after.data.scope_operations).toContain('settings.read');
+            } else expect(after.scope).toMatchObject({ account_id: 'owner', data_domain: 'company', permission_epoch: before.scope.permission_epoch });
+            await expect(overview.locator('time')).toHaveCount(0);
+            await expect(overview).toContainText(t.noSnapshot);
+            await overview.getByRole('link', { name: t.system }).click();
+            const system = page.locator('main .status-evidence');
+            const sidebar = page.locator('.desktop-sidebar .status-evidence');
+            await expect(system).toContainText(status.unknown);
+            await expect.soft(system.locator('time')).toHaveCount(0, { timeout: 2_000 });
+            service.disconnectEvents();
+            await expect(sidebar).toContainText(status.offline);
+            await expect.soft(sidebar.locator('time')).toHaveCount(0, { timeout: 2_000 });
+            await expect.soft(system.locator('time')).toHaveCount(0, { timeout: 2_000 });
+            expect(service.requests.filter(request => ['/api/v1/session', '/api/v1/system/health', '/api/v1/events'].includes(request.path))
+              .every(request => request.hasCookie)).toBe(true);
+          } finally { held.release(); }
+        }, { freshness: 'fresh', at: oldTime, facts: overviewFacts });
+      });
+    }
   });
 }
 

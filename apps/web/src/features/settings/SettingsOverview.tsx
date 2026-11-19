@@ -13,7 +13,7 @@ const issues: Record<string, MessageKey> = {
 
 export function SettingsOverview() {
   const { locale, t } = useLocale();
-  const { health, connected, verifiedAsOf } = useOutletContext<ShellHealthContext>();
+  const { health, connected, projectionCurrent, verifiedAsOf } = useOutletContext<ShellHealthContext>();
   const snapshot = health.data;
   const offline = !isDemo && connected === false;
   const unavailable = !isDemo && !offline && !!health.error;
@@ -31,7 +31,7 @@ export function SettingsOverview() {
       <p>{t('settings.overview.status')}{locale === 'en' ? ' ' : ''}<strong>{t(service)}</strong></p>
       <p className="settings-overview-evidence">
         <span>{t('settings.overview.device')}</span>
-        <span>{verifiedAsOf ? <>{t(current ? 'settings.overview.asOf' : 'settings.overview.lastAsOf')}{' '}
+        <span>{verifiedAsOf ? <>{t(projectionCurrent ? 'settings.overview.asOf' : 'settings.overview.lastAsOf')}{' '}
           <time dateTime={verifiedAsOf}>{formatDate(locale, verifiedAsOf)}</time></> : t('settings.overview.noSnapshot')}</span>
       </p>
       {offline && <p>{t('settings.overview.offline')}</p>}

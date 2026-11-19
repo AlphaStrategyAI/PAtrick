@@ -18,6 +18,7 @@ export type ShellHealthContext = {
   health: ReturnType<typeof useScopedSnapshot<ReturnType<typeof healthSnapshotSchema.parse>>>;
   healthStatus: MessageKey;
   connected: boolean | undefined;
+  projectionCurrent: boolean;
   verifiedAsOf?: string;
 };
 
@@ -44,7 +45,7 @@ function Shell() {
   const latestHealth = health.data;
   const scopeKey = scope ? JSON.stringify([scope.account_id, scope.data_domain, scope.permission_epoch, accessGeneration]) : null;
   const [lastVerified, setLastVerified] = useState<{ scopeKey: string; asOf: string }>();
-  const trustedAsOf = latestHealth?.freshness === 'fresh' && latestHealth.data.freshness === 'fresh' &&
+  const trustedAsOf = scopeKey && latestHealth?.freshness === 'fresh' && latestHealth.data.freshness === 'fresh' &&
     Number.isFinite(Date.parse(latestHealth.as_of)) ? latestHealth.as_of : undefined;
   useEffect(() => {
     if (scopeKey && trustedAsOf) setLastVerified({ scopeKey, asOf: trustedAsOf });
@@ -53,9 +54,11 @@ function Shell() {
   const healthError = health.error ? asClientError(health.error) : null;
   const liveHealth = !isDemo && !healthError && connected === true && latestHealth?.freshness === 'fresh'
     ? latestHealth.data : undefined;
+  const hasLiveProjection = liveHealth?.freshness === 'fresh';
+  const projectionCurrent = hasLiveProjection && trustedAsOf !== undefined;
   const healthStatus: MessageKey = healthError?.code === 'UNAVAILABLE' || connected === false ? 'status.offline'
-    : liveHealth?.freshness === 'fresh' ? `status.${liveHealth.service}` : 'status.unknown';
-  const lastCheck = healthStatus === 'status.offline' ? latestHealth?.as_of : undefined;
+    : hasLiveProjection ? `status.${liveHealth.service}` : 'status.unknown';
+  const offlineAsOf = healthStatus === 'status.offline' ? verifiedAsOf : undefined;
 
   useEffect(() => {
     const onVisibility = () => setHidden(document.hidden);
@@ -73,9 +76,9 @@ function Shell() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">{t('aria.skip')}</a>
-    <aside className="desktop-sidebar"><Sidebar health={liveHealth} status={healthStatus} asOf={lastCheck} hidden={hidden} /></aside>
+    <aside className="desktop-sidebar"><Sidebar health={liveHealth} status={healthStatus} asOf={offlineAsOf} hidden={hidden} /></aside>
     {drawer && <Dialog className="mobile-drawer" title={t('aria.navigation')} onClose={() => setDrawer(false)}>
-      <Sidebar health={liveHealth} status={healthStatus} asOf={lastCheck} hidden={hidden} onNavigate={() => setDrawer(false)} />
+      <Sidebar health={liveHealth} status={healthStatus} asOf={offlineAsOf} hidden={hidden} onNavigate={() => setDrawer(false)} />
     </Dialog>}
     <div className="main-panel">
       <header className="topbar">
@@ -91,7 +94,7 @@ function Shell() {
       <main id="main-content" className="page" tabIndex={-1} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
         {isDemo && <p className="demo-banner">{t('app.demo')}</p>}
         {scope && accessError && <LocalizedError code={accessError.code} />}
-        <Outlet context={{ health, healthStatus, connected, verifiedAsOf } satisfies ShellHealthContext} />
+        <Outlet context={{ health, healthStatus, connected, projectionCurrent, verifiedAsOf } satisfies ShellHealthContext} />
       </main>
     </div>
     {consulting && <ConsultationPanel sourceRoute={consulting} returnTo={() => setConsulting(null)}

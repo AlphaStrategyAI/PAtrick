@@ -87,11 +87,11 @@ function WorkDetailPage() {
 
 function SystemPage() {
   const { t } = useLocale();
-  const { health, healthStatus } = useOutletContext<ShellHealthContext>();
+  const { health, healthStatus, projectionCurrent, verifiedAsOf } = useOutletContext<ShellHealthContext>();
   return <PageFrame item={navigation[5]}><Authenticated>
     <section className="card">
       {isDemo ? <p>{t('empty.demo')}</p> : <>
-        <StatusEvidence status={healthStatus} asOf={health.data?.data.as_of} />
+        <StatusEvidence status={healthStatus} asOf={verifiedAsOf} current={projectionCurrent} />
         {health.error && <LocalizedError code={asClientError(health.error).code} />}
         <button type="button" className="primary" disabled={health.isFetching} onClick={() => { void health.refetch(); }}>
           {t(health.isFetching ? 'status.refreshing' : 'button.refreshStatus')}

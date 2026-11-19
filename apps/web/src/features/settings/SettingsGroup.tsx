@@ -20,12 +20,13 @@ const operationKeys: Record<string, MessageKey> = {
 export function SettingsGroup({ group }: { group: string }) {
   const { locale, t } = useLocale();
   const settings = useScopedSnapshot('getSettings', {}, settingsDashboardSchema.parse);
-  const current = settings.data?.data.groups.find((entry) => entry.id === group);
+  const snapshot = settings.data;
+  const current = snapshot?.data.groups.find((entry) => entry.id === group);
   return <section className="card">
     {settings.error && <LocalizedError code={asClientError(settings.error).code} onRetry={() => { void settings.refetch(); }} />}
     {!settings.error && !current && <p role="status">{t('status.unknown')}</p>}
-    {current && <>
-      {group === 'interaction' && <FeishuSetup key={JSON.stringify(settings.data!.scope)} onChanged={() => { void settings.refetch(); }} />}
+    {snapshot && current && <>
+      {group === 'interaction' && <FeishuSetup key={JSON.stringify(snapshot.scope)} onChanged={() => { void settings.refetch(); }} />}
       <ul>
         {current.operations.map(({ operation, registered, targets }) => <li key={operation}>
           {t(operationKeys[operation] ?? 'status.unknown')}: {t(registered ? 'settings.registered' : 'settings.notConfigured')}
@@ -33,7 +34,7 @@ export function SettingsGroup({ group }: { group: string }) {
             entryLabel={operationKeys[operation] ?? 'status.unknown'} onChanged={() => { void settings.refetch(); }} />}
         </li>)}
       </ul>
-      <p>{t('settings.lastChecked')}: {formatDate(locale, settings.data!.as_of)}</p>
+      <p>{t('settings.snapshotAsOf')}: <time dateTime={snapshot.as_of}>{formatDate(locale, snapshot.as_of)}</time></p>
       <ChangeReceipt />
     </>}
   </section>;
@@ -61,7 +62,8 @@ export function ChangeReceipt({ system = false }: { system?: boolean }) {
         {effect.item.startsWith('network:') ? <NetworkEffect item={effect.item} />
           : <>{t(effectKeys[effect.item] ?? 'settings.effect')}: {t(`settings.effect.${effect.outcome}`)}</>}
       </li>)}</ul>}
-      {receipt.checked_at && <p>{t('settings.lastChecked')}: {formatDate(locale, receipt.checked_at)}</p>}
+      {receipt.checked_at && <p>{t('settings.lastChecked')}:{' '}
+        <time dateTime={receipt.checked_at}>{formatDate(locale, receipt.checked_at)}</time></p>}
       {['start_backup', 'start_restore'].includes(receipt.operation) && !receipt.verified &&
         <NetworkRecovery changeId={id} recoveryOperation onChanged={() => { void result.refetch(); }} />}
       {receipt.operation === 'repair_network' && !receipt.verified && (receipt.phase !== 'observed' ||

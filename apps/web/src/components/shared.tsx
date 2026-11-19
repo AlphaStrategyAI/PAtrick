@@ -60,11 +60,14 @@ export function ConfirmDialog({ title, detail, pending, onClose, onConfirm }: {
   </Dialog>;
 }
 
-export function StatusEvidence({ status, asOf, announce = false }: { status: MessageKey; asOf?: string; announce?: boolean }) {
+export function StatusEvidence({ status, asOf, current = false, announce = false }: {
+  status: MessageKey; asOf?: string; current?: boolean; announce?: boolean;
+}) {
   const { locale, t } = useLocale();
   return <div className="status-evidence">
     <span className="status-pill" role={announce ? 'status' : undefined}>{t(status)}</span>
-    {asOf && <span className="muted">{t('status.checkedAt')} <time dateTime={asOf}>{formatDate(locale, asOf)}</time></span>}
+    {asOf && <span className="muted">{t(current ? 'status.projectionAsOf' : 'status.lastProjectionAsOf')}{' '}
+      <time dateTime={asOf}>{formatDate(locale, asOf)}</time></span>}
   </div>;
 }
 
