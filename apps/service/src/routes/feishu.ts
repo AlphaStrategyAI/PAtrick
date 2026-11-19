@@ -61,9 +61,10 @@ async function readChannel(c: Context, ready: Ready): Promise<Response> {
   const principal = await requireSession(c.req.raw);
   const { db, now } = ready();
   const domain = readChannelDomain(db, principal);
-  const row = db.prepare(`SELECT status, reason_code, transport_mode FROM channel_connections
+  const row = db.prepare(`SELECT status, reason_code, transport_mode, connection_id, config_revision FROM channel_connections
     WHERE account_id = ? AND data_domain = ? ORDER BY updated_at DESC LIMIT 1`).get(principal.account_id, domain);
-  return c.json(snapshot(principal, row ?? { status: 'not_configured', reason_code: null, transport_mode: 'probe' }, now(), db));
+  return c.json(snapshot(principal, row ?? { status: 'not_configured', reason_code: null, transport_mode: 'probe',
+    connection_id: null, config_revision: null }, now(), db));
 }
 
 async function putCredential(c: Context, ready: Ready): Promise<Response> {

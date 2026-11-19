@@ -7,6 +7,8 @@ import { LocalizedError } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate } from '../../i18n/locale.js';
 import { feishuSetupCopy } from './FeishuSetupCopy.js';
+import { SettingsChangeWizard } from './SettingsChangeWizard.js';
+import { ClientError } from '../../api/client.js';
 
 const pairingSchema = z.strictObject({
   pairing_id: z.string().nullable(),
@@ -48,6 +50,7 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
   const { api, scope, accessGeneration } = useService();
   const { locale } = useLocale();
   const copy = feishuSetupCopy[locale];
+  const [rotation, setRotation] = useState<string>();
   const titleId = useId();
   const connection = useScopedSnapshot('getFeishuChannel', {}, feishuConnectionSchema.parse);
   const pairing = useScopedSnapshot('getFeishuBinding', { id: 'current' }, pairingSchema.parse);
@@ -116,6 +119,31 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
     });
   }
 
+  /** Stages a new app secret and offers the rotation as a trusted change.
+   *
+   * The secret never reaches a setting draft: the credential endpoint keeps it and
+   * hands back a reference, and only that reference travels with the change.
+   */
+  function stageRotation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const secret = form.elements.namedItem('rotation_secret');
+    const channelId = connection.data?.data.connection_id;
+    const appId = details?.app_id ?? '';
+    if (!details?.credential_setup_available || window.location.protocol !== 'https:' ||
+        !(secret instanceof HTMLInputElement) || !channelId) return;
+    const body = { app_id: appId, app_secret: secret.value };
+    secret.value = '';
+    act(async (signal) => {
+      try {
+        const response = await api.write('putFeishuCredentials', {}, body, { signal });
+        const staged = response as { credential_ref?: string };
+        if (!staged.credential_ref) throw new ClientError('INVALID_RESPONSE');
+        setRotation(staged.credential_ref);
+      } finally { body.app_secret = ''; }
+    });
+  }
+
   function startPairing(rejectedId?: string) {
     act(async (signal) => {
       setPairCode(undefined);
@@ -167,6 +195,17 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
           <button type="submit" disabled={busy}>{copy.stage}</button>
         </form> : <p>{copy.secureUnavailable}</p>)}
         {nativeProbeRequired && <p>{copy.nativeProbeRequired}</p>}
+        {status !== 'not_configured' && connection.data?.data.connection_id && <section>
+          <h3>{copy.rotationStage}</h3>
+          {!canConfigure ? <p>{copy.secureUnavailable}</p> : !rotation ? <form onSubmit={stageRotation} autoComplete="off">
+            <label>{copy.rotationSecret}
+              <input name="rotation_secret" type="password" maxLength={1024} required autoComplete="new-password" /></label>
+            <button type="submit" disabled={busy}>{copy.rotationStageSecret}</button>
+          </form> : <SettingsChangeWizard operation="rotate_feishu_credential"
+            targets={[{ target: connection.data.data.connection_id, device: null,
+              revision: connection.data.data.config_revision ?? 0, input: { credential_ref: rotation } }]}
+            entryLabel="settings.feishuRotate" onChanged={() => { setRotation(undefined); onChanged(); }} />}
+        </section>}
         {active && <p>{copy.managed}</p>}
         {!active && status !== 'not_configured' && details?.app_id && <>
           <h3>{copy.bindingStage}</h3>

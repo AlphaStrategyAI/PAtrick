@@ -348,3 +348,21 @@ test('frame-coverage · bilingual Feishu navigation, setup, pairing, owner and p
   expect(() => verify(edges.filter(e => e.action !== 'v26:fs-test-preview' || e.locale !== 'zh'))).toThrow();
   await capture(info, 'feishu-edges', edges.map(e => ({ ...e, lockedNodeSourceTarget: rows[e.locale][e.action] })));
 });
+
+test('the owner stages a new credential and rotates it through the trusted change', async ({ browser }) => {
+  await withSecureWeb(async origin => {
+    await inBrowser(browser, 'en', true, page => withChannel(page, origin, true, async fx => {
+      await page.goto(origin + '/settings/interaction');
+      const region = page.getByRole('region', { name: 'Feishu bot' });
+      await region.getByText(feishuSetupCopy.en.setup, { exact: true }).click();
+      await expect(region.getByLabel('New app secret')).toBeVisible({ timeout: 10_000 });
+      const before = fx.db.prepare('SELECT credential_ref, credential_version FROM channel_connections').get();
+      await region.getByLabel('New app secret').fill('rotated-secret-only');
+      await region.getByRole('button', { name: 'Stage a new secret' }).click();
+      await expect(region.getByRole('heading', { name: 'Rotate the Feishu credential' })).toBeVisible({ timeout: 10_000 });
+      // Staging a candidate never replaces the credential the connection still uses.
+      expect(fx.db.prepare('SELECT credential_ref, credential_version FROM channel_connections').get()).toEqual(before);
+      expect(fx.requests.some(({ method, path }) => method === 'POST' && path.endsWith('/credentials'))).toBe(true);
+    }));
+  });
+});

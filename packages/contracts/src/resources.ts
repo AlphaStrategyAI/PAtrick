@@ -284,6 +284,9 @@ export const feishuConnectionSchema = z.strictObject({
   status: feishuConnectionStatusSchema,
   reason_code: z.string().nullable(),
   transport_mode: feishuTransportModeSchema,
+  /** The connection this view describes, and the revision a change binds to. */
+  connection_id: z.string().nullable(),
+  config_revision: z.number().int().nonnegative().nullable(),
 });
 
 export const channelTestStatusSchema = z.enum([
