@@ -279,3 +279,40 @@ test('委托在显式确认精确提案后才生效，并可读回相同可信�
     expect(fixture.requests.filter(({ method, path }) => method === 'POST' && path.endsWith('/apply'))).toHaveLength(1);
   } finally { fixture.close(); }
 });
+
+test('没有委托时，提出一个范围经过可信控制后才生效', async ({ page }) => {
+  const fixture = await t16Fixture(page, false, false);
+  try {
+    await page.goto('/delegations');
+    await expect(page.getByText('还没有委托。')).toBeVisible();
+    await page.getByRole('button', { name: '提出一个范围' }).click({ timeout: 3_000 });
+    const dialog = page.getByRole('dialog', { name: '提出一个范围' });
+    await dialog.getByLabel('委托类型').fill('t16-scope');
+    await dialog.getByLabel('动作').fill('read');
+    await dialog.getByLabel('资源').fill('source');
+    await dialog.getByLabel('资料域').fill('product');
+    await dialog.getByLabel('风险').fill('low');
+    await dialog.getByLabel('能力阶段').selectOption('L0');
+    await dialog.getByLabel('预算（微单位）').fill('700');
+    await dialog.getByLabel('到期时间').fill('2026-12-01T00:00');
+    await dialog.getByRole('button', { name: '登记委托提案' }).click();
+    await expect(dialog.getByTestId('delegation-proposal-hash')).toContainText(/^[a-f0-9]{64}$/);
+    expect(fixture.db.prepare("SELECT COUNT(*) AS n FROM mandates").get()).toEqual({ n: 0 });
+    await dialog.getByRole('button', { name: '确认并应用委托变更' }).click();
+    await expect(dialog.getByTestId('delegation-control-receipt')).toContainText(/rcpt_/);
+    const applied = fixture.db.prepare('SELECT mandate_id,status,level,budget_micros FROM mandates').get() as {
+      mandate_id: string; status: string; level: string; budget_micros: number;
+    };
+    expect(applied).toMatchObject({ status: 'active', level: 'L0', budget_micros: 700 });
+    expect(applied.mandate_id).toMatch(/^mandate_/u);
+  } finally { fixture.close(); }
+});
+
+test('没有可引用的知识时，空状态给出接通来源的下一步', async ({ page }) => {
+  const fixture = await t16Fixture(page, false, true, false);
+  try {
+    await page.goto('/knowledge');
+    await expect(page.getByText('还没有可引用的知识。')).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole('link', { name: '接通来源' })).toBeVisible();
+  } finally { fixture.close(); }
+});

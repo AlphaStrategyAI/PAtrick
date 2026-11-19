@@ -33,7 +33,7 @@ const rules = (JSON.parse(readFileSync(new URL('../../fixtures/evaluation/produc
   candidate_rules: StandardRule[];
 }).candidate_rules;
 
-export async function t16Fixture(page: Page, seedStandard = false) {
+export async function t16Fixture(page: Page, seedStandard = false, seedDelegation = true, seedKnowledge = true) {
   const folder = mkdtempSync(join(tmpdir(), 'patrick-t16-'));
   const root = join(folder, 'vault');
   mkdirSync(join(root, '知识笔记'), { recursive: true });
@@ -47,9 +47,11 @@ export async function t16Fixture(page: Page, seedStandard = false) {
     });
     await vault.connectVault({ accountId: 'owner', deviceId: 'test-mac', vaultId, root, domain: 'product' });
     await vault.confirmVault('test-mac', vaultId);
-    writeFileSync(join(root, '知识笔记', '原文.md'),
-      '---\npatrick_id: doc-first-note\nkind: knowledge\nknowledge_id: k-t16\n---\n\n网页里的知识和引文。\n', 'utf8');
-    await vault.readVault(vaultId);
+    if (seedKnowledge) {
+      writeFileSync(join(root, '知识笔记', '原文.md'),
+        '---\npatrick_id: doc-first-note\nkind: knowledge\nknowledge_id: k-t16\n---\n\n网页里的知识和引文。\n', 'utf8');
+      await vault.readVault(vaultId);
+    }
     const standards = createStandardsApi(db, owner, { domain: 'product', now });
     await standards.seedProductDataset();
     if (seedStandard) {
@@ -66,7 +68,9 @@ export async function t16Fixture(page: Page, seedStandard = false) {
       risk: 'low', level: 'L0' as const, budget_micros: 700,
     };
     await delegation.registerMandateType({ ...mandate, config_version: 1 });
-    await delegation.openMandate({ ...mandate, mandate_id: 'mandate-t16', expires_at: '2026-11-18T05:00:00Z' });
+    if (seedDelegation) {
+      await delegation.openMandate({ ...mandate, mandate_id: 'mandate-t16', expires_at: '2026-11-18T05:00:00Z' });
+    }
 
     issueBootstrapTicket(db, { accountId: 'owner' }, now);
     const { token } = issueCallerSession(db, { accountId: 'owner', callerId: 'web', domain: 'product', permissions: ['owner'] }, now, credentials);

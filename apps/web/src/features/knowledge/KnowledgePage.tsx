@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import { asClientError, useScopedSnapshot } from '../../api/query.js';
 import { LocalizedError, SafeMarkdown } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
@@ -39,6 +40,9 @@ function KnowledgeView({ operations }: { operations: readonly string[] }) {
       </form>
       {list.error && <LocalizedError code={asClientError(list.error).code} onRetry={() => { void list.refetch(); }} />}
       {results?.length === 0 && <p>{t(query ? 'learning.noMatches' : 'empty.knowledge')}</p>}
+      {results?.length === 0 && !query && <div className="actions">
+        <Link to="/settings/materials">{t('learning.connectSource')}</Link>
+      </div>}
       {results && <ul>{results.map((item) => <li key={item.id}>
         <button type="button" aria-pressed={selected?.id === item.id} onClick={() => select(item)}>{item.title ?? item.id}</button>
       </li>)}</ul>}

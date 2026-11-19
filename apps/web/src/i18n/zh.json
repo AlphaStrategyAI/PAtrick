@@ -337,5 +337,10 @@
   "settings.overview.refresh": "刷新健康快照",
   "settings.overview.refreshing": "正在刷新快照…",
   "settings.overview.system": "前往系统",
-  "settings.overview.unavailable": "健康快照暂不可用。"
+  "settings.overview.unavailable": "健康快照暂不可用。",
+  "delegations.create": "提出一个范围",
+  "delegations.typeId": "委托类型",
+  "delegations.level": "能力阶段",
+  "delegations.scopeDomain": "资料域",
+  "learning.connectSource": "接通来源"
 }

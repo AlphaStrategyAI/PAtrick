@@ -725,7 +725,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T25 真实三执行器、双入口答复与飞书排空 | 没有隔离执行器和真实渠道 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |
 
-设计复核的六项里，工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句、以及 2px `#087B96` 的焦点环已经落地；以下四项仍未完成，因此同样保持未勾选：决定页第一层只留问题、两个选项的风险和「提交决定」；决定页在整理中、核验中、空、失败和离线时用户看见的句子；知识、标准和委托的空状态各有一个下一步；咨询生成中流式显示且状态保持「正在回答」。
+设计复核的六项里，工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、以及 2px `#087B96` 的焦点环已经落地；以下三项仍未完成，因此同样保持未勾选：决定页第一层只留问题、两个选项的风险和「提交决定」；决定页在整理中、核验中、空、失败和离线时用户看见的句子；咨询生成中流式显示且状态保持「正在回答」。
 
 逐场景的命令、退出码、版本和证据 hash 记录在 `release-evidence/impl-2026-11-19/`，`manifest.json` 关联产品条款、任务、frame/fixture 和测试；`scripts/check-release-evidence.mjs` 校验该清单，CI 在每次合并前复核。缺真实能力时标 blocked 或 pending，不写 passed。
 
@@ -2318,7 +2318,7 @@ Synthesized from the design review. Each task derives from a decision above.
   - Surfaced by: Pass 2 — 正在进行
   - Files: apps/web/src/features/work/WorkPage.tsx
   - Verify: 同一工作只有一行，详情页用同一句
-- [ ] **T4 (P2, human: ~20min / CC: ~10min)** — lists — 知识、标准和委托的空状态各有一句和一个下一步
+- [x] **T4 (P2, human: ~20min / CC: ~10min)** — lists — 知识、标准和委托的空状态各有一句和一个下一步
   - Surfaced by: Pass 2 — 空知识页
   - Files: apps/web/src/features/knowledge/KnowledgePage.tsx, apps/web/src/features/standards/StandardsPage.tsx, apps/web/src/features/delegation/DelegationsPage.tsx
   - Verify: 没有条目时不是空白表格，也不是故障

@@ -337,5 +337,10 @@
   "settings.overview.refresh": "Refresh health snapshot",
   "settings.overview.refreshing": "Refreshing snapshot…",
   "settings.overview.system": "View in System",
-  "settings.overview.unavailable": "The health snapshot is unavailable."
+  "settings.overview.unavailable": "The health snapshot is unavailable.",
+  "delegations.create": "Propose a scope",
+  "delegations.typeId": "Delegation type",
+  "delegations.level": "Capability level",
+  "delegations.scopeDomain": "Data domain",
+  "learning.connectSource": "Connect a source"
 }

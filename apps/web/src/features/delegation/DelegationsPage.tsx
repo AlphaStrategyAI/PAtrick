@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { asClientError, useScopedSnapshot } from '../../api/query.js';
+import { asClientError, useScopedSnapshot, useService } from '../../api/query.js';
 import { LocalizedError, ScopePreview } from '../../components/shared.js';
 import { useLocale } from '../../i18n/LocaleProvider.js';
 import { formatDate } from '../../i18n/locale.js';
 import { integer, may, parseList, record, string, strings, T16Access } from '../edits/support.js';
 
 import { ControlPreview, type Preview } from './ControlPreview.js';
+import { DelegationCreate } from './DelegationCreate.js';
 
 function parseDelegation(data: unknown) {
   const item = record(data);
@@ -27,9 +28,11 @@ export function DelegationsPage() {
 
 function DelegationsView({ operations }: { operations: readonly string[] }) {
   const { t, locale } = useLocale();
+  const { scope } = useService();
   const list = useScopedSnapshot('listDelegations', {}, (value) => parseList(value, parseDelegation));
   const [id, select] = useState('');
   const [preview, propose] = useState<Preview>();
+  const [creating, create] = useState(false);
   const selected = useScopedSnapshot('getDelegation', { id }, parseDelegation, { enabled: !!id });
   const current = selected.data?.data.id === id ? selected.data.data : undefined;
   function showPreview(requested: Preview['requested']) {
@@ -45,6 +48,9 @@ function DelegationsView({ operations }: { operations: readonly string[] }) {
     <section className="card">
       {list.error && <LocalizedError code={asClientError(list.error).code} />}
       {list.data?.data.length === 0 && <p>{t('empty.delegations')}</p>}
+      {list.data?.data.length === 0 && may(operations, 'owner') && <div className="actions">
+        <button type="button" className="primary" onClick={() => create(true)}>{t('delegations.create')}</button>
+      </div>}
       <ul>{list.data?.data.map((item) => <li key={item.id}>
         <button type="button" aria-pressed={id === item.id} onClick={() => { select(item.id); propose(undefined); }}>{item.id}</button>
         {' · '}{status(item.status)}
@@ -67,6 +73,8 @@ function DelegationsView({ operations }: { operations: readonly string[] }) {
       </div>}
     </section>}
     {preview && <ControlPreview preview={preview} onClose={() => propose(undefined)}
+      onApplied={() => { void list.refetch(); void selected.refetch(); }} />}
+    {creating && <DelegationCreate domain={scope?.data_domain ?? ''} onClose={() => create(false)}
       onApplied={() => { void list.refetch(); void selected.refetch(); }} />}
   </>;
 }
