@@ -17,7 +17,9 @@ export async function measureSettings(page: Page) {
       if (!element) throw new Error('Missing settings landmark ' + selector);
       return element.getBoundingClientRect();
     };
-    const action = select('.settings-overview-actions button');
+    const actions = document.querySelectorAll('.settings-checks-action > button');
+    if (actions.length !== 1) throw new Error('Expected one Settings checks action');
+    const action = actions[0].getBoundingClientRect();
     const grid = '.settings-grid a';
     const links = [...document.querySelectorAll<HTMLAnchorElement>(grid)];
     const edges: Record<string, number> = {
@@ -249,6 +251,16 @@ type HealthFixtureOptions = {
   onCleanup?: (result: { databaseOpen: boolean; runtimeStatus: string; serviceListening: boolean }) => void;
 };
 
+async function unrouteOpenPage(page: Page) {
+  try { if (!page.isClosed()) await page.unrouteAll({ behavior: 'wait' }); }
+  catch (error) { if (!page.isClosed()) throw error; }
+}
+
+async function leaveOpenPage(page: Page) {
+  try { if (!page.isClosed()) await page.goto('about:blank'); }
+  catch (error) { if (!page.isClosed()) throw error; }
+}
+
 /** Real local service and SQLite projection; no business or external service writes. */
 export async function withHealthService(page: Page, run: (fixture: {
   requests: Array<{ method: string; path: string; status: number; hasCookie: boolean; hasAuthorization: boolean }>;
@@ -258,6 +270,7 @@ export async function withHealthService(page: Page, run: (fixture: {
   disconnectEvents: () => void;
   resetProjection: () => void;
   holdNextSession: () => { ready: Promise<void>; release: () => void };
+  holdAllSessions: () => { ready: Promise<void>; count: () => number; release: () => void };
   switchDomain: () => Promise<void>;
   addPermission: () => void;
 }) => Promise<void>, initial?: { freshness: 'fresh' | 'stale' | 'unknown'; at: string; facts?: HealthFacts },
@@ -276,6 +289,7 @@ options: HealthFixtureOptions = {}) {
   let runtime: ReturnType<typeof createServiceRuntime> | undefined;
   let backend: Server | undefined;
   let control: Socket | undefined;
+  let releaseAllSessions: (() => void) | undefined;
   let runtimeStatus = 'not-started';
   const connections = new Set<Socket>();
   try {
@@ -299,6 +313,7 @@ options: HealthFixtureOptions = {}) {
     const streams = new Set<import('node:http').ServerResponse>();
     let offline = false;
     let held: { ready: () => void; gate: Promise<void> } | undefined;
+    let heldAll: { seen: () => void; gate: Promise<void> } | undefined;
     const holdNextSession = () => {
       let ready!: () => void;
       let release!: () => void;
@@ -306,6 +321,24 @@ options: HealthFixtureOptions = {}) {
       const gate = new Promise<void>(resolve => { release = resolve; });
       held = { ready, gate };
       return { ready: pending, release };
+    };
+    const holdAllSessions = () => {
+      if (heldAll) throw new Error('Session gate already active');
+      let signalReady!: () => void;
+      let open!: () => void;
+      let count = 0;
+      const ready = new Promise<void>(resolve => { signalReady = resolve; });
+      const gate = new Promise<void>(resolve => { open = resolve; });
+      const current = { gate, seen: () => { count++; signalReady(); } };
+      heldAll = current;
+      const release = () => {
+        if (heldAll !== current) return;
+        heldAll = undefined;
+        releaseAllSessions = undefined;
+        open();
+      };
+      releaseAllSessions = release;
+      return { ready, count: () => count, release };
     };
     const service = createHttpServer((request, response) => {
       void (async () => {
@@ -318,8 +351,12 @@ options: HealthFixtureOptions = {}) {
         if (events) { streams.add(response); response.on('close', () => streams.delete(response)); }
         const body: Buffer[] = [];
         for await (const chunk of request) body.push(Buffer.from(chunk));
-        if (held && target.pathname === '/api/v1/session' && method === 'GET') {
-          const pending = held; held = undefined; pending.ready(); await pending.gate;
+        if (target.pathname === '/api/v1/session' && method === 'GET') {
+          if (heldAll) {
+            const pending = heldAll; pending.seen(); await pending.gate;
+          } else if (held) {
+            const pending = held; held = undefined; pending.ready(); await pending.gate;
+          }
         }
         const upstream = await serviceRuntime.app.request(target.pathname + target.search, {
           method, headers: request.headers as Record<string, string>, signal: abort.signal,
@@ -380,6 +417,7 @@ options: HealthFixtureOptions = {}) {
         if (result.changes !== 1) throw new Error('Missing projection checkpoint');
       },
       holdNextSession,
+      holdAllSessions,
       addPermission: () => {
         database.prepare("INSERT INTO caller_scopes (account_id,caller_id,data_domain,permission,revoked_at) VALUES ('owner','web','personal','settings.read',NULL)").run();
       },
@@ -390,10 +428,11 @@ options: HealthFixtureOptions = {}) {
       },
     });
   } finally {
+    releaseAllSessions?.();
     try {
-      if (backend?.listening && !page.isClosed()) await page.goto('about:blank');
+      if (backend?.listening) await leaveOpenPage(page);
     } finally {
-      try { await page.unrouteAll({ behavior: 'wait' }); }
+      try { await unrouteOpenPage(page); }
       finally {
         control?.destroy();
         for (const connection of connections) connection.destroy();

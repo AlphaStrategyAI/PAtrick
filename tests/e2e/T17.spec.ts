@@ -394,8 +394,10 @@ test('settings overview does not turn an unobserved snapshot into checks or a kn
     await expect(overview).toContainText('Current device: Unknown');
     await expect(overview).toContainText('No verified snapshot available');
     await expect(overview.locator('time')).toHaveCount(0);
-    await expect(overview.getByRole('button', { name: 'Run checks' })).toBeDisabled();
-    await expect(overview).toContainText('Combined checks are not supported yet.');
+    const checks = page.getByRole('button', { name: 'Run checks', exact: true });
+    await expect(checks).toBeDisabled();
+    await expect(checks).toHaveAccessibleDescription('Combined checks are not supported yet.');
+    await expect(page.locator('#settings-checks-unavailable')).toHaveText('Combined checks are not supported yet.');
     const count = healthRequests.length;
     const refresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/system/health');
     await overview.getByRole('button', { name: 'Refresh health snapshot' }).click();
@@ -408,8 +410,10 @@ test('settings overview does not turn an unobserved snapshot into checks or a kn
     await expect(chinese).toContainText('服务投影状态：未知');
     await expect(chinese).toContainText('当前设备：未知');
     await expect(chinese).toContainText('暂无可验证的快照');
-    await expect(chinese.getByRole('button', { name: '运行检查' })).toBeDisabled();
-    await expect(chinese).toContainText('尚不支持统一检查。');
+    const chineseChecks = page.getByRole('button', { name: '运行检查', exact: true });
+    await expect(chineseChecks).toBeDisabled();
+    await expect(chineseChecks).toHaveAccessibleDescription('尚不支持统一检查。');
+    await expect(page.locator('#settings-checks-unavailable')).toHaveText('尚不支持统一检查。');
   } finally { await fx.close(); }
 });
 

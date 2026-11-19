@@ -26,10 +26,12 @@ import { demoWork, isDemo } from './demo.js';
 import { navigation, settingsNavigation, workDetailPath } from './navigation.js';
 import type { NavigationItem } from './navigation.js';
 
-function PageFrame({ item, children }: { item: Pick<NavigationItem, 'label' | 'summary'>; children?: ReactNode }) {
+function PageFrame({ item, action, children }: { item: Pick<NavigationItem, 'label' | 'summary'>; action?: ReactNode; children?: ReactNode }) {
   const { t } = useLocale();
   return <>
-    <div className="page-title"><h1>{t(item.label)}</h1><p>{t(item.summary)}</p></div>
+    <div className={action ? 'page-title settings-page-title' : 'page-title'}>
+      <h1>{t(item.label)}</h1><p>{t(item.summary)}</p>{action}
+    </div>
     {children}
   </>;
 }
@@ -107,7 +109,12 @@ function SystemPage() {
 
 function SettingsPage() {
   const { t } = useLocale();
-  return <PageFrame item={navigation[7]}><Authenticated>
+  const { scope } = useService();
+  const action = (isDemo || !!scope) ? <div className="settings-checks-action">
+    <button className="primary" type="button" disabled aria-describedby="settings-checks-unavailable">{t('settings.overview.checks')}</button>
+    <p id="settings-checks-unavailable">{t('settings.overview.checksUnavailable')}</p>
+  </div> : undefined;
+  return <PageFrame item={navigation[7]} action={action}><Authenticated>
     <SettingsOverview />
     <nav className="settings-grid" aria-label={t('aria.settings')}>
       {settingsNavigation.map(item => <Link key={item.path} to={item.path} className="settings-row"

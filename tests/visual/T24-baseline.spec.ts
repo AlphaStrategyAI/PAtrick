@@ -95,8 +95,8 @@ for (const locale of ['en', 'zh'] as const) {
         expect(Object.keys(frame.edges).sort()).toEqual(Object.keys(measured.edges).sort());
         const runtimeEdges = edgeDeltas(measured.edges, frame.edges);
         writeFileSync(info.outputPath('runtime-comparison.json'), JSON.stringify({ runtimeEdges, runtimePixels }, null, 2));
-        for (const [key, delta] of Object.entries(runtimeEdges)) expect(Math.abs(delta), key + ' geometry drift').toBeLessThanOrEqual(environment.limits.edgePx);
-        expect(runtimePixels.ratio, 'changed pixel ratio').toBeLessThanOrEqual(environment.limits.pixelRatio);
+        for (const [key, delta] of Object.entries(runtimeEdges)) expect.soft(Math.abs(delta), key + ' geometry drift').toBeLessThanOrEqual(environment.limits.edgePx);
+        expect.soft(runtimePixels.ratio, 'changed pixel ratio').toBeLessThanOrEqual(environment.limits.pixelRatio);
         // Release qualification can run the same capture with the locked Figma gates enabled.
         if (process.env.T24_REQUIRE_DESIGN_MATCH === '1') {
           for (const [key, delta] of Object.entries(designEdges))

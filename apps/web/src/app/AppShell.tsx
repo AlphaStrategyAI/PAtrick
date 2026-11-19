@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router';
+import { matchPath, NavLink, Outlet, useLocation } from 'react-router';
 import { healthSnapshotSchema } from '@patrick/contracts/resources';
 import { asClientError, useScopedSnapshot, useService, useSnapshotEvents } from '../api/query.js';
 import { Icon } from '../components/icons.js';
@@ -81,7 +81,7 @@ function Shell() {
       <Sidebar health={liveHealth} status={healthStatus} asOf={offlineAsOf} hidden={hidden} onNavigate={() => setDrawer(false)} />
     </Dialog>}
     <div className="main-panel">
-      <header className="topbar">
+      <header className={matchPath({ path: '/settings', end: true }, pathname) ? 'topbar topbar--settings-index' : 'topbar'}>
         <button className="icon-button drawer-toggle" type="button" onClick={() => setDrawer(true)}
           aria-expanded={drawer} aria-haspopup="dialog" aria-label={t('aria.openNavigation')}><Icon name="menu" /></button>
         <span className="crumb">{title}</span>

@@ -86,6 +86,7 @@ h2 { font-size: 23px; line-height: 30px; }
   display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px;
   padding: 8px 32px; border-bottom: 1px solid var(--border); background: var(--surface);
 }
+.topbar--settings-index { background: var(--background); }
 .crumb { color: var(--secondary); font-size: 15px; overflow-wrap: anywhere; }
 .topbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .icon-button { width: 44px; padding: 0; display: grid; place-items: center; }
@@ -116,12 +117,14 @@ h2 { font-size: 23px; line-height: 30px; }
 .settings-overview-copy { display: grid; align-content: start; gap: 2px; overflow-wrap: anywhere; }
 .settings-overview-copy h2 { margin: 0; }
 .settings-overview-copy > p { line-height: 22px; }
-.settings-overview-scope, .settings-overview-evidence, .settings-overview-actions p {
+.settings-overview-scope, .settings-overview-evidence, .settings-checks-action p {
   color: var(--secondary); font-size: 15px; line-height: 22px;
 }
 .settings-overview-evidence { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .settings-overview-actions { display: grid; grid-template-columns: auto auto; align-content: start; align-items: center; justify-items: start; gap: 4px 8px; }
 .settings-overview-actions a { min-height: 44px; display: inline-flex; align-items: center; }
+.settings-checks-action { display: grid; justify-items: start; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.settings-checks-action > button { min-height: 47px; }
 .settings-grid { display: grid; }
 .settings-row {
   display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 24px; align-items: center;
@@ -134,8 +137,12 @@ h2 { font-size: 23px; line-height: 30px; }
 .settings-row-copy > span { font-size: 15px; line-height: 24px; color: var(--secondary); }
 .settings-row:hover, .settings-row:focus-visible { background: var(--soft); }
 @media (min-width: 68.01rem) {
-  .page:has(> .settings-grid) { width: min(100%, 1212px); padding-inline: 46px; }
-  .page:has(> .settings-grid) > .page-title { margin-block-end: 24px; }
+  .page:has(> .settings-grid) { width: min(100%, 1212px); padding-inline: 46px; padding-block-start: 40px; }
+  .page:has(> .settings-grid) > .page-title { margin-block-end: 31px; }
+  .settings-page-title { grid-template-columns: minmax(0, 1fr) max-content; grid-template-areas: 'title action' 'summary action'; column-gap: 24px; }
+  .settings-page-title > h1 { grid-area: title; }
+  .settings-page-title > p { grid-area: summary; }
+  .settings-page-title > .settings-checks-action { grid-area: action; justify-items: end; text-align: end; max-width: 21rem; }
   .settings-overview { min-height: 153px; }
   .settings-overview + .settings-grid { margin-block-start: 27px; }
 }

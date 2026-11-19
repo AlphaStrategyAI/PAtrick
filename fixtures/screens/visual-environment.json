@@ -20,17 +20,17 @@
     "en": {
       "key": "en-settings",
       "id": "26:2361",
-      "baselineSha256": "5f56cfccd734652a26cb8cca111bd2b0e304c13c81102ae61f458ae635705aed",
+      "baselineSha256": "f25761ddf8bbc29c7785f8911020c855c900d19285b2ec5ac2dbda1c5bf5ec64",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
         "headingLeft": 274,
         "overviewTop": 208,
         "overviewBottom": 361,
-        "runChecksLeft": 880.3125,
-        "runChecksRight": 998.65625,
-        "runChecksTop": 221,
-        "runChecksBottom": 265,
+        "runChecksLeft": 1275.65625,
+        "runChecksRight": 1394,
+        "runChecksTop": 104,
+        "runChecksBottom": 151,
         "collectionLeft": 274,
         "collectionRight": 1394,
         "collectionTop": 388,
@@ -70,17 +70,17 @@
     "zh": {
       "key": "zh-settings",
       "id": "26:2477",
-      "baselineSha256": "d80bf320830efaf4666f19ceff8bff8dc46b32df0cd4090758ba5948ef5e3163",
+      "baselineSha256": "3c367a9c31eb4adb5d68506cedf2bffc3037b2692e74d6ca1c4840f81f9469e7",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
         "headingLeft": 274,
         "overviewTop": 208,
         "overviewBottom": 361,
-        "runChecksLeft": 1123,
-        "runChecksRight": 1217,
-        "runChecksTop": 221,
-        "runChecksBottom": 265,
+        "runChecksLeft": 1300,
+        "runChecksRight": 1394,
+        "runChecksTop": 104,
+        "runChecksBottom": 151,
         "collectionLeft": 274,
         "collectionRight": 1394,
         "collectionTop": 388,
@@ -166,5 +166,5 @@
       }
     }
   },
-  "healthFixtureSha256": "791efea9e4f0c749c95e283f9f47b21d56eb365be7dfb99014d252a677eb20ae"
+  "healthFixtureSha256": "8abc4f094dd2e45b4604cbd9aff1c22c347299b45046112979b4ad369cbaabfb"
 }

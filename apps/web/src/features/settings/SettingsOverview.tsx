@@ -40,8 +40,6 @@ export function SettingsOverview() {
       {issue && <p>{t('settings.overview.issue')} {t(issue)}</p>}
     </div>
     <div className="settings-overview-actions">
-      <button className="primary" type="button" disabled aria-describedby="settings-checks-unavailable">{t('settings.overview.checks')}</button>
-      <p id="settings-checks-unavailable">{t('settings.overview.checksUnavailable')}</p>
       <button type="button" disabled={isDemo || health.isFetching} onClick={() => { void health.refetch(); }}>
         {t(health.isFetching ? 'settings.overview.refreshing' : 'settings.overview.refresh')}
       </button>
