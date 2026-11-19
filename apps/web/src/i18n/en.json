@@ -369,5 +369,19 @@
   "settings.notificationsAll": "All notifications",
   "settings.quietHours": "Quiet hours",
   "settings.quietHoursStart": "Start",
-  "settings.quietHoursEnd": "End"
+  "settings.quietHoursEnd": "End",
+  "materials.workDirectory": "Work directory",
+  "materials.noWorkDirectory": "No work directory is registered yet.",
+  "materials.directoryDetails": "Directory details",
+  "materials.sourceId": "Source",
+  "materials.vault": "Vault",
+  "materials.noVault": "No Vault is connected yet.",
+  "materials.editor": "Editor",
+  "materials.material": "Material",
+  "materials.writeBack": "Write-back",
+  "materials.facetReady": "Available",
+  "materials.facetMissing": "Not installed",
+  "materials.facetStopped": "Not running",
+  "collection.path": "Folder path",
+  "collection.directoryScope": "This folder is the approved root; the reader never leaves it."
 }

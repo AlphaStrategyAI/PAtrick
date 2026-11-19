@@ -213,10 +213,10 @@ it.each([
       'runs a check of the three backends',
       'registration and targets for host, network repair, backup, and restore actions',
       'a sample test preview', 'language, reduced motion, the notification level, and quiet hours',
+      'registers the approved work directory',
       'Re-pairing an existing connection goes through a trusted change',
     ],
     pending: [
-      'The work-directory editor is still pending.',
       'native Feishu round trip',
     ],
   },
@@ -226,10 +226,11 @@ it.each([
     settings: [
       '新增 RSS 订阅、网页、GitHub 仓库与获准目录', '已登记的 Obsidian 资料库连接', '运行三个后端的检查',
       '主机检查、网络修复、备份与恢复操作的登记状态和目标', '样例测试预览', '语言、减少动效、通知范围和免打扰时段',
+      '登记获准工作目录',
       '已有连接重新配对要走可信变更',
     ],
     pending: [
-      '工作目录编辑器仍待实现', '飞书原生往返',
+      '飞书原生往返',
     ],
   },
 ])('$file describes the current System and Settings capabilities and pending controls', ({ file, system, settings, pending }) => {
@@ -242,7 +243,7 @@ it.each([
 
 it('ties the documented Settings limits to the current operation and UI entry points', () => {
   const collection = read('apps/web/src/features/collection/CollectionPage.tsx');
-  expect(collection).toContain("useState<'rss' | 'webpage' | 'github'>('rss')");
+  expect(collection).toContain("useState<'rss' | 'webpage' | 'github' | 'directory'>('rss')");
   expect(collection).toContain('<option value="rss">');
   expect(collection).toContain('<option value="webpage">');
   expect(collection).toContain('<option value="github">');

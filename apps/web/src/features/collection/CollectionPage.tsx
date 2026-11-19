@@ -128,7 +128,7 @@ function ScopedCollection() {
   const owner = scopeOperations.includes('owner');
   const canPreview = owner || scopeOperations.includes('sources.detect');
   const [target, setTarget] = useState('');
-  const [type, setType] = useState<'rss' | 'webpage' | 'github'>('rss');
+  const [type, setType] = useState<'rss' | 'webpage' | 'github' | 'directory'>('rss');
   const [github, setGithub] = useState({ repo: '', branch: 'main', path: '' });
   const [token, setToken] = useState('');
   const [credentialRef, setCredentialRef] = useState<string>();
@@ -151,7 +151,7 @@ function ScopedCollection() {
   const log = useScopedSnapshot('getSourceReceipts', { id: source?.source_id }, receipts.parse,
     { enabled: !!source, refetchInterval: 10_000 });
 
-  function changeType(next: 'rss' | 'webpage' | 'github') { setType(next); clearPreview(); }
+  function changeType(next: 'rss' | 'webpage' | 'github' | 'directory') { setType(next); clearPreview(); }
 
   /** Stages the GitHub token so the secret never travels with the change. */
   async function stageToken() {
@@ -217,9 +217,10 @@ function ScopedCollection() {
       <form onSubmit={(event) => { void detect(event); }}>
         <label>{t('collection.type')}
           <select value={type} disabled={loading}
-            onChange={(event) => changeType(event.target.value === 'webpage' ? 'webpage' : event.target.value === 'github' ? 'github' : 'rss')}>
+            onChange={(event) => changeType(event.target.value === 'webpage' ? 'webpage' : event.target.value === 'github' ? 'github'
+              : event.target.value === 'directory' ? 'directory' : 'rss')}>
             <option value="rss">{t('collection.rss')}</option><option value="webpage">{t('collection.webpage')}</option>
-            <option value="github">{t('collection.github')}</option>
+            <option value="github">{t('collection.github')}</option><option value="directory">{t('collection.directory')}</option>
           </select>
         </label>
         {type === 'github' ? <>
@@ -243,8 +244,8 @@ function ScopedCollection() {
             {t('collection.stageToken')}
           </button>
           {credentialRef && <p role="status">{t('collection.tokenStaged')}</p>}
-        </> : <label>{t('collection.url')}
-          <input type="url" required maxLength={2048} value={target} disabled={loading}
+        </> : <label>{t(type === 'directory' ? 'collection.path' : 'collection.url')}
+          <input type={type === 'directory' ? 'text' : 'url'} required maxLength={2048} value={target} disabled={loading}
             onChange={(event) => { setTarget(event.target.value); clearPreview(); }} />
         </label>}
         <button className="primary" type="submit" disabled={loading || !target.trim()
@@ -257,8 +258,10 @@ function ScopedCollection() {
         <h3>{t('collection.preview')}</h3>
         <p><code>{preview.target}</code></p>
         <p>{t('settings.validationExpiry')}: {formatDate(locale, preview.expires_at)}</p>
-        <p>{t('collection.allowedScope')}</p>
-        <ul>{preview.allowed_urls.map((url) => <li key={url}><code>{url}</code></li>)}</ul>
+        {preview.type === 'directory' ? <p>{t('collection.directoryScope')}</p> : <>
+          <p>{t('collection.allowedScope')}</p>
+          <ul>{preview.allowed_urls.map((url) => <li key={url}><code>{url}</code></li>)}</ul>
+        </>}
         <p>{t('collection.samples')}: {preview.samples.length}</p>
         {preview.samples.length > 0 && <ul>{preview.samples.map(({ locator, byteLength }) =>
           <li key={locator}><code>{locator}</code> · {byteLength} bytes</li>)}</ul>}
@@ -270,7 +273,11 @@ function ScopedCollection() {
             <label>{t('collection.frequency')}
               <Frequency value={frequency} onChange={chooseFrequency} />
             </label>
-            {type === 'github' && credentialRef ? <SettingsChangeWizard key={[preview.preview_id, credentialRef].join(':')}
+            {preview.type === 'directory' ? <SettingsChangeWizard key={preview.preview_id}
+              operation="enable_work_directory"
+              targets={[{ target: preview.preview_id, label: preview.target, device: null, revision: 0 }]}
+              entryLabel="collection.enable" onChanged={() => { clearPreview(); page(undefined); refresh(); }} />
+              : type === 'github' && credentialRef ? <SettingsChangeWizard key={[preview.preview_id, credentialRef].join(':')}
               operation="enable_github_source"
               targets={[{ target: preview.target, label: preview.target, device: null, revision: 0,
                 input: { credential_ref: credentialRef, repo: github.repo, branch: github.branch, path: github.path } }]}
@@ -306,16 +313,19 @@ function ScopedCollection() {
       {source.connector_type === 'directory' && <p role="status">{directoryReaderLabel()}
         {reader.fresh && reader.data?.data.directory.state === 'blocked' && <> {t('collection.directoryReaderNext')}</>}
       </p>}
-      {owner && ['rss', 'webpage'].includes(source.connector_type) && source.status !== 'disconnected' &&
+      {owner && ['rss', 'webpage', 'directory'].includes(source.connector_type) && source.status !== 'disconnected' &&
         <div>{(['modify', source.status === 'enabled' ? 'pause' : 'resume', 'disconnect'] as const).map((action) =>
           <button key={action} type="button" onClick={() => { chooseFrequency(source.frequency); edit(action); }}
             aria-pressed={operation === action}>{t(labels[action])}</button>)}</div>}
       {operation && source.status !== 'disconnected' && <>
         {operation === 'modify' && <label>{t('collection.frequency')}<Frequency value={frequency} onChange={chooseFrequency} /></label>}
         <SettingsChangeWizard key={[source.source_id, source.config_revision, operation, frequency].join(':')}
-          operation={operation + '_http_source'} targets={[{ target: source.source_id,
+          operation={source.connector_type === 'directory' ? 'change_work_directory' : operation + '_http_source'}
+          targets={[{ target: source.source_id,
             device: null, label: source.normalized_target, revision: source.config_revision,
-            input: operation === 'modify' ? { frequency } : null }]} entryLabel={labels[operation]}
+            input: source.connector_type === 'directory'
+              ? operation === 'modify' ? { action: operation, frequency } : { action: operation }
+              : operation === 'modify' ? { frequency } : null }]} entryLabel={labels[operation]}
           onChanged={() => { edit(undefined); refresh(); }} />
       </>}
       {owner && source.connector_type === 'rss' && source.status === 'enabled' &&

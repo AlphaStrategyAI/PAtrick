@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer as createNetServer } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,9 @@ import { bindUnreserved, withHealthService } from '../visual/T24-baseline-fixtur
 
 async function setup(page: Page, withVault = false, permissions = ['owner']) {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t17-browser-'));
+  const workDirectory = join(dir, 'work');
+  mkdirSync(workDirectory);
+  writeFileSync(join(workDirectory, 'note.md'), '# note\n');
   const databasePath = join(dir, 't17.sqlite');
   const credentialDirectory = join(dir, 'cred');
   let serviceTime = '2026-11-17T05:00:00.000Z';
@@ -50,7 +53,7 @@ async function setup(page: Page, withVault = false, permissions = ['owner']) {
     });
     await route.fulfill({ status: upstream.status, headers: Object.fromEntries(upstream.headers), body: await upstream.text() });
   });
-  return { db, setTime(at: string) { serviceTime = at; }, async close() {
+  return { db, workDirectory, setTime(at: string) { serviceTime = at; }, async close() {
     try { if (!page.isClosed()) { await page.goto('about:blank'); await page.unrouteAll({ behavior: 'wait' }); } }
     finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
   } };
@@ -102,6 +105,31 @@ test('settings offer six groups and distinguish unconfigured host actions from t
     await page.goto('/settings/operation');
     await expect(page.getByText('Check the host: Available')).toBeVisible();
     await expect(page.getByText('Repair a registered network target: Unavailable in this installation')).toBeVisible();
+  } finally { await fx.close(); }
+});
+
+test('the approved work directory is previewed on this device and registered through the trusted change flow', async ({ page }) => {
+  const fx = await setup(page);
+  try {
+    await page.goto('/settings/collection');
+    await page.getByLabel('Source type').selectOption('directory');
+    await page.getByLabel('Folder path').fill(fx.workDirectory);
+    await page.getByRole('button', { name: 'Preview source' }).click();
+    const preview = page.getByRole('region', { name: 'Preview source' });
+    await expect(preview).toContainText('work');
+    await expect(preview).toContainText('Samples:');
+    await page.getByLabel('Registered target').selectOption({ label: realpathSync(fx.workDirectory) });
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByText('Validation passed')).toBeVisible();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    const confirm = page.getByRole('button', { name: 'Confirm and apply' });
+    await expect(confirm).toBeVisible();
+    await confirm.click();
+    await expect(page.getByText('Verified after applying')).toBeVisible();
+    expect(fx.db.prepare("SELECT connector_type,status FROM source_configs WHERE connector_type='directory'").get())
+      .toEqual({ connector_type: 'directory', status: 'enabled' });
+    await page.goto('/settings/materials');
+    await expect(page.getByRole('region', { name: 'Work directory' })).toContainText('work');
   } finally { await fx.close(); }
 });
 

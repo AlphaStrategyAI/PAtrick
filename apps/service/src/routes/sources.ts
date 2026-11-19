@@ -195,6 +195,8 @@ export function mountSourceRoutes(app: Hono, ready: Ready) {
         if (cause instanceof ApiError || !(cause instanceof Error)) throw cause;
         if (cause.message === 'SOURCE_ROOT_TAKEN') throw new ApiError(409, 'CONFLICT', { reason: 'source_exists' });
         if (cause.message === 'SOURCE_TARGET_OUTSIDE_SCOPE') throw new ApiError(422, 'UNPROCESSABLE', { reason: 'source_target' });
+        if (cause.message === 'SOURCE_TARGET_INVALID') throw new ApiError(422, 'UNPROCESSABLE', { reason: 'source_target' });
+        if (cause.message === 'DIRECTORY_READER_UNAVAILABLE') throw new ApiError(503, 'UNAVAILABLE', { reason: 'source_reader' }, true);
         if (['SOURCE_URL_INVALID', 'SOURCE_CREDENTIAL_IN_TARGET', 'SOURCE_REQUIRES_LOGIN', 'SOURCE_MEDIA_TYPE',
           'SOURCE_FEED_INVALID', 'SOURCE_XML_DTD_DENIED', 'SOURCE_HTML_REDIRECT'].includes(cause.message)) {
           throw new ApiError(422, 'UNPROCESSABLE', { reason: 'source_preview' });

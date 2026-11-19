@@ -26,6 +26,35 @@ export function sourceSettingsHandlers({ db, credentials, now, registry }: Optio
     return input.frequency;
   }
 
+  /** Reads the saved preview of a work directory and refuses a stale or foreign one. */
+  function workDirectoryPreview(principal: Principal, draft: SettingsDraft) {
+    assertDomainPermission(db, principal, draft.domain, 'sources.detect');
+    const row = db.prepare(`SELECT p.snapshot FROM source_preview_receipts p JOIN command_records c USING(command_id)
+      WHERE p.command_id=? AND c.account_id=? AND c.caller_id=? AND c.data_domain=? AND c.operation='detectSources'`)
+      .get(draft.target, principal.account_id, principal.caller_id, draft.domain) as { snapshot: string } | undefined;
+    if (!row) forbidden();
+    const saved = JSON.parse(row.snapshot) as { scope: { permission_epoch: number }; data: unknown };
+    const preview = sourcePreviewSchema.parse(saved.data);
+    if (saved.scope.permission_epoch !== principal.auth_epoch || preview.expires_at <= now().toISOString()) stale();
+    if (preview.type !== 'directory') invalid();
+    return preview;
+  }
+
+  /** The action of a work directory change travels with the draft. */
+  function workDirectoryInput(draft: SettingsDraft): { action: 'modify' | 'pause' | 'resume' | 'disconnect'; frequency?: string } {
+    const input = draft.input;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) invalid();
+    const record = input as Record<string, unknown>;
+    const action = record.action;
+    if (action !== 'modify' && action !== 'pause' && action !== 'resume' && action !== 'disconnect') invalid();
+    if (action === 'modify') {
+      if (typeof record.frequency !== 'string' || !httpFrequencies.some((option) => option === record.frequency)) invalid();
+      return { action, frequency: record.frequency };
+    }
+    if (record.frequency !== undefined) invalid();
+    return { action };
+  }
+
   function fromPreview(principal: Principal, draft: SettingsDraft) {
     assertDomainPermission(db, principal, draft.domain, 'sources.detect');
     const row = db.prepare(`SELECT p.snapshot,p.baseline FROM source_preview_receipts p JOIN command_records c USING(command_id)
@@ -191,9 +220,95 @@ export function sourceSettingsHandlers({ db, credentials, now, registry }: Optio
     },
   };
 
+  const enableWorkDirectory: SettingsHandler = {
+    binding(principal, draft) {
+      const preview = workDirectoryPreview(principal, draft);
+      const owner = actor(principal, draft.domain);
+      const existing = preview.duplicate_source_id
+        ? checkedSource(() => registry.describeSource(owner, preview.duplicate_source_id!)) : undefined;
+      return { revision: existing?.revision ?? 0, deviceId,
+        identityId: preview.duplicate_source_id ?? draft.target,
+        scopeHash: hash([preview.draft_hash, draft.target]) };
+    },
+    async validate(principal, draft) {
+      const preview = workDirectoryPreview(principal, draft);
+      try {
+        const checked = await registry.inspectSourceDraft(actor(principal, draft.domain),
+          { type: 'directory', target: preview.target });
+        return { valid: checked.draftHash === preview.draft_hash && checked.sourceId === preview.duplicate_source_id };
+      } catch {
+        return { valid: false };
+      }
+    },
+    authorize,
+    async apply(principal, draft, _proof, beforeWrite) {
+      try {
+        const preview = workDirectoryPreview(principal, draft);
+        const owner = actor(principal, draft.domain);
+        const checked = await registry.inspectSourceDraft(owner, { type: 'directory', target: preview.target });
+        if (checked.draftHash !== preview.draft_hash || checked.sourceId !== preview.duplicate_source_id) stale();
+        const receipt = await registry.enableSource(owner, { type: 'directory', target: preview.target },
+          { draftHash: checked.draftHash, beforeWrite });
+        return { revision: receipt.configRevision,
+          effects: [{ item: 'source_enable', outcome: 'applied', revision: receipt.configRevision }] };
+      } catch (error) { return blockedChange(error); }
+    },
+    async recheck(principal, draft, applied) {
+      const preview = workDirectoryPreview(principal, draft);
+      const row = db.prepare(`SELECT config_revision FROM source_configs
+        WHERE account_id=? AND data_domain=? AND normalized_target=? AND connector_type='directory'`).get(
+        principal.account_id, draft.domain, preview.target) as { config_revision: number } | undefined;
+      const verified = row?.config_revision === applied.revision;
+      return { verified, ...(!verified ? { issue: 'source_recheck' } : {}) };
+    },
+  };
+
+  const changeWorkDirectory: SettingsHandler = {
+    binding(principal, draft) {
+      const owner = actor(principal, draft.domain);
+      const source = checkedSource(() => registry.describeSource(owner, draft.target));
+      return { revision: source.revision, deviceId, identityId: draft.target, scopeHash: source.binding };
+    },
+    async validate(principal, draft) {
+      const input = workDirectoryInput(draft);
+      const owner = actor(principal, draft.domain);
+      const source = checkedSource(() => registry.describeSource(owner, draft.target));
+      if (source.status === 'disconnected') return { valid: false };
+      if (input.action !== 'modify') return { valid: true };
+      try {
+        // The root has to still resolve to the same directory before a change applies.
+        const checked = await registry.inspectSourceDraft(owner, { type: 'directory', target: source.target });
+        return { valid: checked.sourceId === draft.target };
+      } catch {
+        return { valid: false };
+      }
+    },
+    authorize,
+    async apply(principal, draft, proof, beforeWrite) {
+      try {
+        const input = workDirectoryInput(draft);
+        const owner = actor(principal, draft.domain);
+        const result = registry.changeSource(owner, draft.target, input.action, proof.base_revision,
+          input.action === 'modify' ? input.frequency : undefined, beforeWrite);
+        return { revision: result.revision, effects: [{ item: 'source_' + input.action,
+          outcome: result.changed ? 'applied' : 'unchanged', revision: result.revision }] };
+      } catch (error) { return blockedChange(error); }
+    },
+    async recheck(principal, draft, applied) {
+      const input = workDirectoryInput(draft);
+      const source = checkedSource(() => registry.describeSource(actor(principal, draft.domain), draft.target));
+      const expected = input.action === 'pause' ? 'paused' : input.action === 'resume' ? 'enabled'
+        : input.action === 'disconnect' ? 'disconnected' : undefined;
+      const verified = source.revision === applied.revision &&
+        (expected === undefined ? source.frequency === input.frequency : source.status === expected);
+      return { verified, ...(!verified ? { issue: 'source_recheck' } : {}) };
+    },
+  };
+
   return { enable_http_source: enable, modify_http_source: handlerFor('modify'), pause_http_source: handlerFor('pause'),
     resume_http_source: handlerFor('resume'), disconnect_http_source: handlerFor('disconnect'), import_rss_history: history,
-    enable_github_source: enableGithub };
+    enable_github_source: enableGithub, enable_work_directory: enableWorkDirectory,
+    change_work_directory: changeWorkDirectory };
 }
 
 type GithubInput = { credential_ref: string; repo: string; branch: string; path: string };
@@ -238,7 +353,8 @@ function checkedSource<T>(read: () => T): T {
 function throwSourceError(error: unknown): never {
   if (!(error instanceof Error)) throw error;
   if (['SOURCE_NOT_FOUND', 'SOURCE_TARGET_OUTSIDE_SCOPE', 'SOURCE_ROOT_TAKEN'].includes(error.message)) forbidden();
-  if (['SOURCE_HTTP_SCOPE_INVALID', 'SOURCE_URL_INVALID', 'SOURCE_FREQUENCY_INVALID'].includes(error.message)) invalid();
+  if (['SOURCE_HTTP_SCOPE_INVALID', 'SOURCE_URL_INVALID', 'SOURCE_FREQUENCY_INVALID',
+    'SOURCE_TARGET_INVALID'].includes(error.message)) invalid();
   if (['SOURCE_HISTORY_STALE', 'SOURCE_HISTORY_EVIDENCE_REQUIRED', 'SOURCE_HISTORY_BUDGET_EXCEEDED',
     'SOURCE_HISTORY_INVALID'].includes(error.message)) stale();
   throw error;
@@ -248,7 +364,7 @@ function blockedChange(error: unknown): never {
   if (error instanceof ApiError || (error instanceof Error &&
       ['SOURCE_TARGET_OUTSIDE_SCOPE', 'SOURCE_ROOT_TAKEN', 'SOURCE_REVISION_CONFLICT', 'SOURCE_DISCONNECTED',
         'SOURCE_HISTORY_STALE', 'SOURCE_HISTORY_EVIDENCE_REQUIRED', 'SOURCE_HISTORY_BUDGET_EXCEEDED',
-        'SOURCE_HISTORY_INVALID'].includes(error.message))) {
+        'SOURCE_HISTORY_INVALID', 'SOURCE_TARGET_INVALID', 'DIRECTORY_READER_UNAVAILABLE'].includes(error.message))) {
     throw new SettingsApplyBlocked('source_binding_changed');
   }
   throw error;

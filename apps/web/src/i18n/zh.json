@@ -369,5 +369,19 @@
   "settings.notificationsAll": "全部通知",
   "settings.quietHours": "免打扰时段",
   "settings.quietHoursStart": "开始时间",
-  "settings.quietHoursEnd": "结束时间"
+  "settings.quietHoursEnd": "结束时间",
+  "materials.workDirectory": "工作目录",
+  "materials.noWorkDirectory": "尚未登记工作目录。",
+  "materials.directoryDetails": "目录细节",
+  "materials.sourceId": "来源",
+  "materials.vault": "资料库",
+  "materials.noVault": "尚未接通资料库。",
+  "materials.editor": "编辑器",
+  "materials.material": "资料",
+  "materials.writeBack": "导回",
+  "materials.facetReady": "可用",
+  "materials.facetMissing": "未安装",
+  "materials.facetStopped": "未运行",
+  "collection.path": "目录路径",
+  "collection.directoryScope": "此目录即获准根目录，读取器不会越出该范围。"
 }

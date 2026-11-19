@@ -94,7 +94,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 ## Settings
 
 - **Collection** lets authorized users add RSS feeds, web pages, GitHub repositories and approved folders, preview their scope, and enable, pause, or disconnect them. A GitHub source reads the live GitHub API with a staged token. A folder source is read through a reader that resolves every path one component at a time, never follows a link out of the approved root, reads through the descriptor it opened and bounds what it reads. Activation and the first successful collection have separate receipts.
-- **Work materials** reviews an already registered Obsidian Vault connection and its permission checks before confirmation.
+- **Work materials** reviews an already registered Obsidian Vault connection and its permission checks before confirmation. It also registers the approved work directory: the folder is previewed on this device first, confirmed before it collects, and afterwards paused, retimed or disconnected. The editor and the material are reported separately, so a missing desktop app never reads as a missing library.
 - **Execution** runs a check of the three backends. Each record says what was observed; a backend outside the isolated guest stays blocked with that reason, and the check never starts a backend run because a run spends the budget.
 - **Operation & backup** shows the registration and targets for host, network repair, backup, and restore actions. Available network and recovery actions use the trusted confirmation flow. The host check reports the registered targets and the last observation.
 - **Interaction** supports initial Feishu setup, pairing, and a sample test preview when the required host capabilities are registered. Sending and verifying the test require a transport. Re-pairing an existing connection goes through a trusted change that drains the active connection first.
@@ -143,7 +143,6 @@ The service runtime is built separately. Running it against real data requires a
 ## This version does not
 
 - Delivery ends at a verified proposal PR. Merging it, deploying the work product, and L3 multi-step delegation are outside this version. [Technical design v2.1](docs/designs/PAtrick技术设计-v2.md)
-- The work-directory editor is still pending.
 - Re-pairing and rotating the credential of an existing Feishu connection both go through an authorized change: the new secret is staged by the secure credential endpoint, and the change drains the active connection and clears the old binding before it applies.
 - The native Feishu round trip still needs transport provisioning and live acceptance. Real GitHub delivery and Codex CLI, Grok Build, and DSH under their intended host identities also need live acceptance. The local browser and service fixtures exercise their documented contracts.
 - The Obsidian rehearsal covered a synthetic Vault under the current desktop account. A separate production service identity, native reboot, cross-device sync, and upgrade and uninstall preservation are still pending acceptance.

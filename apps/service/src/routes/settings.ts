@@ -15,7 +15,7 @@ const INSPECT_ONLY_OPERATIONS = new Set(['inspect_executor', 'inspect_host']);
 
 export const settingsGroups = [
   { id: 'collection', operations: ['configure_source', 'enable_github_source'] },
-  { id: 'materials', operations: ['connect_vault', 'change_vault'] },
+  { id: 'materials', operations: ['connect_vault', 'change_vault', 'enable_work_directory', 'change_work_directory'] },
   { id: 'execution', operations: ['inspect_executor'] },
   { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
   { id: 'interaction', operations: ['enable_feishu', 'disable_feishu', 'rebind_feishu', 'rotate_feishu_credential'] },
@@ -188,6 +188,11 @@ function originOf(db: SqliteDatabase, principal: Principal, domain: string, oper
     const sources = db.prepare('SELECT COUNT(*) AS n FROM source_configs WHERE account_id=? AND data_domain=?')
       .get(principal.account_id, domain) as { n: number };
     return sources.n > 0 ? 'detected' : 'suggested';
+  }
+  if (operation === 'enable_work_directory' || operation === 'change_work_directory') {
+    const directories = db.prepare(`SELECT COUNT(*) AS n FROM source_configs
+      WHERE account_id=? AND data_domain=? AND connector_type='directory'`).get(principal.account_id, domain) as { n: number };
+    return directories.n > 0 ? 'detected' : 'suggested';
   }
   if (operation === 'connect_vault' || operation === 'change_vault') {
     const vaults = db.prepare('SELECT COUNT(*) AS n FROM vaults WHERE account_id=? AND data_domain=?')

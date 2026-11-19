@@ -8,6 +8,7 @@ import { AccountPreferences } from '../features/settings/AccountPreferences.js';
 import { SettingsOverview } from '../features/settings/SettingsOverview.js';
 import { SettingsReadiness } from '../features/settings/SettingsReadiness.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
+import { WorkMaterials } from '../features/settings/WorkMaterials.js';
 import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
 import { WorkPage as LiveWorkPage } from '../features/work/WorkPage.js';
 import { WorkDetail } from '../features/work/WorkDetail.js';
@@ -171,7 +172,9 @@ export const appRoutes: RouteObject[] = [{
       : <PageFrame item={navigation[6]}><Authenticated><StatsPage /></Authenticated></PageFrame> },
     { path: '/settings', element: <SettingsPage /> },
     ...settingsNavigation.slice(0, 5).map((item) => ({ path: item.path, element: isDemo ? <UnconnectedPage item={item} />
-      : <PageFrame item={item}><Authenticated>{item.path === '/settings/collection' ? <CollectionPage /> : <SettingsGroup group={item.path.split('/').at(-1)!} />}</Authenticated></PageFrame> })),
+      : <PageFrame item={item}><Authenticated>{item.path === '/settings/collection' ? <CollectionPage />
+        : item.path === '/settings/materials' ? <><WorkMaterials /><SettingsGroup group="materials" /></>
+        : <SettingsGroup group={item.path.split('/').at(-1)!} />}</Authenticated></PageFrame> })),
     { path: '/settings/preferences', element: <PreferencesPage /> },
     { path: '*', element: <NotFound /> },
   ],

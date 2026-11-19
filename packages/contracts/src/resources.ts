@@ -111,9 +111,14 @@ export const sourceReaderCapabilitiesSchema = z.strictObject({
 export const sourcePreviewSchema = z.strictObject({
   preview_id: z.string().min(1), target: z.string().min(1), type: detectSourcePayload.shape.type,
   duplicate_source_id: z.string().min(1).nullable(), draft_hash: z.string().regex(/^[a-f0-9]{64}$/u),
-  allowed_urls: z.array(z.string().min(1).max(2048)).min(1).max(32),
+  allowed_urls: z.array(z.string().min(1).max(2048)).max(32),
   samples: z.array(z.strictObject({ locator: z.string().min(1), byteLength: z.number().int().nonnegative() })).max(8),
   expires_at: z.iso.datetime(),
+}).superRefine((value, ctx) => {
+  // A directory preview names the approved root instead of a list of URLs.
+  if (value.type !== 'directory' && value.allowed_urls.length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['allowed_urls'], message: 'allowed_urls_required' });
+  }
 });
 export const sourceReceiptSchema = z.strictObject({
   event_id: z.string().min(1), config_revision: z.number().int().positive(), kind: z.string().min(1),

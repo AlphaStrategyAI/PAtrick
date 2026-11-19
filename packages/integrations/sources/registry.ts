@@ -105,6 +105,7 @@ export type GithubWebhookInput = {
 
 export const httpFrequencies = ['poll', '30m', '1h', '6h', '24h'] as const;
 export type HttpSourceOperation = 'modify' | 'pause' | 'resume' | 'disconnect';
+export type SourceOperation = 'modify' | 'pause' | 'resume' | 'disconnect';
 type SourceEnableGuard = { draftHash: string; httpBaseline?: HttpBaselineEntry[]; beforeWrite(): string };
 type AsyncTracker = <T>(pending: Promise<T>) => Promise<T>;
 type CollectionGuard = { signal: AbortSignal; isLive(): boolean; trackAsync?: AsyncTracker };
@@ -148,6 +149,12 @@ export type SourceRegistry = {
   inspectHttpDraft(principal: Principal, draft: SourceDraft): { draftHash: string; sourceId: string | null; revision: number };
   describeHttpSource(principal: Principal, sourceId: string): { revision: number; status: SourceStatus; frequency: string; binding: string };
   changeHttpSource(principal: Principal, sourceId: string, operation: HttpSourceOperation, expectedRevision: number,
+    frequency: string | undefined, beforeWrite: () => string): { changed: boolean; revision: number; status: SourceStatus };
+  /** Inspects a draft of any connector type. A directory draft resolves its root on disk. */
+  inspectSourceDraft(principal: Principal, draft: SourceDraft): Promise<{ draftHash: string; sourceId: string | null; revision: number }>;
+  describeSource(principal: Principal, sourceId: string): { revision: number; status: SourceStatus; frequency: string;
+    binding: string; target: string };
+  changeSource(principal: Principal, sourceId: string, operation: SourceOperation, expectedRevision: number,
     frequency: string | undefined, beforeWrite: () => string): { changed: boolean; revision: number; status: SourceStatus };
   pauseSource(sourceId: string): Promise<CollectionReceipt>;
   collectSource(sourceId: string, configRevision: number, guard?: CollectionGuard): Promise<CollectionReceipt>;
@@ -450,6 +457,22 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       throw new Error('SOURCE_NOT_FOUND');
     }
     return { ...row, connector_type: row.connector_type };
+  }
+
+  /** Reads a source of any connector type that belongs to the principal. */
+  function scopedSource(principal: Principal, sourceId: string) {
+    const row = load(sourceId);
+    if (!row || row.account_id !== principal.accountId || row.data_domain !== principal.dataDomain) {
+      throw new Error('SOURCE_NOT_FOUND');
+    }
+    return { ...row, connector_type: row.connector_type };
+  }
+
+  function inspectHttpDraftOf(principal: Principal, draft: SourceDraft) {
+    if (!isHttpConnector(draft.type)) throw new Error('SOURCE_HTTP_SCOPE_INVALID');
+    const normalized = normalizeHttp(principal, { ...draft, type: draft.type });
+    const existing = sameRoot(principal, normalized);
+    return { draftHash: hashDraft(principal, normalized), sourceId: existing?.source_id ?? null, revision: existing?.config_revision ?? 0 };
   }
 
   function findRoot(physicalRoot: string): SourceRecord | undefined {
@@ -1255,10 +1278,7 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     },
 
     inspectHttpDraft(principal, draft) {
-      if (!isHttpConnector(draft.type)) throw new Error('SOURCE_HTTP_SCOPE_INVALID');
-      const normalized = normalizeHttp(principal, { ...draft, type: draft.type });
-      const existing = sameRoot(principal, normalized);
-      return { draftHash: hashDraft(principal, normalized), sourceId: existing?.source_id ?? null, revision: existing?.config_revision ?? 0 };
+      return inspectHttpDraftOf(principal, draft);
     },
 
     describeHttpSource(principal, sourceId) {
@@ -1285,6 +1305,72 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
           checkHttpScope(principal, prepared.normalized_target, prepared.connector_type, parseScope(prepared.scope_json));
         }
         const row = scopedHttp(principal, sourceId);
+        if (canonicalPayload(row) !== canonicalPayload(prepared)) throw new Error('SOURCE_REVISION_CONFLICT');
+        if (operation === 'resume' || operation === 'modify') assertRecoveryWriteAllowed(db, row.data_domain);
+        const nextStatus = operation === 'modify' ? row.status : operation === 'pause' ? 'paused' :
+          operation === 'resume' ? 'enabled' : 'disconnected';
+        const nextFrequency = frequency ?? row.frequency;
+        if (row.status === nextStatus && row.frequency === nextFrequency) {
+          return { changed: false, revision: row.config_revision, status: row.status };
+        }
+        const next = row.config_revision + 1;
+        const cursor = loadCursor(sourceId).cursor;
+        const enabled = nextStatus === 'enabled' ? 1 : 0;
+        const updated = db.prepare('UPDATE source_configs SET status=?,enabled=?,frequency=?,config_revision=?,updated_at=? WHERE source_id=? AND config_revision=?')
+          .run(nextStatus, enabled, nextFrequency, next, observedAt, sourceId, row.config_revision);
+        if (updated.changes !== 1) throw new Error('SOURCE_REVISION_CONFLICT');
+        insertVersion(db, { ...row, config_revision: next, status: nextStatus, enabled, frequency: nextFrequency, created_at: observedAt });
+        db.prepare('UPDATE source_cursors SET config_revision=? WHERE source_id=?').run(next, sourceId);
+        db.prepare('INSERT INTO http_source_config_receipts(event_id,source_id,config_revision,kind,cursor,observed_at) VALUES (?,?,?,?,?,?)')
+          .run(`config:${sourceId}:${next}`, sourceId, next, operation, cursor, observedAt);
+        return { changed: true, revision: next, status: nextStatus };
+      });
+    },
+
+    /** Inspects a draft of any connector type. A directory draft resolves its root on disk. */
+    async inspectSourceDraft(principal, draft) {
+      if (draft.type !== 'directory') return inspectHttpDraftOf(principal, draft);
+      if (!principal.accountId || !principal.dataDomain) throw new Error('SOURCE_PRINCIPAL_INVALID');
+      assertDirectoryReaderAvailable();
+      const normalized = await normalize(principal, { ...draft, type: 'directory' });
+      const existing = sameRoot(principal, normalized);
+      return { draftHash: hashDraft(principal, normalized), sourceId: existing?.source_id ?? null,
+        revision: existing?.config_revision ?? 0 };
+    },
+
+    describeSource(principal, sourceId) {
+      const row = scopedSource(principal, sourceId);
+      return { revision: row.config_revision, status: row.status, frequency: row.frequency,
+        binding: sha256(Buffer.from(JSON.stringify([row.scope_json, row.normalized_target, row.status, row.frequency]))),
+        target: row.normalized_target };
+    },
+
+    /**
+     * Changes a source of any connector type.
+     *
+     * The location of a work directory stays where it was registered; only the
+     * frequency and the status can change. The HTTP scope check only applies to
+     * the connectors that hold an approved URL list.
+     */
+    changeSource(principal, sourceId, operation, expectedRevision, frequency, beforeWrite) {
+      return withImmediateTransaction(db, () => {
+        const prepared = scopedSource(principal, sourceId);
+        if (prepared.config_revision !== expectedRevision) throw new Error('SOURCE_REVISION_CONFLICT');
+        if (prepared.status === 'disconnected') throw new Error('SOURCE_DISCONNECTED');
+        const http = isHttpConnector(prepared.connector_type) ? prepared.connector_type : null;
+        if (operation === 'modify') {
+          if (!httpFrequencies.some((option) => option === frequency)) throw new Error('SOURCE_FREQUENCY_INVALID');
+        } else if (frequency !== undefined || !['pause', 'resume', 'disconnect'].includes(operation)) {
+          throw new Error('SOURCE_HTTP_SCOPE_INVALID');
+        }
+        if (http && (operation === 'resume' || operation === 'modify')) {
+          checkHttpScope(principal, prepared.normalized_target, http, parseScope(prepared.scope_json));
+        }
+        const observedAt = beforeWrite();
+        if (http && (operation === 'resume' || operation === 'modify')) {
+          checkHttpScope(principal, prepared.normalized_target, http, parseScope(prepared.scope_json));
+        }
+        const row = scopedSource(principal, sourceId);
         if (canonicalPayload(row) !== canonicalPayload(prepared)) throw new Error('SOURCE_REVISION_CONFLICT');
         if (operation === 'resume' || operation === 'modify') assertRecoveryWriteAllowed(db, row.data_domain);
         const nextStatus = operation === 'modify' ? row.status : operation === 'pause' ? 'paused' :
