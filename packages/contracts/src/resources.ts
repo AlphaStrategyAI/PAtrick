@@ -448,6 +448,8 @@ export const settingsRecoveryReceiptSchema = z.strictObject({
 export const settingsDashboardSchema = z.strictObject({ groups: z.array(z.strictObject({
   id: z.string(), operations: z.array(z.strictObject({
     operation: z.string(), registered: z.boolean(), kind: z.enum(['change', 'inspect']),
+    /** Where the entry comes from: found here, suggested, chosen by the owner, or inherited from the host. */
+    origin: z.enum(['detected', 'suggested', 'user', 'inherited']),
     targets: z.array(settingsTargetSchema),
   })),
 })) });

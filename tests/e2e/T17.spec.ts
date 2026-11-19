@@ -1130,3 +1130,16 @@ test('the System page shows the status of each category', async ({ page }) => {
     await expect(categories).toContainText('blocked: the executor is not inside the lima guest');
   } finally { await fx.close(); }
 });
+
+test('the settings home shows where each entry comes from', async ({ page }) => {
+  const fx = await setup(page, true);
+  try {
+    await page.goto('/settings');
+    const readiness = page.getByTestId('settings-readiness');
+    await expect(readiness).toBeVisible({ timeout: 3000 });
+    await expect(readiness).toContainText('Detected on this device');
+    await expect(readiness).toContainText('Suggested, still missing');
+    await expect(readiness).toContainText('From this host');
+    await expect(readiness).not.toContainText('Unavailable in this installation');
+  } finally { await fx.close(); }
+});

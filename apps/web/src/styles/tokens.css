@@ -192,3 +192,9 @@ dialog textarea { margin-block: 16px 4px; }
 [data-reduced-motion="true"] *, [data-reduced-motion="true"] *::before, [data-reduced-motion="true"] *::after {
   animation: none !important; transition: none !important; scroll-behavior: auto !important;
 }
+
+.settings-readiness { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 0; padding: 0; list-style: none; }
+.settings-readiness > li { display: inline-flex; align-items: baseline; gap: 6px; }
+.settings-readiness-label { font-weight: 600; }
+.settings-origin { color: var(--muted); }
+.settings-check-record { font-family: var(--mono, ui-monospace, monospace); }

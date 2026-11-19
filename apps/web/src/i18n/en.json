@@ -350,5 +350,10 @@
   "system.category.sources": "Collection sources",
   "system.category.recovery": "Recovery gate",
   "system.category.host": "Host and backup",
-  "settings.feishuRebind": "Re-pair the Feishu bot"
+  "settings.feishuRebind": "Re-pair the Feishu bot",
+  "settings.readiness": "Readiness",
+  "settings.origin.detected": "Detected on this device",
+  "settings.origin.suggested": "Suggested, still missing",
+  "settings.origin.user": "Your choice",
+  "settings.origin.inherited": "From this host"
 }

@@ -38,6 +38,7 @@ export function mountSettingsRoutes(app: Hono, ready: Ready): void {
     const groups = settingsGroups.map(({ id, operations }) => ({ id, operations: operations.map((operation) => ({
       operation, registered: INSPECT_ONLY_OPERATIONS.has(operation) ? true : engine.isRegistered(operation),
       kind: INSPECT_ONLY_OPERATIONS.has(operation) ? 'inspect' : 'change',
+      origin: originOf(db, principal, domain, operation),
       targets: registeredTargets(db, principal, domain, operation, networkTargets, recoveryTargets),
     })) }));
     return c.json(snapshot({ ...principal, domains: [domain] }, { groups }, now(), db));
@@ -171,4 +172,31 @@ function registeredTargets(db: SqliteDatabase, principal: Principal, domain: str
       .all(principal.account_id, domain, operation === 'enable_feishu' ? 'needs_enable' : 'ready');
   }
   return [];
+}
+
+/** Where an entry comes from, so the owner can see why it is on the page.
+ *
+ * `detected` means PAtrick found it on this machine, `suggested` means it is
+ * missing and PAtrick proposes it, `user` means the owner chose it, and
+ * `inherited` means it comes from the host or the platform.
+ */
+function originOf(db: SqliteDatabase, principal: Principal, domain: string, operation: string):
+'detected' | 'suggested' | 'user' | 'inherited' {
+  if (['inspect_executor', 'inspect_host', 'repair_network', 'start_backup', 'start_restore'].includes(operation)) return 'inherited';
+  if (operation === 'configure_source') {
+    const sources = db.prepare('SELECT COUNT(*) AS n FROM source_configs WHERE account_id=? AND data_domain=?')
+      .get(principal.account_id, domain) as { n: number };
+    return sources.n > 0 ? 'detected' : 'suggested';
+  }
+  if (operation === 'connect_vault' || operation === 'change_vault') {
+    const vaults = db.prepare('SELECT COUNT(*) AS n FROM vaults WHERE account_id=? AND data_domain=?')
+      .get(principal.account_id, domain) as { n: number };
+    return vaults.n > 0 ? 'detected' : 'suggested';
+  }
+  if (['enable_feishu', 'disable_feishu', 'rebind_feishu'].includes(operation)) {
+    const channels = db.prepare('SELECT COUNT(*) AS n FROM channel_connections WHERE account_id=? AND data_domain=?')
+      .get(principal.account_id, domain) as { n: number };
+    return channels.n > 0 ? 'detected' : 'suggested';
+  }
+  return 'user';
 }

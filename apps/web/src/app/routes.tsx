@@ -6,6 +6,7 @@ import { DiagnosticsPanel } from '../features/system/DiagnosticsPanel.js';
 import { CollectionPage } from '../features/collection/CollectionPage.js';
 import { AccountPreferences } from '../features/settings/AccountPreferences.js';
 import { SettingsOverview } from '../features/settings/SettingsOverview.js';
+import { SettingsReadiness } from '../features/settings/SettingsReadiness.js';
 import { ChangeReceipt, SettingsGroup } from '../features/settings/SettingsGroup.js';
 import { DecisionsPage } from '../features/decisions/DecisionsPage.js';
 import { WorkPage as LiveWorkPage } from '../features/work/WorkPage.js';
@@ -112,6 +113,8 @@ function SystemPage() {
 function SettingsPage() {
   const { t } = useLocale();
   const { scope } = useService();
+  // The home keeps the locked design's unavailable action. The checks themselves run
+  // from the execution and operation groups, where the backend and host status live.
   const action = (isDemo || !!scope) ? <div className="settings-checks-action">
     <button className="primary" type="button" disabled aria-describedby="settings-checks-unavailable">{t('settings.overview.checks')}</button>
     <p id="settings-checks-unavailable">{t('settings.overview.checksUnavailable')}</p>
@@ -129,6 +132,7 @@ function SettingsPage() {
         <span aria-hidden="true">→</span>
       </Link>)}
     </nav>
+    <SettingsReadiness />
   </Authenticated></PageFrame>;
 }
 

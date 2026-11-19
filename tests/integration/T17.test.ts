@@ -229,7 +229,7 @@ test('running the settings checks reports what each one observed without claimin
     const dashboard = await app.request('/api/v1/settings?domain=personal', { headers: { authorization: session.authorization } });
     const groups = (await dashboard.json() as { data: { groups: Array<{ id: string; operations: Array<{ operation: string; kind: string }> }> } }).data.groups;
     const execution = groups.find((group) => group.id === 'execution');
-    expect(execution?.operations).toEqual([{ operation: 'inspect_executor', registered: true, kind: 'inspect', targets: [] }]);
+    expect(execution?.operations).toEqual([{ operation: 'inspect_executor', registered: true, kind: 'inspect', origin: 'inherited', targets: [] }]);
   } finally {
     db.close();
     rmSync(root, { recursive: true, force: true });
