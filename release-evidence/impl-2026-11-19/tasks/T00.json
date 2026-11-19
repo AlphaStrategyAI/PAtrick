@@ -1,6 +1,6 @@
 {
   "task": "T00",
-  "completedAt": "2026-11-19T14:00:21.997Z",
+  "completedAt": "2026-11-19T14:50:59.039Z",
   "productClauses": [],
   "scenarios": [
     {
@@ -10,7 +10,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -20,12 +20,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T00/design-inputs-lock.log",
-      "evidenceSha256": "12898abc960113925966584dd7cca6c48f81ea371d4009852bfa8a7d14588f25",
-      "durationMs": 559
+      "evidenceSha256": "854eb56063538886d69791ba5e7cfe2db99f907c9d5ba29227d80ff499c3ac15",
+      "durationMs": 570
     },
     {
       "id": "design-inputs-recheck",
@@ -34,7 +34,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -44,12 +44,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T00/design-inputs-recheck.log",
-      "evidenceSha256": "59486c5cced5961cf57a34ab7ef9208b1781b9c0739bc2b7c9619b5018a85b7c",
-      "durationMs": 131
+      "evidenceSha256": "d6846fa79fe36204d476a7acbe4b9b03ca630dcb674313e1fd7cb9616e5855ab",
+      "durationMs": 130
     },
     {
       "id": "runtime-admission-probes",
@@ -58,7 +58,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -68,12 +68,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T00/runtime-admission-probes.log",
-      "evidenceSha256": "74b9929d64add927d0785b48df0d6362c6783f265bdc125ce391161c12f32d2b",
-      "durationMs": 132,
+      "evidenceSha256": "1497d9b1cf699c277dd72301151eb01e1d6703059c59ed5bd9e00d6fd629b150",
+      "durationMs": 131,
       "note": "记录 Node/npm、平台、CLI、飞书与 Obsidian 的真实探针结果；未测到的组合保留 pending/blocked。"
     }
   ]

@@ -1,6 +1,6 @@
 {
   "task": "T19",
-  "completedAt": "2026-11-19T14:03:36.535Z",
+  "completedAt": "2026-11-19T14:54:15.301Z",
   "productClauses": [
     "C3",
     "C9"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -23,12 +23,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T19/six-metrics.log",
-      "evidenceSha256": "03b8bf9c0f9bd1e402d429a2f68228a8770f9f845ed9f22028e71c585978afd7",
-      "durationMs": 1524
+      "evidenceSha256": "09ddac2208f3baefc7f48c3adc4f71e7fcd6391ab564a2acffee564406e3a557",
+      "durationMs": 1498
     },
     {
       "id": "stats-browser",
@@ -37,7 +37,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -47,12 +47,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T19/stats-browser.log",
-      "evidenceSha256": "af4c99689d885362bbfbd58e0a7a1c1e3e58073ba3c59ad9dad3b938351129f4",
-      "durationMs": 3683
+      "evidenceSha256": "e7cce9c68b83f1fde9f7ad7e8f438ad6c7b8304f036bdaf6c97261aa7f159d32",
+      "durationMs": 3614
     }
   ]
 }

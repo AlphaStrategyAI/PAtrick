@@ -1,6 +1,6 @@
 {
   "task": "T27",
-  "completedAt": "2026-11-19T14:07:41.779Z",
+  "completedAt": "2026-11-19T14:58:18.044Z",
   "productClauses": [
     "C4"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T27/obsidian-install-rehearsal.log",
-      "evidenceSha256": "7db2a1d1402996da76fc0adeee82a59be1f65e28b51c5044544a9c5bfca42884",
-      "durationMs": 7904
+      "evidenceSha256": "4d7660cd68ba5de7b959cd623e0cee1c070f8a8f71bd3ae05c005ada43949dd0",
+      "durationMs": 7793
     },
     {
       "id": "production-service-identity-round-trip",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T27/production-service-identity-round-trip.log",
-      "evidenceSha256": "33657aba2301d422b3307b219a4d761891a4e3ef8411e019acf8ef2be1b87487",
-      "durationMs": 5149,
+      "evidenceSha256": "f544199c2be977ffc2c0934ef74ca7747a69da299cc4b40d26ebd392203549e0",
+      "durationMs": 5205,
       "blockedReason": "生产服务身份下的 Vault 往返、原生重启与跨设备同步需要已安装的服务身份；本机没有该安装目录。"
     }
   ]

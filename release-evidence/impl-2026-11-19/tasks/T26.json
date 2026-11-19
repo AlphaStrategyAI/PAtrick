@@ -1,6 +1,6 @@
 {
   "task": "T26",
-  "completedAt": "2026-11-19T14:07:28.725Z",
+  "completedAt": "2026-11-19T14:58:05.045Z",
   "productClauses": [
     "C1"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T26/pilot-and-release-policy.log",
-      "evidenceSha256": "79ebce50b73bfca8f07b60d324dac53b828ef4c0d09df80a5e75a829b84a2d28",
-      "durationMs": 5115
+      "evidenceSha256": "5236ae064267ca677ad0d85053797e9a72b0b035b082ff019350a12a8c3d57c2",
+      "durationMs": 5106
     },
     {
       "id": "observed-pilot-results",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
-        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
+        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
       },
       "evidenceFile": "evidence/T26/observed-pilot-results.log",
-      "evidenceSha256": "3e07ccb3b3c37349449a36010d19deca19aa878b7f776b4af1eae4fc7382ad62",
-      "durationMs": 5106,
+      "evidenceSha256": "9aaa8e33c23e513f668f23c55d2ef8595e09f9ac87d7a98eab68db42de7fabdc",
+      "durationMs": 5173,
       "pendingReason": "试点成果有效率、引用准确率与人工投入需要真实观察样本；当前没有可分母的试点数据。"
     }
   ]

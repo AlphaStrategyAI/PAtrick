@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/integration/T08.test.ts
-exit=0 signal=none durationMs=1432
+exit=0 signal=none durationMs=1446
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=1432
 
  Test Files  1 passed (1)
       Tests  16 passed (16)
-   Start at  22:00:48
-   Duration  918ms (tests 64%, import 27%, transform 9%)
+   Start at  22:51:25
+   Duration  932ms (tests 64%, import 27%, transform 9%)
 
 
 --- stderr ---
