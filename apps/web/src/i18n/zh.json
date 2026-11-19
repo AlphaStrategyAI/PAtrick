@@ -362,5 +362,6 @@
   "collection.path": "路径",
   "collection.token": "访问令牌",
   "collection.stageToken": "暂存令牌",
-  "collection.tokenStaged": "令牌已暂存，可以预览来源。"
+  "collection.tokenStaged": "令牌已暂存，可以预览来源。",
+  "collection.directoryReaderReady": "目录读取可用。"
 }

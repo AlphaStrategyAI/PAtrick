@@ -362,5 +362,6 @@
   "collection.path": "Path",
   "collection.token": "Access token",
   "collection.stageToken": "Stage the token",
-  "collection.tokenStaged": "The token is staged; the source can be previewed."
+  "collection.tokenStaged": "The token is staged; the source can be previewed.",
+  "collection.directoryReaderReady": "Directory reading is available."
 }

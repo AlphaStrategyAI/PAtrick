@@ -206,8 +206,9 @@ function ScopedCollection() {
   function page(next: string | undefined) { setCursor(next); select(undefined); edit(undefined); }
   function sourceLabel(row: Source) { return t(labels[row.status] ?? 'status.unknown'); }
   function directoryReaderLabel() {
-    return reader.fresh && reader.data?.data.directory.state === 'blocked'
-      ? t('collection.directoryReaderBlocked') : t('collection.directoryReaderUnknown');
+    if (!reader.fresh) return t('collection.directoryReaderUnknown');
+    return reader.data?.data.directory.state === 'blocked'
+      ? t('collection.directoryReaderBlocked') : t('collection.directoryReaderReady');
   }
   return <>
     {canPreview && <section className="card">

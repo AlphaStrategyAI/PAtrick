@@ -39,23 +39,22 @@ test('an existing folder shows its saved status and blocked reader in list and d
     await page.goto('/settings/collection');
     const list = page.locator('main li').filter({ hasText: '/synthetic/old' });
     await expect(list).toContainText('Enabled');
-    await expect(list).toContainText('Directory reading is temporarily unavailable.', { timeout: 5000 });
+    await expect(list).toContainText('Directory reading is available.', { timeout: 5000 });
     const paused = page.locator('main li').filter({ hasText: '/synthetic/paused' });
     await expect(paused).toContainText('Paused');
-    await expect(paused).toContainText('Directory reading is temporarily unavailable.');
+    await expect(paused).toContainText('Directory reading is available.');
     await list.getByRole('button', { name: '/synthetic/old' }).click();
     const detail = page.getByRole('region', { name: 'Source details' });
     await expect(detail).toContainText('Enabled');
-    await expect(detail).toContainText('Directory reading is temporarily unavailable.');
-    await expect(detail).toContainText('Wait for a trusted reader');
+    await expect(detail).toContainText('Directory reading is available.');
     await expect(detail).toContainText('First successful collection');
     expect(capabilityRequests).toBe(1);
     await paused.getByRole('button', { name: '/synthetic/paused' }).click();
     await expect(detail).toContainText('Paused');
-    await expect(detail).toContainText('Directory reading is temporarily unavailable.');
+    await expect(detail).toContainText('Directory reading is available.');
     expect(capabilityRequests).toBe(1);
     await page.reload();
-    await expect(page.locator('main li').filter({ hasText: '/synthetic/old' })).toContainText('Directory reading is temporarily unavailable.');
+    await expect(page.locator('main li').filter({ hasText: '/synthetic/old' })).toContainText('Directory reading is available.');
     capabilityUnavailable = true;
     await page.getByRole('button', { name: 'Refresh status' }).click();
     await expect(page.locator('main li').filter({ hasText: '/synthetic/old' })).toContainText('Directory reading status is unavailable.');
@@ -64,9 +63,8 @@ test('an existing folder shows its saved status and blocked reader in list and d
     capabilityUnavailable = false;
     await page.getByRole('combobox', { name: 'Interface language' }).selectOption('zh');
     await page.reload();
-    await expect(page.locator('main li').filter({ hasText: '/synthetic/old' })).toContainText('目录读取暂不可用。');
+    await expect(page.locator('main li').filter({ hasText: '/synthetic/old' })).toContainText('目录读取可用。');
     await page.locator('main li').filter({ hasText: '/synthetic/old' }).getByRole('button').click();
-    await expect(page.getByRole('region', { name: '来源详情' })).toContainText('请等待可信读取能力可用');
     expect(db.prepare("SELECT status,config_revision FROM source_configs WHERE source_id='legacy'").get()).toEqual({ status: 'enabled', config_revision: 1 });
     expect(db.prepare("SELECT status,config_revision FROM source_configs WHERE source_id='paused'").get()).toEqual({ status: 'paused', config_revision: 2 });
     expect(db.prepare('SELECT event_id FROM collection_receipts').all()).toEqual([{ event_id: 'old-receipt' }]);
@@ -117,7 +115,7 @@ test('directory capability expires without a manual refresh while the next reque
   try {
     await page.goto('/settings/collection');
     const row = page.locator('main li').filter({ hasText: '/synthetic/old' });
-    await expect(row).toContainText('Directory reading is temporarily unavailable.');
+    await expect(row).toContainText('Directory reading is available.');
     expect(f.requests()).toBe(1);
     f.hold(true);
     await page.clock.fastForward(10_001);
@@ -134,7 +132,7 @@ test('an actually delivered capability reply cannot become fresh after its reque
   try {
     await page.goto('/settings/collection');
     const row = page.locator('main li').filter({ hasText: '/synthetic/old' });
-    await expect(row).toContainText('Directory reading is temporarily unavailable.');
+    await expect(row).toContainText('Directory reading is available.');
     f.hold(true);
     await page.clock.fastForward(10_001);
     await expect.poll(f.requests).toBe(2);
@@ -154,7 +152,7 @@ test('returning to the page and reconnecting revalidates before showing director
   try {
     await page.goto('/settings/collection');
     const row = page.locator('main li').filter({ hasText: '/synthetic/old' });
-    await expect(row).toContainText('Directory reading is temporarily unavailable.');
+    await expect(row).toContainText('Directory reading is available.');
     expect(f.requests()).toBe(1);
     f.hold(true);
     await page.evaluate(() => {
@@ -166,12 +164,12 @@ test('returning to the page and reconnecting revalidates before showing director
     await expect.poll(f.requests).toBeGreaterThanOrEqual(2);
     await expect(row).toContainText('Directory reading status is unavailable.');
     f.hold(false); f.release();
-    await expect(row).toContainText('Directory reading is temporarily unavailable.');
+    await expect(row).toContainText('Directory reading is available.');
     await page.context().setOffline(true);
     await expect(row).toContainText('Directory reading status is unavailable.');
     const before = f.requests();
     await page.context().setOffline(false);
     await expect.poll(f.requests).toBeGreaterThan(before);
-    await expect(row).toContainText('Directory reading is temporarily unavailable.');
+    await expect(row).toContainText('Directory reading is available.');
   } finally { await page.context().setOffline(false); await f.close(); }
 });

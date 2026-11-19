@@ -106,7 +106,7 @@ export const sourceEntrySchema = z.strictObject({
   config_revision: z.number().int().positive(), status: z.string().min(1), updated_at: z.iso.datetime(),
 });
 export const sourceReaderCapabilitiesSchema = z.strictObject({
-  directory: z.strictObject({ state: z.literal('blocked'), reason: z.literal('DIRECTORY_READER_UNAVAILABLE') }),
+  directory: z.strictObject({ state: z.enum(['available', 'blocked']), reason: z.string().nullable() }),
 });
 export const sourcePreviewSchema = z.strictObject({
   preview_id: z.string().min(1), target: z.string().min(1), type: detectSourcePayload.shape.type,

@@ -14,6 +14,12 @@ vi.mock('../../packages/integrations/sources/directory.js', async (load) => {
   const actual = await load<typeof import('../../packages/integrations/sources/directory.js')>();
   return {
     ...actual,
+    async listDirectory(...args: Parameters<typeof actual.listDirectory>) {
+      const result = await actual.listDirectory(...args);
+      const hold = io.scan; io.scan = null;
+      if (hold) await hold();
+      return result;
+    },
     async scanDirectory(...args: Parameters<typeof actual.scanDirectory>) {
       const result = await actual.scanDirectory(...args);
       const hold = io.scan; io.scan = null;

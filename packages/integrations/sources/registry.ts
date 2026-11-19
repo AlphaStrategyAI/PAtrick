@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { canonicalPayload } from '@patrick/contracts';
 import { appendDomainEvent, assertRecoveryWriteAllowed, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
-import { listSamples, samplePath, scanDirectory, stabilityDecision, type StabilitySample } from './directory.js';
+import { listDirectory, listSamples, readDirectoryFile, readDirectoryObject, samplePath, stabilityDecision, type StabilitySample } from './directory.js';
 import { assertDirectoryReaderAvailable } from './directory-capability.js';
 import { listSamples as listGithubFixtureSamples, scanDirectory as scanGithubFixture } from './github-fixture-directory.js';
 export { directoryReaderCapability } from './directory-capability.js';
@@ -1003,14 +1003,21 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
     if (!root) throw new Error('SOURCE_SCOPE_INVALID');
     const directory = directorySnapshot(source, configRevision);
     if (isReceipt(directory)) return directory;
-    const scan = await scanDirectory(root, excludes);
-    if (scan.state === 'offline') return setStatus(source.source_id, 'offline', directory);
-    if (scan.state === 'placeholder') return setStatus(source.source_id, 'placeholder', directory);
-    const staged = await stage(source.source_id, scan.files.map((file) => ({
-      locator: file.relativePath,
-      stable: file.stable,
-      bytes: file.bytes,
-    })));
+    // The directory is read through the trusted reader, which never follows a
+    // link out of the approved root and bounds every object it reads.
+    const listing = await listDirectory(root, excludes);
+    if (listing.state === 'offline') return setStatus(source.source_id, 'offline', directory);
+    if (listing.state === 'placeholder') return setStatus(source.source_id, 'placeholder', directory);
+    const files: Array<{ locator: string; stable: boolean; bytes?: Uint8Array }> = [];
+    for (const entry of listing.entries) {
+      if (!entry.stable) {
+        files.push({ locator: entry.relativePath, stable: false });
+        continue;
+      }
+      const read = await readDirectoryFile(entry);
+      if (read.state === 'read') files.push({ locator: entry.relativePath, stable: true, bytes: read.bytes });
+    }
+    const staged = await stage(source.source_id, files);
     return commitSweep({
       source,
       configRevision,
@@ -1521,9 +1528,11 @@ export function createSourceRegistry(db: SqliteDatabase, options: RegistryOption
       if (decision.next) stable.set(key, decision.next);
       else stable.delete(key);
       if (!decision.ready) return { read: false, receipt: null };
-      const real = await realpath(full);
-      if (!isInside(root, real)) return { read: false, receipt: null };
-      const staged = await stage(sourceId, [{ locator, stable: true, bytes: new Uint8Array(await readFile(real)) }]);
+      // The trusted reader opens the object itself and reports whether it really
+      // opened a file inside the approved root.
+      const read = await readDirectoryObject(root, locator);
+      if (read.state !== 'read') return { read: false, receipt: null };
+      const staged = await stage(sourceId, [{ locator, stable: true, bytes: read.bytes }]);
       const receipt = commitSweep({
         source,
         configRevision: source.config_revision,

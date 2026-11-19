@@ -33,7 +33,7 @@ test('directory reader capability is separately readable without changing strict
     expect(sourceEntrySchema.parse((await detail.json()).data)).toEqual(listed.data.items[0]);
     const capability = await app.request('/api/v1/source-reader-capabilities?domain=personal', { headers });
     expect(capability.status).toBe(200);
-    expect((await capability.json()).data).toEqual({ directory: { state: 'blocked', reason: 'DIRECTORY_READER_UNAVAILABLE' } });
+    expect((await capability.json()).data).toEqual({ directory: { state: 'available', reason: null } });
     expect((await app.request('/api/v1/source-reader-capabilities?domain=other', { headers })).status).toBe(403);
     expect((await app.request('/api/v1/source-reader-capabilities?domain=personal')).status).toBe(401);
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }

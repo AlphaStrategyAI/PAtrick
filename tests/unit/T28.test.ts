@@ -209,14 +209,14 @@ it.each([
     file: 'README.md',
     system: 'Review service health, notifications, change receipts, and a scoped diagnostic preview. Running the checks reports the status of the network, the three executors, the collection sources, the recovery gate and the host with its backup targets.',
     settings: [
-      'add RSS feeds, web pages and GitHub repositories', 'already registered Obsidian Vault connection',
+      'add RSS feeds, web pages, GitHub repositories and approved folders', 'already registered Obsidian Vault connection',
       'runs a check of the three backends',
       'registration and targets for host, network repair, backup, and restore actions',
       'a sample test preview', 'language and reduced motion',
       'Re-pairing an existing connection goes through a trusted change',
     ],
     pending: [
-      'Adding a local-directory source', 'work-directory editor',
+      'The work-directory editor and notification preferences are still pending.',
       'notification preferences', 'native Feishu round trip',
     ],
   },
@@ -224,13 +224,12 @@ it.each([
     file: 'README.zh-CN.md',
     system: '查看服务状态、通知、变更回执以及当前范围的诊断预览。运行检查会分别给出网络、三个执行器、采集来源、恢复门禁以及主机与备份目标的状态。',
     settings: [
-      '新增 RSS 订阅和网页', '已登记的 Obsidian 资料库连接', '运行三个后端的检查',
+      '新增 RSS 订阅、网页、GitHub 仓库与获准目录', '已登记的 Obsidian 资料库连接', '运行三个后端的检查',
       '主机检查、网络修复、备份与恢复操作的登记状态和目标', '样例测试预览', '语言和减少动效',
       '已有连接重新配对要走可信变更',
     ],
     pending: [
-      '设置中新增本地目录来源', '工作目录编辑器',
-      '通知偏好', '飞书原生往返',
+      '工作目录编辑器和通知偏好仍待实现', '飞书原生往返',
     ],
   },
 ])('$file describes the current System and Settings capabilities and pending controls', ({ file, system, settings, pending }) => {
