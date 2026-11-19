@@ -725,7 +725,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T25 真实三执行器、双入口答复与飞书排空 | 没有隔离执行器和真实渠道 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |
 
-设计复核的六项里，工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层以及整理中／核验中／空／失败／离线的句子都已经落地；只剩一项未完成，因此保持未勾选：咨询生成中流式显示且状态保持「正在回答」。
+设计复核的六项已经全部落地：工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层、整理中／核验中／空／失败／离线的句子，以及咨询生成中流式显示且状态保持「正在回答」。
 
 逐场景的命令、退出码、版本和证据 hash 记录在 `release-evidence/impl-2026-11-19/`，`manifest.json` 关联产品条款、任务、frame/fixture 和测试；`scripts/check-release-evidence.mjs` 校验该清单，CI 在每次合并前复核。缺真实能力时标 blocked 或 pending，不写 passed。
 
@@ -2322,7 +2322,7 @@ Synthesized from the design review. Each task derives from a decision above.
   - Surfaced by: Pass 2 — 空知识页
   - Files: apps/web/src/features/knowledge/KnowledgePage.tsx, apps/web/src/features/standards/StandardsPage.tsx, apps/web/src/features/delegation/DelegationsPage.tsx
   - Verify: 没有条目时不是空白表格，也不是故障
-- [ ] **T5 (P1, human: ~20min / CC: ~10min)** — consultation — 生成中流式显示，状态保持「正在回答」
+- [x] **T5 (P1, human: ~20min / CC: ~10min)** — consultation — 生成中流式显示，状态保持「正在回答」
   - Surfaced by: Pass 2 — 咨询生成
   - Files: apps/web/src/features/consultation/ConsultationPanel.tsx
   - Verify: 最终答案落盘前不显示完成；取消后停止继续流出
