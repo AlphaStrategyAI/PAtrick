@@ -349,5 +349,6 @@
   "system.category.executor": "Executors",
   "system.category.sources": "Collection sources",
   "system.category.recovery": "Recovery gate",
-  "system.category.host": "Host and backup"
+  "system.category.host": "Host and backup",
+  "settings.feishuRebind": "Re-pair the Feishu bot"
 }

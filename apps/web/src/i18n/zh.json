@@ -349,5 +349,6 @@
   "system.category.executor": "执行器",
   "system.category.sources": "采集来源",
   "system.category.recovery": "恢复门禁",
-  "system.category.host": "主机与备份"
+  "system.category.host": "主机与备份",
+  "settings.feishuRebind": "重新绑定飞书机器人"
 }

@@ -18,7 +18,7 @@ export const settingsGroups = [
   { id: 'materials', operations: ['connect_vault', 'change_vault'] },
   { id: 'execution', operations: ['inspect_executor'] },
   { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
-  { id: 'interaction', operations: ['enable_feishu', 'disable_feishu'] },
+  { id: 'interaction', operations: ['enable_feishu', 'disable_feishu', 'rebind_feishu'] },
   { id: 'preferences', operations: [] },
 ] as const;
 const draftRequest = commandEnvelope(settingsDraftSchema);

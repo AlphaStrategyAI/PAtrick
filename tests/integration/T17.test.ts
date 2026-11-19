@@ -382,6 +382,56 @@ test.each([false, true])('a trusted Feishu stop fences old permits, pending=%s',
   } finally { fx.dispose(); }
 });
 
+test('a trusted Feishu rebind drains the active connection and clears the old binding', async () => {
+  const fx = fixture();
+  try {
+    const at = initial;
+    fx.db.prepare(`INSERT INTO channel_connections(connection_id,account_id,data_domain,app_id,tenant_key,credential_ref,
+      credential_version,config_revision,channel_incarnation,connection_epoch,binding_revision,current_pairing_id,current_test_id,
+      owner_open_id,chat_id,status,transport_mode,schema_version,created_at,updated_at)
+      VALUES ('rebind-channel','owner','personal','rebind-app','rebind-tenant','fixture-only',1,7,1,9,1,'pair-old','test-old',
+        'ou-owner','oc-owner','ready','active','1.0',?,?)`).run(at, at);
+    const credentials = createCredentialStore(join(fx.root, 'creds'), () => new Date(at));
+    const hub = createLocalHubPort(join(fx.root, 'unused-hub'));
+    const handlers = builtinSettingsHandlers({ db: fx.db, credentials, now: () => new Date(at), hub: () => hub, host: 'test-host' });
+    const handler = handlers.rebind_feishu;
+    const draft = { operation: 'rebind_feishu', domain: 'personal', target: 'rebind-channel', input: null };
+    const binding = handler.binding(owner, draft);
+    expect(binding).toMatchObject({ revision: 7, identityId: 'rebind-channel' });
+    await expect(handler.validate(owner, draft)).resolves.toEqual({ valid: true });
+    const proof = { base_revision: 7, draft_hash: 'a'.repeat(64), validation_id: 'v', valid: true,
+      device_id: 'test-host', identity_id: 'rebind-channel', scope_hash: 'b'.repeat(64),
+      checked_at: at, expires_at: at };
+    const applied = await handler.apply(owner, draft, proof, () => at);
+    expect(applied.effects).toEqual([{ item: 'feishu_rebind', outcome: 'applied', revision: 7 }]);
+    expect(fx.db.prepare(`SELECT status,transport_mode,connection_epoch,current_pairing_id,current_test_id,owner_open_id,chat_id
+      FROM channel_connections WHERE connection_id='rebind-channel'`).get()).toEqual({
+      status: 'needs_binding', transport_mode: 'probe', connection_epoch: 10,
+      current_pairing_id: null, current_test_id: null, owner_open_id: null, chat_id: null,
+    });
+    expect(fx.db.prepare("SELECT COUNT(*) AS n FROM domain_events WHERE json_extract(payload,'$.type')='channel.mode.changed'").get())
+      .toEqual({ n: 1 });
+    await expect(handler.recheck(owner, draft, applied)).resolves.toEqual({ verified: true });
+  } finally { fx.dispose(); }
+});
+
+test('a Feishu rebind refuses a base revision that moved', async () => {
+  const fx = fixture();
+  try {
+    const at = initial;
+    fx.db.prepare(`INSERT INTO channel_connections(connection_id,account_id,data_domain,app_id,tenant_key,credential_ref,
+      credential_version,config_revision,channel_incarnation,connection_epoch,binding_revision,status,transport_mode,schema_version,created_at,updated_at)
+      VALUES ('rebind-stale','owner','personal','rebind-app','rebind-tenant','fixture-only',1,7,1,9,1,'needs_binding','probe','1.0',?,?)`).run(at, at);
+    const credentials = createCredentialStore(join(fx.root, 'creds'), () => new Date(at));
+    const hub = createLocalHubPort(join(fx.root, 'unused-hub'));
+    const handler = builtinSettingsHandlers({ db: fx.db, credentials, now: () => new Date(at), hub: () => hub, host: 'test-host' }).rebind_feishu;
+    const draft = { operation: 'rebind_feishu', domain: 'personal', target: 'rebind-stale', input: null };
+    await expect(handler.apply(owner, draft, { base_revision: 6, draft_hash: 'a'.repeat(64), validation_id: 'v', valid: true,
+      device_id: 'test-host', identity_id: 'rebind-stale', scope_hash: 'b'.repeat(64),
+      checked_at: at, expires_at: at }, () => at)).rejects.toThrow('confirmation_changed');
+  } finally { fx.dispose(); }
+});
+
 const channelRaces = ['enable_feishu', 'disable_feishu'].flatMap((operation) =>
   ['none', 'permission', 'binding'].map((race) => ({ operation, race })));
 

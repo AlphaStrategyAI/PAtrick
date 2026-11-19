@@ -137,7 +137,36 @@ export function builtinSettingsHandlers(options: Input): Record<string, Settings
       return { verified: !blocked, ...(blocked ? { issue: 'feishu_recheck' } : {}) };
     },
   };
-  return { connect_vault: existingVault, enable_feishu: enabledChannel, disable_feishu: disabledChannel };
+  const reboundChannel: SettingsHandler = {
+    binding: enabledChannel.binding,
+    async validate(principal, draft) {
+      const row = channelFor(principal, draft);
+      return { valid: row.status !== 'draining' && row.transport_mode !== 'draining' };
+    },
+    authorize,
+    async apply(principal, draft, proof, beforeWrite) {
+      const row = channelFor(principal, draft);
+      if (row.config_revision !== proof.base_revision) throw new SettingsApplyBlocked('confirmation_changed');
+      const endpoint = createFeishuChannel(db, { domain: draft.domain, connectionId: row.connection_id, now, hub: hub(), encode: encodeHubAnswer });
+      if (row.status === 'ready' && row.transport_mode === 'active') {
+        // An active connection is drained before it is rebound, so no answer is
+        // accepted under the old binding once the new one starts.
+        const result = await endpoint.disableTrusted({ accountId: principal.account_id, configRevision: row.config_revision,
+          epoch: row.connection_epoch }, { beforeWrite });
+        if (result.status === 'draining') {
+          return { revision: result.epoch, effects: [{ item: 'feishu_draining', outcome: 'applied', revision: result.epoch }] };
+        }
+      }
+      endpoint.configure();
+      return { revision: row.config_revision, effects: [{ item: 'feishu_rebind', outcome: 'applied', revision: row.config_revision }] };
+    },
+    async recheck(principal, draft) {
+      const row = channelFor(principal, draft);
+      const verified = row.status === 'needs_binding' || row.status === 'draining';
+      return { verified, ...(!verified ? { issue: 'feishu_recheck' } : {}) };
+    },
+  };
+  return { connect_vault: existingVault, enable_feishu: enabledChannel, disable_feishu: disabledChannel, rebind_feishu: reboundChannel };
 }
 
 function denied(): never {
