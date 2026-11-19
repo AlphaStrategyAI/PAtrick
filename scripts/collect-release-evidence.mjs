@@ -8,8 +8,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { arch, platform, release } from 'node:os';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { arch, platform, release, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { productCoverage, releaseEvidencePlan } from './release-evidence-plan.mjs';
@@ -124,13 +124,16 @@ function parseArguments(argv) {
 
 const options = parseArguments(process.argv.slice(2));
 const evidenceRoot = join(root, 'release-evidence', options.release);
+// The collection runs against a clean checkout: the runtime build refuses an
+// overridden working tree, so the report is staged outside the repository and
+// only moved into place once every command has run.
+const stagingRoot = mkdtempSync(join(tmpdir(), `patrick-release-evidence-${options.release}-`));
 const versions = versionContext();
 const tasks = Object.keys(releaseEvidencePlan)
   .filter((task) => options.only.length === 0 || options.only.includes(task))
   .sort();
 
-rmSync(evidenceRoot, { recursive: true, force: true });
-mkdirSync(join(evidenceRoot, 'tasks'), { recursive: true });
+mkdirSync(join(stagingRoot, 'tasks'), { recursive: true });
 
 const summary = { scenarios: 0, passed: 0, failed: 0, blocked: 0, pending: 0 };
 const collectedTasks = [];
@@ -149,8 +152,8 @@ for (const task of tasks) {
     summary[status] += 1;
 
     const evidenceFile = join('evidence', task, `${scenario.id}.log`);
-    mkdirSync(dirname(join(evidenceRoot, evidenceFile)), { recursive: true });
-    writeFileSync(join(evidenceRoot, evidenceFile), run.output);
+    mkdirSync(dirname(join(stagingRoot, evidenceFile)), { recursive: true });
+    writeFileSync(join(stagingRoot, evidenceFile), run.output);
 
     const record = {
       id: scenario.id,
@@ -170,7 +173,7 @@ for (const task of tasks) {
     process.stdout.write(`${status} (exit ${run.exitCode})\n`);
   }
   const clauses = productCoverage.filter((entry) => entry.tasks.includes(task)).map((entry) => entry.id);
-  writeFileSync(join(evidenceRoot, 'tasks', `${task}.json`), `${JSON.stringify({
+  writeFileSync(join(stagingRoot, 'tasks', `${task}.json`), `${JSON.stringify({
     task,
     completedAt: new Date().toISOString(),
     productClauses: clauses,
@@ -179,7 +182,7 @@ for (const task of tasks) {
   collectedTasks.push(task);
 }
 
-writeFileSync(join(evidenceRoot, 'manifest.json'), `${JSON.stringify({
+writeFileSync(join(stagingRoot, 'manifest.json'), `${JSON.stringify({
   release: options.release,
   generatedAt: new Date().toISOString(),
   versions,
@@ -195,5 +198,14 @@ writeFileSync(join(evidenceRoot, 'manifest.json'), `${JSON.stringify({
   note: '缺真实能力时标blocked而非passed；豁免与失败保留在本清单中。',
 }, null, 2)}\n`);
 
+rmSync(evidenceRoot, { recursive: true, force: true });
+mkdirSync(dirname(evidenceRoot), { recursive: true });
+try {
+  renameSync(stagingRoot, evidenceRoot);
+} catch (error) {
+  if (error?.code !== 'EXDEV') throw error;
+  cpSync(stagingRoot, evidenceRoot, { recursive: true });
+  rmSync(stagingRoot, { recursive: true, force: true });
+}
 console.log(`\nwrote ${collectedTasks.length} task report(s) to release-evidence/${options.release}`);
 console.log(`passed ${summary.passed} · failed ${summary.failed} · blocked ${summary.blocked} · pending ${summary.pending}`);
