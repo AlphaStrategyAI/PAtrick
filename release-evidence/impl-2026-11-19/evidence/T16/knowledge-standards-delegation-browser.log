@@ -1,0 +1,32 @@
+$ npm exec -- playwright test --config tests/e2e/T16.config.ts --reporter=line
+exit=0 signal=none durationMs=11016
+--- stdout ---
+
+
+Running 16 tests using 1 worker
+
+
+
+[1/16] tests/e2e/T16.spec.ts:7:1 › 新建标准从已授权的空标准页进入并读取文件回执
+[2/16] tests/e2e/T16.spec.ts:22:1 › 修订标准后，实际采纳和投影失败分开显示
+[3/16] tests/e2e/T16.spec.ts:86:1 › 冻结内容时存储目录不可用，修复后按原采纳导回
+[4/16] tests/e2e/T16.spec.ts:106:1 › 较新投影接替时旧回执记录接替批次
+[5/16] tests/e2e/T16.spec.ts:146:1 › 知识页展示原稿和补充入口，并保留原始证据
+[6/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：文件名带井号，target 保留路径并只展示正确跳转
+[7/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：文件名带井号，destination 保留路径并只展示正确跳转
+[8/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：目录名带井号，target 保留路径并只展示正确跳转
+[9/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：目录名带井号，destination 保留路径并只展示正确跳转
+[10/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：普通路径，target 保留路径并只展示正确跳转
+[11/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：普通路径，destination 保留路径并只展示正确跳转
+[12/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：服务返回不匹配的 URI，target 保留路径并只展示正确跳转
+[13/16] tests/e2e/T16.spec.ts:187:5 › 编辑目标：服务返回不匹配的 URI，destination 保留路径并只展示正确跳转
+[14/16] tests/e2e/T16.spec.ts:230:1 › 委托状态与具体范围来自服务，预览未核验的变更不会写入
+[15/16] tests/e2e/T16.spec.ts:245:1 › 资料域只返回获准的搜索证据
+[16/16] tests/e2e/T16.spec.ts:264:1 › 委托在显式确认精确提案后才生效，并可读回相同可信回执
+  16 passed (10.4s)
+
+--- stderr ---
+[WebServer] (node:98856) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:98858) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)

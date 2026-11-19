@@ -1,0 +1,177 @@
+{
+  "release": "impl-2026-11-19",
+  "generatedAt": "2026-11-19T14:07:42.486Z",
+  "versions": {
+    "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+    "node": "v26.13.0",
+    "npm": "11.20.0",
+    "platform": "darwin-arm64",
+    "osRelease": "27.2.0",
+    "schemaRange": "1..1",
+    "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+    "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+    "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+    "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+    "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+    "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.2.0",
+    "host": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "tasks": [
+    "T00",
+    "T01",
+    "T02",
+    "T03",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20",
+    "T21",
+    "T22",
+    "T23",
+    "T24",
+    "T25",
+    "T26",
+    "T27",
+    "T28"
+  ],
+  "productCoverage": [
+    {
+      "id": "C1",
+      "clauses": "产品§1、§4；技术§3、§4",
+      "acceptance": "T07 冻结 r8 后收录 r9，旧报告只能留档；T25 实际反馈进入原案例，完成当前/候选/外部方法对照、影子及一个退化或样本不足样本；T26 按完整分母报告成果和人工投入",
+      "tasks": [
+        "T07",
+        "T08",
+        "T12",
+        "T25",
+        "T26"
+      ]
+    },
+    {
+      "id": "C2",
+      "clauses": "产品§2–3；技术§5.1–§5.2、A2",
+      "acceptance": "T10 `answer-once`、`stale-or-deferred`；T13 `stable-work-and-watermark`；T15 `same-work`，显式提交和聊天各走其路，断线重取同一工作及回执",
+      "tasks": [
+        "T04",
+        "T08",
+        "T10",
+        "T11",
+        "T13",
+        "T15",
+        "T25"
+      ]
+    },
+    {
+      "id": "C3",
+      "clauses": "产品§2.2；技术§5.5",
+      "acceptance": "T19 夏令时跨日、域外事实、重复/撤销/重建，活动与当前存量分别验；T25 对账一次真实答复只计一次",
+      "tasks": [
+        "T13",
+        "T19",
+        "T25"
+      ]
+    },
+    {
+      "id": "C4",
+      "clauses": "产品§4.1、§5.4；技术§5.3.1、§5.4.1、§6.1.1、A1",
+      "acceptance": "T06 写稿后丢回执、中文检索与撤回；T16 四入口和三轴；T27 真实 Mac 文件往返/关编辑器；T22 保全较新原稿",
+      "tasks": [
+        "T05",
+        "T06",
+        "T07",
+        "T16",
+        "T17",
+        "T22",
+        "T27"
+      ]
+    },
+    {
+      "id": "C5",
+      "clauses": "产品§5.5；技术§5.4.2、A2、A4",
+      "acceptance": "T10 `channel-lifecycle` 和真实双向探针；T17 待启用/排空各有回执；T22 恢复后旧 incarnation 回调和绑定无效",
+      "tasks": [
+        "T03",
+        "T10",
+        "T17",
+        "T20",
+        "T22",
+        "T25"
+      ]
+    },
+    {
+      "id": "C6",
+      "clauses": "产品§5.1–5.3、§7；技术§2.5、§5.3–§5.4",
+      "acceptance": "T17 验证后改草稿、部分应用后复查失败；T05/T18 四种来源、启用和首次采集证据；T20 明确发送和脱敏预览",
+      "tasks": [
+        "T01",
+        "T03",
+        "T05",
+        "T17",
+        "T18",
+        "T20"
+      ]
+    },
+    {
+      "id": "C7",
+      "clauses": "产品§6–7；技术§4、§5.7–§5.8、A3–A4",
+      "acceptance": "T08 最后额度竞争与旧 grant；T09 三后台身份、坏退出、每收费 attempt 预算；T12 远端成功响应丢失及 source/base 变化；T25 三条真实工作路线",
+      "tasks": [
+        "T08",
+        "T09",
+        "T12",
+        "T25"
+      ]
+    },
+    {
+      "id": "C8",
+      "clauses": "产品§6–7；技术§6、A4",
+      "acceptance": "T21 双 VPN 和原健康依赖复验；T22 两库水位、撤回、Vault 新稿、旧主机未停；T23 空机安装与升级；T25 真实隔离恢复",
+      "tasks": [
+        "T21",
+        "T22",
+        "T23",
+        "T25"
+      ]
+    },
+    {
+      "id": "C9",
+      "clauses": "产品§8–10；技术§5.6、§7.2",
+      "acceptance": "T14 默认语言和覆盖；T15 生成中换语言后保留草稿、焦点、回执；T24 `frame-coverage`、各布局截图、键盘/读屏和动效实测",
+      "tasks": [
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T19",
+        "T24",
+        "T25"
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 55,
+    "passed": 48,
+    "failed": 0,
+    "blocked": 5,
+    "pending": 2
+  },
+  "note": "缺真实能力时标blocked而非passed；豁免与失败保留在本清单中。"
+}

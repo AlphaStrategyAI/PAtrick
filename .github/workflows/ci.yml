@@ -34,3 +34,9 @@ jobs:
       - name: Recovery tests
         if: hashFiles('tests/recovery/**/*.ts') != ''
         run: npm run test:recovery
+      - name: Release evidence
+        if: hashFiles('release-evidence/*/manifest.json') != ''
+        run: |
+          for dir in release-evidence/*/; do
+            node scripts/check-release-evidence.mjs "$dir"
+          done

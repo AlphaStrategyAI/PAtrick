@@ -1,0 +1,88 @@
+{
+  "task": "T25",
+  "completedAt": "2026-11-19T14:07:18.503Z",
+  "productClauses": [
+    "C1",
+    "C2",
+    "C3",
+    "C5",
+    "C7",
+    "C8",
+    "C9"
+  ],
+  "scenarios": [
+    {
+      "id": "pilot-trace-consistency",
+      "command": "npm exec -- vitest run tests/admission/T25.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T25/pilot-trace-consistency.log",
+      "evidenceSha256": "46f61eefa22ce5c11a5805259b381e8088ed7fe657eeb9c912ee56b98eaa4c35",
+      "durationMs": 1153
+    },
+    {
+      "id": "directory-block-browser",
+      "command": "npm exec -- playwright test --config tests/e2e/T25-directory-block.config.ts --reporter=line",
+      "kind": "browser",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T25/directory-block-browser.log",
+      "evidenceSha256": "d847463acb3a613cd8db96a7735ff741c1857c96f0cffa83e98bfd9d4b47c904",
+      "durationMs": 5077
+    },
+    {
+      "id": "provider-backed-work-routes",
+      "command": "npm exec -- vitest run tests/admission/T25.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "pending",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T25/provider-backed-work-routes.log",
+      "evidenceSha256": "8c7271d30067e1e866bce46804f265490a904256267294f28fe04a4dd5bfca8c",
+      "durationMs": 912,
+      "pendingReason": "三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。"
+    }
+  ]
+}

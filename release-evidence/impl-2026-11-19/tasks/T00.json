@@ -1,0 +1,80 @@
+{
+  "task": "T00",
+  "completedAt": "2026-11-19T14:00:21.997Z",
+  "productClauses": [],
+  "scenarios": [
+    {
+      "id": "design-inputs-lock",
+      "command": "npm run test:t00",
+      "kind": "contract",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T00/design-inputs-lock.log",
+      "evidenceSha256": "12898abc960113925966584dd7cca6c48f81ea371d4009852bfa8a7d14588f25",
+      "durationMs": 559
+    },
+    {
+      "id": "design-inputs-recheck",
+      "command": "node scripts/lock-design-inputs.mjs --check",
+      "kind": "probe",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T00/design-inputs-recheck.log",
+      "evidenceSha256": "59486c5cced5961cf57a34ab7ef9208b1781b9c0739bc2b7c9619b5018a85b7c",
+      "durationMs": 131
+    },
+    {
+      "id": "runtime-admission-probes",
+      "command": "node scripts/lock-design-inputs.mjs",
+      "kind": "probe",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T00/runtime-admission-probes.log",
+      "evidenceSha256": "74b9929d64add927d0785b48df0d6362c6783f265bdc125ce391161c12f32d2b",
+      "durationMs": 132,
+      "note": "记录 Node/npm、平台、CLI、飞书与 Obsidian 的真实探针结果；未测到的组合保留 pending/blocked。"
+    }
+  ]
+}

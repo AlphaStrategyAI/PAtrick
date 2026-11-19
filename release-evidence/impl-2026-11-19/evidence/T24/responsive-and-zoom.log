@@ -1,0 +1,28 @@
+$ npm exec -- playwright test --config tests/e2e/T24-responsive.config.ts --reporter=line
+exit=0 signal=none durationMs=13653
+--- stdout ---
+
+
+Running 12 tests using 1 worker
+
+
+
+[1/12] tests/e2e/T24-responsive.spec.ts:221:7 › en › mobile responsive layout and keyboard
+[2/12] tests/e2e/T24-responsive.spec.ts:221:7 › en › tablet responsive layout and keyboard
+[3/12] tests/e2e/T24-responsive.spec.ts:221:7 › en › desktop responsive layout and keyboard
+[4/12] tests/e2e/T24-responsive.spec.ts:227:5 › en › Settings home and Collection have distinct localized summaries
+[5/12] tests/e2e/T24-responsive.spec.ts:244:5 › en › 200% browser zoom in an isolated profile
+[6/12] tests/e2e/T24-responsive.spec.ts:221:7 › zh › mobile responsive layout and keyboard
+[7/12] tests/e2e/T24-responsive.spec.ts:221:7 › zh › tablet responsive layout and keyboard
+[8/12] tests/e2e/T24-responsive.spec.ts:221:7 › zh › desktop responsive layout and keyboard
+[9/12] tests/e2e/T24-responsive.spec.ts:227:5 › zh › Settings home and Collection have distinct localized summaries
+[10/12] tests/e2e/T24-responsive.spec.ts:244:5 › zh › 200% browser zoom in an isolated profile
+[11/12] tests/e2e/T24-responsive.spec.ts:287:1 › layout checks detect horizontal overflow and an obscured action
+[12/12] tests/e2e/T24-responsive.spec.ts:312:1 › registration preserves a deliberate keyboard focus move while the service responds
+  12 passed (12.8s)
+
+--- stderr ---
+[WebServer] (node:7071) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:7073) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)

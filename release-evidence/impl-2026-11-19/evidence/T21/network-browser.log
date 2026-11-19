@@ -1,0 +1,21 @@
+$ npm exec -- playwright test --config tests/e2e/T21.config.ts --reporter=line
+exit=0 signal=none durationMs=6283
+--- stdout ---
+
+
+Running 5 tests using 1 worker
+
+
+
+[1/5] tests/e2e/T21.spec.ts:14:1 › a second fixed repair preserves its input and the same success receipt across settings and System
+[2/5] tests/e2e/T21.spec.ts:14:1 › a second fixed repair preserves its input and the same mfa receipt across settings and System
+[3/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from settings and retains the original receipt
+[4/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from system and retains the original receipt
+[5/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from logout and retains the original receipt
+  5 passed (5.6s)
+
+--- stderr ---
+[WebServer] (node:99412) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:99419) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)

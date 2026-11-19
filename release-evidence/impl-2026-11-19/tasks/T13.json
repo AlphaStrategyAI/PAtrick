@@ -1,0 +1,34 @@
+{
+  "task": "T13",
+  "completedAt": "2026-11-19T14:01:27.720Z",
+  "productClauses": [
+    "C2",
+    "C3"
+  ],
+  "scenarios": [
+    {
+      "id": "work-and-health-projections",
+      "command": "npm exec -- vitest run tests/integration/T13.test.ts",
+      "kind": "integration",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T13/work-and-health-projections.log",
+      "evidenceSha256": "449c1b39b16dfdda63efd0af41f8ef54a88385afc4a1abb7d406813a7cea5b31",
+      "durationMs": 1783
+    }
+  ]
+}

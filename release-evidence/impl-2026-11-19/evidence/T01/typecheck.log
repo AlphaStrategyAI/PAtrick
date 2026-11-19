@@ -1,0 +1,13 @@
+$ npm run typecheck
+exit=0 signal=none durationMs=7469
+--- stdout ---
+
+> patrick@0.0.0 typecheck
+> tsc --noEmit && npm run typecheck -w @patrick/web
+
+
+> @patrick/web@0.0.0 typecheck
+> tsc --noEmit
+
+
+--- stderr ---

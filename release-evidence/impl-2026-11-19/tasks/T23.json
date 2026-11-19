@@ -1,0 +1,82 @@
+{
+  "task": "T23",
+  "completedAt": "2026-11-19T14:05:56.915Z",
+  "productClauses": [
+    "C8"
+  ],
+  "scenarios": [
+    {
+      "id": "release-candidate-admission",
+      "command": "npm exec -- vitest run tests/admission/T23.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T23/release-candidate-admission.log",
+      "evidenceSha256": "7ddc8a0cc9ff874a477278f98bfb41a4b88e3983913f113174c6edfb40d710f6",
+      "durationMs": 17467
+    },
+    {
+      "id": "runtime-build-and-relocate",
+      "command": "npm exec -- vitest run tests/admission/T23-build.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T23/runtime-build-and-relocate.log",
+      "evidenceSha256": "527d9065bfb3b7839ad0a6f4f38c5403502dafbc498dd7906041a4f09a64ff20",
+      "durationMs": 102654
+    },
+    {
+      "id": "empty-host-install-and-upgrade",
+      "command": "npm exec -- vitest run tests/admission/T23-install-preview.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "blocked",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T23/empty-host-install-and-upgrade.log",
+      "evidenceSha256": "ceda29079aadab0483566858ee8faba3b2ee3110a3de2affaf5a39d2c292e0c9",
+      "durationMs": 1422,
+      "blockedReason": "空机安装、重启与升级只对真实安装目录有证据；本机没有已安装的 PAtrick.app，候选包的 installable 仍为 false。"
+    }
+  ]
+}

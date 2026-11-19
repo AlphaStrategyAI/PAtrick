@@ -1,0 +1,81 @@
+{
+  "task": "T24",
+  "completedAt": "2026-11-19T14:07:11.359Z",
+  "productClauses": [
+    "C9"
+  ],
+  "scenarios": [
+    {
+      "id": "frame-coverage-and-visual-baselines",
+      "command": "npm exec -- playwright test --config tests/visual/T24.config.ts --reporter=line",
+      "kind": "visual",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T24/frame-coverage-and-visual-baselines.log",
+      "evidenceSha256": "d950110fd7932f84c32493e9e67ed53449b6b690cd9fac2c8dc948aafbca477d",
+      "durationMs": 41023
+    },
+    {
+      "id": "motion-and-accessibility",
+      "command": "npm exec -- playwright test --config tests/e2e/T24.config.ts --reporter=line",
+      "kind": "browser",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T24/motion-and-accessibility.log",
+      "evidenceSha256": "d330995428c8984d356483514fe2fae48d8e4f650d904b5fcbe5159a3bcf9bb6",
+      "durationMs": 19765
+    },
+    {
+      "id": "responsive-and-zoom",
+      "command": "npm exec -- playwright test --config tests/e2e/T24-responsive.config.ts --reporter=line",
+      "kind": "browser",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "379fff00fe47b1db311a79bef6712015cb4633f5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
+        "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
+        "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
+        "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
+        "tests": "896b4eaa54b37d7009ef32f031423323bad3336e5fa113b326b0548bf58a937d",
+        "fixtures": "d2aeb53b4c25444553184e6f0314309e8093e87d4be98b747b912bd29b0c8df6"
+      },
+      "evidenceFile": "evidence/T24/responsive-and-zoom.log",
+      "evidenceSha256": "cb8796546298627ff2e29c82a870b625d8d40a243b90ccaabcb49c2c9543758c",
+      "durationMs": 13653
+    }
+  ]
+}

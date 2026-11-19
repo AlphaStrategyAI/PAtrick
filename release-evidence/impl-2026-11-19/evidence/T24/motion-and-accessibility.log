@@ -1,0 +1,26 @@
+$ npm exec -- playwright test --config tests/e2e/T24.config.ts --reporter=line
+exit=0 signal=none durationMs=19765
+--- stdout ---
+
+
+
+Running 7 tests using 1 worker
+
+
+
+[1/7] tests/e2e/T24.a11y.spec.ts:27:1 › a fresh health read waits for its event connection before showing running
+[2/7] tests/e2e/T24.a11y.spec.ts:49:1 › the 4.8s orbit repeats without updating the live status while a decision waits
+[3/7] tests/e2e/T24.a11y.spec.ts:88:1 › system and local motion preferences keep a static available mark
+[4/7] tests/e2e/T24.a11y.spec.ts:116:1 › a visibilitychange pauses and resumes the existing orbit phase
+[5/7] tests/e2e/T24.a11y.spec.ts:135:1 › stale, non-running, and rejected health reads keep the logo static
+[6/7] tests/e2e/T24.a11y.spec.ts:166:1 › the shared logo stays available in the keyboard-operated drawer at both compact widths
+[7/7] tests/e2e/T24.a11y.spec.ts:184:1 › demo mode keeps the logo static and reports unknown service health
+  7 passed (19.0s)
+
+--- stderr ---
+[WebServer] (node:6962) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:6996) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:6998) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
