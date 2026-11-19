@@ -70,7 +70,7 @@
     "zh": {
       "key": "zh-settings",
       "id": "26:2477",
-      "baselineSha256": "621579b8bcb001c0b98c82d2b0db632fecc8b1bf25a2d773ae2ed092c48768a8",
+      "baselineSha256": "2f26c3cd4a80a02c141d84bd313e01f68ed5528179aec13196bee11e8d152305",
       "edges": {
         "sidebarRight": 228,
         "headerBottom": 64,
