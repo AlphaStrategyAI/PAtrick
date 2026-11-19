@@ -160,10 +160,7 @@ function selected(host: RegisteredHost, operation: string, vaultId: string) {
     lease.validate(); data.validate(); plan?.validate();
   }
   validate();
-  const heldOwner: ExclusiveRuntimeStaging = { withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) {
-    validate(); return Reflect.apply(lease.value, owner, [read]);
-  } };
-  return { entry, enrollment, owner: heldOwner, plan: plan?.value, validate };
+  return { entry, enrollment, owner, plan: plan?.value, validate };
 }
 
 /** Constructor deferral still requires an own, selected public-plan capability.

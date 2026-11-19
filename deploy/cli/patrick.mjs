@@ -4,10 +4,81 @@ import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
 import { bindInstallPreviewEnrollment, previewFirstInstall } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
+import { leased } from '../lib/emitted-release.mjs';
 
 const commands = new Set(['init', 'doctor', 'install', 'start', 'stop', 'backup', 'restore', 'upgrade', 'uninstall']);
 const lifecycleCommands = new Set(['init', 'install', 'start', 'stop', 'upgrade', 'uninstall']);
 const id = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+function captureDataField(object, key) {
+  if (!object || (typeof object !== 'object' && typeof object !== 'function')) return;
+  const chain = [];
+  let descriptor;
+  for (let at = object; at; at = Object.getPrototypeOf(at)) {
+    chain.push({ object: at, prototype: Object.getPrototypeOf(at) });
+    descriptor = Object.getOwnPropertyDescriptor(at, key);
+    if (descriptor) break;
+  }
+  if (descriptor && !Object.hasOwn(descriptor, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+  const initial = descriptor, value = descriptor?.value;
+  return { value, validate() {
+    for (let index = 0; index < chain.length; index++) {
+      const item = chain[index];
+      if (Object.getPrototypeOf(item.object) !== item.prototype) throw new Error('HOST_IDENTITY_MISMATCH');
+      const live = Object.getOwnPropertyDescriptor(item.object, key);
+      if (index < chain.length - 1 || !initial) {
+        if (live) throw new Error('HOST_IDENTITY_MISMATCH');
+      } else if (!live || !Object.hasOwn(live, 'value') || !Object.is(live.value, value) ||
+        live.configurable !== initial.configurable || live.enumerable !== initial.enumerable || live.writable !== initial.writable) {
+        throw new Error('HOST_IDENTITY_MISMATCH');
+      }
+    }
+  } };
+}
+// The registration binder preserves opaque class instances by reference. Trust
+// inputs therefore need their own detached data snapshot and live descriptor
+// checks, including every nested record and array.
+function captureReleaseData(input) {
+  const seen = new WeakMap(), checks = [];
+  function copy(value, depth = 0) {
+    if (value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)) return value;
+    if (typeof value !== 'object' || depth > 64) throw new Error('HOST_IDENTITY_MISMATCH');
+    if (seen.has(value)) return seen.get(value);
+    const prototype = Object.getPrototypeOf(value);
+    // A custom prototype may supply an inherited digest or evidence policy.
+    // Only own-data records and ordinary arrays have a detached representation.
+    if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== null && prototype !== Object.prototype) {
+      throw new Error('HOST_IDENTITY_MISMATCH');
+    }
+    const names = Object.getOwnPropertyNames(value).sort();
+    if (Object.getOwnPropertySymbols(value).length) throw new Error('HOST_IDENTITY_MISMATCH');
+    const descriptors = new Map();
+    const output = Array.isArray(value) ? [] : Object.create(null);
+    seen.set(value, output);
+    for (const name of names) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+      descriptors.set(name, descriptor);
+      if (Array.isArray(value) && name === 'length') continue;
+      Object.defineProperty(output, name, { value: copy(descriptor.value, depth + 1),
+        enumerable: descriptor.enumerable, writable: true, configurable: true });
+    }
+    if (Array.isArray(value)) output.length = descriptors.get('length').value;
+    checks.push(() => {
+      if (Object.getPrototypeOf(value) !== prototype || Object.getOwnPropertySymbols(value).length ||
+        JSON.stringify(Object.getOwnPropertyNames(value).sort()) !== JSON.stringify(names)) throw new Error('HOST_IDENTITY_MISMATCH');
+      for (const [name, initial] of descriptors) {
+        const live = Object.getOwnPropertyDescriptor(value, name);
+        if (!live || !Object.hasOwn(live, 'value') || !Object.is(live.value, initial.value) ||
+          live.configurable !== initial.configurable || live.enumerable !== initial.enumerable || live.writable !== initial.writable) {
+          throw new Error('HOST_IDENTITY_MISMATCH');
+        }
+      }
+    });
+    return Object.freeze(output);
+  }
+  const value = copy(input);
+  return { value, validate() { for (const check of checks) check(); } };
+}
 const commandOptions = {
   init: ['vault'], doctor: ['vault'], install: ['release'], start: [], stop: [],
   backup: ['target'], restore: ['target', 'manifest', 'mode'], upgrade: ['release'], uninstall: [],
@@ -242,26 +313,52 @@ export function createPatrickCli(host, checkLiveStorage) {
         });
     }
     if (['install', 'upgrade'].includes(request.command)) {
-      const releaseBinding = bindRegistration(() => host.releases && Object.hasOwn(host.releases, request.release) ? host.releases[request.release] : undefined);
+      const entries = host.releases;
+      const selected = () => {
+        if (host.releases !== entries) throw new Error('HOST_IDENTITY_MISMATCH');
+        const row = entries && Object.getOwnPropertyDescriptor(entries, request.release);
+        if (row && !Object.hasOwn(row, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+        return row?.value;
+      };
+      const originalRelease = selected();
+      const releaseBinding = bindRegistration(() => {
+        const live = selected();
+        if (live !== originalRelease) throw new Error('HOST_IDENTITY_MISMATCH');
+        return live;
+      });
       const release = releaseBinding.value;
-      const validate = () => { hostBinding.validate(); releaseBinding.validate(); };
       if (!release) return response(request, 'unavailable', 'RELEASE_REGISTRATION_REQUIRED', 'Select an independently registered exact release candidate.', context);
-      if (!sameIdentity(identity, release.identity)) return response(request, 'blocked', 'HOST_IDENTITY_MISMATCH', 'Reconcile the registered release configuration revision.', context);
-      if (typeof release.staging?.withExclusiveReadRoot !== 'function') return response(request, 'unavailable', 'CONTROLLED_STAGING_REQUIRED',
+      const identityField = captureDataField(originalRelease, 'identity');
+      const candidateField = captureDataField(originalRelease, 'candidatePath');
+      const expectedField = captureDataField(originalRelease, 'expected');
+      const policyField = captureDataField(originalRelease, 'policy');
+      const identityData = captureReleaseData(identityField?.value);
+      const expectedData = captureReleaseData(expectedField?.value);
+      const policyData = captureReleaseData(policyField?.value);
+      const stagingField = captureDataField(originalRelease, 'staging');
+      const staging = stagingField?.value;
+      const ownerMethod = captureDataField(staging, 'withExclusiveReadRoot');
+      const validate = () => {
+        hostBinding.validate(); releaseBinding.validate();
+        identityField?.validate(); candidateField?.validate(); expectedField?.validate(); policyField?.validate();
+        identityData.validate(); expectedData.validate(); policyData.validate(); stagingField?.validate(); ownerMethod?.validate();
+      };
+      if (!sameIdentity(identity, identityData.value)) return response(request, 'blocked', 'HOST_IDENTITY_MISMATCH', 'Reconcile the registered release configuration revision.', context);
+      if (typeof ownerMethod?.value !== 'function') return response(request, 'unavailable', 'CONTROLLED_STAGING_REQUIRED',
         'Provision a physical staging root with exclusive trusted control of the tree and ancestors throughout verification.', context);
       if (request.action === 'readback') return response(request, 'unavailable', 'LIFECYCLE_READBACK_REQUIRED', 'Provision the durable installed lifecycle readback authority.', context);
       try {
         // Only the trusted staging owner can supply the physical root while holding its exclusive lease.
         validate();
-        let verified;
-        const returned = await release.staging.withExclusiveReadRoot(async (readRoot) => {
+        const verified = await leased(staging, async lease => {
           validate();
-          verified = await verifyRelease(release.candidatePath, { policy: release.policy, expected: release.expected, readRoot });
+          const result = await verifyRelease(candidateField?.value, { policy: policyData.value, expected: expectedData.value,
+            readRoot: lease.root, validate: lease.guard });
           validate();
-          return verified;
-        });
+          return result;
+        }, true, validate);
         validate();
-        if (!verified || returned !== verified) throw new Error('unverified');
+        if (!verified) throw new Error('unverified');
         const candidate = { sha256: verified.sha256, manifestSha256: verified.manifestSha256, installable: false, runtime: 'unavailable' };
         return response(request, request.action === 'preview' ? 'preview' : 'unavailable',
           request.action === 'preview' ? 'RELEASE_CANDIDATE_PREVIEW' : 'RELEASE_RUNTIME_REQUIRED',

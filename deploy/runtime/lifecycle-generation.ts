@@ -3,15 +3,11 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSy
   realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-import { leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
-import type { DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
+import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
+import type { DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 
-// The publication verifier already implements guarded, acknowledged owner callbacks.
-interface Lease { root: string; guard(): void }
-declare module '../lib/emitted-release.mjs' {
-  export function leased<T>(owner: ExclusiveRuntimeStaging, use: (lease: Lease) => Promise<T>, joinWork: boolean): Promise<T>;
-}
+type Lease = RuntimeLease;
 
 const format = 'patrick-installed-selection-v1' as const;
 const maxRecords = 4096;
@@ -53,6 +49,31 @@ function requireValue(value: unknown): asserts value {
 function token(value: unknown): asserts value is string {
   requireValue(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value));
 }
+// Capture only data-backed methods and the complete lookup chain. Rechecking
+// descriptors must never invoke an accessor installed while an operation waits.
+function captureMethod<T extends object, K extends keyof T>(object: T, key: K) {
+  requireValue(object && (typeof object === 'object' || typeof object === 'function'));
+  const chain: Array<{ object: object; prototype: object | null }> = [];
+  let descriptor: PropertyDescriptor | undefined;
+  for (let current: object | null = object; current; current = Object.getPrototypeOf(current)) {
+    chain.push({ object: current, prototype: Object.getPrototypeOf(current) });
+    descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor) break;
+  }
+  requireValue(descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'function');
+  const initial = descriptor;
+  const value = initial.value as T[K];
+  return { value, validate() {
+    for (let index = 0; index < chain.length; index++) {
+      const item = chain[index]!;
+      requireValue(Object.getPrototypeOf(item.object) === item.prototype);
+      const current = Object.getOwnPropertyDescriptor(item.object, key);
+      if (index < chain.length - 1) requireValue(!current);
+      else requireValue(current && Object.hasOwn(current, 'value') && Object.is(current.value, value) &&
+        current.configurable === initial.configurable && current.enumerable === initial.enumerable && current.writable === initial.writable);
+    }
+  } };
+}
 function hash(value: unknown): asserts value is string {
   requireValue(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
 }
@@ -93,12 +114,15 @@ export function canRestoreOldRelease(input: {
 function generationStorage(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging, signer?: GenerationRecordSigner) {
   const binding = bindRegistration(() => registration);
   const e = binding.value;
-  const registeredLease = owner.withExclusiveReadRoot;
-  const registeredSign = signer?.signRecord;
+  const ownerMethod = captureMethod(owner, 'withExclusiveReadRoot');
+  const signerMethod = signer === undefined ? undefined : captureMethod(signer, 'signRecord');
+  const registeredSign = signerMethod?.value;
   function enrolled() {
     binding.validate();
-    requireValue(owner.withExclusiveReadRoot === registeredLease && signer?.signRecord === registeredSign);
+    ownerMethod.validate();
+    signerMethod?.validate();
   }
+  enrolled();
   const key = createPublicKey(e.publicKey);
   requireValue(key.asymmetricKeyType === 'ed25519' && e.root !== sep && resolve(e.root) === e.root);
   token(e.installationId);
@@ -127,6 +151,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
   }
 
   function order(operationId: string, previous: string | null, generationId: string): GenerationOrder {
+    enrolled();
     token(operationId);
     if (previous !== null) hash(previous);
     const generation = generations.get(generationId);
@@ -167,13 +192,11 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     const release = releases.get(g.packageSha256)!;
     // Borrow the already-held outer owner. Both verifier calls see the same
     // private port. They cannot re-enter or acquire a different native lock.
-    const staging: ExclusiveRuntimeStaging = { async withExclusiveReadRoot(read) {
-      lease.guard();
-      try { return await read(lease.root); } finally { lease.guard(); }
-    } };
+    const staging = deriveRuntimeStaging(lease, lease.root);
     const receipt = await verifyEmittedRuntimeCandidate(join(e.root, 'packages', g.packageSha256 + '.json'), {
       staging, expected: release.expected, policy: release.policy,
     });
+    boundary(lease);
     return withPublishedDeployment(receipt, { staging, releasesRoot: join(e.root, 'releases') }, async installed => {
       requireValue(installed.packageSha256 === g.packageSha256 && installed.root === join(e.root, 'releases', g.packageSha256));
       boundary(lease);
@@ -190,7 +213,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
   function uncertain(operationId: string) {
     return Object.assign(new Error('GENERATION_SELECTION_UNCERTAIN'), { code: 'GENERATION_SELECTION_UNCERTAIN', operationId });
   }
-  async function readState(lease: Lease, operationId?: string, unusedGeneration?: string): Promise<State> {
+  async function readState(lease: Lease, operationId?: string, unusedGeneration?: string, ownedScratch?: GenerationNode): Promise<State> {
     boundary(lease);
     const entries = readdirSync(history);
     requireValue(entries.length <= maxRecords * 2);
@@ -217,6 +240,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
       requireValue(realpathSync.native(path) === path && info.isFile() && info.uid === BigInt(process.geteuid!()) &&
         (info.mode & 0o7777n) === 0o600n && info.nlink >= 1n && info.nlink <= 3n);
       const raw = await readRegularFile(path, recordLimit, { root: e.root, validate: () => boundary(lease) });
+      boundary(lease);
       const stored = JSON.parse(raw.toString()) as { body: RecordBody; signature: string };
       const record = authenticate(stored.body.authorization);
       const body: RecordBody = { format: 'patrick-installed-selection-record-v1', authorization: stored.body.authorization, node: pin(info) };
@@ -271,19 +295,42 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
         requireValue(scratch.dev === info.dev && scratch.ino === info.ino);
       } else requireValue(info.nlink === links);
     }
+    // A create may have succeeded even when its acknowledgement was lost.  A
+    // scratch without its authenticated history link is not evidence of absence,
+    // and it must block *all* later selections, not just the same operation ID.
+    for (const name of readdirSync(e.root)) {
+      if (!name.toLowerCase().startsWith('.selection-')) continue;
+      const id = name.slice('.selection-'.length);
+      if (name !== '.selection-' + id || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(id)) {
+        throw uncertain(operationId ?? 'unknown');
+      }
+      const scratchPath = join(e.root, name);
+      const scratch = lstatSync(scratchPath, { bigint: true, throwIfNoEntry: false });
+      if (!scratch) throw uncertain(id);
+      if (pending?.order.operationId === id) {
+        const retained = nodes.get(id)!;
+        if (scratch.dev !== retained.dev || scratch.ino !== retained.ino) throw uncertain(id);
+      } else if (id === operationId && ownedScratch) {
+        checkNode(scratchPath, ownedScratch, false);
+      } else throw uncertain(id);
+    }
+    boundary(lease);
     return { current, pending, historical: historical === pending ? null : historical };
   }
   async function verifyObservation(lease: Lease, state: State, operationId?: string) {
     for (const entry of new Set([state.current, state.pending, state.historical])) {
       if (entry) await withGeneration(lease, entry.order.generation, async () => {});
+      boundary(lease);
     }
-    requireValue(canonicalize(await readState(lease, operationId)) === canonicalize(state));
+    const observed = await readState(lease, operationId);
+    boundary(lease);
+    requireValue(canonicalize(observed) === canonicalize(state));
     return state;
   }
   async function observe(operationId?: string) {
     if (operationId !== undefined) token(operationId);
     enrolled();
-    const result = await leased(owner, async lease => verifyObservation(lease, await readState(lease, operationId), operationId), true);
+    const result = await leased(owner, async lease => verifyObservation(lease, await readState(lease, operationId), operationId), true, enrolled);
     enrolled();
     return result;
   }
@@ -298,6 +345,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     try {
       const result = await leased(owner, async lease => {
         const state = await readState(lease, id);
+        boundary(lease);
         if (state.pending?.sha256 === next.sha256) throw uncertain(id);
         if (state.historical) {
           requireValue(state.historical.sha256 === next.sha256);
@@ -305,27 +353,31 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
         }
         requireValue(!state.pending && (state.current?.sha256 ?? null) === next.order.previous);
         requireValue(readdirSync(history).filter(name => name.endsWith('.json')).length < maxRecords);
-        if (state.current) await withGeneration(lease, state.current.order.generation, async () => {});
+        if (state.current) { await withGeneration(lease, state.current.order.generation, async () => {}); boundary(lease); }
         return withGeneration(lease, next.order.generation, async () => {
-          requireValue(canonicalize(await readState(lease, id, next.order.generation.id)) === canonicalize(state));
+          const before = await readState(lease, id, next.order.generation.id);
           boundary(lease);
+          requireValue(canonicalize(before) === canonicalize(state));
           const stage = join(e.root, '.selection-' + id);
           const record = join(history, id + '.json');
+          requireValue(signer && registeredSign);
+          attempted = true;
           const fd = openSync(stage, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
           try {
-            requireValue(signer && registeredSign);
             const node = pin(fstatSync(fd, { bigint: true }));
             const body: RecordBody = { format: 'patrick-installed-selection-record-v1', authorization: signed, node };
-            const signature = await registeredSign.call(signer, bytes(body));
+            const signature = await Reflect.apply(registeredSign, signer, [bytes(body)]);
+            boundary(lease);
             const envelope = bytes({ body, signature });
             requireValue(signatureValid(bytes(body), signature) && envelope.length <= recordLimit);
-            requireValue(canonicalize(await readState(lease, id, next.order.generation.id)) === canonicalize(state));
+            const confirmed = await readState(lease, id, next.order.generation.id, node);
+            boundary(lease);
+            requireValue(canonicalize(confirmed) === canonicalize(state));
             checkNode(stage, node, false);
             writeFileSync(fd, envelope);
             fsyncSync(fd);
           } finally { closeSync(fd); }
           boundary(lease);
-          attempted = true;
           linkSync(stage, record);
           syncDirectory(history, e.stores.history);
           // After this point the record forbids a second attempt even on restart.
@@ -336,20 +388,25 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
           // signature proves the earlier pointer barrier even if the final history
           // flush loses its acknowledgement. Disappearance of the link fails closed.
           const visible = await readState(lease, id);
+          boundary(lease);
           requireValue(visible.current?.sha256 === next.sha256 && visible.pending?.sha256 === next.sha256);
           const selected = pin(stat(currentPath));
           const payload = completionBytes(next, selected);
-          const signature = await registeredSign.call(signer, payload);
-          requireValue(signatureValid(payload, signature) && canonicalize(await readState(lease, id)) === canonicalize(visible));
+          const signature = await Reflect.apply(registeredSign, signer, [payload]);
+          boundary(lease);
+          const confirmed = await readState(lease, id);
+          boundary(lease);
+          requireValue(signatureValid(payload, signature) && canonicalize(confirmed) === canonicalize(visible));
           requireValue(canonicalize(pin(stat(currentPath))) === canonicalize(selected));
           boundary(lease);
           linkSync(currentPath, join(history, id + '.' + Buffer.from(signature, 'base64').toString('hex') + '.durable'));
           syncDirectory(history, e.stores.history);
           const observed = await readState(lease, id);
+          boundary(lease);
           requireValue(observed.current?.sha256 === next.sha256 && !observed.pending);
           return observed;
         });
-      }, true);
+      }, true, enrolled);
       enrolled();
       return result;
     } catch (error) {
@@ -361,7 +418,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging, signer: GenerationRecordSigner) {
-  requireValue(typeof signer?.signRecord === 'function');
+  requireValue(signer && (typeof signer === 'object' || typeof signer === 'function'));
   return generationStorage(registration, owner, signer);
 }
 

@@ -12,6 +12,7 @@ import { createLifecycleJournal, type LifecycleRegistration, type LifecycleReque
 import type { VaultInitCliEntry } from '../../deploy/runtime/vault-init-cli.js';
 import type { RegisteredHost } from '../../deploy/lib/doctor.mjs';
 import { createVaultKitInstaller } from '../../deploy/obsidian/install.mjs';
+import { deriveRuntimeStaging, leased } from '../../deploy/lib/emitted-release.mjs';
 import { readRecoveryDatabase } from '../../packages/host/src/recovery/backup.js';
 import { connectVault, confirmVault, inspectVault, requireVault } from '../../packages/integrations/vault/connection.js';
 import { openDatabase } from '../../packages/storage/src/database.js';
@@ -125,6 +126,87 @@ test('installed preview projects the exact independently retained synthetic plan
   expect(readdirSync(f.journal)).toEqual([]);
   expect(readdirSync(f.root)).toEqual(['模板']);
 });
+
+test('installed Vault preview, execution and cold readback retain a genuine recursive derived owner', async () => {
+  const f = await fixture();
+  expect(await f.cli.run(f.args('preview'))).toMatchObject({ status: 'preview' });
+  let expired!: typeof f.owner;
+  await leased(f.owner, async parent => {
+    const child = deriveRuntimeStaging(parent, f.dir);
+    expired = child;
+    const directHost = { identity: f.e.identity, captureHost: f.e.captureHost, serviceUid: f.e.serviceUid,
+      minimumFreeBytes: 1, dataRoot: f.dir, profile: 'test', runtime: { createVaultKitInstaller }, vaults: f.caps.vaults } as unknown as RegisteredHost;
+    expect(await createVaultInitController(() => f.e, child, directHost, f.signer).preview()).toEqual(f.plan);
+    f.approved.owner = child;
+    expect(await f.cli.run(f.args('preview'))).toMatchObject({ status: 'preview', code: 'VAULT_INIT_KIT_PREVIEW' });
+    expect(await f.cli.run(f.args('execute'))).toMatchObject({ status: 'completed', code: 'LIFECYCLE_COMPLETED' });
+    await leased(child, async nested => {
+      f.approved.owner = deriveRuntimeStaging(nested, f.dir);
+      expect(await f.cli.run(f.args('readback'))).toMatchObject({ status: 'completed', code: 'LIFECYCLE_COMPLETED' });
+    }, true);
+    f.approved.owner = { withExclusiveReadRoot: child.withExclusiveReadRoot };
+    expect((await f.cli.run(f.args('readback'))).status).toBe('blocked');
+    f.approved.owner = deriveRuntimeStaging(parent, f.root);
+    expect((await f.cli.run(f.args('readback'))).status).toBe('blocked');
+  }, true);
+  f.approved.owner = expired;
+  expect((await f.cli.run(f.args('readback'))).status).toBe('blocked');
+  expect(readFileSync(join(f.root, '模板/知识笔记.md'))).toEqual(f.human);
+}, 120_000);
+
+test('an installed signer getter drift after actual Vault publication stays uncertain', async () => {
+  const f = await fixture();
+  const original = f.signer.sign;
+  let getters = 0, changed = false;
+  f.hooks.read = () => {
+    if (!changed && existsSync(join(f.root, '模板/判断案例.md'))) {
+      changed = true;
+      Object.defineProperty(f.signer, 'sign', { configurable: true, get() { getters++; return original; } });
+    }
+  };
+  const result = await f.cli.run(f.args('execute'));
+  expect(changed).toBe(true);
+  expect(result.status).toBe('uncertain');
+  expect(getters).toBe(0);
+  expect(existsSync(join(f.root, '模板/判断案例.md'))).toBe(true);
+  expect(await f.cli.run(f.args('readback'))).toMatchObject({ status: 'uncertain' });
+  expect(getters).toBe(0);
+}, 120_000);
+
+test('installed Vault preview stops source inspection after its derived parent exits', async () => {
+  const f = await fixture();
+  const installer = f.caps.vaults![f.e.vault.vault_id]!.installer!;
+  const load = installer.loadVault, inspect = installer.inspectVault;
+  let start!: () => void, resume!: () => void, armed = false, released = false, lateInspections = 0;
+  const entered = new Promise<void>(resolve => { start = resolve; });
+  const continuing = new Promise<void>(resolve => { resume = resolve; });
+  installer.loadVault = async function(id: string) {
+    const record = await Reflect.apply(load, installer, [id]);
+    if (!armed) { armed = true; start(); await continuing; }
+    return record;
+  };
+  installer.inspectVault = async function(device: string, id: string) {
+    if (released) lateInspections++;
+    return Reflect.apply(inspect, installer, [device, id]);
+  };
+  const owner = { async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+    const pending = read(f.dir); pending.catch(() => {});
+    const enteredBeforeExit = await Promise.race([entered.then(() => true), pending.then(() => false, () => false)]);
+    if (!enteredBeforeExit) return pending;
+    released = true; setImmediate(resume);
+    return undefined as T;
+  } };
+  let status: string | undefined;
+  await leased(owner, async parent => {
+    f.approved.owner = deriveRuntimeStaging(parent, f.dir);
+    status = (await f.cli.run(f.args('preview'))).status;
+  }, true).catch(() => {});
+  expect(armed).toBe(true);
+  expect(released).toBe(true);
+  expect(status).toBe('blocked');
+  expect(lateInspections).toBe(0);
+  expect(readdirSync(f.journal)).toEqual([]);
+}, 120_000);
 
 test('preserves class-backed staging, signer and Vault-port receivers without reading function metadata', async () => {
   const f = await fixture();

@@ -17,6 +17,10 @@ const addon = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
 const semver = /^\d+\.\d+\.\d+$/;
 const verified = new WeakMap();
 const staged = new WeakMap();
+const activeLeases = new WeakMap();
+const derivedPorts = new WeakMap();
+const leaseCallbacks = new WeakMap();
+const unresolvedWrites = new WeakMap();
 const own = Object.hasOwn;
 export function check(value, message) { if (!value) throw new Error(message); }
 export const encode = value => Buffer.from(canonicalize(value));
@@ -287,31 +291,140 @@ export function inside(root, path) {
   check(local && !isAbsolute(local) && local !== '..' && !local.startsWith('..' + sep), 'path outside staging root');
   return path;
 }
+
+/** A view can only narrow a currently held genuine lease. Every consumer must
+ * pass this exact object so leased() can propagate the parent guard. */
+export function deriveRuntimeStaging(parentLease, root, publication) {
+  const parent = activeLeases.get(parentLease);
+  check(parent, 'genuine parent lease required');
+  parent.guard();
+  check(typeof root === 'string' && resolve(root) === root && (root === parent.root || inside(parent.root, root)),
+    'derived root outside parent');
+  let registered;
+  const roots = [root];
+  if (publication !== undefined) {
+    check(publication && [null, Object.prototype].includes(Object.getPrototypeOf(publication)) &&
+      Reflect.ownKeys(publication).length === 2, 'invalid derived publication');
+    const stage = Object.getOwnPropertyDescriptor(publication, 'stagingRoot');
+    const releases = Object.getOwnPropertyDescriptor(publication, 'releasesRoot');
+    check(stage && releases && own(stage, 'value') && own(releases, 'value'), 'invalid derived publication fields');
+    const stagingRoot = inside(root, stage.value), releasesRoot = inside(root, releases.value);
+    check(stagingRoot !== releasesRoot && !stagingRoot.startsWith(releasesRoot + sep) &&
+      !releasesRoot.startsWith(stagingRoot + sep), 'overlapping derived publication roots');
+    roots.push(stagingRoot, releasesRoot);
+    registered = Object.freeze({ stagingRoot, releasesRoot });
+  }
+  const captures = roots.map(path => {
+    check(realpathSync.native(path) === path, 'noncanonical derived root');
+    const tree = ancestry(path, parent.root);
+    const births = new Map([...tree.keys()].map(name => [name, stat(name).birthtimeNs]));
+    return { path, tree, births };
+  });
+  let invalid = false;
+  const guard = () => {
+    check(!invalid, 'derived lease invalid');
+    try {
+      parent.guard();
+      for (const capture of captures) {
+        recheck(capture.tree);
+        for (const [path, birth] of capture.births) check(stat(path).birthtimeNs === birth, 'derived root birth identity changed');
+        check(realpathSync.native(capture.path) === capture.path, 'derived root changed');
+      }
+    } catch (error) { invalid = true; throw error; }
+  };
+  guard();
+  const port = Object.freeze({ ...(registered ? { publication: registered } : {}),
+    async withExclusiveReadRoot(read) {
+      check(this === port && leaseCallbacks.get(read) === port, 'original derived lease callback required');
+      guard();
+      check(typeof read === 'function' && !parent.child, 'concurrent derived lease');
+      const token = {};
+      parent.child = token;
+      try { const result = await read(root); guard(); return result; }
+      finally { if (parent.child === token) parent.child = undefined; }
+    },
+  });
+  derivedPorts.set(port, { guard, parent });
+  return port;
+}
 // The independently registered host MUST exclude competing writers throughout this
 // callback. Public path-based Node APIs cannot exclude a hostile swap-and-restore
 // between two syscalls. Device/inode checks only detect observable exchanges.
-export async function leased(port, work, joinWork = false) {
-  check(typeof port?.withExclusiveReadRoot === 'function', 'exclusive host staging required');
+function captureLeaseMethod(port) {
+  check(port && (typeof port === 'object' || typeof port === 'function'), 'exclusive host staging required');
+  const chain = [];
+  let descriptor;
+  for (let current = port; current; current = Object.getPrototypeOf(current)) {
+    chain.push({ object: current, prototype: Object.getPrototypeOf(current) });
+    descriptor = Object.getOwnPropertyDescriptor(current, 'withExclusiveReadRoot');
+    if (descriptor) break;
+  }
+  check(descriptor && own(descriptor, 'value') && typeof descriptor.value === 'function', 'exclusive host staging required');
+  const initial = descriptor;
+  const value = initial.value;
+  return { value, validate() {
+    for (let index = 0; index < chain.length; index++) {
+      const item = chain[index];
+      check(Object.getPrototypeOf(item.object) === item.prototype, 'exclusive host staging changed');
+      const current = Object.getOwnPropertyDescriptor(item.object, 'withExclusiveReadRoot');
+      if (index < chain.length - 1) check(!current, 'exclusive host staging changed');
+      else check(current && own(current, 'value') && Object.is(current.value, value) &&
+        current.configurable === initial.configurable && current.enumerable === initial.enumerable &&
+        current.writable === initial.writable, 'exclusive host staging changed');
+    }
+  } };
+}
+export async function leased(port, work, joinWork = false, validate) {
+  const method = captureLeaseMethod(port);
+  check(validate === undefined || typeof validate === 'function', 'invalid lease admission');
+  const inherited = derivedPorts.get(port);
   let active = true;
   let calls = 0;
   let finished = false;
   let firstCall;
   let answer;
   const marker = Object.freeze({});
-  function valid() { check(active && calls === 1, 'exclusive lease callback violation'); }
+  let start;
+  const starting = new Promise(resolve => { start = resolve; });
+  function checkBinding() {
+    inherited?.guard();
+    method.validate();
+    if (validate) {
+      Reflect.apply(validate, undefined, []);
+      method.validate();
+      inherited?.guard();
+    }
+  }
+  function valid() { check(active && calls === 1, 'exclusive lease callback violation'); checkBinding(); }
+  let callback;
   try {
-    const result = await port.withExclusiveReadRoot(root => {
+    callback = root => {
       calls++;
       const run = async () => {
+        await starting;
+        // Allow an immediately settled owner to be observed before starting work.
+        await new Promise(resolve => setImmediate(resolve));
         valid();
         admitReadRoot(root).validate();
         const tree = ancestry(root, root);
-        const guard = () => { valid(); recheck(tree); };
+        const state = { root, open: true, invalid: false, child: undefined, guard: undefined, scope: inherited?.parent.scope };
+        state.scope ??= state;
+        const guard = () => {
+          check(!state.invalid, 'lease invalid');
+          try { valid(); check(state.open, 'lease callback ended'); recheck(tree); }
+          catch (error) { state.invalid = true; throw error; }
+        };
+        state.guard = guard;
+        const lease = Object.freeze({ root, tree: new Map(tree), guard });
+        activeLeases.set(lease, state);
         guard();
-        answer = await work({ root, tree, guard });
-        guard();
-        finished = true;
-        return marker;
+        try {
+          answer = await work(lease);
+          guard();
+          check(!state.child, 'derived lease still active');
+          finished = true;
+          return marker;
+        } finally { state.open = false; }
       };
       const promise = run();
       if (calls === 1) firstCall = promise;
@@ -319,12 +432,23 @@ export async function leased(port, work, joinWork = false) {
       // check still refuses it and closes the guard on return.
       promise.catch(() => {});
       return promise;
-    });
+    };
+    leaseCallbacks.set(callback, port);
+    checkBinding();
+    const returned = Reflect.apply(method.value, port, [callback]);
+    const observed = Promise.resolve(returned).then(result => {
+      if (!finished) active = false;
+      return result;
+    }, error => { active = false; throw error; });
+    start();
+    const result = await observed;
     valid();
     check(finished && result === marker, 'exclusive lease callback incomplete or result substituted');
     return answer;
   } finally {
     active = false;
+    if (callback) leaseCallbacks.delete(callback);
+    start();
     // Complete in-flight system calls before reacquiring for write recovery.
     if (joinWork) await firstCall?.catch(() => {});
   }
@@ -359,6 +483,7 @@ export async function readLeased(lease, path, limit, budget) {
   return { data, binding };
 }
 export async function readTree(lease, root, expected, budget = { bytes: 0, files: 0 }) {
+  lease.guard();
   inside(lease.root, root);
   const boundary = ancestry(root, lease.root);
   const captures = new Map();
@@ -376,24 +501,35 @@ export async function readTree(lease, root, expected, budget = { bytes: 0, files
       requireOwnedDirectory(info);
       const dir = await opendir(path);
       let children = 0;
-      for await (const item of dir) {
-        children++;
-        const child = local ? local + '/' + item.name : item.name;
-        validatePaths([child]);
-        await visit(join(path, item.name), child, depth + 1);
-      }
+      try {
+        for (;;) {
+          lease.guard();
+          const item = await dir.read();
+          lease.guard();
+          if (!item) break;
+          children++;
+          const child = local ? local + '/' + item.name : item.name;
+          validatePaths([child]);
+          await visit(join(path, item.name), child, depth + 1);
+          lease.guard();
+        }
+      } finally { await dir.close(); }
+      lease.guard();
       check(children > 0, 'unexpected empty runtime directory');
     } else {
       const mode = info.mode & 0o7777n;
       check(mode === 0o644n || mode === 0o755n, 'runtime material mode');
       const { data } = await readLeased(lease, path, limits.artifactBytes, budget);
+      lease.guard();
       files.set(local, data);
       modes.set(local, '100' + mode.toString(8));
     }
+    lease.guard();
     check(stable(stat(path)) === identity, 'runtime tree changed during read');
   }
   if (expected) recheck(expected.boundary);
   await visit(root, '', 0);
+  lease.guard();
   recheck(boundary);
   recheck(captures, stable);
   if (expected) check(captures.size === expected.nodes.size, 'staged inventory count changed');
@@ -530,6 +666,7 @@ export async function verifyEmittedRuntimeCandidate(path, { staging, expected, p
   const pins = structuredClone({ expected, policy });
   const { projection, binding, publication } = await leased(staging, async lease => {
     const { data, binding } = await readLeased(lease, path, limits.packageBytes);
+    lease.guard();
     const { identity, manifestSha256, packageSha256, materialSha256 } = decodePackage(data, pins.expected, pins.policy);
     const { version, source, target, schema, runtime, inventorySha256, toolchainSha256, materials } = identity;
     const publication = capturePublication(lease, staging.publication, path);
@@ -610,6 +747,10 @@ async function cleanupCreated(lease, journal, reacquired = false) {
 function writeFailure(journal, staging, code) {
   const error = Object.assign(new Error(code), { code, operation: journal.operation, path: journal.path, packageSha256: journal.packageSha256 });
   failedWrites.set(error, { journal, staging });
+  if (code === 'EMITTED_WRITE_UNCERTAIN' && journal.pending) {
+    const owner = derivedPorts.get(staging)?.parent.scope ?? staging;
+    unresolvedWrites.set(owner, error);
+  }
   return Object.freeze(error);
 }
 export async function readEmittedWriteOutcome(error) {
@@ -619,6 +760,8 @@ export async function readEmittedWriteOutcome(error) {
   const { operation, path, packageSha256 } = journal;
   try {
     return await leased(staging, async lease => {
+      checkWriteScope(lease, journal);
+      if (journal.pending) return freeze({ operation, path, packageSha256, state: 'unavailable' });
       const states = inspectCreated(lease, journal);
       let owned = 0, absent = 0, changed = 0;
       for (const [name, state] of states) {
@@ -627,11 +770,13 @@ export async function readEmittedWriteOutcome(error) {
         const entry = journal.entries.get(name);
         if (journal.complete && !entry.directory) {
           const { data } = await readLeased(lease, name, operation === 'pack' ? limits.packageBytes : limits.artifactBytes);
+          checkWriteScope(lease, journal);
           if (sha256(data) !== entry.sha256) { changed++; continue; }
         }
         owned++;
       }
       const state = changed ? 'changed' : !owned ? 'absent' : journal.complete && !absent ? 'owned' : 'partial';
+      checkWriteScope(lease, journal);
       return freeze({ operation, path, packageSha256, state, owned, changed, absent });
     });
   } catch {
@@ -640,6 +785,9 @@ export async function readEmittedWriteOutcome(error) {
 }
 
 async function writeUnderLease(staging, operation, path, packageSha256, work) {
+  const owner = derivedPorts.get(staging)?.parent.scope ?? staging;
+  const unresolved = unresolvedWrites.get(owner);
+  if (unresolved) throw unresolved;
   let journal;
   let originalFailure;
   try {
@@ -647,7 +795,7 @@ async function writeUnderLease(staging, operation, path, packageSha256, work) {
       inside(lease.root, path);
       const parent = dirname(path);
       journal = { operation, path, packageSha256, root: lease.root, parent,
-        boundary: ancestry(parent, lease.root), entries: new Map(), complete: false };
+        boundary: ancestry(parent, lease.root), entries: new Map(), complete: false, pending: undefined };
       try {
         const result = await work(lease, journal);
         checkWriteScope(lease, journal);
@@ -660,12 +808,19 @@ async function writeUnderLease(staging, operation, path, packageSha256, work) {
         journal.complete = true;
         return result;
       } catch (error) {
+        if (journal.pending && error?.code !== 'EEXIST') {
+          let absent = false;
+          try { guardOutput(lease, journal, journal.pending); absent = !namedInfo(journal.pending); } catch { /* Ownership was lost. */ }
+          if (!absent) throw writeFailure(journal, staging, 'EMITTED_WRITE_UNCERTAIN');
+        }
+        journal.pending = undefined;
         if (journal.entries.size) await cleanupCreated(lease, journal);
         originalFailure = { error };
         throw error;
       }
     }, true);
   } catch (error) {
+    if (failedWrites.has(error)) throw error;
     if (!journal?.entries.size || (originalFailure && originalFailure.error === error)) throw error;
     try {
       await leased(staging, lease => cleanupCreated(lease, journal, true), true);
@@ -678,11 +833,15 @@ async function writeUnderLease(staging, operation, path, packageSha256, work) {
 
 async function writeNew(lease, journal, path, data, mode, digest) {
   guardOutput(lease, journal, path);
+  journal.pending = path;
   const handle = await open(path, 'wx', 0o600);
   const entry = { directory: false, sha256: digest };
   journal.entries.set(path, entry);
   try {
+    guardOutput(lease, journal, path);
     entry.id = objectId(await handle.stat({ bigint: true }));
+    guardOutput(lease, journal, path);
+    journal.pending = undefined;
     guardOutput(lease, journal, path);
     await handle.writeFile(data);
     guardOutput(lease, journal, path);
@@ -699,13 +858,16 @@ export function publishPackage(staging, path, data, packageSha256) {
     const tmp = join(journal.parent, '.candidate-' + randomUUID());
     await writeNew(lease, journal, tmp, data, 0o600, packageSha256);
     guardOutput(lease, journal, path);
+    journal.pending = path;
     await link(tmp, path);
     journal.entries.set(path, { ...journal.entries.get(tmp) });
+    journal.pending = undefined;
     guardOutput(lease, journal, tmp);
     check(objectId(stat(tmp)) === journal.entries.get(tmp).id, 'temporary package exchanged');
     await unlink(tmp);
     journal.entries.delete(tmp);
     const actual = await readLeased(lease, path, limits.packageBytes);
+    guardOutput(lease, journal, path);
     check(actual.data.equals(data), 'package output readback mismatch');
   });
 }
@@ -713,6 +875,7 @@ async function createTree(lease, journal, materials, files) {
   for (const dir of runtimeDirectories(materials)) {
     const path = join(journal.path, dir);
     guardOutput(lease, journal, path);
+    journal.pending = path;
     await mkdir(path, { mode: 0o700 });
     const entry = { directory: true };
     journal.entries.set(path, entry);
@@ -720,6 +883,7 @@ async function createTree(lease, journal, materials, files) {
     const info = stat(path);
     requireOwnedDirectory(info);
     entry.id = objectId(info);
+    journal.pending = undefined;
   }
   for (const r of materials) await writeNew(lease, journal, join(journal.path, r.path), files.get(r.path), parseInt(r.mode.slice(3), 8), r.sha256);
 }
@@ -734,9 +898,12 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
     }
     checkLeaf(lease, record.path, record.binding);
     const { data } = await readLeased(lease, record.path, limits.packageBytes);
+    lease.guard();
     const { files } = decodePackage(data, record.pins.expected, record.pins.policy);
     await createTree(lease, journal, receipt.materials, files);
+    lease.guard();
     const tree = await readTree(lease, destination);
+    lease.guard();
     compareTree(tree, receipt.materials);
     checkLeaf(lease, record.path, record.binding);
     return { nodes: tree.nodes, boundary: tree.boundary, leaseRoot: lease.root };
@@ -749,8 +916,10 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
 async function verifiedTreeCapture(lease, record, receipt, root, expected) {
   checkLeaf(lease, record.path, record.binding);
   const { data } = await readLeased(lease, record.path, limits.packageBytes);
+  lease.guard();
   check(sha256(data) === receipt.packageSha256, 'staging package changed');
   const tree = await readTree(lease, root, expected);
+  lease.guard();
   compareTree(tree, receipt.materials);
   checkLeaf(lease, record.path, record.binding);
   return { nodes: tree.nodes, boundary: tree.boundary };
@@ -759,12 +928,14 @@ async function verifiedTreeCapture(lease, record, receipt, root, expected) {
 async function useVerifiedTree(lease, record, receipt, root, use, stageCapture) {
   const readback = async expected => {
     const capture = await verifiedTreeCapture(lease, record, receipt, root, expected);
+    lease.guard();
     // On case-insensitive volumes the digest slot must still use its enrolled spelling.
     if (!stageCapture) check(realpathSync.native(root) === root, 'noncanonical published release path');
     return capture;
   };
   const capture = await readback(stageCapture);
   try {
+    lease.guard();
     const deployment = receipt.profile === 'deployment-complete' ? {
       templates: Object.fromEntries(Object.entries(deploymentPaths).map(([key, path]) => [key, join(root, path)])),
     } : {};
@@ -835,6 +1006,7 @@ export async function publishStagedDeployment(receipt, token) {
       check(sourceInfo.dev === volume && stat(parent).dev === volume, 'same-volume publication required');
       check(!namedInfo(path), 'occupied release slot');
       const capture = await verifiedTreeCapture(lease, record, receipt, source, stage.capture);
+      lease.guard();
       // Material files were synced at staging. Flush the directory entries from
       // leaves to root before the rename makes them reachable in the store.
       for (const local of runtimeDirectories(receipt.materials).reverse()) {

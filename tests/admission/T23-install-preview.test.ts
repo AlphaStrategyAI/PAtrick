@@ -1,18 +1,19 @@
 import { openDatabase } from '@patrick/storage';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { renameSync, type BigIntStats } from 'node:fs';
 import { createServer } from 'node:https';
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { budgetInstallVolume, observeInstallSession, previewFirstInstall, type InstallPreviewEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createPatrickCli } from '../../deploy/cli/patrick.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { deploymentPaths } from '../../deploy/lib/deployment-templates.mjs';
+import { deriveRuntimeStaging, leased } from '../../deploy/lib/emitted-release.mjs';
 import { sha256 } from '../../deploy/lib/release.mjs';
 
 // Narrow OS fault: emulate an independent device number for only the enrolled Lima
@@ -166,6 +167,106 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
     }
   });
 
+  test('stops the real signed candidate reader after its parent owner returns early', () => {
+    const input = { ...e, owner: undefined, session: undefined };
+    const module = pathToFileURL(join(repo, 'deploy/runtime/install-preview.ts')).href;
+    const probe = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      import { join } from 'node:path';
+      const e=JSON.parse(process.argv[1]);
+      const archive=join(e.root,'packages',e.expected.packageSha256+'.json');
+      let start, resume, released=false, lateReads=0, opens=0;
+      const entered=new Promise(resolve=>start=resolve);
+      const continuing=new Promise(resolve=>resume=resolve);
+      const original=fs.promises.open;
+      fs.promises.open=async function(path,...args) {
+        const handle=await Reflect.apply(original,this,[path,...args]);
+        if(path===archive && ++opens===1) {
+          const read=handle.read;
+          handle.read=async function(...values){if(released) lateReads++;return Reflect.apply(read,this,values);};
+          start(); await continuing;
+        }
+        return handle;
+      };
+      syncBuiltinESMExports();
+      const {previewFirstInstall}=await import(${JSON.stringify(module)});
+      e.owner={async withExclusiveReadRoot(read){const pending=read(e.root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+      const result=await previewFirstInstall(()=>e,e.releaseId);
+      assert.equal(result.status,'blocked');
+      assert.equal(opens,1);
+      assert.equal(lateReads,0);
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(input)],
+      { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+  }, 60_000);
+
+  test('previews the real signed installation through its genuine recursive derived owner', async () => {
+    const { session: _credential, ...bootstrap } = e;
+    expect(_credential).toBeDefined();
+    const ordinary = await previewFirstInstall(() => bootstrap, 'release');
+    expect(ordinary.status, JSON.stringify(ordinary)).toBe('preview');
+    let expired!: typeof bootstrap.owner;
+    await leased(e.owner, async parent => {
+      const child = deriveRuntimeStaging(parent, e.root);
+      expired = child;
+      const selected = { ...bootstrap, owner: child };
+      const direct = await previewFirstInstall(() => selected, 'release');
+      expect(direct.status, JSON.stringify(direct)).toBe('preview');
+      await leased(child, async nested => {
+        const grandchild = deriveRuntimeStaging(nested, e.root);
+        const enrollment = { ...bootstrap, owner: grandchild };
+        const recursive = await previewFirstInstall(() => enrollment, 'release');
+        expect(recursive.status, JSON.stringify(recursive)).toBe('preview');
+      }, true);
+      const forged = { withExclusiveReadRoot: child.withExclusiveReadRoot };
+      const forgedEnrollment = { ...bootstrap, owner: forged };
+      expect((await previewFirstInstall(() => forgedEnrollment, 'release')).status).toBe('blocked');
+      const narrow = deriveRuntimeStaging(parent, join(e.root, 'packages'));
+      const narrowEnrollment = { ...bootstrap, owner: narrow };
+      expect((await previewFirstInstall(() => narrowEnrollment, 'release')).status).toBe('blocked');
+    }, true);
+    const expiredEnrollment = { ...bootstrap, owner: expired };
+    expect((await previewFirstInstall(() => expiredEnrollment, 'release')).status).toBe('blocked');
+  }, 120_000);
+
+  test('stops reading the enrolled real Node executable when its parent owner returns during fstat', () => {
+    const input = { ...e, owner: undefined, session: undefined };
+    const module = pathToFileURL(join(repo, 'deploy/runtime/install-preview.ts')).href;
+    const probe = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const e=JSON.parse(process.argv[1]);
+      let start,resume,released=false,armed=false,lateReads=0,lateStats=0,closed=0;
+      const entered=new Promise(resolve=>start=resolve),continuing=new Promise(resolve=>resume=resolve);
+      const open=fs.promises.open;
+      fs.promises.open=async function(path,...args){
+        const handle=await Reflect.apply(open,this,[path,...args]);
+        if(path===e.node.path){
+          const stat=handle.stat,read=handle.read,close=handle.close;
+          handle.stat=async function(...values){if(released)lateStats++;const result=await Reflect.apply(stat,this,values);
+            if(!armed){armed=true;start();await continuing;}return result;};
+          handle.read=async function(...values){if(released)lateReads++;return Reflect.apply(read,this,values);};
+          handle.close=async function(...values){closed++;return Reflect.apply(close,this,values);};
+        }
+        return handle;
+      };
+      syncBuiltinESMExports();
+      const {previewFirstInstall}=await import(${JSON.stringify(module)});
+      e.owner={async withExclusiveReadRoot(read){const pending=read(e.root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+      const result=await previewFirstInstall(()=>e,e.releaseId);
+      console.log(JSON.stringify({released,armed,lateReads,lateStats,closed,status:result.status}));
+      assert(released&&armed);assert.equal(result.status,'blocked');
+      assert.equal(lateReads,0);assert.equal(lateStats,0);assert.equal(closed,1);
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(input)],
+      { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  }, 60_000);
+
   test('observes a session after schema bootstrap against the retained plan without changing data', async () => {
     const file = join(e.root, 'data', 'service.sqlite');
     const db = openDatabase(file);
@@ -315,13 +416,36 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
         if (revise) session.credentialRevision += 'x';
         return answer;
       } } });
-    expect((await previewFirstInstall(() => original, 'release')).status).toBe('preview');
+    const bootstrap = await previewFirstInstall(() => original, 'release');
+    expect(bootstrap.status, JSON.stringify(bootstrap)).toBe('preview');
     expect(reads).toBe(0);
-    expect((await observeInstallSession(() => original, 'release')).status).toBe('session-observed');
+    const observed = await observeInstallSession(() => original, 'release');
+    expect(observed.status, JSON.stringify(observed)).toBe('session-observed');
     revise = true;
     expect((await observeInstallSession(() => original, 'release')).status).toBe('blocked');
     expect(reads).toBe(2);
   });
+
+  test('rejects a replaced inherited owner prototype before acquiring the original class receiver', async () => {
+    let acquisitions = 0, registryReads = 0;
+    class BaseOwner {
+      async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+        expect(this).toBe(owner); acquisitions++;
+        return Reflect.apply(e.owner.withExclusiveReadRoot<T>, e.owner, [read]);
+      }
+    }
+    class Owner extends BaseOwner {}
+    const owner = new Owner();
+    const enrollment = { ...e, owner };
+    const current = () => {
+      registryReads++;
+      if (registryReads === 2) Object.setPrototypeOf(Owner.prototype, Object.create(BaseOwner.prototype));
+      return enrollment;
+    };
+    const result = await previewFirstInstall(current, 'release');
+    expect(result.status, JSON.stringify(result)).toBe('blocked');
+    expect(acquisitions).toBe(0);
+  }, 60_000);
 
   test('invokes only the original port methods without reading callable metadata', async () => {
     const { cli, registry, enrollment } = installedFixture();

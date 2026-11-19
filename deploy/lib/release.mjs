@@ -87,11 +87,13 @@ export async function readRegularFile(path, limit = RELEASE_LIMITS.artifactBytes
   try {
     validate();
     const before = await handle.stat();
+    validate();
     requireCondition(before.isFile() && before.size <= limit && sameIdentity(leaf, before), 'invalid or changed regular file');
     const storage = Buffer.alloc(before.size + 1);
     let offset = 0;
     while (offset < storage.length) {
       const { bytesRead } = await handle.read(storage, offset, storage.length - offset, offset);
+      validate();
       if (bytesRead === 0) break;
       offset += bytesRead;
     }
@@ -159,8 +161,12 @@ function verifyEvidence(manifest, files, required) {
     }
   }
 }
-export async function verifyRelease(path, { policy, expected, readRoot }) {
-  const bytes = await readRegularFile(path, RELEASE_LIMITS.packageBytes, admitReadRoot(readRoot));
+export async function verifyRelease(path, { policy, expected, readRoot, validate }) {
+  requireCondition(validate === undefined || typeof validate === 'function', 'invalid release admission');
+  const root = admitReadRoot(readRoot);
+  const admission = validate ? { root: root.root, validate() { Reflect.apply(validate, undefined, []); root.validate(); } } : root;
+  const bytes = await readRegularFile(path, RELEASE_LIMITS.packageBytes, admission);
+  admission.validate();
   if (expected?.packageSha256 !== undefined) {
     requireCondition(digestPattern.test(expected.packageSha256) && sha256(bytes) === expected.packageSha256, 'package digest mismatch');
   }

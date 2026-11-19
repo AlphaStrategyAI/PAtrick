@@ -38,6 +38,29 @@ type Kit = { files: { path: string; sha256: string }[]; manifestPath: string };
 const stagingDirectories = ['模板/.patrick-staging', '系统视图/.patrick-staging'];
 
 function check(value: unknown): asserts value { if (!value) throw new Error('VAULT_INIT_BINDING_INVALID'); }
+function captureMethod<T extends object, K extends keyof T>(object: T, key: K) {
+  check(object && (typeof object === 'object' || typeof object === 'function'));
+  const chain: Array<{ object: object; prototype: object | null }> = [];
+  let descriptor: PropertyDescriptor | undefined;
+  for (let at: object | null = object; at; at = Object.getPrototypeOf(at)) {
+    chain.push({ object: at, prototype: Object.getPrototypeOf(at) });
+    descriptor = Object.getOwnPropertyDescriptor(at, key);
+    if (descriptor) break;
+  }
+  check(descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'function');
+  const initial = descriptor;
+  const value = initial.value as T[K];
+  return { value, validate() {
+    for (let index = 0; index < chain.length; index++) {
+      const item = chain[index]!;
+      check(Object.getPrototypeOf(item.object) === item.prototype);
+      const live = Object.getOwnPropertyDescriptor(item.object, key);
+      if (index < chain.length - 1) check(!live);
+      else check(live && Object.hasOwn(live, 'value') && Object.is(live.value, value) &&
+        live.configurable === initial.configurable && live.enumerable === initial.enumerable && live.writable === initial.writable);
+    }
+  } };
+}
 const hash = (value: unknown) => digest(canonicalize(JSON.parse(JSON.stringify(value))));
 const equal = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 const token = (s: string) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(s);
@@ -72,7 +95,7 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
   const e = binding.value, vault = e.vault;
   const contract = hash(e);
   const verifyApproval = verifiedKey(e.approvalPublicKey), verifyJournal = verifiedKey(e.journalPublicKey);
-  const ownerLease = owner.withExclusiveReadRoot;
+  const ownerLease = captureMethod(owner, 'withExclusiveReadRoot');
   check(e.owner.path !== sep && resolve(e.owner.path) === e.owner.path && token(e.installationId) && token(e.operationId) && token(e.journalKeyId) &&
     token(vault.vault_id) && vault.scope_hash === hash({ domain: vault.data_domain, paths: layout }) && sha(e.kitSha256) && /^\d+\.\d+\.\d+$/.test(e.kitVersion) &&
     sameIdentity(projectIdentity(e.identity), e.identity) && e.identity.accountId === vault.account_id &&
@@ -91,20 +114,21 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     for (let parent = dirname(path); parent !== e.owner.path; parent = dirname(parent)) ancestors.add(parent);
   }
   function guard(lease: Lease) {
-    binding.validate();
     lease.guard();
-    check(owner.withExclusiveReadRoot === ownerLease && lease.root === e.owner.path && hostname() === e.captureHost &&
+    binding.validate(); ownerLease.validate();
+    check(lease.root === e.owner.path && hostname() === e.captureHost &&
       process.geteuid!() === e.serviceUid);
     for (const parent of ancestors) check(dir(parent));
     for (const root of [e.owner, e.journal, e.assets, e.stage]) rootMatches(root);
     const s = stat(vault.root_path);
     check(s?.isDirectory() && physical(vault.root_path) && s.uid === BigInt(e.serviceUid) && (s.mode & 0o022n) === 0n && vault.root_identity === s.dev + ':' + s.ino);
   }
-  async function underOwner<T>(work: (lease: Lease) => Promise<T>) {
+  async function underOwner<T>(work: (lease: Lease) => Promise<T>, extra?: () => void) {
+    const admission = () => { binding.validate(); ownerLease.validate(); extra?.(); };
     const result = await leased(owner, async lease => {
       guard(lease); const answer = await work(lease); guard(lease); return answer;
-    }, true);
-    binding.validate(); check(owner.withExclusiveReadRoot === ownerLease);
+    }, true, admission);
+    admission();
     return result;
   }
   const read = (lease: Lease, path: string) => readRegularFile(path, 16 * 1024 * 1024, {root: e.owner.path, validate: () => guard(lease)});
@@ -260,11 +284,11 @@ export function createVaultInitReader(current: () => VaultInitEnrollment, owner:
 export function createVaultInitController(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeStaging, host: RegisteredHost, signer: Signer) {
   const registration = enrollment(current, owner), { e } = registration;
   const vaultId = e.vault.vault_id;
-  const sign = signer.sign;
+  const signerMethod = captureMethod(signer, 'sign');
   const hostBinding = bindHostRegistration(host);
   const target = bindRegistration(() => host.vaults && Object.hasOwn(host.vaults, vaultId) ? host.vaults[vaultId] : undefined);
   function checkLiveRegistration() {
-    check(signer.sign === sign);
+    signerMethod.validate();
     hostBinding.validate();
     target.validate();
   }
@@ -309,7 +333,7 @@ export function createVaultInitController(current: () => VaultInitEnrollment, ow
   }
   return {
     async preview() {
-      const plan = await registration.underOwner(lease => stablePreflight(lease, live(lease)));
+      const plan = await registration.underOwner(lease => stablePreflight(lease, live(lease)), checkLiveRegistration);
       checkLiveRegistration();
       return plan;
     },
@@ -332,7 +356,7 @@ export function createVaultInitController(current: () => VaultInitEnrollment, ow
           const guardedSigner: Signer = { async sign(bytes) {
             v.guard();
             const { kind } = JSON.parse(Buffer.from(bytes).toString('utf8'));
-            const signature = await sign.call(signer, bytes);
+            const signature = await Reflect.apply(signerMethod.value, signer, [bytes]);
             v.guard();
             if (kind === 'reservation' || kind === 'claim') {
               // The enrolled signer can yield or alter an input before returning.
@@ -360,7 +384,7 @@ export function createVaultInitController(current: () => VaultInitEnrollment, ow
           try { const s = fstatSync(fd); check(e.vault.root_identity === s.dev + ':' + s.ino); fsyncSync(fd); } finally { closeSync(fd); }
           v.guard();
           return await journal.markCompleted(claim.token, evidenceId);
-        });
+        }, checkLiveRegistration);
         if (attempted) checkLiveRegistration();
         return result;
       } catch (error) {

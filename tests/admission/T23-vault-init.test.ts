@@ -67,6 +67,76 @@ test('previews a confirmed real Vault without reserving or installing any file',
   } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
 });
 
+test('rejects direct Vault owner and signer accessors without executing them during construction', async () => {
+  const f = await fixture();
+  try {
+    let ownerReads = 0, signerReads = 0;
+    const owner = Object.defineProperty({}, 'withExclusiveReadRoot', { get() { ownerReads++; return f.owner.withExclusiveReadRoot; } }) as typeof f.owner;
+    const signer = Object.defineProperty({}, 'sign', { get() { signerReads++; return f.signer.sign; } }) as typeof f.signer;
+    let ownerRejected = false, signerRejected = false;
+    try { createVaultInitController(() => f.e, owner, f.host, f.signer); } catch { ownerRejected = true; }
+    try { createVaultInitController(() => f.e, f.owner, f.host, signer); } catch { signerRejected = true; }
+    console.log(JSON.stringify({ ownerReads, signerReads, ownerRejected, signerRejected }));
+    expect(ownerRejected).toBe(true); expect(signerRejected).toBe(true);
+    expect(ownerReads).toBe(0); expect(signerReads).toBe(0);
+    expect(readdirSync(f.journal)).toEqual([]);
+  } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
+});
+
+test('preserves a direct class owner and signer receiver without reading function metadata', async () => {
+  const f = await fixture();
+  try {
+    const metadata: string[] = [];
+    class Owner {
+      async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+        expect(this).toBe(owner);
+        return Reflect.apply(f.owner.withExclusiveReadRoot<T>, f.owner, [read]);
+      }
+    }
+    class Signer {
+      async sign(bytes: Uint8Array) { expect(this).toBe(signer); return Reflect.apply(f.signer.sign, f.signer, [bytes]); }
+    }
+    for (const method of [Owner.prototype.withExclusiveReadRoot, Signer.prototype.sign]) {
+      for (const key of ['call', 'bind']) Object.defineProperty(method, key, { get() { metadata.push(key); throw Error('metadata'); } });
+    }
+    const owner = new Owner(), signer = new Signer();
+    const controller = createVaultInitController(() => f.e, owner, f.host, signer);
+    const plan = await controller.preview();
+    const approval = sign(null, vaultInitApproval(plan), f.approval.privateKey).toString('base64');
+    expect(await controller.execute(plan, approval)).toMatchObject({ status: 'completed' });
+    expect(metadata).toEqual([]);
+  } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
+}, 120_000);
+
+test('direct Vault signer getter drift after native publication remains uncertain without invoking it', async () => {
+  const f = await fixture();
+  try {
+    let getters = 0, changed = false;
+    class Signer { async sign(bytes: Uint8Array) { expect(this).toBe(signer); return Reflect.apply(f.signer.sign, f.signer, [bytes]); } }
+    const signer = new Signer(), original = Signer.prototype.sign;
+    const load = f.options.loadVault;
+    f.options.loadVault = id => {
+      const result = load(id);
+      if (!changed && existsSync(join(f.root, '模板/判断案例.md'))) {
+        changed = true;
+        Object.defineProperty(signer, 'sign', { configurable: true, get() { getters++; return original; } });
+      }
+      return result;
+    };
+    const controller = createVaultInitController(() => f.e, f.owner, f.host, signer);
+    const plan = await controller.preview();
+    const approval = sign(null, vaultInitApproval(plan), f.approval.privateKey).toString('base64');
+    const result = await controller.execute(plan, approval);
+    console.log(JSON.stringify({ changed, getters, status: result.status }));
+    expect(changed).toBe(true);
+    expect(result.status).toBe('running_or_uncertain');
+    expect(getters).toBe(0);
+    expect(existsSync(join(f.root, '模板/判断案例.md'))).toBe(true);
+    expect(await createVaultInitReader(() => f.e, f.owner, plan).read()).toMatchObject({ status: 'running_or_uncertain' });
+    expect(getters).toBe(0);
+  } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
+}, 120_000);
+
 
 test('publishes only missing templates and binds the observed files to the durable claim', async () => {
   const f = await fixture();

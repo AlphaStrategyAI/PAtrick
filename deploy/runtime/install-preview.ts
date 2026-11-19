@@ -6,14 +6,9 @@ import { dirname, join } from 'node:path';
 import type { GenerationNode } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
-import { leased, verifyEmittedRuntimeCandidate, type ExclusiveRuntimeStaging,
+import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, type ExclusiveRuntimeStaging,
   type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy } from '../lib/emitted-release.mjs';
 import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-
-interface Lease { root: string; guard(): void }
-declare module '../lib/emitted-release.mjs' {
-  export function leased<T>(owner: ExclusiveRuntimeStaging, use: (lease: Lease) => Promise<T>, joinWork: boolean): Promise<T>;
-}
 
 const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
 const budgets = ['releases', 'data', 'lima'] as const;
@@ -174,17 +169,24 @@ export function bindInstallPreviewEnrollment(current: Registry) {
   }
   trackPrototype(original);
   function field<T extends object, K extends keyof T>(object: T, key: K, optional = false): T[K] {
-    const descriptor = () => {
-      for (let at: object | null = object; at; at = Object.getPrototypeOf(at)) {
-        const found = Object.getOwnPropertyDescriptor(at, key);
-        if (found) return found;
-      }
-    };
-    const first = descriptor();
+    const chain: Array<{ object: object; prototype: object | null }> = [];
+    let first: PropertyDescriptor | undefined;
+    for (let at: object | null = object; at; at = Object.getPrototypeOf(at)) {
+      chain.push({ object: at, prototype: Object.getPrototypeOf(at) });
+      first = Object.getOwnPropertyDescriptor(at, key);
+      if (first) break;
+    }
     requireFact(first ? Object.hasOwn(first, 'value') : optional);
+    const initial = first;
     checks.push(() => {
-      const live = descriptor();
-      requireFact(first ? live && Object.hasOwn(live, 'value') && Object.is(live.value, first.value) : !live);
+      for (let index = 0; index < chain.length; index++) {
+        const item = chain[index]!;
+        requireFact(Object.getPrototypeOf(item.object) === item.prototype);
+        const live = Object.getOwnPropertyDescriptor(item.object, key);
+        if (index < chain.length - 1 || !initial) requireFact(!live);
+        else requireFact(live && Object.hasOwn(live, 'value') && Object.is(live.value, initial.value) &&
+          live.enumerable === initial.enumerable && live.configurable === initial.configurable && live.writable === initial.writable);
+      }
     });
     return first?.value;
   }
@@ -218,8 +220,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
   const owner = field(original, 'owner');
   trackPrototype(owner);
-  const readRoot = field(owner, 'withExclusiveReadRoot');
-  requireFact(typeof readRoot === 'function');
+  requireFact(typeof field(owner, 'withExclusiveReadRoot') === 'function');
   const session = field(original, 'session', true);
   let credential: InstallPreviewEnrollment['session'];
   if (session !== undefined) {
@@ -229,9 +230,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     requireFact(typeof readBearer === 'function');
     credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
   }
-  const value: InstallPreviewEnrollment = { ...data, session: credential, owner: {
-    withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) { return Reflect.apply(readRoot<T>, owner, [read]); },
-  } };
+  const value: InstallPreviewEnrollment = { ...data, session: credential, owner };
   function validate() {
     requireFact(current() === original);
     for (const check of checks) check();
@@ -269,17 +268,19 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
       stage = 'HOST';
       const nodeRoot = admitReadRoot(dirname(e.node.path));
       const binary = stat(e.node.path);
-      requireFact(binary.isFile() && (binary.mode & 0o111n) !== 0n && (binary.mode & 0o022n) === 0n &&
-        sha256(await readRegularFile(e.node.path, 256 * 1024 * 1024, nodeRoot)) === e.node.sha256);
+      requireFact(binary.isFile() && (binary.mode & 0o111n) !== 0n && (binary.mode & 0o022n) === 0n);
+      const nodeBytes = await readRegularFile(e.node.path, 256 * 1024 * 1024,
+        { root: nodeRoot.root, validate() { guard(); nodeRoot.validate(); } });
+      guard();
+      requireFact(sha256(nodeBytes) === e.node.sha256);
       stage = 'PACKAGE';
-      const staging: ExclusiveRuntimeStaging = { async withExclusiveReadRoot(read) {
-        guard();
-        try { return await read(lease.root); } finally { guard(); }
-      } };
+      guard();
+      const staging = deriveRuntimeStaging(lease, lease.root);
       const archive = join(e.root, 'packages', e.expected.packageSha256 + '.json');
       const artifact = stat(archive);
       const receipt = await verifyEmittedRuntimeCandidate(archive,
         { staging, expected: e.expected, policy: e.policy });
+      guard();
       const materialBytes = receipt.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
       stage = 'CAPACITY';
       const volumes = capacity(e, materialBytes);
@@ -305,6 +306,7 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
         requireFact(credential && credential.bootstrapPlanSha256 === planSha256);
         guard();
         await checkSession(e, credential, guard);
+        guard();
         credentialBindingSha256 = digest({ planSha256, callerId: credential.callerId, authEpoch: credential.authEpoch,
           credentialRevision: credential.credentialRevision });
       }
@@ -328,7 +330,7 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
         phase: 'authenticated-session' as const, credentialBindingSha256, observed: ['fixed-origin-tls', 'authenticated-session'] as const,
         outstanding: ['schema-bootstrap', 'owner-passkey'] as const };
       return { ...local, status: 'preview' as const, phase: 'bootstrap' as const, outstanding: [...bootstrapRequirements] as const };
-    }, true);
+    }, true, validate);
     validate();
     return result;
   } catch { return { status: 'blocked', code: `INSTALL_PREVIEW_${stage}` }; }

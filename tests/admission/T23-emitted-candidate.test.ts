@@ -332,6 +332,190 @@ async function promotionHost(label: string) {
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
 
+test.each(['owner-lost', 'live-ack-lost'])('reports an actual derived stage mkdir as uncertain on %s', async mode => {
+  const owner = join(dir, 'parent-lease-mkdir-' + mode);
+  await mkdir(owner, { mode: 0o700 });
+  const stagingRoot = join(owner, 'staging'), releasesRoot = join(owner, 'releases'), archive = join(owner, 'archive');
+  await mkdir(stagingRoot); await mkdir(releasesRoot); await cp(complete.packagePath, archive);
+  const verifier = pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const [root, archive, stagingRoot, releasesRoot, pins, mode] = process.argv.slice(1);
+    const destination = join(stagingRoot, 'candidate');
+    let signal, resume;
+    const started = new Promise(resolve => signal = resolve);
+    const continueMkdir = new Promise(resolve => resume = resolve);
+    let released = false, lateMkdirs = 0, mkdirAttempts = 0, created = false;
+    const original = fs.promises.mkdir;
+    fs.promises.mkdir = async function(path, ...args) {
+      if (String(path).startsWith(destination) && released) lateMkdirs++;
+      if (path === destination) mkdirAttempts++;
+      const result = await Reflect.apply(original, this, [path, ...args]);
+      if (path === destination) {
+        created = true; fs.writeFileSync(join(destination, 'foreign-sentinel'), 'untouched'); signal();
+        if (mode === 'owner-lost') await continueMkdir;
+        throw Error('mkdir acknowledgement lost');
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    const { leased, deriveRuntimeStaging, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime,
+      readEmittedWriteOutcome } = await import(${JSON.stringify(verifier)});
+    const owner = { async withExclusiveReadRoot(read) {
+      const pending = read(root);
+      if (mode !== 'owner-lost') return await pending;
+      pending.catch(() => {});
+      await started;
+      released = true;
+      setImmediate(resume);
+    } };
+    let stageFailure, savedStaging, savedReceipt;
+    const run = leased(owner, async parent => {
+      const staging = deriveRuntimeStaging(parent, root, { stagingRoot, releasesRoot });
+      const checked = await verifyEmittedRuntimeCandidate(archive, { staging, ...JSON.parse(pins) });
+      savedStaging = staging; savedReceipt = checked;
+      try { await stageVerifiedEmittedRuntime(checked, { staging, destination }); }
+      catch (error) {
+        stageFailure = error;
+        if (mode === 'owner-lost') throw error;
+        assert.equal((await readEmittedWriteOutcome(error)).state, 'unavailable');
+        const parked = destination + '-preserved';
+        fs.renameSync(destination, parked);
+        const repeated = await stageVerifiedEmittedRuntime(checked, { staging, destination }).catch(error => error);
+        assert.equal(repeated, error);
+        const another = deriveRuntimeStaging(parent, root, { stagingRoot, releasesRoot });
+        const anotherReceipt = await verifyEmittedRuntimeCandidate(archive, { staging: another, ...JSON.parse(pins) });
+        const alternate = await stageVerifiedEmittedRuntime(anotherReceipt, { staging: another, destination }).catch(error => error);
+        assert.equal(alternate, error);
+        const different = destination + '-different';
+        const otherPath = await stageVerifiedEmittedRuntime(anotherReceipt, { staging: another, destination: different }).catch(error => error);
+        assert.equal(otherPath, error);
+        assert(!fs.existsSync(different));
+        const intermediate = deriveRuntimeStaging(parent, root);
+        await leased(intermediate, async nestedParent => {
+          const nested = deriveRuntimeStaging(nestedParent, root, { stagingRoot, releasesRoot });
+          const nestedReceipt = await verifyEmittedRuntimeCandidate(archive, { staging: nested, ...JSON.parse(pins) });
+          const deepRetry = await stageVerifiedEmittedRuntime(nestedReceipt, { staging: nested, destination }).catch(error => error);
+          assert.equal(deepRetry, error);
+        }, true);
+        assert(!fs.existsSync(destination));
+        assert.equal(fs.readFileSync(join(parked, 'foreign-sentinel'), 'utf8'), 'untouched');
+        fs.renameSync(parked, destination);
+      }
+    }, true);
+    if (mode === 'owner-lost') await assert.rejects(run); else await run;
+    assert(created && fs.existsSync(destination));
+    assert.equal(lateMkdirs, 0);
+    assert.equal(stageFailure?.code, 'EMITTED_WRITE_UNCERTAIN');
+    assert.equal((await readEmittedWriteOutcome(stageFailure)).state, 'unavailable');
+    const inode = fs.lstatSync(destination, { bigint: true }).ino;
+    const repeated = await stageVerifiedEmittedRuntime(savedReceipt, { staging: savedStaging, destination }).catch(error => error);
+    assert.equal(repeated, stageFailure);
+    assert.equal(mkdirAttempts, 1);
+    assert.equal(fs.lstatSync(destination, { bigint: true }).ino, inode);
+    assert.equal(fs.readFileSync(join(destination, 'foreign-sentinel'), 'utf8'), 'untouched');
+  `;
+  child(['--input-type=module', '-e', probe, owner, archive, stagingRoot, releasesRoot, JSON.stringify({ expected: complete.expected, policy: complete.policy }), mode]);
+}, 120_000);
+
+test('a derived stage rejects an existing foreign directory without claiming or changing it', async () => {
+  const owner = join(dir, 'parent-lease-foreign');
+  await mkdir(owner, { mode: 0o700 });
+  const stagingRoot = join(owner, 'staging'), releasesRoot = join(owner, 'releases'), archive = join(owner, 'archive');
+  await mkdir(stagingRoot); await mkdir(releasesRoot); await cp(complete.packagePath, archive);
+  const verifier = pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { join } from 'node:path';
+    const [root, archive, stagingRoot, releasesRoot, pins] = process.argv.slice(1);
+    const destination = join(stagingRoot, 'foreign');
+    fs.mkdirSync(destination, { mode: 0o700 });
+    fs.writeFileSync(join(destination, 'sentinel'), 'private original');
+    const before = fs.lstatSync(destination, { bigint: true });
+    const { leased, deriveRuntimeStaging, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime } = await import(${JSON.stringify(verifier)});
+    const owner = { async withExclusiveReadRoot(read) { return await read(root); } };
+    await leased(owner, async parent => {
+      const staging = deriveRuntimeStaging(parent, root, { stagingRoot, releasesRoot });
+      const checked = await verifyEmittedRuntimeCandidate(archive, { staging, ...JSON.parse(pins) });
+      await assert.rejects(stageVerifiedEmittedRuntime(checked, { staging, destination }), { code: 'EEXIST' });
+    }, true);
+    assert.equal(fs.lstatSync(destination, { bigint: true }).ino, before.ino);
+    assert.deepEqual(fs.readdirSync(destination), ['sentinel']);
+    assert.equal(fs.readFileSync(join(destination, 'sentinel'), 'utf8'), 'private original');
+  `;
+  child(['--input-type=module', '-e', probe, owner, archive, stagingRoot, releasesRoot, JSON.stringify({ expected: complete.expected, policy: complete.policy })]);
+}, 120_000);
+
+test.each(['success', 'before-rename-loss', 'after-rename-loss'])('holds the derived owner through publication: %s', async mode => {
+  const owner = join(dir, 'parent-lease-publish-' + mode);
+  await mkdir(owner, { mode: 0o700 });
+  const stagingRoot = join(owner, 'staging'), releasesRoot = join(owner, 'releases'), archive = join(owner, 'archive');
+  await mkdir(stagingRoot); await mkdir(releasesRoot); await cp(complete.packagePath, archive);
+  const verifier = pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const [root, archive, stagingRoot, releasesRoot, pins, mode] = process.argv.slice(1);
+    const destination = join(stagingRoot, 'candidate');
+    let signal, resume;
+    const triggered = new Promise(resolve => signal = resolve);
+    const proceed = new Promise(resolve => resume = resolve);
+    let renames = 0, released = false, lateRenames = 0;
+    const originalRename = fs.renameSync;
+    fs.renameSync = function(from, to) {
+      if (from === destination) {
+        renames++; if (released) lateRenames++;
+        const result = Reflect.apply(originalRename, this, [from, to]);
+        if (mode === 'after-rename-loss') { signal(); throw Error('rename acknowledgement lost'); }
+        return result;
+      }
+      return Reflect.apply(originalRename, this, [from, to]);
+    };
+    syncBuiltinESMExports();
+    const { leased, deriveRuntimeStaging, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime,
+      publishStagedDeployment, withPublishedDeployment } = await import(${JSON.stringify(verifier)});
+    const owner = { async withExclusiveReadRoot(read) {
+      const pending = read(root);
+      if (mode === 'success') return await pending;
+      pending.catch(() => {});
+      await triggered; released = true; setImmediate(resume);
+    } };
+    let failure, staging, checked, token, installed;
+    const run = leased(owner, async parent => {
+      staging = deriveRuntimeStaging(parent, root, { stagingRoot, releasesRoot });
+      checked = await verifyEmittedRuntimeCandidate(archive, { staging, ...JSON.parse(pins) });
+      installed = join(releasesRoot, checked.packageSha256);
+      token = await stageVerifiedEmittedRuntime(checked, { staging, destination });
+      if (mode === 'before-rename-loss') { signal(); await proceed; await new Promise(resolve => setImmediate(resolve)); }
+      try {
+        await publishStagedDeployment(checked, token);
+        assert.equal(await withPublishedDeployment(checked, { staging, releasesRoot }, async value => value.root), installed);
+      } catch (error) { failure = error; throw error; }
+    }, true);
+    if (mode === 'success') await run; else await assert.rejects(run);
+    if (mode === 'before-rename-loss') {
+      assert.equal(renames, 0); assert.equal(lateRenames, 0);
+      assert(fs.existsSync(destination)); assert(!fs.existsSync(installed)); assert(failure);
+    } else {
+      assert.equal(renames, 1); assert.equal(lateRenames, 0);
+      assert(!fs.existsSync(destination)); assert(fs.existsSync(installed));
+      if (mode === 'after-rename-loss') {
+        assert.equal(failure?.code, 'EMITTED_PUBLICATION_UNCERTAIN');
+        await assert.rejects(publishStagedDeployment(checked, token));
+        assert.equal(renames, 1);
+      }
+    }
+  `;
+  child(['--input-type=module', '-e', probe, owner, archive, stagingRoot, releasesRoot,
+    JSON.stringify({ expected: complete.expected, policy: complete.policy }), mode]);
+}, 120_000);
+
 test('publishes the exact staged deployment and authenticates its new slot in a fresh process', async () => {
   const { scope, installed, checked, stage, destination, archive } = await promotionHost('promotion');
   const pathsToCheck = ['', ...checked.materials.map(row => row.path)];

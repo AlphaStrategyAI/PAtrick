@@ -38,6 +38,7 @@ import { createNetworkInspector } from '../../packages/host/src/network/probes.j
 import { createObsidianDoctor, createObsidianInspector } from '../../deploy/obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../../deploy/obsidian/install.mjs';
 import { createPatrickCli, parseArguments } from '../../deploy/cli/patrick.mjs';
+import { deriveRuntimeStaging, leased } from '../../deploy/lib/emitted-release.mjs';
 const cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.splice(0).forEach((close) => close()); });
 function fixture() {
@@ -507,6 +508,204 @@ function candidateFixture(f: ReturnType<typeof fixture>) {
     staging: { async withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) { stagingReads++; return read(f.root); } } };
   return { release, path, reads: () => stagingReads };
 }
+test.each([
+  ['class', 'public-key'], ['class', 'schema'], ['ordinary', 'public-key'], ['ordinary', 'schema'],
+] as const)('rejects %s release row %s drift during a real signed package fstat', (kind, changedField) => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const host = { identity: f.host.identity, captureHost: f.host.captureHost, serviceUid: f.host.serviceUid,
+    profile: f.host.profile, dataRoot: f.host.dataRoot, minimumFreeBytes: f.host.minimumFreeBytes,
+    releases: { candidate: { ...candidate.release, staging: undefined } } };
+  const module = new URL('../../deploy/cli/patrick.mjs', import.meta.url).href;
+  const probe = `
+    import assert from 'node:assert/strict';import fs from 'node:fs';import {generateKeyPairSync} from 'node:crypto';
+    import {syncBuiltinESMExports} from 'node:module';
+    const [raw,root,path,kind,field]=process.argv.slice(1),host=JSON.parse(raw);
+    const data=host.releases.candidate;
+    const row=kind==='class'?Object.assign(new class ReleaseRow {},data):data;
+    const goodKey=row.policy.keys[0].publicKey,goodSchema=row.expected.schema;
+    if(field==='public-key') row.policy.keys[0].publicKey=generateKeyPairSync('ed25519').publicKey.export({format:'pem',type:'spki'}).toString();
+    else row.expected.schema=99;
+    let changed=false,reads=0,closed=0,signerGets=0;
+    Object.defineProperty(row,'signer',{get(){signerGets++;throw Error('unexpected signer');}});
+    const open=fs.promises.open;
+    fs.promises.open=async function(name,...args){const handle=await Reflect.apply(open,this,[name,...args]);
+      if(name===path){const stat=handle.stat,read=handle.read,close=handle.close;
+        handle.stat=async function(...values){const result=await Reflect.apply(stat,this,values);if(!changed){changed=true;
+          if(field==='public-key')row.policy.keys[0].publicKey=goodKey;else row.expected.schema=goodSchema;}return result;};
+        handle.read=async function(...values){if(changed)reads++;return Reflect.apply(read,this,values);};
+        handle.close=async function(...values){closed++;return Reflect.apply(close,this,values);};
+      }return handle;};
+    syncBuiltinESMExports();
+    const {createPatrickCli}=await import(${JSON.stringify(module)});
+    row.staging={async withExclusiveReadRoot(read){return await read(root);}};
+    host.releases.candidate=row;
+    const result=await createPatrickCli(host).run(['install','--release','candidate']);
+    console.log(JSON.stringify({kind,field,changed,reads,closed,signerGets,status:result.status,code:result.code}));
+    assert(changed);assert.equal(result.status,'blocked');assert.equal(reads,0);assert.equal(closed,1);assert.equal(signerGets,0);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(host), f.root, candidate.path, kind, changedField],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 120_000);
+
+test.each(['policy', 'expected', 'nested-key', 'nested-schema'] as const)(
+  'refuses class release row %s accessor without executing it', async key => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const row = Object.assign(new class ReleaseRow {}, candidate.release);
+  let getters = 0;
+  const object = key === 'policy' || key === 'expected' ? row : key === 'nested-key' ? row.policy.keys[0] : row.expected;
+  const property = key === 'nested-key' ? 'publicKey' : key === 'nested-schema' ? 'schema' : key;
+  const original = Reflect.get(object, property);
+  Object.defineProperty(object, property, { configurable: true, enumerable: true, get() { getters++; return original; } });
+  const host = { ...f.host, releases: { candidate: row } };
+  const result = await createPatrickCli(host).run(['install', '--release', 'candidate']);
+  expect(result.status).toBe('blocked');
+  expect(getters).toBe(0);
+}, 120_000);
+
+test('rejects inherited digest constraints before entering staging', async () => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const row = Object.assign(new class ReleaseRow {}, candidate.release);
+  let gets = 0;
+  Object.setPrototypeOf(row.expected, { get packageSha256() { gets++; return '0'.repeat(64); } });
+  const result = await createPatrickCli({ ...f.host, releases: { candidate: row } }).run(['install', '--release', 'candidate']);
+  expect(result.status).toBe('blocked');
+  expect(gets).toBe(0);
+  expect(candidate.reads()).toBe(0);
+});
+
+test.each(['class', 'ordinary'] as const)('accepts an unchanged %s release row without reading an unrelated signer', async kind => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const row = kind === 'class' ? Object.assign(new class ReleaseRow {}, candidate.release) : candidate.release;
+  let getters = 0;
+  Object.defineProperty(row, 'signer', { configurable: true, get() { getters++; throw Error('unexpected signer'); } });
+  const host = { ...f.host, releases: { candidate: row } };
+  expect(await createPatrickCli(host).run(['install', '--release', 'candidate'])).toMatchObject({ status: 'preview' });
+  expect(getters).toBe(0);
+}, 120_000);
+test('legacy Ed25519 candidate preview keeps genuine recursive derived staging and its original receiver', async () => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const original = candidate.release.staging;
+  class Owner {
+    async withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) {
+      expect(this).toBe(owner);
+      return Reflect.apply(original.withExclusiveReadRoot<T>, original, [read]);
+    }
+  }
+  const owner = new Owner();
+  const selected = (staging: typeof owner) => ({ ...f.host, releases: { candidate: { ...candidate.release, staging } } });
+  expect(await createPatrickCli(selected(owner)).run(['install', '--release', 'candidate'])).toMatchObject({ status: 'preview' });
+  let expired!: typeof owner;
+  await leased(owner, async parent => {
+    const child = deriveRuntimeStaging(parent, f.root);
+    expired = child;
+    expect(await createPatrickCli(selected(child)).run(['install', '--release', 'candidate'])).toMatchObject({ status: 'preview' });
+    await leased(child, async nested => {
+      const grandchild = deriveRuntimeStaging(nested, f.root);
+      expect(await createPatrickCli(selected(grandchild)).run(['install', '--release', 'candidate'])).toMatchObject({ status: 'preview' });
+    }, true);
+    const forged = { withExclusiveReadRoot: child.withExclusiveReadRoot };
+    expect((await createPatrickCli(selected(forged)).run(['install', '--release', 'candidate'])).status).toBe('blocked');
+    const narrow = deriveRuntimeStaging(parent, join(f.root, 'isolated'));
+    expect((await createPatrickCli(selected(narrow)).run(['install', '--release', 'candidate'])).status).toBe('blocked');
+  }, true);
+  expect((await createPatrickCli(selected(expired)).run(['install', '--release', 'candidate'])).status).toBe('blocked');
+}, 120_000);
+
+test('legacy candidate refuses an unadmitted class staging getter without invoking it', async () => {
+  const f = fixture(), candidate = candidateFixture(f);
+  let getters = 0;
+  class Staging { get withExclusiveReadRoot() { getters++; return candidate.release.staging.withExclusiveReadRoot; } }
+  const host = { ...f.host, releases: { candidate: { ...candidate.release, staging: new Staging() } } };
+  const result = await createPatrickCli(host).run(['install', '--release', 'candidate']);
+  expect(['blocked', 'unavailable']).toContain(result.status);
+  expect(getters).toBe(0);
+});
+
+test('legacy candidate never combines an old original port with a newly selected registration', async () => {
+  const f = fixture(), candidate = candidateFixture(f);
+  let reads = 0, firstCalls = 0, secondCalls = 0;
+  const first = { async withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) { firstCalls++; return read(f.root); } };
+  const second = { async withExclusiveReadRoot<T>(read: (root: string) => Promise<T>) { secondCalls++; return read(f.root); } };
+  const entries = { candidate: { ...candidate.release, staging: first } };
+  const replacement = { ...candidate.release, staging: second };
+  const host = Object.defineProperty({ ...f.host }, 'releases', { get() {
+    if (++reads === 3) entries.candidate = replacement;
+    return entries;
+  } });
+  const result = await createPatrickCli(host).run(['install', '--release', 'candidate']);
+  expect(result).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+  expect(firstCalls).toBe(0);
+  expect(secondCalls).toBe(0);
+});
+
+test.each(['fstat', 'short-read'] as const)(
+  'legacy signed candidate stops after parent loss during %s and always closes the handle', scenario => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const host = { identity: f.host.identity, captureHost: f.host.captureHost, serviceUid: f.host.serviceUid,
+    profile: f.host.profile, dataRoot: f.host.dataRoot, minimumFreeBytes: f.host.minimumFreeBytes,
+    releases: { candidate: { ...candidate.release, staging: undefined } } };
+  const module = new URL('../../deploy/cli/patrick.mjs', import.meta.url).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    const [raw,root,path,scenario]=process.argv.slice(1),host=JSON.parse(raw);
+    let start,resume,pending,released=false,armed=false,lateReads=0,lateStats=0,closed=0;
+    const entered=new Promise(resolve=>start=resolve),continuing=new Promise(resolve=>resume=resolve);
+    const open=fs.promises.open;
+    fs.promises.open=async function(name,...args){const handle=await Reflect.apply(open,this,[name,...args]);
+      if(name===path){const stat=handle.stat,read=handle.read,close=handle.close;
+        handle.close=async function(...values){closed++;return Reflect.apply(close,this,values);};
+        handle.stat=async function(...values){if(released)lateStats++;const result=await Reflect.apply(stat,this,values);
+          if(scenario==='fstat'&&!armed){armed=true;start();await continuing;}return result;};
+        handle.read=async function(buffer,offset,length,position){if(released)lateReads++;
+          if(scenario==='short-read'&&!armed){armed=true;const result=await Reflect.apply(read,this,[buffer,offset,Math.min(length,1),position]);start();await continuing;return result;}
+          return Reflect.apply(read,this,[buffer,offset,length,position]);};
+      }return handle;};
+    syncBuiltinESMExports();
+    const {createPatrickCli}=await import(${JSON.stringify(module)});
+    host.releases.candidate.staging={async withExclusiveReadRoot(read){pending=read(root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+    const result=await createPatrickCli(host).run(['install','--release','candidate']);
+    await pending.catch(()=>{});
+    console.log(JSON.stringify({scenario,released,armed,lateReads,lateStats,closed,status:result.status}));
+    assert(released&&armed);assert.equal(result.status,'blocked');
+    assert.equal(lateReads,0);assert.equal(lateStats,0);assert.equal(closed,1);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(host), f.root, candidate.path, scenario],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 120_000);
+test('legacy signed candidate rejects class owner getter drift after real fstat without calling it', () => {
+  const f = fixture(), candidate = candidateFixture(f);
+  const host = { identity: f.host.identity, captureHost: f.host.captureHost, serviceUid: f.host.serviceUid,
+    profile: f.host.profile, dataRoot: f.host.dataRoot, minimumFreeBytes: f.host.minimumFreeBytes,
+    releases: { candidate: { ...candidate.release, staging: undefined } } };
+  const module = new URL('../../deploy/cli/patrick.mjs', import.meta.url).href;
+  const probe = `
+    import assert from 'node:assert/strict';import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+    const [raw,root,path]=process.argv.slice(1),host=JSON.parse(raw);
+    let changed=false,getters=0,lateReads=0,closed=0;
+    class Owner { async withExclusiveReadRoot(read){assert.equal(this,owner);return await read(root);} }
+    const owner=new Owner(),original=Owner.prototype.withExclusiveReadRoot,open=fs.promises.open;
+    fs.promises.open=async function(name,...args){const handle=await Reflect.apply(open,this,[name,...args]);
+      if(name===path){const stat=handle.stat,read=handle.read,close=handle.close;
+        handle.stat=async function(...values){const result=await Reflect.apply(stat,this,values);if(!changed){changed=true;
+          Object.defineProperty(owner,'withExclusiveReadRoot',{configurable:true,get(){getters++;return original;}});}return result;};
+        handle.read=async function(...values){if(changed)lateReads++;return Reflect.apply(read,this,values);};
+        handle.close=async function(...values){closed++;return Reflect.apply(close,this,values);};
+      }return handle;};
+    syncBuiltinESMExports();
+    const {createPatrickCli}=await import(${JSON.stringify(module)});
+    host.releases.candidate.staging=owner;
+    const result=await createPatrickCli(host).run(['install','--release','candidate']);
+    console.log(JSON.stringify({changed,getters,lateReads,closed,status:result.status}));
+    assert(changed);assert.equal(result.status,'blocked');assert.equal(getters,0);assert.equal(lateReads,0);assert.equal(closed,1);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(host), f.root, candidate.path],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 120_000);
 test('install and upgrade verify actual signed candidate under trusted exclusive staging and keep installable false', async () => {
   const f = fixture(); const candidate = candidateFixture(f);
   const host = { ...f.host, releases: { candidate: candidate.release } };

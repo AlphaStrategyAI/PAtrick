@@ -27,6 +27,17 @@ export interface ExclusiveRuntimeStaging {
   readonly publication?: Readonly<{ stagingRoot: string; releasesRoot: string }>;
   withExclusiveReadRoot<T>(read: (physicalRoot: string) => Promise<T>): Promise<T>;
 }
+declare const runtimeLease: unique symbol;
+/** The live value is issued only to a `leased` callback and expires with it. */
+export type RuntimeLease = Readonly<{ root: string; guard(): void; readonly [runtimeLease]: true }>;
+/** An additional admission check strengthens every guard and never substitutes
+ * the exact owner identity or any genuine derived parent guard. */
+export function leased<T>(owner: ExclusiveRuntimeStaging, work: (lease: RuntimeLease) => Promise<T>, joinWork?: boolean,
+  validate?: () => void): Promise<T>;
+/** Use the exact returned object with `leased` or fixed emitted-release APIs; wrappers
+ * and direct callbacks cannot discard its live parent guard. The root cannot widen. */
+export function deriveRuntimeStaging(parent: RuntimeLease, root: string,
+  publication?: NonNullable<ExclusiveRuntimeStaging['publication']>): ExclusiveRuntimeStaging;
 export type EmittedReleaseExpectation = Readonly<{
   profile?: EmittedReleaseProfile; version: string; target: DarwinTarget; schema: SchemaInterval; activeSchema: number; source: EmittedSourceIdentity;
   runtime: Readonly<{ node: string; modules: string }>; toolchainSha256: string; inventorySha256: string;

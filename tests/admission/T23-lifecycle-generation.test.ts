@@ -1,14 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { closeSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync,
-  realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+  readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
 import { canonicalize } from '../../deploy/lib/release.mjs';
-import { publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
+import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import type { ExclusiveRuntimeStaging } from '../../deploy/lib/emitted-release.mjs';
 import { canRestoreOldRelease, createGenerationReader, createGenerationStore } from '../../deploy/runtime/lifecycle-generation';
 import type { GenerationEnrollment, GenerationOrder, InstalledGeneration } from '../../deploy/runtime/lifecycle-generation';
@@ -107,6 +107,28 @@ test('checks physical enrollment on authenticated absence, including after root 
   expect(readdirSync(join(h.root + '-retained', 'history'))).toEqual([]);
 });
 
+test('refuses pre-existing owner and signer accessors without invoking them', () => {
+  const h = host();
+  let calls = 0;
+  const owner = Object.defineProperty({}, 'withExclusiveReadRoot', { get() { calls++; return h.owner.withExclusiveReadRoot; } });
+  const signer = Object.defineProperty({}, 'signRecord', { get() { calls++; return h.signer.signRecord; } });
+  expect(() => createGenerationReader(h.e, owner as ExclusiveRuntimeStaging)).toThrow();
+  expect(() => createGenerationStore(h.e, h.owner, signer as typeof h.signer)).toThrow();
+  expect(calls).toBe(0);
+});
+
+test('refuses a changed owner prototype even when the old method is still inherited', async () => {
+  const h = host();
+  class Owner {
+    async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+      Object.setPrototypeOf(this, Object.create(Owner.prototype));
+      return Reflect.apply(h.owner.withExclusiveReadRoot<T>, h.owner, [read]);
+    }
+  }
+  await expect(createGenerationReader(h.e, new Owner()).observe()).rejects.toThrow();
+  expect(readdirSync(join(h.root, 'history'))).toEqual([]);
+});
+
 test('refuses an unsigned transition, changed binding, incompatible schema and unverified release', async () => {
   const h = signedOnlyFixture();
   const store = createGenerationStore(h.e, h.owner, h.signer);
@@ -166,6 +188,449 @@ async function nativeHost() {
   addGeneration(h, 'three', releases[1].expected.packageSha256, 2);
   return h;
 }
+
+test.skipIf(inputs.length === 0)('reads a completed signed generation through its genuine recursive derived owner', async () => {
+  const h = await nativeHost();
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  await store.select(h.signed(store.order('install', null, 'one')));
+  let expired!: ExclusiveRuntimeStaging;
+  await leased(h.owner, async parent => {
+    const child = deriveRuntimeStaging(parent, h.root);
+    expired = child;
+    const state = await createGenerationReader(h.e, child).observe('install');
+    expect(state.current?.order.operationId).toBe('install');
+    expect(state.pending).toBeNull();
+    await leased(child, async nested => {
+      const grandchild = deriveRuntimeStaging(nested, h.root);
+      expect((await createGenerationReader(h.e, grandchild).observe('install')).current).toEqual(state.current);
+    }, true);
+    const forged = { withExclusiveReadRoot: child.withExclusiveReadRoot };
+    await expect(createGenerationReader(h.e, forged).observe('install')).rejects.toThrow();
+    const unrelated = host();
+    await expect(createGenerationReader(unrelated.e, child).observe()).rejects.toThrow();
+  }, true);
+  await expect(createGenerationReader(h.e, expired).observe('install')).rejects.toThrow();
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('keeps a genuine derived selection uncertain when a class signer drifts', async () => {
+  const h = await nativeHost();
+  let getterCalls = 0, signatures = 0;
+  class Signer {
+    async signRecord(bytes: Uint8Array) {
+      expect(this).toBe(signer);
+      signatures++;
+      const original = Signer.prototype.signRecord;
+      Object.defineProperty(this, 'signRecord', { configurable: true, get() { getterCalls++; return original; } });
+      return h.signer.signRecord(bytes);
+    }
+  }
+  const signer = new Signer();
+  await leased(h.owner, async parent => {
+    const derived = deriveRuntimeStaging(parent, h.root);
+    const store = createGenerationStore(h.e, derived, signer);
+    const envelope = h.signed(store.order('install', null, 'one'));
+    await expect(store.select(envelope)).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'install' });
+    expect(signatures).toBe(1);
+    expect(getterCalls).toBe(0);
+    expect(lstatSync(join(h.root, '.selection-install')).size).toBe(0);
+    expect(readdirSync(join(h.root, 'history'))).toEqual([]);
+  }, true);
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('stops the real generation release verifier when its parent owner returns early', async () => {
+  const h = await nativeHost();
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  await store.select(h.signed(store.order('initial', null, 'one')));
+  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const e=JSON.parse(process.argv[1]);
+    const archive=join(e.root,'packages',e.generations[0].packageSha256+'.json');
+    let start, resume, released=false, lateReads=0, opens=0;
+    const entered=new Promise(resolve=>start=resolve);
+    const continuing=new Promise(resolve=>resume=resolve);
+    const original=fs.promises.open;
+    fs.promises.open=async function(path,...args) {
+      const handle=await Reflect.apply(original,this,[path,...args]);
+      if(path===archive && ++opens===1) {
+        const read=handle.read;
+        handle.read=async function(...values){if(released) lateReads++;return Reflect.apply(read,this,values);};
+        start(); await continuing;
+      }
+      return handle;
+    };
+    syncBuiltinESMExports();
+    const {createGenerationReader}=await import(${JSON.stringify(module)});
+    const owner={async withExclusiveReadRoot(read){const pending=read(e.root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+    await assert.rejects(createGenerationReader(e,owner).observe());
+    assert.equal(opens,1);
+    assert.equal(lateReads,0);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(h.e)],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('stops generation file writes when the owner exits during a signed history read', async () => {
+  const h = await nativeHost();
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  const initial = await store.select(h.signed(store.order('initial', null, 'one')));
+  const upgrade = h.signed(store.order('upgrade', initial.current!.sha256, 'two'));
+  const rival = h.signed(store.order('rival', initial.current!.sha256, 'three'));
+  const privateKey = h.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { sign } from 'node:crypto';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const e=JSON.parse(process.argv[1]), envelope=process.argv[2], key=process.argv[3], rival=process.argv[4];
+    const record=join(e.root,'history','initial.json');
+    let start, resume, armed=false, intercepted=false, released=false, lateWrites=0;
+    const entered=new Promise(resolve=>start=resolve);
+    const continuing=new Promise(resolve=>resume=resolve);
+    const originalOpen=fs.promises.open, originalWrite=fs.writeFileSync;
+    fs.promises.open=async function(path,...args) {
+      const handle=await Reflect.apply(originalOpen,this,[path,...args]);
+      if(path===record && armed && !intercepted) {
+        intercepted=true;
+        const close=handle.close;
+        handle.close=async function(...values){const result=await Reflect.apply(close,this,values);start();await continuing;return result;};
+      }
+      return handle;
+    };
+    fs.writeFileSync=function(...args){if(armed && released) lateWrites++;return Reflect.apply(originalWrite,this,args);};
+    syncBuiltinESMExports();
+    const {createGenerationStore,createGenerationReader}=await import(${JSON.stringify(module)});
+    const owner={async withExclusiveReadRoot(read){const pending=read(e.root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+    const signer={async signRecord(bytes){armed=true;return sign(null,bytes,key).toString('base64');}};
+    const failure=await createGenerationStore(e,owner,signer).select(envelope).catch(error=>error);
+    assert(intercepted && released);
+    assert.equal(lateWrites,0);
+    assert.equal(failure.code,'GENERATION_SELECTION_UNCERTAIN');
+    const scratch=join(e.root,'.selection-upgrade');
+    const before=fs.lstatSync(scratch,{bigint:true});
+    assert.equal(before.size,0n);
+    const owner2={async withExclusiveReadRoot(read){return await read(e.root);}};
+    const readback=await createGenerationReader(e,owner2).observe('upgrade').catch(error=>error);
+    assert.equal(readback.code,'GENERATION_SELECTION_UNCERTAIN');
+    const repeated=await createGenerationStore(e,owner2,signer).select(envelope).catch(error=>error);
+    assert.equal(repeated.code,'GENERATION_SELECTION_UNCERTAIN');
+    const competing=await createGenerationStore(e,owner2,signer).select(rival).catch(error=>error);
+    assert.equal(competing.code,'GENERATION_SELECTION_UNCERTAIN');
+    assert.equal(competing.operationId,'upgrade');
+    const global=await createGenerationReader(e,owner2).observe().catch(error=>error);
+    assert.equal(global.code,'GENERATION_SELECTION_UNCERTAIN');
+    assert.equal(global.operationId,'upgrade');
+    const after=fs.lstatSync(scratch,{bigint:true});
+    assert.equal(after.ino,before.ino);assert.equal(after.size,before.size);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(h.e), upgrade, privateKey, rival],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+  const readback = `
+    import assert from 'node:assert/strict';
+    import { fstatSync, lstatSync } from 'node:fs';
+    import { createGenerationReader } from ${JSON.stringify(module)};
+    const e=JSON.parse(process.argv[1]), lock=process.argv[2];
+    const owner={async withExclusiveReadRoot(read){
+      const check=()=>{const a=fstatSync(3,{bigint:true}),b=lstatSync(lock,{bigint:true});
+        assert.equal(a.dev,b.dev);assert.equal(a.ino,b.ino);};
+      check();try{return await read(e.root);}finally{check();}
+    }};
+    const reader=createGenerationReader(e,owner);
+    await assert.rejects(reader.observe('upgrade'),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    await assert.rejects(reader.observe(),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    process.stdout.write('public-only uncertain');
+  `;
+  const fd = openSync(h.lock, 'wx', 0o600);
+  try {
+    const child = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e', readback,
+      JSON.stringify(h.e), h.lock], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 60_000 });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toBe('public-only uncertain');
+    expect(lstatSync(join(h.root, '.selection-upgrade')).size).toBe(0);
+  } finally { closeSync(fd); unlinkSync(h.lock); }
+}, 120_000);
+
+test.skipIf(inputs.length === 0).each(['file', 'directory', 'symlink'] as const)(
+  'preserves a foreign %s at the reserved selection scratch name', async kind => {
+  const h = await nativeHost();
+  const bootstrap = createGenerationStore(h.e, h.owner, h.signer);
+  const first = await bootstrap.select(h.signed(bootstrap.order('initial', null, 'one')));
+  const scratch = join(h.root, '.selection-foreign');
+  const sentinel = join(h.fixture, 'foreign-sentinel');
+  writeFileSync(sentinel, 'outside-content', { mode: 0o600 });
+  if (kind === 'file') writeFileSync(scratch, 'foreign-content', { mode: 0o600 });
+  if (kind === 'directory') { mkdirSync(scratch, { mode: 0o700 }); writeFileSync(join(scratch, 'sentinel'), 'directory-content'); }
+  if (kind === 'symlink') symlinkSync(sentinel, scratch);
+  const before = lstatSync(scratch, { bigint: true });
+  const history = readdirSync(join(h.root, 'history')).sort();
+  let signatures = 0;
+  const signer = { async signRecord(bytes: Uint8Array) { signatures++; return h.signer.signRecord(bytes); } };
+  const store = createGenerationStore(h.e, h.owner, signer);
+  const reader = createGenerationReader(h.e, h.owner);
+  await expect(reader.observe('foreign')).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'foreign' });
+  await expect(reader.observe()).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'foreign' });
+  for (const id of ['foreign', 'other']) {
+    await expect(store.select(h.signed(store.order(id, first.current!.sha256, 'two'))))
+      .rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'foreign' });
+  }
+  const after = lstatSync(scratch, { bigint: true });
+  expect([after.dev, after.ino, after.mode, after.size]).toEqual([before.dev, before.ino, before.mode, before.size]);
+  if (kind === 'file') expect(readFileSync(scratch, 'utf8')).toBe('foreign-content');
+  if (kind === 'directory') expect(readFileSync(join(scratch, 'sentinel'), 'utf8')).toBe('directory-content');
+  if (kind === 'symlink') expect(readlinkSync(scratch)).toBe(sentinel);
+  expect(readFileSync(sentinel, 'utf8')).toBe('outside-content');
+  expect(readdirSync(join(h.root, 'history')).sort()).toEqual(history);
+  expect(signatures).toBe(0);
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('preserves both inodes when an owned selection scratch is replaced during signing', async () => {
+  const h = await nativeHost();
+  const bootstrap = createGenerationStore(h.e, h.owner, h.signer);
+  const first = await bootstrap.select(h.signed(bootstrap.order('initial', null, 'one')));
+  const scratch = join(h.root, '.selection-upgrade');
+  const retained = join(h.fixture, 'retained-original-scratch');
+  let original: ReturnType<typeof node> | undefined;
+  let signatures = 0;
+  const signer = { async signRecord(bytes: Uint8Array) {
+    signatures++;
+    original = node(scratch);
+    renameSync(scratch, retained);
+    writeFileSync(scratch, 'foreign-replacement', { mode: 0o600 });
+    return h.signer.signRecord(bytes);
+  } };
+  const store = createGenerationStore(h.e, h.owner, signer);
+  const envelope = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
+  const history = readdirSync(join(h.root, 'history')).sort();
+  await expect(store.select(envelope)).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'upgrade' });
+  expect(signatures).toBe(1);
+  expect(node(retained)).toEqual(original);
+  expect(lstatSync(retained).size).toBe(0);
+  const foreign = node(scratch);
+  expect(foreign).not.toEqual(original);
+  expect(readFileSync(scratch, 'utf8')).toBe('foreign-replacement');
+  await expect(createGenerationReader(h.e, h.owner).observe('upgrade'))
+    .rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'upgrade' });
+  await expect(store.select(envelope)).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'upgrade' });
+  await expect(store.select(h.signed(store.order('other', first.current!.sha256, 'three'))))
+    .rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'upgrade' });
+  expect(signatures).toBe(1);
+  expect(node(scratch)).toEqual(foreign);
+  expect(node(retained)).toEqual(original);
+  expect(readFileSync(scratch, 'utf8')).toBe('foreign-replacement');
+  expect(lstatSync(retained).size).toBe(0);
+  expect(readdirSync(join(h.root, 'history')).sort()).toEqual(history);
+}, 120_000);
+
+test.skipIf(inputs.length === 0).each(['signer-instance', 'signer-prototype', 'owner-instance', 'owner-prototype'] as const)(
+  'rejects a class-backed %s accessor installed during a real signature', async kind => {
+  const h = await nativeHost();
+  let getterCalls = 0, signatures = 0;
+  class Owner {
+    async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+      expect(this).toBe(owner);
+      return Reflect.apply(h.owner.withExclusiveReadRoot<T>, h.owner, [read]);
+    }
+  }
+  class Signer {
+    async signRecord(bytes: Uint8Array) {
+      expect(this).toBe(signer);
+      signatures++;
+      const object = kind.startsWith('owner') ? (kind.endsWith('instance') ? owner : Owner.prototype)
+        : (kind.endsWith('instance') ? signer : Signer.prototype);
+      const key = kind.startsWith('owner') ? 'withExclusiveReadRoot' : 'signRecord';
+      const original = kind.startsWith('owner') ? Owner.prototype.withExclusiveReadRoot : Signer.prototype.signRecord;
+      Object.defineProperty(object, key, { configurable: true, get() { getterCalls++; return original; } });
+      return h.signer.signRecord(bytes);
+    }
+  }
+  const owner = new Owner(), signer = new Signer();
+  const store = createGenerationStore(h.e, owner, signer);
+  const envelope = h.signed(store.order('install', null, 'one'));
+  await expect(store.select(envelope)).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'install' });
+  expect(signatures).toBe(1);
+  expect(getterCalls).toBe(0);
+  expect(readdirSync(join(h.root, 'history'))).toEqual([]);
+  const scratch = join(h.root, '.selection-install');
+  const before = node(scratch);
+  expect(lstatSync(scratch).size).toBe(0);
+  await expect(createGenerationReader(h.e, h.owner).observe('install'))
+    .rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'install' });
+  await expect(store.select(envelope)).rejects.toThrow();
+  expect(getterCalls).toBe(0);
+  expect(node(scratch)).toEqual(before);
+  expect(lstatSync(scratch).size).toBe(0);
+  expect(readdirSync(join(h.root, 'history'))).toEqual([]);
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('retains the original class owner and signer receivers for a real selection', async () => {
+  const h = await nativeHost();
+  let ownerCalls = 0, signatures = 0;
+  class Owner {
+    async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+      expect(this).toBe(owner); ownerCalls++;
+      return Reflect.apply(h.owner.withExclusiveReadRoot<T>, h.owner, [read]);
+    }
+  }
+  class Signer {
+    async signRecord(bytes: Uint8Array) { expect(this).toBe(signer); signatures++; return h.signer.signRecord(bytes); }
+  }
+  for (const method of [Owner.prototype.withExclusiveReadRoot, Signer.prototype.signRecord]) {
+    for (const key of ['call', 'bind']) Object.defineProperty(method, key, { get() { throw Error('callable metadata accessed'); } });
+  }
+  const owner = new Owner(), signer = new Signer();
+  const store = createGenerationStore(h.e, owner, signer);
+  const result = await store.select(h.signed(store.order('install', null, 'one')));
+  expect(result.current?.order.operationId).toBe('install');
+  expect(result.pending).toBeNull();
+  expect(ownerCalls).toBeGreaterThan(0);
+  expect(signatures).toBe(2);
+}, 120_000);
+
+test.skipIf(inputs.length === 0).each(['owner', 'signer'] as const)(
+  'preserves a pending visible selection when class %s changes during completion signing', async kind => {
+  const h = await nativeHost();
+  let getters = 0, signatures = 0;
+  class Owner {
+    async withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+      expect(this).toBe(owner);
+      return Reflect.apply(h.owner.withExclusiveReadRoot<T>, h.owner, [read]);
+    }
+  }
+  class Signer {
+    async signRecord(bytes: Uint8Array) {
+      expect(this).toBe(signer);
+      signatures++;
+      if (signatures === 2) {
+        const target = kind === 'owner' ? owner : signer;
+        const key = kind === 'owner' ? 'withExclusiveReadRoot' : 'signRecord';
+        const original = kind === 'owner' ? Owner.prototype.withExclusiveReadRoot : Signer.prototype.signRecord;
+        Object.defineProperty(target, key, { configurable: true, get() { getters++; return original; } });
+      }
+      return h.signer.signRecord(bytes);
+    }
+  }
+  const owner = new Owner(), signer = new Signer();
+  const store = createGenerationStore(h.e, owner, signer);
+  const envelope = h.signed(store.order('install', null, 'one'));
+  await expect(store.select(envelope)).rejects.toMatchObject({ code: 'GENERATION_SELECTION_UNCERTAIN', operationId: 'install' });
+  expect(signatures).toBe(2);
+  expect(getters).toBe(0);
+  const history = readdirSync(join(h.root, 'history')).sort();
+  expect(history).toEqual(['install.json']);
+  const current = node(join(h.root, 'current'));
+  const observed = await createGenerationReader(h.e, h.owner).observe('install');
+  expect(observed.current?.order.operationId).toBe('install');
+  expect(observed.pending?.order.operationId).toBe('install');
+  await expect(store.select(envelope)).rejects.toThrow();
+  expect(signatures).toBe(2);
+  expect(getters).toBe(0);
+  expect(node(join(h.root, 'current'))).toEqual(current);
+  expect(readdirSync(join(h.root, 'history')).sort()).toEqual(history);
+}, 120_000);
+
+test.skipIf(inputs.length === 0)('keeps a created scratch uncertain when open acknowledgement is lost', async () => {
+  const h = await nativeHost();
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  const first = await store.select(h.signed(store.order('initial', null, 'one')));
+  const envelope = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
+  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const e=JSON.parse(process.argv[1]), envelope=process.argv[2], lock=process.argv[3];
+    const scratch=join(e.root,'.selection-upgrade');
+    const open=fs.openSync;
+    let attempts=0, signatures=0;
+    fs.openSync=function(path,...args){
+      const fd=Reflect.apply(open,this,[path,...args]);
+      if(path===scratch){attempts++;fs.closeSync(fd);throw Error('lost acknowledgement after actual exclusive create');}
+      return fd;
+    };
+    syncBuiltinESMExports();
+    const {createGenerationStore,createGenerationReader}=await import(${JSON.stringify(module)});
+    const owner={async withExclusiveReadRoot(read){const fd=fs.openSync(lock,'wx',0o600);
+      try{return await read(e.root);}finally{fs.closeSync(fd);fs.unlinkSync(lock);}}};
+    const signer={async signRecord(){signatures++;throw Error('must not sign');}};
+    const store=createGenerationStore(e,owner,signer);
+    await assert.rejects(store.select(envelope),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    const before=fs.lstatSync(scratch,{bigint:true});
+    assert.equal(before.size,0n);
+    await assert.rejects(createGenerationReader(e,owner).observe('upgrade'),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    await assert.rejects(store.select(envelope),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    const after=fs.lstatSync(scratch,{bigint:true});
+    assert.equal(after.ino,before.ino);assert.equal(after.size,before.size);
+    assert.equal(attempts,1);assert.equal(signatures,0);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(h.e), envelope, h.lock],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+}, 120_000);
+
+test.skipIf(inputs.length === 0).each(['visible', 'completion'] as const)(
+  'stops generation %s processing when the parent exits during history read', async phase => {
+  const h = await nativeHost();
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  const first = await store.select(h.signed(store.order('initial', null, 'one')));
+  const envelope = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
+  const privateKey = h.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { sign } from 'node:crypto';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { join } from 'node:path';
+    const e=JSON.parse(process.argv[1]), envelope=process.argv[2], key=process.argv[3], phase=process.argv[4];
+    const record=join(e.root,'history','upgrade.json'), current=join(e.root,'current');
+    let start,resume,released=false,renamed=false,intercepted=false,signatures=0,lateSignatures=0,lateReads=0,lateLinks=0;
+    const entered=new Promise(resolve=>start=resolve), continuing=new Promise(resolve=>resume=resolve);
+    const originalOpen=fs.promises.open, originalRename=fs.renameSync, originalLstat=fs.lstatSync, originalLink=fs.linkSync;
+    fs.promises.open=async function(path,...args){
+      const handle=await Reflect.apply(originalOpen,this,[path,...args]);
+      if(path===record && !intercepted && renamed && signatures===(phase==='visible'?1:2)){
+        intercepted=true;
+        const close=handle.close;
+        handle.close=async function(...values){const result=await Reflect.apply(close,this,values);start();await continuing;return result;};
+      }
+      return handle;
+    };
+    fs.renameSync=function(from,to){const result=Reflect.apply(originalRename,this,[from,to]);if(to===current)renamed=true;return result;};
+    fs.lstatSync=function(path,...args){if(released && path===current)lateReads++;return Reflect.apply(originalLstat,this,[path,...args]);};
+    fs.linkSync=function(from,to){if(released && String(to).endsWith('.durable'))lateLinks++;return Reflect.apply(originalLink,this,[from,to]);};
+    syncBuiltinESMExports();
+    const {createGenerationStore,createGenerationReader}=await import(${JSON.stringify(module)});
+    const owner={async withExclusiveReadRoot(read){const pending=read(e.root);pending.catch(()=>{});await entered;released=true;setImmediate(resume);}};
+    const signer={async signRecord(bytes){if(released)lateSignatures++;signatures++;return sign(null,bytes,key).toString('base64');}};
+    const failure=await createGenerationStore(e,owner,signer).select(envelope).catch(error=>error);
+    assert(intercepted && released && renamed);
+    assert.equal(failure.code,'GENERATION_SELECTION_UNCERTAIN');
+    assert.equal(lateSignatures,0);assert.equal(lateReads,0);assert.equal(lateLinks,0);
+    assert.equal(signatures,phase==='visible'?1:2);
+    fs.lstatSync=originalLstat;syncBuiltinESMExports();
+    const owner2={async withExclusiveReadRoot(read){return await read(e.root);}};
+    const reader=createGenerationReader(e,owner2);
+    const observed=await reader.observe('upgrade');
+    assert.equal(observed.current.order.operationId,'upgrade');
+    assert.equal(observed.pending.order.operationId,'upgrade');
+    const before=fs.readdirSync(join(e.root,'history')).sort();
+    await assert.rejects(createGenerationStore(e,owner2,signer).select(envelope),{code:'GENERATION_SELECTION_UNCERTAIN',operationId:'upgrade'});
+    assert.deepEqual(fs.readdirSync(join(e.root,'history')).sort(),before);
+    assert.equal(signatures,phase==='visible'?1:2);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe, JSON.stringify(h.e), envelope, privateKey, phase],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' } });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+}, 120_000);
+
 test.skipIf(inputs.length === 0)('selects both real releases and data generations, reconciles loss and refuses replay', async () => {
   const h = await nativeHost();
   const store = createGenerationStore(h.e, h.owner, h.signer);
