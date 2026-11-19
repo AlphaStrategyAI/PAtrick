@@ -31,7 +31,8 @@ const questionOptions: QuestionOption[] = [
     reason_code: null, next_action: 'collect_evidence', difference: null, missing: [],
     collection_id: 'collection-017', expected_material: 'evidence-017' },
   { option_id: 'deferred-choice', index: 1, label: '方案 B：稍后决定', disposition: 'deferred',
-    reason_code: null, next_action: 'judge', difference: null, missing: [], collection_id: null, expected_material: null },
+    reason_code: null, next_action: 'judge', difference: '保持当前工作不推进', missing: ['本人的决定'],
+    collection_id: null, expected_material: null },
 ];
 
 export async function t15Fixture(options: { paidConsultation?: boolean } = {}) {

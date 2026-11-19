@@ -1,5 +1,10 @@
 import { ClientError } from '../../api/client.js';
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
 export type WorkState = 'researching' | 'awaiting_answer' | 'verifying' | 'paused' | 'blocked' | 'delivered';
 export type WorkItem = {
   work_id: string;
@@ -26,7 +31,7 @@ export type Question = {
   options_hash: string;
   status: 'open' | 'closed' | 'superseded';
   successor_question_id: string | null;
-  options: { option_id: string; index: number; label: string }[];
+  options: { option_id: string; index: number; label: string; next_action: string | null; difference: string | null; missing: string[] }[];
   custom_allowed: boolean;
   expires_at: string | null;
 };
@@ -105,7 +110,10 @@ export function parseQuestion(value: unknown): Question {
   const row = data(value);
   const options = row.options === undefined ? [] : array(row.options, (entry) => {
     const opt = data(entry);
-    return { option_id: id(opt.option_id), index: number(opt.index), label: text(opt.label) };
+    return { option_id: id(opt.option_id), index: number(opt.index), label: text(opt.label),
+      next_action: opt.next_action === undefined || opt.next_action === null ? null : text(opt.next_action),
+      difference: opt.difference === undefined || opt.difference === null ? null : text(opt.difference),
+      missing: stringList(opt.missing) };
   }).sort((a, b) => a.index - b.index);
   if (new Set(options.map((option) => option.option_id)).size !== options.length
     || new Set(options.map((option) => option.index)).size !== options.length) return invalid();

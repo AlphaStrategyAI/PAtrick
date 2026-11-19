@@ -725,7 +725,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T25 真实三执行器、双入口答复与飞书排空 | 没有隔离执行器和真实渠道 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |
 
-设计复核的六项里，工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、以及 2px `#087B96` 的焦点环已经落地；以下三项仍未完成，因此同样保持未勾选：决定页第一层只留问题、两个选项的风险和「提交决定」；决定页在整理中、核验中、空、失败和离线时用户看见的句子；咨询生成中流式显示且状态保持「正在回答」。
+设计复核的六项里，工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层以及整理中／核验中／空／失败／离线的句子都已经落地；只剩一项未完成，因此保持未勾选：咨询生成中流式显示且状态保持「正在回答」。
 
 逐场景的命令、退出码、版本和证据 hash 记录在 `release-evidence/impl-2026-11-19/`，`manifest.json` 关联产品条款、任务、frame/fixture 和测试；`scripts/check-release-evidence.mjs` 校验该清单，CI 在每次合并前复核。缺真实能力时标 blocked 或 pending，不写 passed。
 
@@ -2306,11 +2306,11 @@ REALITY: obligation-tiers pass D2 到 D6 是对应任务的交付合同，不是
 
 Synthesized from the design review. Each task derives from a decision above.
 
-- [ ] **T1 (P1, human: ~30min / CC: ~10min)** — decisions — 第一眼只留问题、两个选项的风险和「提交决定」
+- [x] **T1 (P1, human: ~30min / CC: ~10min)** — decisions — 第一眼只留问题、两个选项的风险和「提交决定」
   - Surfaced by: Pass 1 — 决策页层级
   - Files: apps/web/src/features/decisions/DecisionsPage.tsx, apps/web/src/features/decisions/DecisionCard.tsx
   - Verify: 聊天按钮是「发送」，不能提交决定
-- [ ] **T2 (P1, human: ~30min / CC: ~10min)** — decisions — 写上整理中、核验中、空、失败和离线时用户看见的句子
+- [x] **T2 (P1, human: ~30min / CC: ~10min)** — decisions — 写上整理中、核验中、空、失败和离线时用户看见的句子
   - Surfaced by: Pass 2 — 决策页等待
   - Files: apps/web/src/features/decisions/DecisionsPage.tsx
   - Verify: 回执变成已核验之前，提交不可用

@@ -34,6 +34,7 @@ export function DecisionsPage() {
   return <>
     {list.error && <LocalizedError code={asClientError(list.error).code} onRetry={() => void list.refetch()} />}
     {list.isPending && <p role="status">{t.unknown}</p>}
+    {list.data && list.data.freshness !== 'fresh' && <p role="status">{t.snapshot}</p>}
     {list.data?.freshness === 'fresh' && !cards.length && <p>{t.noDecisions}</p>}
     {cards.map(({ questionId, workId }) => <BoundDecision key={questionId} questionId={questionId} workId={workId}
       retain={() => setRetained((prior) => prior.some((reference) => reference.questionId === questionId)
@@ -48,5 +49,6 @@ function BoundDecision({ questionId, workId, retain }: CardRef & { retain: () =>
   const card = question.data?.data;
   if (!card) return <p role="status">{t.unknown}</p>;
   if (card.question_id !== questionId || card.work_id !== workId) return <LocalizedError code="INVALID_RESPONSE" />;
-  return <DecisionCard card={card} retain={retain} refresh={() => void question.refetch()} />;
+  return <DecisionCard card={card} retain={retain} refresh={() => void question.refetch()}
+    stale={question.data?.freshness !== 'fresh'} />;
 }

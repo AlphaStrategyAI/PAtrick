@@ -37,8 +37,21 @@ async function readQuestion(c: Context, ready: Ready): Promise<Response> {
   if (!row || !principal.domains.includes(row.data_domain)) throw new ApiError(403, 'FORBIDDEN', { reason: 'scope' });
   assertDomainPermission(db, principal, row.data_domain, 'questions.read');
   const { options_json, custom_allowed, ...binding } = row;
-  const options = (JSON.parse(options_json) as { option_id: string; index: number; label: string }[])
-    .map(({ option_id, index, label }) => ({ option_id, index, label }));
+  const options = (JSON.parse(options_json) as {
+    option_id: string;
+    index: number;
+    label: string;
+    next_action?: string | null;
+    difference?: string | null;
+    missing?: string[];
+  }[]).map(({ option_id, index, label, next_action, difference, missing }) => ({
+    option_id,
+    index,
+    label,
+    next_action: next_action ?? null,
+    difference: difference ?? null,
+    missing: missing ?? [],
+  }));
   return c.json(snapshot({ ...principal, domains: [row.data_domain] }, { ...binding, options, custom_allowed: !!custom_allowed }, now(), db));
 }
 

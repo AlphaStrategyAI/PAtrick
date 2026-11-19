@@ -12,6 +12,12 @@ import { decisionPath } from './paths.js';
 
 export type CardAnswer = { kind: 'option'; option_id: string } | { kind: 'custom'; raw_text: string };
 
+/** The risk a person needs before choosing: how this option differs, or what it still misses. */
+function optionRisk(option: Question['options'][number]): string | null {
+  if (option.difference) return option.difference;
+  return option.missing.length > 0 ? option.missing.join('、') : null;
+}
+
 export function answerPayload(card: Question, answer: CardAnswer) {
   const { work_id, generation, question_id, question_version, proposal_revision, options_hash } = card;
   return { work_id, generation, question_id, question_version, proposal_revision, options_hash, answer };
@@ -19,8 +25,15 @@ export function answerPayload(card: Question, answer: CardAnswer) {
 
 type LocalDraft = { binding: string; text: string; selected?: { kind: 'custom' } | { kind: 'option'; id: string } };
 
-export function DecisionCard({ card, refresh, retain }: { card: Question; refresh: () => void; retain: () => void }) {
+export function DecisionCard({ card, refresh, retain, stale = false }: {
+  card: Question;
+  refresh: () => void;
+  retain: () => void;
+  stale?: boolean;
+}) {
   const t = useT15();
+  const [detail, setDetail] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const { scope } = useService();
   const commands = useCommands();
   const group = useId();
@@ -71,7 +84,7 @@ export function DecisionCard({ card, refresh, retain }: { card: Question; refres
     <h2>{t.decision} {card.question_id}</h2>
     <Link to={'/work/' + encodeURIComponent(card.work_id)}>{t.viewWork} {card.work_id}</Link>
     {!open && <p role="status">{expired ? t.stale : t.closeQuestion}</p>}
-    {open && !card.custom_allowed && card.options.length === 0 && <p role="status">{t.noChoices}</p>}
+    {open && card.options.length === 0 && <p role="status">{t.preparingOptions}</p>}
     <form onSubmit={(event) => {
       event.preventDefault();
       if (!scope || !open || !answer || frozen) return;
@@ -83,18 +96,38 @@ export function DecisionCard({ card, refresh, retain }: { card: Question; refres
         {card.options.map((option) => <label className="check-control" key={option.option_id}>
           <input type="radio" name={group} value={option.option_id} checked={acceptOption === option.option_id}
             onChange={() => choose({ kind: 'option', id: option.option_id })} /> {option.label}
+          {optionRisk(option) && <span className="option-risk">{optionRisk(option)}</span>}
         </label>)}
-        {card.custom_allowed && <>
-          <label className="check-control">
-            <input type="radio" name={group} value={group + '-custom-option'} checked={current.selected?.kind === 'custom'}
-              onChange={() => choose({ kind: 'custom' })} /> {t.custom}
-          </label>
-          <textarea aria-label={t.custom} rows={4} value={current.text}
-            onChange={(event) => choose({ kind: 'custom' }, event.target.value, true)} />
-        </>}
-        {open && <button type="submit" className="primary" disabled={!answer || frozen}>{t.submit}</button>}
+        {open && stale && <p role="status">{t.offline}</p>}
+        {open && <button type="submit" className="primary" disabled={!acceptOption || frozen || stale}>{t.submit}</button>}
       </fieldset>
     </form>
+    {open && card.options.length > 0 && <details open={detail} onToggle={(event) => setDetail(event.currentTarget.open)}>
+      <summary>{t.showBasis}</summary>
+      <ul>{card.options.map((option) => <li key={option.option_id}>
+        <strong>{option.label}</strong>
+        {option.next_action && <p>{t.optionNextAction}: {option.next_action}</p>}
+        {option.difference && <p>{t.optionDifference}: {option.difference}</p>}
+        {option.missing.length > 0 && <p>{t.optionMissing}: {option.missing.join('、')}</p>}
+      </li>)}</ul>
+    </details>}
+    {card.custom_allowed && <details open={customOpen} onToggle={(event) => setCustomOpen(event.currentTarget.open)}>
+      <summary>{t.customLayer}</summary>
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        if (!scope || !open || !answer || answer.kind !== 'custom' || frozen) return;
+        commands.start(commandKey, { operation: 'submitAnswer', parameters: { id: card.question_id },
+          command: { expected_revision: card.proposal_revision, payload: answerPayload(card, answer) } });
+      }}>
+        <label className="check-control">
+          <input type="radio" name={group + '-custom'} checked={current.selected?.kind === 'custom'}
+            onChange={() => choose({ kind: 'custom' })} /> {t.custom}
+        </label>
+        <textarea aria-label={t.custom} rows={4} value={current.text} disabled={!open || frozen}
+          onChange={(event) => choose({ kind: 'custom' }, event.target.value, true)} />
+        <button type="submit" className="primary" disabled={!open || !current.text.trim() || frozen}>{t.submitCustom}</button>
+      </form>
+    </details>}
     {held && <label>{t.staleDraft}<textarea rows={3} readOnly value={held} /></label>}
     {unsaved && <p role="status">{t.draftUnsaved}</p>}
     {attempt?.phase === 'sending' && <p role="status">{t.received}</p>}

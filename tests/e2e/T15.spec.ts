@@ -7,7 +7,7 @@ test('same-work: consultation stays separate and the explicit decision reads its
     await fixture.signIn(page);
     await page.goto('/decisions');
     const card = page.getByTestId('decision-Q-017');
-    await expect(card.getByRole('textbox', { name: '自定义决定' })).toBeVisible({ timeout: 3500 });
+    await expect(card.getByText('写一个自定义决定')).toBeVisible({ timeout: 3500 });
     await expect(card.getByRole('radio', { name: /方案 A/ })).not.toBeChecked();
     await card.getByRole('link', { name: '查看工作 W-017' }).click();
     await expect(page.getByTestId('work-id')).toHaveText('W-017');
@@ -70,6 +70,7 @@ test('small screen: a replacement card preserves the original draft without usin
     await fixture.signIn(page);
     await page.goto('/decisions');
     const old = page.getByTestId('decision-Q-017');
+    await old.getByText('写一个自定义决定').click();
     await old.getByRole('textbox', { name: '自定义决定' }).fill('保留这个尚未提交的决定');
     await page.getByRole('button', { name: '问个问题' }).click();
     const consult = page.getByRole('dialog');
@@ -83,6 +84,7 @@ test('small screen: a replacement card preserves the original draft without usin
     await expect(old.getByRole('textbox', { name: '自定义决定' })).toHaveValue('保留这个尚未提交的决定');
     await old.getByRole('link', { name: '查看替代决定' }).click();
     const next = page.getByTestId('decision-Q-018');
+    await next.getByText('写一个自定义决定').click();
     await expect(next.getByRole('textbox', { name: '自定义决定' })).toHaveValue('');
     await expect(next.getByRole('button', { name: '提交决定' })).toBeDisabled();
     expect(fixture.requests.filter(({ method, path }) => method === 'POST' && path.endsWith('/answers'))).toHaveLength(0);
@@ -99,7 +101,7 @@ test('small screen: a replacement card preserves the original draft without usin
 
     const custom = '  原话保留  ';
     await next.getByRole('textbox', { name: '自定义决定' }).fill(custom);
-    await next.getByRole('button', { name: '提交决定' }).click();
+    await next.getByRole('button', { name: '提交自定义决定' }).click();
     await expect(page.getByTestId('answer-receipt-Q-018')).toContainText('已核验');
     expect(fixture.db.prepare('SELECT question_id, raw_custom FROM decision_submissions').get())
       .toEqual({ question_id: 'Q-018', raw_custom: custom });
@@ -121,6 +123,7 @@ test('two tabs fence a late private response when the session is revoked during 
       .toBeGreaterThanOrEqual(2);
     fixture.disconnectEvents();
     held = fixture.holdNextRead('/api/v1/questions/Q-017');
+    await card.getByText('写一个自定义决定').click();
     await card.getByRole('textbox', { name: '自定义决定' }).fill('不能泄露的旧草稿');
     await card.getByRole('button', { name: '读取决定' }).click();
     await held.ready;
@@ -151,6 +154,22 @@ test('frozen question options are available only in the authorized domain', asyn
     expect(result.data).not.toHaveProperty('options_json');
     const denied = await fixture.readFrozenQuestion('different-domain');
     expect(denied.status).toBe(403);
+  } finally { await fixture.close(); }
+});
+
+test('the decision card shows each option risk first and keeps the full detail one layer down', async ({ page }) => {
+  const fixture = await t15Fixture();
+  try {
+    await fixture.signIn(page);
+    await page.goto('/decisions');
+    const card = page.getByTestId('decision-Q-017');
+    await expect(card.getByRole('radio', { name: /方案 B/ })).toBeVisible({ timeout: 3500 });
+    await expect(card.locator('.option-risk')).toHaveText('保持当前工作不推进');
+    await expect(card.getByText('查看依据与完整利弊')).toBeVisible();
+    await card.getByText('查看依据与完整利弊').click();
+    await expect(card.getByText('接下来会做').first()).toBeVisible();
+    await expect(card.getByText('还缺').first()).toBeVisible();
+    await expect(card.getByText('还缺: 本人的决定')).toBeVisible();
   } finally { await fixture.close(); }
 });
 
