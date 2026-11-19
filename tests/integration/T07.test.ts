@@ -16,6 +16,7 @@ import { createRecoveryWitness, type RecoveryWitnessRecord } from '../../package
 import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
+import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 const NOW = '2026-11-16T12:00:00.000Z';
 const DOMAIN = 'product';
@@ -806,27 +807,7 @@ test('a stale adopt after r9 and a rejected adopt record that business state', a
 
 test('the standards migration appends without changing earlier files', () => {
   const manifest = JSON.parse(readFileSync(join(MIGRATIONS, 'manifest.json'), 'utf8')) as { file: string; sha256: string }[];
-  expect(manifest.map((entry) => entry.file)).toEqual([
-    '0002_core.sql',
-    '0003_auth_control.sql',
-    '0004_hub_work.sql',
-    '0005_sources.sql',
-    '0006_vault_evidence.sql',
-    '0007_standards.sql',
-    '0008_admission_budget.sql',
-    '0010_answers_channels.sql',
-    '0011_conversations.sql',
-    '0012_effects_outcomes.sql',
-    '0013_views.sql',
-    '0017_settings.sql',
-    '0018_delegation_control.sql',
-    '0019_stats.sql',
-    '0020_http_sources.sql',
-    '0021_notifications.sql',
-    '0022_network.sql',
-    '0023_recovery.sql',
-    '0024_settings_recoveries.sql',
-  ]);
+  expect(manifest).toEqual(expectedMigrationManifest(MIGRATIONS));
   for (const [file, hash] of Object.entries(PREVIOUS)) {
     expect(manifest.find((entry) => entry.file === file)?.sha256).toBe(hash);
     expect(sha256(readFileSync(join(MIGRATIONS, file)))).toBe(hash);

@@ -25,6 +25,7 @@ import {
 } from '../../apps/service/src/settings/registry.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
+import { expectedMigrationManifest } from '../support/migration-manifest.js';
 
 const CORE_SQL_HASH = '6e82bac75d455f28dc498874b61d0d778e1552b4bc5a8d1b5d7f5dfddfc06233';
 const CONFIRM_SQL = `UPDATE control_proposals
@@ -848,27 +849,18 @@ test('the auth migration appends after the untouched core schema', () => {
     file: string;
     sha256: string;
   }[];
-  expect(manifest).toEqual([
-    { file: '0002_core.sql', sha256: CORE_SQL_HASH },
-    { file: '0003_auth_control.sql', sha256: authHash },
-    { file: '0004_hub_work.sql', sha256: hubHash },
-    { file: '0005_sources.sql', sha256: sourceHash },
-    { file: '0006_vault_evidence.sql', sha256: vaultHash },
-    { file: '0007_standards.sql', sha256: standardsHash },
-    { file: '0008_admission_budget.sql', sha256: admissionHash },
-    { file: '0010_answers_channels.sql', sha256: answersHash },
-    { file: '0011_conversations.sql', sha256: conversationHash },
-    { file: '0012_effects_outcomes.sql', sha256: effectsHash },
-    { file: '0013_views.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0013_views.sql'))).digest('hex') },
-    { file: '0017_settings.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0017_settings.sql'))).digest('hex') },
-    { file: '0018_delegation_control.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0018_delegation_control.sql'))).digest('hex') },
-    { file: '0019_stats.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0019_stats.sql'))).digest('hex') },
-    { file: '0020_http_sources.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0020_http_sources.sql'))).digest('hex') },
-    { file: '0021_notifications.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0021_notifications.sql'))).digest('hex') },
-    { file: '0022_network.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0022_network.sql'))).digest('hex') },
-    { file: '0023_recovery.sql', sha256: createHash('sha256').update(readFileSync(join(root, 'packages/storage/migrations/0023_recovery.sql'))).digest('hex') },
-    { file: '0024_settings_recoveries.sql', sha256: 'a2e4c46c207056d3b4beb484c1431f3ebdaf553b2aab3caa483f594a5151a667' },
-  ]);
+  expect(manifest).toEqual(expectedMigrationManifest(join(root, 'packages/storage/migrations')));
+  expect(manifest.find((entry) => entry.file === '0003_auth_control.sql')?.sha256).toBe(authHash);
+  expect(manifest.find((entry) => entry.file === '0004_hub_work.sql')?.sha256).toBe(hubHash);
+  expect(manifest.find((entry) => entry.file === '0005_sources.sql')?.sha256).toBe(sourceHash);
+  expect(manifest.find((entry) => entry.file === '0006_vault_evidence.sql')?.sha256).toBe(vaultHash);
+  expect(manifest.find((entry) => entry.file === '0007_standards.sql')?.sha256).toBe(standardsHash);
+  expect(manifest.find((entry) => entry.file === '0008_admission_budget.sql')?.sha256).toBe(admissionHash);
+  expect(manifest.find((entry) => entry.file === '0010_answers_channels.sql')?.sha256).toBe(answersHash);
+  expect(manifest.find((entry) => entry.file === '0011_conversations.sql')?.sha256).toBe(conversationHash);
+  expect(manifest.find((entry) => entry.file === '0012_effects_outcomes.sql')?.sha256).toBe(effectsHash);
+  expect(manifest.find((entry) => entry.file === '0024_settings_recoveries.sql')?.sha256)
+    .toBe('a2e4c46c207056d3b4beb484c1431f3ebdaf553b2aab3caa483f594a5151a667');
   const controlSource = readFileSync(join(root, 'apps/service/src/control.ts'), 'utf8');
   expect(controlSource).toContain(CONFIRM_SQL);
   expect(controlSource).toContain('withImmediateTransaction');
