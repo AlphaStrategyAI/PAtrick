@@ -371,7 +371,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     mountFeishuRoutes(app, () => {
       const current = context();
       return { db: current.db, now, hub: durableHub(), feishuCredentials: options.feishuCredentials,
-        feishuTestOutbound: options.feishuTestOutbound };
+        feishuTestOutbound: options.feishuTestOutbound, feishuOutboundLifetime: lifetime };
     });
     const resources = () => ({ db: context().db, api: vaultApi(), now });
     mountVaultRoutes(app, resources);

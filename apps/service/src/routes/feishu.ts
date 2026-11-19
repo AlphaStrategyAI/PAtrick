@@ -6,7 +6,7 @@ import { commandFingerprint, recordCommand, withImmediateTransaction, type Sqlit
 import { encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { channelPermit, createAnswerGate, type AnswerPayload } from '../../../../packages/domain/src/answer-gate.js';
 import { createFeishuChannel, type EnableProof } from '../../../../packages/integrations/feishu/connection.js';
-import { claimFeishuOutboundTest, dispatchClaimedFeishuTest, type FeishuTestOutbound } from '../../../../packages/integrations/feishu/outbound.js';
+import { claimFeishuOutboundTest, dispatchClaimedFeishuTest, type FeishuOutboundLifetime, type FeishuTestOutbound } from '../../../../packages/integrations/feishu/outbound.js';
 import { assertDomainPermission, browserAuthority, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { assertBusinessWrite } from '../recovery-runtime.js';
@@ -15,6 +15,7 @@ import { assertPayloadHash, assertWriteOrigin, handle, readJson, requirePermissi
 
 type Ready = () => {
   db: SqliteDatabase; now: () => Date; hub: LocalHubPort; feishuCredentials?: CredentialStore; feishuTestOutbound?: FeishuTestOutbound;
+  feishuOutboundLifetime?: FeishuOutboundLifetime;
 };
 type PairingCodes = Map<string, { code: string; expires_at: string; connection_id: string }>;
 function secureSetupOrigin(): string {
@@ -141,7 +142,7 @@ async function confirmBinding(c: Context, ready: Ready): Promise<Response> {
 async function readBinding(c: Context, ready: Ready, codes: PairingCodes): Promise<Response> {
   const principal = await requireSession(c.req.raw);
   const requested = routeId(c.req.param('id'));
-  const { db, now, feishuCredentials, feishuTestOutbound } = ready();
+  const { db, now, feishuCredentials, feishuTestOutbound, feishuOutboundLifetime } = ready();
   const domain = readChannelDomain(db, principal);
   const connection = db.prepare(`SELECT connection_id, app_id, current_test_id, current_pairing_id, owner_open_id,
       tenant_key, reason_code, status, transport_mode
@@ -168,7 +169,8 @@ async function readBinding(c: Context, ready: Ready, codes: PairingCodes): Promi
   if ((code || expired) && pairingId) codes.delete(pairingId);
   const summary = {
     credential_setup_available: owner && !!feishuCredentials && new URL(c.req.url).origin === secureSetupOrigin(),
-    transport_available: owner && !!feishuTestOutbound && !!connection?.owner_open_id && connection.transport_mode === 'probe' &&
+    transport_available: owner && !!feishuTestOutbound && !!feishuOutboundLifetime && !feishuOutboundLifetime.signal.aborted &&
+      !!connection?.owner_open_id && connection.transport_mode === 'probe' &&
       (connection.status === 'needs_test' || connection.status === 'needs_enable') && admittedPairingProbe(connection),
     owner_actions_available: owner,
     data_domain: domain, app_id: connection?.app_id ?? null, destination: connection?.owner_open_id ?? null,
@@ -212,7 +214,7 @@ async function sendTest(c: Context, ready: Ready, pathTestId?: string): Promise<
   const testId = payload.test_id;
   if (pathTestId !== undefined && pathTestId !== testId) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'test' });
   const resources = ready();
-  const { db, feishuTestOutbound } = resources;
+  const { db, feishuTestOutbound, feishuOutboundLifetime } = resources;
   const operation = 'sendFeishuTest';
   const receiptPath = 'channels/feishu/tests';
   const claimed = withImmediateTransaction(db, () => {
@@ -231,17 +233,20 @@ async function sendTest(c: Context, ready: Ready, pathTestId?: string): Promise<
       }
       throw error;
     }
-    if (!feishuTestOutbound) throw new ApiError(503, 'UNAVAILABLE', { reason: 'transport_not_configured' });
+    if (!feishuTestOutbound || !feishuOutboundLifetime) throw new ApiError(503, 'UNAVAILABLE', { reason: 'transport_not_configured' });
+    if (feishuOutboundLifetime.signal.aborted) throw new ApiError(503, 'UNAVAILABLE', { reason: 'service_stopping' });
     assertPairingProbe(connection);
     const test = claimFeishuOutboundTest(db, payload, {
       account_id: principal.account_id, data_domain: domain, connection_id: connection.connection_id,
     }, resources.now().toISOString());
     if (!test) throw new ApiError(409, 'CONFLICT', { reason: 'stale_test_preview' });
     const commandId = storeCommand(resources, principal, operation, testId, domain, client_request_id, expected_revision, payload_hash);
-    return { test, commandId };
+    // The injected clock can synchronously stop the owner while recording the command.
+    if (feishuOutboundLifetime.signal.aborted) throw new ApiError(503, 'UNAVAILABLE', { reason: 'service_stopping' });
+    return { test, commandId, adapter: feishuTestOutbound, lifetime: feishuOutboundLifetime };
   });
-  if (claimed.test && feishuTestOutbound) {
-    try { await dispatchClaimedFeishuTest(db, feishuTestOutbound, claimed.test, resources.now); }
+  if (claimed.test) {
+    try { await dispatchClaimedFeishuTest(db, claimed.adapter, claimed.test, resources.now, claimed.lifetime); }
     catch (error) {
       if (error instanceof Error && error.message === 'FEISHU_TEST_STALE') {
         throw new ApiError(409, 'CONFLICT', { reason: 'stale_test_preview' });

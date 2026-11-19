@@ -24,9 +24,14 @@ type OutboundResult = Readonly<{ state: 'sent'; message_id: string }> | Readonly
 /** The opt-in supervisor uses the exact provider, credential version, and binding in the request.
  * If it cannot establish their validity, it must not send. Use test_id as the stable dispatch key
  * call beforeSend after awaiting credentials and directly before the actual provider handoff,
- * and return `sent` only for a provider receipt. This port never establishes inbound readiness. */
+ * await all work owned by the handoff, and return `sent` only for a provider receipt. */
 export type FeishuTestOutbound = Readonly<{
   sendTest: (test: FeishuOutboundTest, signal: AbortSignal, beforeSend: () => void) => Promise<OutboundResult>;
+}>;
+
+export type FeishuOutboundLifetime = Readonly<{
+  signal: AbortSignal;
+  run: (start: () => Promise<void>) => Promise<void>;
 }>;
 
 // This is the T10 preview. Matching its stored hash keeps a changed preview and
@@ -83,9 +88,10 @@ function assertCurrentDispatch(db: SqliteDatabase, test: FeishuOutboundTest): vo
 
 /** An uncertain send stays with the same test; neither route schedules a retry. */
 export async function dispatchClaimedFeishuTest(db: SqliteDatabase, adapter: FeishuTestOutbound, test: FeishuOutboundTest,
-  now: () => Date): Promise<void> {
+  now: () => Date, lifetime: FeishuOutboundLifetime): Promise<void> {
+  if (!lifetime || lifetime.signal.aborted) throw new Error('FEISHU_TEST_HANDOFF_CLOSED');
   assertCurrentDispatch(db, test);
-  const result = await sendBounded(db, adapter, test);
+  const result = await sendBounded(db, adapter, test, lifetime);
   db.prepare(`UPDATE channel_tests SET status=?, message_id=?, reason_code=?, updated_at=?
     WHERE test_id=? AND connection_id=? AND account_id=? AND data_domain=? AND binding_id=? AND preview_hash=?
       AND incarnation=? AND epoch=? AND status='sending'`).run(
@@ -95,28 +101,39 @@ export async function dispatchClaimedFeishuTest(db: SqliteDatabase, adapter: Fei
   );
 }
 
-function sendBounded(db: SqliteDatabase, adapter: FeishuTestOutbound, test: FeishuOutboundTest): Promise<OutboundResult> {
+function sendBounded(db: SqliteDatabase, adapter: FeishuTestOutbound, test: FeishuOutboundTest,
+  lifetime: FeishuOutboundLifetime): Promise<OutboundResult> {
   const deadline = new AbortController();
-  const unknown: OutboundResult = { state: 'unknown' };
+  const signal = AbortSignal.any([lifetime.signal, deadline.signal]);
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => { resolve(unknown); deadline.abort(); }, 10_000);
+    let closed = false;
     let denied: unknown;
     const beforeSend = () => {
+      if (closed || signal.aborted) throw new Error('FEISHU_TEST_HANDOFF_CLOSED');
+      if (denied) throw denied;
       try { assertCurrentDispatch(db, test); }
       catch (error) { denied = error; throw error; }
     };
-    const complete = (value?: OutboundResult) => {
+    const timeout = setTimeout(() => deadline.abort(), 10_000);
+    const aborted = () => complete();
+    function complete(result: OutboundResult = { state: 'unknown' }) {
+      if (closed) return;
+      closed = true;
       clearTimeout(timeout);
-      if (denied) { reject(denied); return; }
-      if (value?.state === 'sent' && typeof value.message_id === 'string' && /^[A-Za-z0-9_:-]{1,200}$/u.test(value.message_id)) {
-        resolve({ state: 'sent', message_id: value.message_id });
-      } else {
-        resolve(unknown);
-      }
-    };
-    void Promise.resolve().then(() => {
-      beforeSend();
-      return adapter.sendTest(test, deadline.signal, beforeSend);
-    }).then(complete).catch(() => complete());
+      signal.removeEventListener('abort', aborted);
+      if (denied) reject(denied);
+      else resolve(result);
+    }
+    signal.addEventListener('abort', aborted, { once: true });
+    // run registers before its starter executes. Only actual adapter settlement releases the owner.
+    void lifetime.run(async () => {
+      try {
+        beforeSend();
+        const result = await adapter.sendTest(test, signal, beforeSend);
+        if (closed) return;
+        const id = result?.state === 'sent' ? result.message_id : undefined;
+        complete(typeof id === 'string' && /^[A-Za-z0-9_:-]{1,200}$/u.test(id) ? { state: 'sent', message_id: id } : undefined);
+      } catch { complete(); }
+    });
   });
 }
