@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/admission/T23-build.test.ts
-exit=0 signal=none durationMs=102871
+exit=0 signal=none durationMs=102987
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=102871
 
  Test Files  1 passed (1)
       Tests  51 passed | 2 skipped (53)
-   Start at  22:54:51
-   Duration  102.33s (tests 100%)
+   Start at  23:47:50
+   Duration  102.37s (tests 100%)
 
 
 --- stderr ---

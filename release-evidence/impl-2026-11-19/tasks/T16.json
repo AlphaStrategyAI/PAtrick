@@ -1,6 +1,6 @@
 {
   "task": "T16",
-  "completedAt": "2026-11-19T14:52:44.191Z",
+  "completedAt": "2026-11-19T15:45:42.362Z",
   "productClauses": [
     "C4",
     "C9"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -23,12 +23,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T16/knowledge-standards-delegation-browser.log",
-      "evidenceSha256": "848e3ffea8a1eb5420bd0ce16ad738bc26f136ee091b75a71b9e85b4f93921d8",
-      "durationMs": 11704
+      "evidenceSha256": "3ff6fbd02a32c969014cbf8723e7d2d223d754ea0eaac44a8d0f4eb592fc0d93",
+      "durationMs": 12121
     }
   ]
 }

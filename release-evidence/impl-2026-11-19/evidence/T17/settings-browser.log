@@ -1,69 +1,71 @@
 $ npm exec -- playwright test --config tests/e2e/T17.config.ts --reporter=line
-exit=0 signal=none durationMs=77941
+exit=0 signal=none durationMs=79021
 --- stdout ---
 
 
-Running 53 tests using 1 worker
+Running 55 tests using 1 worker
 
 
 
-[1/53] tests/e2e/T17.spec.ts:54:1 › account preferences read back after reload and a failed save keeps the local language
-[2/53] tests/e2e/T17.spec.ts:82:1 › settings offer six groups and distinguish unconfigured host actions from the registered Vault handler
-[3/53] tests/e2e/T17.spec.ts:94:1 › a registered Vault uses the three-step review before applying and shows the same receipt on System
-[4/53] tests/e2e/T17.spec.ts:138:5 › en timestamp provenance › distinguishes the settings snapshot and the operation receipt check
-[5/53] tests/e2e/T17.spec.ts:178:5 › en timestamp provenance › hides the unobserved health timestamp online and after disconnect
-[6/53] tests/e2e/T17.spec.ts:194:5 › en timestamp provenance › keeps the verified time historical after an invalid fresh projection timestamp
-[7/53] tests/e2e/T17.spec.ts:220:5 › en timestamp provenance › settings overview distinguishes an invalid fresh projection timestamp from verified time
-[8/53] tests/e2e/T17.spec.ts:265:5 › en timestamp provenance › labels the current health projection and retains only verified time offline
-[9/53] tests/e2e/T17.spec.ts:138:5 › zh timestamp provenance › distinguishes the settings snapshot and the operation receipt check
-[10/53] tests/e2e/T17.spec.ts:178:5 › zh timestamp provenance › hides the unobserved health timestamp online and after disconnect
-[11/53] tests/e2e/T17.spec.ts:194:5 › zh timestamp provenance › keeps the verified time historical after an invalid fresh projection timestamp
-[12/53] tests/e2e/T17.spec.ts:220:5 › zh timestamp provenance › settings overview distinguishes an invalid fresh projection timestamp from verified time
-[13/53] tests/e2e/T17.spec.ts:265:5 › zh timestamp provenance › labels the current health projection and retains only verified time offline
-[14/53] tests/e2e/T17.spec.ts:295:1 › the first account read does not overwrite a language choice made while it is in flight
-[15/53] tests/e2e/T17.spec.ts:314:1 › Feishu setup reports unavailable ingress instead of asking for a secret on local HTTP
-[16/53] tests/e2e/T17.spec.ts:327:1 › Feishu confirms the scoped pairing, previews the exact test and leaves delivery unverified without a transport
-[17/53] tests/e2e/T17.spec.ts:366:1 › opening interaction settings does not revoke a session that cannot read channels
-[18/53] tests/e2e/T17.spec.ts:380:1 › settings overview does not turn an unobserved snapshot into checks or a known device
-[19/53] tests/e2e/T17.spec.ts:437:5 › en scoped settings health overview › reports only the current projection and one known issue, then preserves the last verified snapshot
-[20/53] tests/e2e/T17.spec.ts:503:5 › en scoped settings health overview › does not invent a verified timestamp from an initially stale projection
-[21/53] tests/e2e/T17.spec.ts:514:5 › en scoped settings health overview › does not invent a verified timestamp for an initially unobserved projection
-[22/53] tests/e2e/T17.spec.ts:437:5 › zh scoped settings health overview › reports only the current projection and one known issue, then preserves the last verified snapshot
-[23/53] tests/e2e/T17.spec.ts:503:5 › zh scoped settings health overview › does not invent a verified timestamp from an initially stale projection
-[24/53] tests/e2e/T17.spec.ts:514:5 › zh scoped settings health overview › does not invent a verified timestamp for an initially unobserved projection
-[25/53] tests/e2e/T17.spec.ts:528:1 › health fixture cleans up when its TCP port is occupied without touching its owner
-[26/53] tests/e2e/T17.spec.ts:557:7 › en timestamp scope › settings snapshot time is cleared on same-scope revalidation
-[27/53] tests/e2e/T17.spec.ts:557:7 › en timestamp scope › settings snapshot time is cleared on different-domain switch
-[28/53] tests/e2e/T17.spec.ts:557:7 › zh timestamp scope › settings snapshot time is cleared on same-scope revalidation
-[29/53] tests/e2e/T17.spec.ts:557:7 › zh timestamp scope › settings snapshot time is cleared on different-domain switch
-[30/53] tests/e2e/T17.spec.ts:605:1 › nested independent process reserves and releases a different overview proxy
-[31/53] tests/e2e/T17.spec.ts:635:1 › health fixture removes its own resources on normal and exceptional callback exits
-[32/53] tests/e2e/T17.spec.ts:654:1 › proxy exit preserves an unowned socket in its private directory
-[33/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: skip-reserved
-[34/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: control-skip
-[35/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: fixed-low-a
-[36/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: fixed-low-b
-[37/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: fixed-other
-[38/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: duplicate-control
-[39/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: backend-duplicate
-[40/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: exhaustion
-[41/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: control-exhaustion
-[42/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: listen-error
-[43/53] tests/e2e/T17.spec.ts:792:3 › overview proxy allocation without sockets: invalid-address
-[44/53] tests/e2e/T17.spec.ts:805:1 › replacement Playwright worker rejects dead registration and opens a fresh fixture
-[45/53] tests/e2e/T17.spec.ts:851:1 › TCP transport rejects unregistered, invalid, oversized and idle handshakes
-[46/53] tests/e2e/T17.spec.ts:888:1 › proxy sends no HTTP to an impostor backend with an invalid server proof
-[47/53] tests/e2e/T17.spec.ts:939:3 › real same-origin SSE handles abrupt backend close and cleans up
-[48/53] tests/e2e/T17.spec.ts:939:3 › real same-origin SSE handles graceful backend close and cleans up
-[49/53] tests/e2e/T17.spec.ts:939:3 › real same-origin SSE handles browser cancellation and cleans up
-[50/53] tests/e2e/T17.spec.ts:980:1 › idle authenticated SSE forwards headers before its first event
-[51/53] tests/e2e/T17.spec.ts:1018:1 › same-origin Vite forwards idle SSE headers before its first event
-[52/53] tests/e2e/T17.spec.ts:1042:1 › same-origin Vite preserves ordinary success and error responses
-[53/53] tests/e2e/T17.spec.ts:1076:1 › same-origin Vite returns 503 when an in-flight GET loses its backend
-  53 passed (1.3m)
+[1/55] tests/e2e/T17.spec.ts:59:1 › account preferences read back after reload and a failed save keeps the local language
+[2/55] tests/e2e/T17.spec.ts:87:1 › settings offer six groups and distinguish unconfigured host actions from the registered Vault handler
+[3/55] tests/e2e/T17.spec.ts:100:1 › a registered Vault uses the three-step review before applying and shows the same receipt on System
+[4/55] tests/e2e/T17.spec.ts:144:5 › en timestamp provenance › distinguishes the settings snapshot and the operation receipt check
+[5/55] tests/e2e/T17.spec.ts:184:5 › en timestamp provenance › hides the unobserved health timestamp online and after disconnect
+[6/55] tests/e2e/T17.spec.ts:200:5 › en timestamp provenance › keeps the verified time historical after an invalid fresh projection timestamp
+[7/55] tests/e2e/T17.spec.ts:226:5 › en timestamp provenance › settings overview distinguishes an invalid fresh projection timestamp from verified time
+[8/55] tests/e2e/T17.spec.ts:271:5 › en timestamp provenance › labels the current health projection and retains only verified time offline
+[9/55] tests/e2e/T17.spec.ts:144:5 › zh timestamp provenance › distinguishes the settings snapshot and the operation receipt check
+[10/55] tests/e2e/T17.spec.ts:184:5 › zh timestamp provenance › hides the unobserved health timestamp online and after disconnect
+[11/55] tests/e2e/T17.spec.ts:200:5 › zh timestamp provenance › keeps the verified time historical after an invalid fresh projection timestamp
+[12/55] tests/e2e/T17.spec.ts:226:5 › zh timestamp provenance › settings overview distinguishes an invalid fresh projection timestamp from verified time
+[13/55] tests/e2e/T17.spec.ts:271:5 › zh timestamp provenance › labels the current health projection and retains only verified time offline
+[14/55] tests/e2e/T17.spec.ts:301:1 › the first account read does not overwrite a language choice made while it is in flight
+[15/55] tests/e2e/T17.spec.ts:320:1 › Feishu setup reports unavailable ingress instead of asking for a secret on local HTTP
+[16/55] tests/e2e/T17.spec.ts:333:1 › Feishu confirms the scoped pairing, previews the exact test and leaves delivery unverified without a transport
+[17/55] tests/e2e/T17.spec.ts:372:1 › opening interaction settings does not revoke a session that cannot read channels
+[18/55] tests/e2e/T17.spec.ts:386:1 › settings overview does not turn an unobserved snapshot into checks or a known device
+[19/55] tests/e2e/T17.spec.ts:443:5 › en scoped settings health overview › reports only the current projection and one known issue, then preserves the last verified snapshot
+[20/55] tests/e2e/T17.spec.ts:509:5 › en scoped settings health overview › does not invent a verified timestamp from an initially stale projection
+[21/55] tests/e2e/T17.spec.ts:520:5 › en scoped settings health overview › does not invent a verified timestamp for an initially unobserved projection
+[22/55] tests/e2e/T17.spec.ts:443:5 › zh scoped settings health overview › reports only the current projection and one known issue, then preserves the last verified snapshot
+[23/55] tests/e2e/T17.spec.ts:509:5 › zh scoped settings health overview › does not invent a verified timestamp from an initially stale projection
+[24/55] tests/e2e/T17.spec.ts:520:5 › zh scoped settings health overview › does not invent a verified timestamp for an initially unobserved projection
+[25/55] tests/e2e/T17.spec.ts:534:1 › health fixture cleans up when its TCP port is occupied without touching its owner
+[26/55] tests/e2e/T17.spec.ts:563:7 › en timestamp scope › settings snapshot time is cleared on same-scope revalidation
+[27/55] tests/e2e/T17.spec.ts:563:7 › en timestamp scope › settings snapshot time is cleared on different-domain switch
+[28/55] tests/e2e/T17.spec.ts:563:7 › zh timestamp scope › settings snapshot time is cleared on same-scope revalidation
+[29/55] tests/e2e/T17.spec.ts:563:7 › zh timestamp scope › settings snapshot time is cleared on different-domain switch
+[30/55] tests/e2e/T17.spec.ts:611:1 › nested independent process reserves and releases a different overview proxy
+[31/55] tests/e2e/T17.spec.ts:641:1 › health fixture removes its own resources on normal and exceptional callback exits
+[32/55] tests/e2e/T17.spec.ts:660:1 › proxy exit preserves an unowned socket in its private directory
+[33/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: skip-reserved
+[34/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: control-skip
+[35/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: fixed-low-a
+[36/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: fixed-low-b
+[37/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: fixed-other
+[38/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: duplicate-control
+[39/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: backend-duplicate
+[40/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: exhaustion
+[41/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: control-exhaustion
+[42/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: listen-error
+[43/55] tests/e2e/T17.spec.ts:798:3 › overview proxy allocation without sockets: invalid-address
+[44/55] tests/e2e/T17.spec.ts:811:1 › replacement Playwright worker rejects dead registration and opens a fresh fixture
+[45/55] tests/e2e/T17.spec.ts:857:1 › TCP transport rejects unregistered, invalid, oversized and idle handshakes
+[46/55] tests/e2e/T17.spec.ts:894:1 › proxy sends no HTTP to an impostor backend with an invalid server proof
+[47/55] tests/e2e/T17.spec.ts:945:3 › real same-origin SSE handles abrupt backend close and cleans up
+[48/55] tests/e2e/T17.spec.ts:945:3 › real same-origin SSE handles graceful backend close and cleans up
+[49/55] tests/e2e/T17.spec.ts:945:3 › real same-origin SSE handles browser cancellation and cleans up
+[50/55] tests/e2e/T17.spec.ts:986:1 › idle authenticated SSE forwards headers before its first event
+[51/55] tests/e2e/T17.spec.ts:1024:1 › same-origin Vite forwards idle SSE headers before its first event
+[52/55] tests/e2e/T17.spec.ts:1048:1 › same-origin Vite preserves ordinary success and error responses
+[53/55] tests/e2e/T17.spec.ts:1082:1 › same-origin Vite returns 503 when an in-flight GET loses its backend
+[54/55] tests/e2e/T17.spec.ts:1103:1 › running the settings checks shows what each one observed
+[55/55] tests/e2e/T17.spec.ts:1117:1 › the System page shows the status of each category
+  55 passed (1.3m)
 
 --- stderr ---
-[WebServer] (node:17488) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:37095) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:17490) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:37097) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

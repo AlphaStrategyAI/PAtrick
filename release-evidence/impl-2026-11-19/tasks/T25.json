@@ -1,6 +1,6 @@
 {
   "task": "T25",
-  "completedAt": "2026-11-19T14:57:54.764Z",
+  "completedAt": "2026-11-19T15:50:54.607Z",
   "productClauses": [
     "C1",
     "C2",
@@ -18,7 +18,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -28,12 +28,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/pilot-trace-consistency.log",
-      "evidenceSha256": "e54a9a62956ce207e40fdbf10f3e9d155ba14e5ea247b07e70fee8bb774dd1b8",
-      "durationMs": 1158
+      "evidenceSha256": "8e3da4419d41b8a11382d3afc74a99c6a0a7afe9e1e9e4b89cd9b37e4b3bfcd7",
+      "durationMs": 1238
     },
     {
       "id": "directory-block-browser",
@@ -42,7 +42,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -52,12 +52,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/directory-block-browser.log",
-      "evidenceSha256": "a6871abe06a85ca487440a742ca3c3d359ba5bc07a1ccb05586b341a019009a0",
-      "durationMs": 5113
+      "evidenceSha256": "634088d477bf391886a2c1c9e4a52f801ad1956d561f043d2a0698987a7a7b81",
+      "durationMs": 4951
     },
     {
       "id": "provider-backed-work-routes",
@@ -66,7 +66,7 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -76,12 +76,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T25/provider-backed-work-routes.log",
-      "evidenceSha256": "e627f71aafa04a52f2b4ea685ef0c24da6621a8af9d9b70c66adf28d67ac9d54",
-      "durationMs": 896,
+      "evidenceSha256": "e91b65245a3bac42fa03085b6ab8947461f3afa38526ec388376dfd032a670fa",
+      "durationMs": 951,
       "pendingReason": "三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。"
     }
   ]

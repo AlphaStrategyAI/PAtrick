@@ -1,6 +1,6 @@
 {
   "task": "T01",
-  "completedAt": "2026-11-19T14:51:13.039Z",
+  "completedAt": "2026-11-19T15:44:10.477Z",
   "productClauses": [
     "C6"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T01/contract-envelope.log",
-      "evidenceSha256": "872b56e96fd9dfb176c340644d8af5dd9d792f8a85ede83406daa1a0b2a14c97",
-      "durationMs": 1803
+      "evidenceSha256": "6f5dc49ccce22c8f10948a5d121b6007520a6a7736fd67bb3ba133ecbc1a8aee",
+      "durationMs": 1635
     },
     {
       "id": "lint",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T01/lint.log",
-      "evidenceSha256": "9e39b25edf01c3f5b07df357fcf7599932069614b9285b563ef6c180dea78686",
-      "durationMs": 4701
+      "evidenceSha256": "5c0868ca34edd549be18d1a8a03ac653c6cdd8e110634e7f253a29ed8a945794",
+      "durationMs": 4698
     },
     {
       "id": "typecheck",
@@ -60,7 +60,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "c3fe78acbc1549f98b7f50df8b5983767f37bfef",
+        "code": "6cb343ff418ecec9194cfe62b9cfed23ebd85e76",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -70,12 +70,12 @@
         "upstream": "4df09547ac7a738c8f4476c01e80633bb66ff1e95a257c3d4c9ed97e2c556aa9",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "22:9fd4c87659627039b587ffd9a4fa246dbfc665f228636c2b7f8caf7a7ab08570",
-        "tests": "4cce21becef543c61cb5a6d826dbca9eddf3e96f6d710f037e1567083be6b090",
-        "fixtures": "eef96a1506ec255dd9a06e8cf18bffdb337504c639b8a2013653a8f5ab783aee"
+        "tests": "d2467ee7c5a6d7badacea34759cbeb89109b93806e475530f54e5a8385f2a9d6",
+        "fixtures": "a51471ebaa36ff971331f36b69a087335323de3164f1c23ac0b8bd593709a5f6"
       },
       "evidenceFile": "evidence/T01/typecheck.log",
-      "evidenceSha256": "5241962cd753e97898e6f3a6eab752a9a7be84d063316684e207892ab8a49f23",
-      "durationMs": 7495
+      "evidenceSha256": "14d64c81d035841c457a7999f78e3e48c9a746b0b1c381244b091184f3f7763e",
+      "durationMs": 7522
     }
   ]
 }

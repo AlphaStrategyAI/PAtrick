@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/unit/T15-command-journal.test.ts
-exit=0 signal=none durationMs=768
+exit=0 signal=none durationMs=728
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=768
 
  Test Files  1 passed (1)
       Tests  6 passed (6)
-   Start at  22:52:32
-   Duration  249ms (import 50%, transform 45%, tests 3%, worker 2%)
+   Start at  23:45:30
+   Duration  216ms (import 73%, transform 19%, tests 4%, worker 3%)
 
 
 --- stderr ---
