@@ -1,0 +1,43 @@
+{
+  "kind": "executor-admission",
+  "guest": "lima-guest",
+  "guestMarkerPresent": true,
+  "backends": [
+    {
+      "backend": "codex",
+      "status": "blocked",
+      "available": false,
+      "command": "codex --version",
+      "installedVersion": "codex-cli 0.163.0",
+      "liveTerminal": false,
+      "liveToolCall": false,
+      "isolated": true,
+      "observation": "codex-cli 0.163.0\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: codex-cli 0.163.0",
+      "evidenceSha256": "fa855c9d615b6e5fb3e425f7090263bded0b7673cc8a1b861b57dc1108b4851f"
+    },
+    {
+      "backend": "grok",
+      "status": "blocked",
+      "available": false,
+      "command": "grok --version",
+      "installedVersion": null,
+      "liveTerminal": false,
+      "liveToolCall": false,
+      "isolated": true,
+      "observation": "spawn grok ENOENT\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: unavailable",
+      "evidenceSha256": "b19ec8752a594bb8285050256a7d7b97e64e2b5e433d56d2a4020606c38a5ec8"
+    },
+    {
+      "backend": "dsh",
+      "status": "blocked",
+      "available": false,
+      "command": "dsh --version",
+      "installedVersion": "0.2.2-rc.2",
+      "liveTerminal": false,
+      "liveToolCall": false,
+      "isolated": true,
+      "observation": "0.2.2-rc.2\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: 0.2.2-rc.2",
+      "evidenceSha256": "df49493b41488889fd3ab88cd0537bf1b20abbf44c49960579c26259d2094f7c"
+    }
+  ]
+}

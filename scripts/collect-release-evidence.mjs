@@ -60,6 +60,13 @@ function evaluatePrecondition(precondition) {
       return Array.isArray(items) && items.length > 0
         && items.every((item) => item[precondition.field] === 'pending');
     }
+    case 'json-entries-incomplete': {
+      // The real capability is missing unless every recorded entry says so.
+      const document = readJson(join(root, precondition.file));
+      const items = document[precondition.collection];
+      if (!Array.isArray(items) || items.length === 0) return true;
+      return !items.every((item) => item[precondition.field] === precondition.value);
+    }
     default:
       throw new Error(`unknown precondition type: ${precondition.type}`);
   }

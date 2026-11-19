@@ -716,7 +716,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
-| T09 在隔离虚拟机内执行准入 | `deploy/lima/executor.yaml` 的来宾虚拟机未在本机启动 | `T09/executor-production-admission` blocked |
+| T09 在隔离虚拟机内执行准入 | 隔离来宾已启动并跑过准入，但来宾内没有模型凭据，实时终端与 Harness 领域工具调用没有成功；Grok Build 只发布了 macOS aarch64 版本 | `T09/executor-production-admission` blocked，记录见 `docs/operations/evidence/executor-admission-guest.json` |
 | T10 从实际飞书应用配对与双向验证 | 没有真实飞书应用凭据 | `T10/feishu-live-round-trip` blocked |
 | T21 已登记设备的双启动顺序与企业 DNS | 没有登记设备和实测记录 | `T21/registered-device-vpn-admission` blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
