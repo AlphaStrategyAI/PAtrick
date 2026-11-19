@@ -9,6 +9,7 @@ on:
       - 'deploy/**'
       - 'docs/designs/设计资产/v2/**'
       - 'scripts/build-runtime.mjs'
+      - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
       - 'package*.json'
       - 'tsconfig.json'
@@ -21,6 +22,7 @@ on:
       - 'deploy/**'
       - 'docs/designs/设计资产/v2/**'
       - 'scripts/build-runtime.mjs'
+      - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
       - 'package*.json'
       - 'tsconfig.json'
@@ -96,6 +98,34 @@ jobs:
           archive="node-v$NODE_VERSION-headers.tar.xz"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' \
             "https://nodejs.org/dist/v$NODE_VERSION/$archive" --output "$RUNNER_TEMP/$archive"
+      - name: Observe unsigned Darwin toolchain
+        id: observe
+        continue-on-error: true
+        run: |
+          evidence="$RUNNER_TEMP/patrick-toolchain-observation"
+          mkdir "$evidence"
+          node scripts/observe-darwin-toolchain.mjs "$TARGET_ARCH" "$GITHUB_SHA" > "$evidence/toolchain.json"
+          (
+            cd "$evidence"
+            shasum -a 256 toolchain.json > SHA256SUMS
+            cat SHA256SUMS
+            node -e 'const r = require("./toolchain.json"); console.log(JSON.stringify({
+              commit: r.commit, target: r.target, host: r.host, hostConsistency: r.hostConsistency,
+              headers: r.headers, sources: r.sources, developer: r.developer, sdk: r.sdk, tools: r.tools,
+              fixedInputs: r.fixedInputs, dependencyScan: r.dependencyScan
+            }));'
+          )
+      - name: Upload unsigned toolchain observation
+        if: steps.observe.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: patrick-darwin-${{ matrix.arch }}-${{ github.sha }}-unsigned-toolchain-observation
+          path: |
+            ${{ runner.temp }}/patrick-toolchain-observation/toolchain.json
+            ${{ runner.temp }}/patrick-toolchain-observation/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
       - name: Install locked dependencies and compile better-sqlite3
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
