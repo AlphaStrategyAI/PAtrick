@@ -27,6 +27,7 @@
     "./publisher/outcomes": "./publisher/outcomes.ts"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "@patrick/contracts": "*",
     "@patrick/domain": "*",
     "@patrick/storage": "*",

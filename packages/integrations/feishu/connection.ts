@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { appendDomainEvent, assertRecoveryWriteAllowed, recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import {
   channelPermit,
@@ -77,6 +80,35 @@ type Snap = {
 
 const sockets = new Map<string, { id: string }>();
 
+/**
+ * The Feishu application credentials of this installation.
+ *
+ * The environment wins, so a deployment can inject them. Otherwise the owner
+ * keeps them in the file the probe and the runtime both read; the file stays
+ * outside the repository and its values never reach a command line.
+ */
+export function feishuAppCredentials(env: NodeJS.ProcessEnv = process.env):
+  { appId: string; appSecret: string; source: 'environment' | 'file' | 'none' } {
+  const fromEnvironment = {
+    appId: (env.FEISHU_APP_ID || env.LARK_APP_ID || '').trim(),
+    appSecret: (env.FEISHU_APP_SECRET || env.LARK_APP_SECRET || '').trim(),
+  };
+  if (fromEnvironment.appId && fromEnvironment.appSecret) return { ...fromEnvironment, source: 'environment' };
+  const path = env.PATRICK_FEISHU_CREDENTIALS_FILE?.trim() || join(homedir(), '.patrick', 'secrets', 'feishu.env');
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch { return { appId: '', appSecret: '', source: 'none' }; }
+  const values = new Map<string, string>();
+  for (const line of text.split('\n')) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match || line.trim().startsWith('#')) continue;
+    values.set(match[1]!, match[2]!.trim().replace(/^["']|["']$/gu, ''));
+  }
+  const appId = (values.get('FEISHU_APP_ID') || values.get('LARK_APP_ID') || '').trim();
+  const appSecret = (values.get('FEISHU_APP_SECRET') || values.get('LARK_APP_SECRET') || '').trim();
+  if (!appId || !appSecret) return { appId: '', appSecret: '', source: 'none' };
+  return { appId, appSecret, source: 'file' };
+}
+
 export function openSupervisedSocket(appId: string, tenant: string): { id: string } {
   const key = `${appId}/${tenant}`;
   const existing = sockets.get(key);
@@ -95,7 +127,15 @@ export function probeDeferredCard(): {
 } {
   const script = 'const id = process.env.FEISHU_APP_ID || process.env.LARK_APP_ID || ""; const secret = process.env.FEISHU_APP_SECRET || process.env.LARK_APP_SECRET || ""; if (!id || !secret) throw new Error("missing Feishu app credential");';
   const command = `${process.execPath} --input-type=module -e ${JSON.stringify(script)}`;
-  const credential = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  // The credentials of the file reach the child process as its environment, so
+  // the secret never appears in the command or in the observation.
+  const credentials = feishuAppCredentials();
+  const childEnvironment = { ...process.env };
+  if (credentials.source === 'file') {
+    childEnvironment.FEISHU_APP_ID = credentials.appId;
+    childEnvironment.FEISHU_APP_SECRET = credentials.appSecret;
+  }
+  const credential = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: childEnvironment });
   const sdk = spawnSync(process.execPath, ['--input-type=module', '-e', 'import("@larksuiteoapi/node-sdk").then(() => process.exit(0)).catch((error) => { console.error(error && error.code ? error.code : error); process.exit(1); })'], { encoding: 'utf8' });
   const observation = [
     'feishu_deferred_card',
