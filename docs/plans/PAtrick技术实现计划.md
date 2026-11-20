@@ -716,7 +716,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
-| T10 可信启用、真实双入口竞答与排空 | 配对、双向读回、暂缓后选项 A 已在真实租户完成；启用、竞答和排空还没有在这条连接上重放 | `T10/feishu-live-round-trip` passed |
+| T10 真实双入口竞答与排空 | 配对、双向读回、暂缓后选项 A 和可信启用已完成；竞答和排空还没有在这条连接上重放 | `T10/feishu-live-round-trip` passed |
 | T21 已登记设备的双启动顺序与企业 DNS | 没有登记设备和实测记录 | `T21/registered-device-vpn-admission` blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
 | T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |

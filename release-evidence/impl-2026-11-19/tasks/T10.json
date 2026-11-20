@@ -51,9 +51,9 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T10/feishu-live-round-trip.log",
-      "evidenceSha256": "fc41bdf4bd5a7192bd8ae4e1950c2228eb10980e8f05ff6f7e8376a36f93b3df",
-      "durationMs": 2179,
-      "note": "真实租户读回了配对消息、发出的测试消息，以及暂缓之后的选项 A。可信启用、双入口竞答和排空仍未在这条连接上重放。"
+      "evidenceSha256": "d67fecc60503be2458de9a63dd8855055b66f2b11407899462f317a711af02e7",
+      "durationMs": 1776,
+      "note": "真实租户完成了配对、双向读回、暂缓后的选项 A，以及可信启用。双入口竞答和排空还没有在这条连接上重放。"
     }
   ]
 }

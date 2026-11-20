@@ -235,6 +235,9 @@ test('the recorded Feishu round trip reads back defer and a later decision', () 
   expect(stored.observation).toContain('answer_after_defer_action: option-a');
   expect(stored.observation).toContain('answer_card_distinct_from_defer: true');
   expect(stored.observation).toContain('business_facts: none');
+  expect(stored.observation).toContain('enable_status: ready');
+  expect(stored.observation).toContain('enable_test_message_id: om_x100b7f34f81f97ecdf7cfcb2b645e6e');
+  expect(stored.observation).toContain('enable_readback: match');
   expect(stored.observation).not.toMatch(/app_secret|FEISHU_APP_SECRET|ou_|oc_|tenant_key/i);
 });
 
