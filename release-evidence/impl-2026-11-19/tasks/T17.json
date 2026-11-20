@@ -1,6 +1,6 @@
 {
   "task": "T17",
-  "completedAt": "2026-11-19T18:52:43.784Z",
+  "completedAt": "2026-11-20T00:06:20.197Z",
   "productClauses": [
     "C4",
     "C5",
@@ -15,7 +15,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -25,12 +25,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T17/settings-change-chain.log",
-      "evidenceSha256": "b6e30b24e2ca5157b828ee9bb4c67d213cadc5f1d305983ad9ab7a33372bbffd",
-      "durationMs": 2122
+      "evidenceSha256": "cf03607f870633d0d2e1d09c37cc429d51b9c64c8cee3ebeacf96c77caf9843e",
+      "durationMs": 2202
     },
     {
       "id": "settings-browser",
@@ -39,7 +39,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -49,12 +49,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T17/settings-browser.log",
-      "evidenceSha256": "18ea3876f751b4b3d0e9dedc4e970e841752a6e2d3969b62b80a8b6745225f38",
-      "durationMs": 79382
+      "evidenceSha256": "92eaf93aabcbf40eecf29c891097c20f6c41a684c624f46ffc488c42a6bd4154",
+      "durationMs": 80441
     }
   ]
 }

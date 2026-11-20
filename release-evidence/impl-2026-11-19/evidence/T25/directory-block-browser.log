@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T25-directory-block.config.ts --reporter=line
-exit=0 signal=none durationMs=5144
+exit=0 signal=none durationMs=5091
 --- stdout ---
 
 
@@ -8,13 +8,13 @@ Running 4 tests using 1 worker
 
 
 [1/4] tests/e2e/T25-directory-block.spec.ts:10:1 › an existing folder shows its saved status and blocked reader in list and detail
-[2/4] tests/e2e/T25-directory-block.spec.ts:114:1 › directory capability expires without a manual refresh while the next request hangs
-[3/4] tests/e2e/T25-directory-block.spec.ts:131:1 › an actually delivered capability reply cannot become fresh after its request lifetime
-[4/4] tests/e2e/T25-directory-block.spec.ts:152:1 › returning to the page and reconnecting revalidates before showing directory capability
-  4 passed (4.5s)
+[2/4] tests/e2e/T25-directory-block.spec.ts:112:1 › directory capability expires without a manual refresh while the next request hangs
+[3/4] tests/e2e/T25-directory-block.spec.ts:129:1 › an actually delivered capability reply cannot become fresh after its request lifetime
+[4/4] tests/e2e/T25-directory-block.spec.ts:150:1 › returning to the page and reconnecting revalidates before showing directory capability
+  4 passed (4.4s)
 
 --- stderr ---
-[WebServer] (node:24603) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:59402) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:24605) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:59406) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

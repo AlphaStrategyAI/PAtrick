@@ -1,6 +1,6 @@
 {
   "task": "T11",
-  "completedAt": "2026-11-19T18:50:19.312Z",
+  "completedAt": "2026-11-20T00:03:53.556Z",
   "productClauses": [
     "C2"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/conversations-and-consultations.log",
-      "evidenceSha256": "7e4ee9c52dd6efec0693c8a2d3158deb36bf097b7bac884798a73d79dc0791ed",
-      "durationMs": 1064
+      "evidenceSha256": "f0be85f9c163a56f0194a6a45edacdf473fa451920d797c16d067afff7a46fbe",
+      "durationMs": 1088
     },
     {
       "id": "hub-contract",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/hub-contract.log",
-      "evidenceSha256": "46a758933a4c428221c5b525765f0eeeb0640d0e6df2716c34b5259949e9da60",
-      "durationMs": 1444
+      "evidenceSha256": "f458583c4ca30851bded7925f41bdc7dd3bda59f132a8e6d41b649bed0023864",
+      "durationMs": 1432
     },
     {
       "id": "hub-routing",
@@ -60,7 +60,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -70,12 +70,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/hub-routing.log",
-      "evidenceSha256": "f2da4d377bbc7d250a95f571ede56e8aa792381c3c9bf28b92d1599d70971154",
-      "durationMs": 3726
+      "evidenceSha256": "89302690ae3ae813118f5a6e22cf92f2e440d8356626483a8cd6964d02df08b5",
+      "durationMs": 3698
     }
   ]
 }

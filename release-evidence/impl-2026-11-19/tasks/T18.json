@@ -1,6 +1,6 @@
 {
   "task": "T18",
-  "completedAt": "2026-11-19T18:52:50.156Z",
+  "completedAt": "2026-11-20T00:06:26.573Z",
   "productClauses": [
     "C6"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T18/rss-and-webpage-collection.log",
-      "evidenceSha256": "112a5bb830559b7865bad597cb44a1f13fbb7dc797bfaea59ef3b0e841f7d7b5",
-      "durationMs": 2180
+      "evidenceSha256": "0cb59c1fe7001313d59cc899b84a8be993539b1c8af46920a0b8d98350d9f913",
+      "durationMs": 2271
     },
     {
       "id": "collection-browser",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T18/collection-browser.log",
-      "evidenceSha256": "b2dab444e806655bb275eb3fee707151740d98060d8e60f817e2e4da131e708b",
-      "durationMs": 4191
+      "evidenceSha256": "593d67f5a3b3ab337bfa2df3e05d70a24c5d1da25247cd76ce3bfacab0972bc5",
+      "durationMs": 4104
     }
   ]
 }

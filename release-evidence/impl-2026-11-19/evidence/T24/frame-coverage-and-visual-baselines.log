@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/visual/T24.config.ts --reporter=line
-exit=0 signal=none durationMs=40394
+exit=0 signal=none durationMs=39243
 --- stdout ---
 
 
@@ -10,10 +10,10 @@ Running 41 tests using 1 worker
 [1/41] tests/visual/T24-baseline.spec.ts:22:5 › en settings index › desktop runtime baseline and locked design comparison
 [2/41] tests/visual/T24-baseline.spec.ts:22:5 › zh settings index › desktop runtime baseline and locked design comparison
 [3/41] tests/visual/T24-edit.spec.ts:212:1 › frame-coverage · paired editing registration, saved file and export transitions
-[4/41] tests/visual/T24-feishu.spec.ts:296:3 › en owner manually recovers pairing after a lost rejection response without a credential provider
-[5/41] tests/visual/T24-feishu.spec.ts:296:3 › zh owner manually recovers pairing after a lost rejection response without a credential provider
-[6/41] tests/visual/T24-feishu.spec.ts:332:1 › frame-coverage · bilingual Feishu navigation, setup, pairing, owner and preview
-[7/41] tests/visual/T24-feishu.spec.ts:352:1 › the owner stages a new credential and rotates it through the trusted change
+[4/41] tests/visual/T24-feishu.spec.ts:306:3 › en owner manually recovers pairing after a lost rejection response without a credential provider
+[5/41] tests/visual/T24-feishu.spec.ts:306:3 › zh owner manually recovers pairing after a lost rejection response without a credential provider
+[6/41] tests/visual/T24-feishu.spec.ts:342:1 › frame-coverage · bilingual Feishu navigation, setup, pairing, owner and preview
+[7/41] tests/visual/T24-feishu.spec.ts:362:1 › the owner stages a new credential and rotates it through the trusted change
 [8/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › desktop six described keyboard links in one column
 [9/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › tablet six described keyboard links in one column
 [10/41] tests/visual/T24-settings-index.spec.ts:28:7 › en Settings index › mobile six described keyboard links in one column
@@ -48,10 +48,10 @@ Running 41 tests using 1 worker
 [39/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-delegation
 [40/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-system
 [41/41] tests/visual/T24.spec.ts:192:1 › frame-coverage · paired Vault review, back and apply runtime transitions
-  41 passed (39.7s)
+  41 passed (38.6s)
 
 --- stderr ---
-[WebServer] (node:24100) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:58897) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:24102) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:58901) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

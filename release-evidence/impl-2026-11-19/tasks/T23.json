@@ -1,6 +1,6 @@
 {
   "task": "T23",
-  "completedAt": "2026-11-19T18:55:15.972Z",
+  "completedAt": "2026-11-20T00:08:51.993Z",
   "productClauses": [
     "C8"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/release-candidate-admission.log",
-      "evidenceSha256": "8f93b367ad028cb404b595bfd86cbc73591e317f38447c7ed990b5a7881ac8fa",
-      "durationMs": 17039
+      "evidenceSha256": "74f35cb19b6f5eeb6bae803f081eb408b2772bd6e80d9d8f155240fab438969b",
+      "durationMs": 16955
     },
     {
       "id": "runtime-build-and-relocate",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/runtime-build-and-relocate.log",
-      "evidenceSha256": "6c48201bd1cdcad4d660143f307b9178d9085915591b58866218ed18c6bcd6bb",
-      "durationMs": 103041
+      "evidenceSha256": "392dbec70c6c9780ebefbb3e7f7b1934df82f8c2ebd71d9ce45c497375898f23",
+      "durationMs": 103354
     },
     {
       "id": "empty-host-install-and-upgrade",
@@ -60,7 +60,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "546a6d2fa750847b31de675eb03f72fbeb570fcc",
+        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -70,12 +70,12 @@
         "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6c23d090c8efa874f53eeea6fe9784d365baee1a3a6d7597d6c8fa07053ec297",
-        "fixtures": "7b2e280d221ea48590a8b0d286ee6119c85a45fab27d46482dfb4f31de08c23c"
+        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/empty-host-install-and-upgrade.log",
-      "evidenceSha256": "7ae5531d29c818e40dcbb1ef1a662d4314afcb4e19f8cd4a4f8a9ea624c2943c",
-      "durationMs": 1437,
+      "evidenceSha256": "c5a3a307f3aef5feae8f001ad1f9dd87c091fd0e0dea609ee6d62539639fb513",
+      "durationMs": 1404,
       "blockedReason": "空机安装、重启与升级只对真实安装目录有证据；本机没有已安装的 PAtrick.app，候选包的 installable 仍为 false。"
     }
   ]

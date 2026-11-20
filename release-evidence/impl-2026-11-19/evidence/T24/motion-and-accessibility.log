@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T24.config.ts --reporter=line
-exit=0 signal=none durationMs=20736
+exit=0 signal=none durationMs=19854
 --- stdout ---
 
 
@@ -15,12 +15,12 @@ Running 7 tests using 1 worker
 [5/7] tests/e2e/T24.a11y.spec.ts:135:1 › stale, non-running, and rejected health reads keep the logo static
 [6/7] tests/e2e/T24.a11y.spec.ts:166:1 › the shared logo stays available in the keyboard-operated drawer at both compact widths
 [7/7] tests/e2e/T24.a11y.spec.ts:184:1 › demo mode keeps the logo static and reports unknown service health
-  7 passed (19.9s)
+  7 passed (19.0s)
 
 --- stderr ---
-[WebServer] (node:24353) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:59144) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-[WebServer] (node:24384) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:59175) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:24388) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:59177) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
