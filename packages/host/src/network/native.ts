@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { FixedNetworkActuator } from './supervisor.js';
 import { networkPolicyDigest } from './supervisor.js';
-import { parseNetworkPolicy, type FixedRepair, type NetworkOwner, type NetworkPolicy } from './vpn.js';
+import { parseNetworkPolicy, vpnClientForBundle, vpnClientRole, type FixedRepair, type NetworkOwner, type NetworkPolicy, type VpnClient, type VpnRole } from './vpn.js';
 import type { ConnectProxy } from './proxy.js';
 import type { ProbeReading } from './probes.js';
 
@@ -14,8 +14,8 @@ type Proxy = Readonly<{ enabled: boolean; server: string; port: number }>;
 type Proxies = Readonly<{ web: Proxy; secure: Proxy; socks: Proxy }>;
 type Binding = (Readonly<{ repairId: string; service: string }> & (
   Readonly<{ servers: readonly string[]; proxies?: never }> | Readonly<{ proxies: Proxies; servers?: never }>))
-  | Readonly<{ repairId: string; client: 'tunnelblick'; configuration: string }>;
-type VpnSnapshot = Readonly<{ vpn_state: 'CONNECTED' | 'EXITING' }>;
+  | Readonly<{ repairId: string; client: 'openvpn' | 'shadowrocket'; configuration: string }>;
+type VpnSnapshot = Readonly<{ vpn_state: 'CONNECTED' | 'EXITING' | 'DISCONNECTED' }>;
 type Snapshot = readonly string[] | Proxies | VpnSnapshot;
 type Journal = { device: string; policy: string; repairId: string; owner: NetworkOwner;
   priorRule: string; changedRule: string; before: Snapshot };
@@ -30,18 +30,49 @@ const canonical = (value: Snapshot): Snapshot => Array.isArray(value) || 'vpn_st
 const digest = (value: Snapshot) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const safeLabel = (value: string) => typeof value === 'string' && value.length > 0 && value.length <= 160 &&
   !value.startsWith('-') && ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
-const vpnScript = (action: 'read' | 'connect' | 'disconnect') => `on run argv
-set configurationName to item 1 of argv
-if application id "net.tunnelblick.tunnelblick" is not running then return "UNAVAILABLE"
-tell application id "net.tunnelblick.tunnelblick"
-${action === 'read' ? 'return state of first configuration whose name is configurationName' : `${action} configurationName`}
-end tell
-end run`;
+const vpnActions = { read: 'status', connect: 'start', disconnect: 'stop' } as const;
+const vpnState = (stdout: string): VpnSnapshot['vpn_state'] => {
+  const line = stdout.trim().split(/\r?\n/u)[0]?.trim();
+  if (line === 'Connected') return 'CONNECTED';
+  if (line === 'Connecting' || line === 'Disconnecting') return 'EXITING';
+  if (line === 'Disconnected') return 'DISCONNECTED';
+  throw new Error('NETWORK_NATIVE_UNKNOWN');
+};
 const restorable = (snapshot: Snapshot) => Array.isArray(snapshot) || ('vpn_state' in snapshot ? snapshot.vpn_state === 'CONNECTED' :
   proxyKinds.every((kind) => (snapshot as Proxies)[kind].server.length > 0 && (snapshot as Proxies)[kind].port > 0));
 const permissionError = (error: unknown) => error && typeof error === 'object' &&
   (('code' in error && ['EACCES', 'EPERM'].includes(String(error.code))) ||
     ('message' in error && /not authorized to send Apple events|\(-1743\)/iu.test(String(error.message))));
+
+
+export type RegisteredVpnService = Readonly<{
+  serviceId: string; client: VpnClient; role: VpnRole;
+  state: 'connected' | 'connecting' | 'disconnecting' | 'disconnected';
+}>;
+const vpnListLine = /^\* \((Connected|Connecting|Disconnecting|Disconnected)\)\s+([0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}) VPN \(([^)]+)\) /u;
+const listedVpnState = { Connected: 'connected', Connecting: 'connecting', Disconnecting: 'disconnecting', Disconnected: 'disconnected' } as const;
+export function parseRegisteredVpnServices(stdout: string): readonly RegisteredVpnService[] {
+  if (typeof stdout !== 'string' || stdout.length > 64 * 1024) throw new Error('NETWORK_NATIVE_UNKNOWN');
+  const services: RegisteredVpnService[] = [];
+  const seen = new Set<string>();
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (line.length === 0 || line.startsWith('Available network connection services')) continue;
+    const match = vpnListLine.exec(line);
+    if (!match) {
+      if (line.includes(' VPN (')) throw new Error('NETWORK_NATIVE_UNKNOWN');
+      continue;
+    }
+    const serviceId = match[2];
+    const key = serviceId.toUpperCase();
+    if (seen.has(key)) throw new Error('NETWORK_NATIVE_UNKNOWN');
+    seen.add(key);
+    const client = vpnClientForBundle(match[3]);
+    if (!client) continue;
+    const state = listedVpnState[match[1] as keyof typeof listedVpnState];
+    services.push(Object.freeze({ serviceId, client, role: vpnClientRole(client), state }));
+  }
+  return Object.freeze(services);
+}
 
 export function createMacNetworkActuator(options: {
   policy: NetworkPolicy; localDeviceId: string; bindings: readonly Binding[]; snapshotDirectory: string;
@@ -54,7 +85,7 @@ export function createMacNetworkActuator(options: {
     const binding = structuredClone(raw);
     const repair = policy.repairs.find(({ id }) => id === binding.repairId);
     const valid = repair?.kind === 'reconnect_vpn'
-      ? 'client' in binding && binding.client === 'tunnelblick' && safeLabel(binding.configuration) &&
+      ? 'client' in binding && (binding.client === 'openvpn' || binding.client === 'shadowrocket') && safeLabel(binding.configuration) &&
         policy.vpn_paths.some(({ id, client }) => id === repair.path && client === binding.client)
       : !('client' in binding) && safeLabel(binding.service) &&
         (repair?.kind === 'refresh_dns' ? validDns(binding.servers)
@@ -77,13 +108,11 @@ export function createMacNetworkActuator(options: {
   };
   const command = (args: readonly string[], signal: AbortSignal) => run('/usr/sbin/networksetup', args, signal);
   const vpnCommand = (binding: Extract<Binding, { client: string }>, action: 'read' | 'connect' | 'disconnect', signal: AbortSignal) =>
-    run('/usr/bin/osascript', ['-e', vpnScript(action), binding.configuration], signal);
+    run('/usr/sbin/scutil', ['--nc', vpnActions[action], binding.configuration], signal);
   async function read(binding: Binding, signal: AbortSignal): Promise<Snapshot> {
     if ('client' in binding) {
       const { stdout } = await vpnCommand(binding, 'read', signal);
-      const vpn_state = stdout.trim();
-      if (vpn_state !== 'CONNECTED' && vpn_state !== 'EXITING') throw new Error('NETWORK_NATIVE_UNKNOWN');
-      return { vpn_state };
+      return { vpn_state: vpnState(stdout) };
     }
     if (binding.servers) {
       const { stdout } = await command(['-getdnsservers', binding.service], signal);
@@ -201,7 +230,7 @@ export function createMacNetworkActuator(options: {
 
 function validVpn(value: unknown): value is VpnSnapshot {
   return Boolean(value && typeof value === 'object' && Object.keys(value).length === 1 && 'vpn_state' in value &&
-    (value.vpn_state === 'CONNECTED' || value.vpn_state === 'EXITING'));
+    (value.vpn_state === 'CONNECTED' || value.vpn_state === 'EXITING' || value.vpn_state === 'DISCONNECTED'));
 }
 
 function validDns(value: unknown): value is readonly string[] {

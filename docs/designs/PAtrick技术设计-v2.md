@@ -515,7 +515,7 @@ vault-kit包含知识/案例/标准模板、索引、Bases/Canvas及manifest，�
 | **预算与停止** | 按business累计时限、attempt和子任务额度，重试/session更换不清零。API每次逻辑调用前原子预留，覆盖root/child/title/compaction/retry；未知价格、归属、用量或服务失联时不放行新收费调用，缺usage保留未决预留。订阅缺计量则明确unknown，只硬限时间/次数 |
 | **网络与VPN** | 区分worker→hub、主机间心跳、GitHub/GitLab业务探针。故障先查本机接口/路由/DNS/代理，再查目标TCP/TLS/HTTP/鉴权；只执行已测固定恢复，最后同时复验故障目标、原正常目标与peer。401/403归身份，429退避，不关闭TLS验证 |
 | **主机互斥** | 路由、DNS、系统代理与VPN变更共用主机锁和network_epoch；回退只撤销本轮拥有且仍匹配epoch的变更。重连有次数/冷却上限，MFA形成一次问题；恢复不产生新业务根、不清零hops、不绕过待答门禁 |
-| **双VPN** | Tunnelblick/OpenVPN/Shadowrocket按实际版本、账号与后台会话探测能力。测试两种启动顺序、并发访问、企业DNS和重连影响；不能并用则明确dual_path=false，按许可分机或受控轮换，不改公司网络策略 |
+| **双VPN** | 只保留 OpenVPN 与 Shadowrocket，按实际版本、账号与后台会话探测。OpenVPN 默认连接公司内网，Shadowrocket 默认访问公网网站。测试两种启动顺序、并发访问、企业 DNS 和重连影响；不能并用则明确 dual_path=false，按许可分机或受控轮换，不改公司网络策略 |
 | **备份与恢复** | RecoverySet包含两库、来源/blob、Vault、案例/标准/评测、未结问题与AnswerIntent、咨询/会话、配置变更/回执、偏好、委托类型、动作及撤回水位；投影保留重建版本/水位。冻结写者后备份；恢复追平撤回和新稿，对账卡片/配置/uncertain动作，确认单写者后开放 |
 | **容量与维护** | 初始模型worker并发1；队列上限1000，附件20MB；背压保留游标。磁盘<30GB告警、<15GB停大附件/新副本；普通会话14天、完成副本7天，活跃引用与凭据另行保留。数值为待实测初值 |
 

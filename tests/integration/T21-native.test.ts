@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { createMacNetworkActuator } from '../../packages/host/src/network/native.js';
+import { createMacNetworkActuator, parseRegisteredVpnServices } from '../../packages/host/src/network/native.js';
 import { parseNetworkPolicy } from '../../packages/host/src/network/vpn.js';
 
 const assertEffect = () => {};
@@ -193,26 +193,26 @@ test('a gate closed between proxy commands prevents later writes and preserves a
   expect(writes).toBe(1);
 });
 
-test.each(['CONNECTED', 'EXITING'] as const)('ambiguous Tunnelblick EXITING never acknowledges a settled effect from %s', async (initial) => {
+test.each(['CONNECTED', 'EXITING'] as const)('ambiguous OpenVPN Disconnecting never acknowledges a settled effect from %s', async (initial) => {
   const vpnPolicy = parseNetworkPolicy({ ...policy,
-    vpn_paths: [{ id: 'company', client: 'tunnelblick', targets: ['work'] }],
+    vpn_paths: [{ id: 'company', client: 'openvpn', targets: ['work'] }],
     repairs: [{ id: 'work-vpn', kind: 'reconnect_vpn', path: 'company', target: 'work' }],
   });
   let state: string = initial;
   const actions: string[] = [];
   const options = { policy: vpnPolicy, localDeviceId: policy.device_id, platform: 'darwin',
     snapshotDirectory: mkdtempSync(join(tmpdir(), 'patrick-t21-vpn-')),
-    bindings: [{ repairId: 'work-vpn', client: 'tunnelblick' as const, configuration: 'Registered "Company" VPN' }],
+    bindings: [{ repairId: 'work-vpn', client: 'openvpn' as const, configuration: 'Registered "Company" VPN' }],
     runCommand: async (file: string, args: readonly string[]) => {
-      expect(file).toBe('/usr/bin/osascript');
+      expect(file).toBe('/usr/sbin/scutil');
+      expect(args[0]).toBe('--nc');
       expect(args.at(-1)).toBe('Registered "Company" VPN');
-      const script = args[1];
-      expect(script).not.toContain('Registered "Company" VPN');
-      if (script.includes('return state of')) return { stdout: state + '\n' };
-      if (script.includes('disconnect configurationName')) { actions.push('disconnect'); state = 'EXITING'; }
-      else if (script.includes('connect configurationName')) { actions.push('connect'); state = 'CONNECTED'; }
-      else throw new Error('unexpected script');
-      return { stdout: 'true\n' };
+      expect(args.join(' ')).not.toContain('osascript');
+      if (args[1] === 'status') return { stdout: (state === 'CONNECTED' ? 'Connected' : 'Disconnecting') + '\n' };
+      if (args[1] === 'stop') { actions.push('disconnect'); state = 'EXITING'; }
+      else if (args[1] === 'start') { actions.push('connect'); state = 'CONNECTED'; }
+      else throw new Error('unexpected command');
+      return { stdout: '' };
     },
   };
   const actuator = createMacNetworkActuator(options);
@@ -229,4 +229,51 @@ test.each(['CONNECTED', 'EXITING'] as const)('ambiguous Tunnelblick EXITING neve
   expect(applied).toEqual({ state: 'unknown' });
   expect(state).toBe('EXITING');
   expect(actions).toEqual(['disconnect']);
+});
+
+test('registered VPN inventory keeps OpenVPN intranet and Shadowrocket public, and ignores every other client', () => {
+  const listed = `Available network connection services in the current set (*=enabled):
+* (Connected)      10DF65A0-458D-4C14-BE47-7203F24D31D3 VPN (com.liguangming.Shadowrocket) "Public"                   [VPN:com.liguangming.Shadowrocket]
+* (Disconnected)   66B3EB82-FE21-4E16-A59A-1F000453B9AA VPN (org.openvpn.client.app) "intranet.example [intranet.example [VPN:org.openvpn.client.app]
+* (Disconnected)   70BD0AE5-3A7E-46B3-8280-CE94C06F2AC2 VPN (org.outline.macos.client) "Other"                    [VPN:org.outline.macos.client]
+* (Disconnected)   11111111-2222-3333-4444-555555555555 VPN (net.tunnelblick.tunnelblick) "Legacy" [VPN:net.tunnelblick.tunnelblick]
+`;
+  expect(parseRegisteredVpnServices(listed)).toEqual([
+    { serviceId: '10DF65A0-458D-4C14-BE47-7203F24D31D3', client: 'shadowrocket', role: 'public', state: 'connected' },
+    { serviceId: '66B3EB82-FE21-4E16-A59A-1F000453B9AA', client: 'openvpn', role: 'intranet', state: 'disconnected' },
+  ]);
+  expect(() => parseRegisteredVpnServices(listed + listed)).toThrow('NETWORK_NATIVE_UNKNOWN');
+  expect(() => parseRegisteredVpnServices('* (Paused) 66B3EB82-FE21-4E16-A59A-1F000453B9AA VPN (org.openvpn.client.app) "x"\n'))
+    .toThrow('NETWORK_NATIVE_UNKNOWN');
+});
+
+test('a disconnected registered VPN is incompatible and is not started', async () => {
+  const vpnPolicy = parseNetworkPolicy({ ...policy,
+    vpn_paths: [{ id: 'company', client: 'openvpn', targets: ['work'] }],
+    repairs: [{ id: 'work-vpn', kind: 'reconnect_vpn', path: 'company', target: 'work' }],
+  });
+  const actions: string[] = [];
+  const actuator = createMacNetworkActuator({
+    policy: vpnPolicy, localDeviceId: policy.device_id, platform: 'darwin',
+    snapshotDirectory: mkdtempSync(join(tmpdir(), 'patrick-t21-vpn-idle-')),
+    bindings: [{ repairId: 'work-vpn', client: 'openvpn', configuration: '66B3EB82-FE21-4E16-A59A-1F000453B9AA' }],
+    runCommand: async (file, args) => {
+      expect(file).toBe('/usr/sbin/scutil');
+      expect(args).toEqual(['--nc', 'status', '66B3EB82-FE21-4E16-A59A-1F000453B9AA']);
+      actions.push(args[1]);
+      return { stdout: 'Disconnected\nExtended Status <dictionary> {\n  Status : 0\n}\n' };
+    },
+  });
+  expect(await actuator.readRule(vpnPolicy.repairs[0], new AbortController().signal)).toEqual({ state: 'incompatible' });
+  expect(actions).toEqual(['status']);
+  expect(() => createMacNetworkActuator({
+    policy: vpnPolicy, localDeviceId: policy.device_id, platform: 'darwin',
+    snapshotDirectory: mkdtempSync(join(tmpdir(), 'patrick-t21-vpn-wrong-client-')),
+    bindings: [{ repairId: 'work-vpn', client: 'shadowrocket', configuration: 'Public' }],
+  })).toThrow('NETWORK_NATIVE_BINDING_INVALID');
+  expect(() => createMacNetworkActuator({
+    policy: vpnPolicy, localDeviceId: policy.device_id, platform: 'darwin',
+    snapshotDirectory: mkdtempSync(join(tmpdir(), 'patrick-t21-vpn-legacy-')),
+    bindings: [{ repairId: 'work-vpn', client: 'tunnelblick' as 'openvpn', configuration: 'Legacy' }],
+  })).toThrow('NETWORK_NATIVE_BINDING_INVALID');
 });

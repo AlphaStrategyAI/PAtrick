@@ -17,7 +17,7 @@ const policy = parseNetworkPolicy({
   schema_version: '1.0', device_id: 'fixture-mac', revision: 9,
   targets: [{ id: 'hub', role: 'hub' }, { id: 'gitlab', role: 'target' },
     { id: 'github', role: 'target' }, { id: 'writer-peer', role: 'peer' }],
-  vpn_paths: [{ id: 'corporate', client: 'tunnelblick', targets: ['gitlab'] }],
+  vpn_paths: [{ id: 'corporate', client: 'openvpn', targets: ['gitlab'] }],
   repairs: [
     { id: 'corporate-dns', kind: 'refresh_dns', target: 'gitlab' },
     { id: 'personal-proxy', kind: 'refresh_proxy', target: 'github' },

@@ -503,7 +503,7 @@ doctor返回状态、证据/时间、影响和一个下一步，覆盖实际服�
 
 ### 6.3 网络与资源验收
 
-心跳异常先查本机；hub正常但GitHub/GitLab不可达也触发目标诊断。401/403归身份，429退避，TLS失败不得靠关闭校验修复。Tunnelblick/OpenVPN/Shadowrocket按实际设备测试两种启动顺序、并发、DNS及重连；不能并用则dual_path=false，并按许可分机/受控轮换。
+心跳异常先查本机；hub正常但GitHub/GitLab不可达也触发目标诊断。401/403归身份，429退避，TLS失败不得靠关闭校验修复。VPN 只保留 OpenVPN 与 Shadowrocket：OpenVPN 默认是公司内网客户端，Shadowrocket 默认是访问公网网站的客户端。按实际设备测试两种启动顺序、并发、企业 DNS 及重连；不能并用则 dual_path=false，并按许可分机或受控轮换。
 
 所有路由/DNS/代理/VPN动作持同一主机锁与network_epoch；回退只撤本轮拥有且仍匹配版本的变更。重试有次数、冷却与总时长，MFA只产生一个待处理问题；修复后同时复验故障目标、原健康目标和peer。网络恢复不创建新业务根，不越过待答/暂停门禁。
 
@@ -1576,6 +1576,8 @@ export function interrupts(signal: { current: boolean; kind: 'decision' | 'block
 **文件** `packages/host/src/network/probes.ts`、`packages/host/src/network/supervisor.ts`、`packages/host/src/network/vpn.ts`、`deploy/network-policy.schema.json`、`tests/integration/T21.test.ts`、`tests/admission/T21.test.ts`。
 
 **交接** `inspectNetwork(targets: readonly TargetId[]): Promise<NetworkReport>` 返回接口/路由/DNS/代理、TCP/TLS/身份/peer 各级证据。`repairNetwork(proposalId: string, expectedEpoch: number): Promise<RepairReceipt>` 经 T03注册固定操作，T17展示相同结果。
+
+VPN 客户端只登记 OpenVPN 与 Shadowrocket。OpenVPN 默认承担公司内网，Shadowrocket 默认承担公网网站访问。不登记 Tunnelblick 或其他 VPN 客户端。
 
 - [x] 红测保持 hub 健康而目标失败，再注入身份错误、限流、epoch 被他次操作替换。运行 `npm exec -- vitest run tests/integration/T21.test.ts`，预期误用修 VPN 或拥有权断言失败。
 

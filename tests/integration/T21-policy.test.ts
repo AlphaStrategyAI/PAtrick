@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import {
-  assessVpnCapability, mayRevert, parseNetworkPolicy, repairVerificationTargets, selectFixedRepair, type VpnTrial,
+  assessVpnCapability, mayRevert, parseNetworkPolicy, repairVerificationTargets, selectFixedRepair, vpnClientForBundle, vpnClientRole, type VpnTrial,
 } from '../../packages/host/src/network/vpn.js';
 
 const at = new Date('2026-11-17T07:00:00.000Z');
@@ -10,7 +10,7 @@ const config = () => ({
   targets: [{ id: 'hub', role: 'hub' }, { id: 'gitlab', role: 'target' },
     { id: 'github', role: 'target' }, { id: 'writer-peer', role: 'peer' }],
   vpn_paths: [
-    { id: 'corporate', client: 'tunnelblick', targets: ['gitlab'] },
+    { id: 'corporate', client: 'openvpn', targets: ['gitlab'] },
     { id: 'personal', client: 'shadowrocket', targets: ['github'] },
   ],
   repairs: [
@@ -25,6 +25,22 @@ const trial = (order: VpnTrial['order'], overrides: Partial<VpnTrial> = {}): Vpn
   deviceId: 'test-mac', policyRevision: 9, environmentDigest: environment,
   order, observedAt: at.toISOString(),
   concurrentAccess: 'passed', enterpriseDns: 'passed', reconnect: 'passed', peer: 'passed', ...overrides,
+});
+
+test('OpenVPN defaults to the intranet client and Shadowrocket defaults to the public client', () => {
+  const policy = parseNetworkPolicy(config());
+  expect(policy.vpn_paths.map((path) => [path.client, vpnClientRole(path.client)]))
+    .toEqual([['openvpn', 'intranet'], ['shadowrocket', 'public']]);
+  expect(() => parseNetworkPolicy({ ...config(), vpn_paths: [{ id: 'legacy', client: 'tunnelblick', targets: ['gitlab'] }] }))
+    .toThrow('NETWORK_POLICY_INVALID');
+  expect(() => parseNetworkPolicy({ ...config(), vpn_paths: [
+    { id: 'intranet-a', client: 'openvpn', targets: ['gitlab'] },
+    { id: 'intranet-b', client: 'openvpn', targets: ['github'] },
+  ] })).toThrow('NETWORK_POLICY_INVALID');
+  expect(vpnClientForBundle('org.openvpn.client.app')).toBe('openvpn');
+  expect(vpnClientForBundle('com.liguangming.Shadowrocket')).toBe('shadowrocket');
+  expect(vpnClientForBundle('net.tunnelblick.tunnelblick')).toBeNull();
+  expect(vpnClientForBundle('org.outline.macos.client')).toBeNull();
 });
 
 test('a fixed repair accepts only its registered device, target, layer and profile', () => {

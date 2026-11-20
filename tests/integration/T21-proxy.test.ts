@@ -96,7 +96,7 @@ test.each([
   ['unsupported', { code: 'ENOENT', stderr: '' }, 'unknown'],
 ] as const)('native composition distinguishes %s before selecting its registered VPN repair', async (_name, failure, problem) => {
   const vpnPolicy = parseNetworkPolicy({ ...policy,
-    vpn_paths: [{ id: 'company', client: 'tunnelblick', targets: ['work'] }],
+    vpn_paths: [{ id: 'company', client: 'openvpn', targets: ['work'] }],
     repairs: [{ id: 'work-vpn', kind: 'reconnect_vpn', target: 'work', path: 'company' }],
   });
   const original = nodeProbes.createNodeNetworkProbePorts;
@@ -107,7 +107,7 @@ test.each([
   try {
     const configuration = createNativeNetworkRepairConfiguration({ policy: vpnPolicy, localDeviceId: policy.device_id,
       accountId: 'owner', domain: 'personal', endpoints, snapshotDirectory: mkdtempSync(join(tmpdir(), 'patrick-t21-route-')),
-      nativeBindings: [{ repairId: 'work-vpn', client: 'tunnelblick', configuration: 'Registered VPN' }],
+      nativeBindings: [{ repairId: 'work-vpn', client: 'openvpn', configuration: 'Registered VPN' }],
       nativeRuntime: { platform: 'darwin', runCommand: async (file, args) => {
         expect(file).toBe('/sbin/route');
         expect(args).toEqual(['-n', 'get', '127.0.0.1']);

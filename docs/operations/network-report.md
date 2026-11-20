@@ -15,15 +15,15 @@
 
 ## 原生固定动作
 
-`native.ts` 使用 `/usr/sbin/networksetup` 固定参数管理登记网络服务的 DNS 和 web/secure/SOCKS 代理，使用 `/usr/bin/osascript` 的固定脚本操作已运行的 Tunnelblick 登记配置。没有 shell、任意脚本、任意可执行文件、sudo、凭据接收或自动提权入口。网络服务、DNS/代理配置、VPN 客户端与配置名绑定登记摘要，变更登记内容会使旧确认失效。
+`native.ts` 使用 `/usr/sbin/networksetup` 固定参数管理登记网络服务的 DNS 和 web/secure/SOCKS 代理，使用 `/usr/sbin/scutil --nc` 的固定参数读取、连接或断开已登记的 OpenVPN 与 Shadowrocket 服务。没有 shell、任意脚本、任意可执行文件、sudo、凭据接收或自动提权入口。网络服务、DNS/代理配置、VPN 客户端与配置名绑定登记摘要，变更登记内容会使旧确认失效。
 
 DNS 和代理在变更前保存 mode 0600 快照，目录以 mode 0700 创建；读回确认后才报告变更，重新创建适配器仍可读取同一拥有者的回退快照。目录须由安装层登记在运行数据目录，不能放入 Vault 或同步目录。系统工具不提供对绕过监督器的管理员写入的原子 CAS；所有 PAtrick 网络写入必须使用同一监督器。
 
 代理的空服务器/零端口没有经验证的精确清空语义。因此任何 web/secure/SOCKS 项缺少可重建服务器/端口时，原快照在变更前返回 `incompatible`；具有这类值的目标配置在登记时被拒绝。不会通过仅关闭代理、保留新服务器值来宣称原快照已经恢复。这一限制也意味着常见默认空代理状态不能直接使用本适配器修复。
 
-Tunnelblick 仅支持 `{repairId, client:'tunnelblick', configuration:'登记名称'}`，并要求策略路径客户端匹配。配置名通过 osascript 的 argv 传入，绝不插入脚本文本；只读取/连接/断开该名称，不启动客户端、不操作全部配置。`CONNECTED` 可作为已连接快照；`EXITING` 不具备已停止证明，读回时返回不兼容，不能登记为可恢复快照。已连接配置进入固定断开命令后，适配器立即报告未知效果，不继续发起连接，也不报告回退完成；监督器保留设备锁。当前 Tunnelblick API 缺少独立的断开收敛证明，因此不能把这条保守路径计为可用重连验收。OpenVPN 和 Shadowrocket 尚无固定原生绑定，返回不兼容。
+OpenVPN 与 Shadowrocket 支持 `{repairId, client, configuration}`，客户端只能是 `openvpn` 或 `shadowrocket`，并要求与策略路径一致。OpenVPN 的角色固定为公司内网，Shadowrocket 的角色固定为公网网站。服务名只作为 `scutil --nc` 的参数传入，不拼进脚本；只读取、连接或断开该服务，不启动客户端，也不操作全部配置。`Connected` 可作为已连接快照；`Connecting`/`Disconnecting` 记为未收敛，读回时返回不兼容，不能登记为可恢复快照。已连接服务进入固定断开命令后，适配器立即报告未知效果，不继续发起连接，也不报告回退完成；监督器保留设备锁。因此不能把这条保守路径计为可用重连验收。其他 VPN 客户端，包括 Tunnelblick，在策略解析时拒绝。
 
-实现依据为此前检查的本机只读资料：`/Applications/Tunnelblick.app/Contents/Resources/tunnelblick.sdef`、`/usr/share/man/man1/osascript.1`、`/usr/share/man/man8/networksetup.8` 和 `/usr/share/man/man8/scutil.8`。Tunnelblick 字典明确把 `EXITING` 定义为“断开中或已断开”。本轮仅用命令 fixture 验证保守拒绝与未知留锁，没有执行这些原生命令；不能证明断开已完全收敛、原有 TCP 会话恢复、原连接代次恢复，或同名配置未被管理员重新连接。实际路由、DNS 和连接收敛必须通过真实登记设备验收。
+实现依据为 `/usr/share/man/man8/scutil.8` 与 `/usr/share/man/man8/networksetup.8`。`scutil --nc status` 的首行 `Connected` 映射为已连接；`Connecting`/`Disconnecting` 为未收敛；`Disconnected` 为已知未连接，读回不兼容，并且不会因此发起连接。`No service` 与其他输出保持未知。`parseRegisteredVpnServices` 只读解析 `scutil --nc list`，只保留 OpenVPN（`org.openvpn.client.app`，公司内网）和 Shadowrocket（`com.liguangming.Shadowrocket`，公网网站），忽略 Outline、Tunnelblick 及其他服务。服务标识使用列表中的 UUID，显示名含方括号时不从列表行猜测名称。该解析不连接、不断开。状态词汇用只读列表核对过；不能证明断开已完全收敛、原有 TCP 会话恢复、原连接代次恢复，或同名服务未被重新连接。实际路由、DNS 和连接收敛必须通过真实登记设备验收。
 
 生产原生工厂使用固定 `/sbin/route -n get <登记目标主机>` 进行只读诊断。只有退出码 1 且 stderr 精确为 `route: writing to routing socket: not in table` 时报告路由失败，允许选择匹配的登记 `reconnect_vpn`；权限错误、工具缺失、其他输出或取消均保持未知。选中动作不表示其原生收敛已获支持。
 
@@ -61,7 +61,7 @@ Tunnelblick 仅支持 `{repairId, client:'tunnelblick', configuration:'登记名
 
 当前策略允许 1–4 次尝试、5–600 秒冷却、5–900 秒总期限，并拒绝无法容纳约定冷却的组合。TCP/TLS 套接字及 CONNECT 使用至多 1.5 秒空闲超时，HTTPS 使用至多 5 秒空闲超时；DNS、慢速持续数据和全部多地址串行重试仍受外层总期限约束。只读路由/scutil 命令为 5 秒，原生命令为 15 秒。对账期限取策略期限与 15 秒较小值。未知效果留锁不能因期限到达被解释为已停止。
 
-Tunnelblick 轮询至多 150 次，每次间隔 100 ms，但每次包含 osascript 调用，不能据此宣称 15 秒墙钟上界；外层取消信号控制实际总期限。代理快照/写入/回退包含多条串行命令，不能把单条命令上界当成完整回退时间。期限不足或取消时保持未知留锁，不能承诺一定完成回退。
+VPN 连接轮询至多 150 次，每次间隔 100 ms，但断开命令本身立即视为未收敛，不能据此宣称 15 秒墙钟上界；外层取消信号控制实际总期限。代理快照/写入/回退包含多条串行命令，不能把单条命令上界当成完整回退时间。期限不足或取消时保持未知留锁，不能承诺一定完成回退。
 
 这些范围是保守安全约束，尚无生产工作负载或尾延迟校准。部署前须对登记设备采集各目标与代理的 P50/P95/P99 DNS/TCP/TLS/HTTP 时延、原生命令/重连/快照/回退耗时、双路径并发目标数与地址数分布，记录 deadline 比例、未知锁数量和年龄、backoff 比例，并据测量设置期限和告警。当前本地控制流测试不能建立生产 SLO、RTO 或双 VPN 可用率。
 
@@ -71,4 +71,4 @@ Tunnelblick 轮询至多 150 次，每次间隔 100 ms，但每次包含 osascri
 
 真实环回测试使用临时本地证书、HTTPS 服务和 CONNECT 代理，实际检查固定 IP、多地址、可信 TLS、代理隧道、身份、429、重定向和代理提前关闭。实际 HTTPS 请求以仅有原 IP SAN 的证书成功，以仅有 localhost SAN 的证书被拒绝。不访问外网；不受信任证书保持 TLS 失败。浏览器覆盖固定修复选择、设置/System 同回执和返回路径、MFA 指引，以及原确认过期后的新恢复流程、不可用原因和退出取消。所有原生命令均为 fixture。
 
-`tests/admission/T21.test.ts` 的本地 harness 仅修改临时配置文件，真实设备 gate 默认跳过。`PATRICK_T21_LIVE_EVIDENCE` 只用于读取真实登记报告，不会连接 VPN，也不能替代现场动作。尚需登记设备、账号、客户端版本及范围批准后验证：两种启动顺序、并发目标、企业 DNS、Tunnelblick 重连/路由收敛、真实 networksetup 权限与精确回退、peer/原健康目标保持，以及冲突时获准的分机或受控轮换。未测保持未知。
+`tests/admission/T21.test.ts` 的本地 harness 仅修改临时配置文件，真实设备 gate 默认跳过。`PATRICK_T21_LIVE_EVIDENCE` 只用于读取真实登记报告，不会连接 VPN，也不能替代现场动作。尚需登记设备、账号、客户端版本及范围批准后验证：OpenVPN 与 Shadowrocket 的两种启动顺序、并发目标、企业 DNS、重连/路由收敛、真实 networksetup 权限与精确回退、peer/原健康目标保持，以及冲突时获准的分机或受控轮换。未测保持未知。

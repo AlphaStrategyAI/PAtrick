@@ -1,7 +1,9 @@
 /** Local policy only. The supervisor applies an approved repair under its host lock. */
 type TargetRole = 'hub' | 'target' | 'peer';
 type Target = Readonly<{ id: string; role: TargetRole }>;
-type VpnPath = Readonly<{ id: string; client: 'tunnelblick' | 'openvpn' | 'shadowrocket'; targets: readonly string[] }>;
+export type VpnClient = 'openvpn' | 'shadowrocket';
+export type VpnRole = 'intranet' | 'public';
+type VpnPath = Readonly<{ id: string; client: VpnClient; targets: readonly string[] }>;
 export type FixedRepair =
   | Readonly<{ id: string; kind: 'refresh_dns' | 'refresh_proxy'; target: string }>
   | Readonly<{ id: string; kind: 'reconnect_vpn'; target: string; path: string }>;
@@ -33,7 +35,18 @@ const vpnEvidenceAgeMs = 60 * 60_000;
 const idPattern = /^[a-z0-9][a-z0-9_-]{0,79}$/u;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const roles = ['hub', 'target', 'peer'] as const;
-const clients = ['tunnelblick', 'openvpn', 'shadowrocket'] as const;
+const clients = ['openvpn', 'shadowrocket'] as const;
+const clientRoles: Readonly<Record<VpnClient, VpnRole>> = Object.freeze({ openvpn: 'intranet', shadowrocket: 'public' });
+const clientBundles: Readonly<Record<string, VpnClient>> = Object.freeze({
+  'org.openvpn.client.app': 'openvpn',
+  'com.liguangming.Shadowrocket': 'shadowrocket',
+});
+export function vpnClientRole(client: VpnClient): VpnRole {
+  return clientRoles[client];
+}
+export function vpnClientForBundle(bundleId: string): VpnClient | null {
+  return clientBundles[bundleId] ?? null;
+}
 const fallbacks = ['none', 'device_split', 'controlled_rotation'] as const;
 const outcomes = ['passed', 'failed', 'unknown'] as const;
 const allowedFailure: Readonly<Record<FixedRepair['kind'], string>> = Object.freeze({
@@ -54,9 +67,11 @@ export function parseNetworkPolicy(raw: unknown): NetworkPolicy {
     const namedTargets = collection(path.targets, 1, 12).map(id);
     unique(namedTargets);
     if (namedTargets.some((name) => !targets.some((target) => target.id === name && target.role === 'target'))) invalid();
-    return Object.freeze({ id: id(path.id), client: choice(path.client, clients), targets: Object.freeze(namedTargets) });
+    const client = choice(path.client, clients);
+    return Object.freeze({ id: id(path.id), client, targets: Object.freeze(namedTargets) });
   });
   unique(vpnPaths.map((path) => path.id));
+  unique(vpnPaths.map((path) => path.client));
   const repairs = collection(spec.repairs, 0, 24).map((input): FixedRepair => {
     const kind = choice(object(input).kind, ['refresh_dns', 'refresh_proxy', 'reconnect_vpn'] as const);
     const repair = exactObject(input, kind === 'reconnect_vpn' ? ['id', 'kind', 'target', 'path'] : ['id', 'kind', 'target']);
