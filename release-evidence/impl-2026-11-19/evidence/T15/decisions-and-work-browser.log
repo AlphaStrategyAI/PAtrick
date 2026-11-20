@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T15.config.ts --reporter=line
-exit=0 signal=none durationMs=25644
+exit=0 signal=none durationMs=24395
 --- stdout ---
 
 
@@ -19,26 +19,26 @@ Running 9 tests using 1 worker
 [8/9] tests/e2e/T15.spec.ts:244:1 › a different authenticated caller on the same account cannot revive a quarantined consultation
 
 [9/9] tests/e2e/T15.spec.ts:270:1 › the consultation streams its answer and stays answering until the result is saved
-  9 passed (25.0s)
+  9 passed (23.7s)
 
 --- stderr ---
-[WebServer] (node:11240) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:91916) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:11242) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:91918) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
-[WebServer] 10:08:54 AM [vite] http proxy error: /api/v1/questions/Q-017/answers
+[WebServer] 12:23:21 PM [vite] http proxy error: /api/v1/questions/Q-017/answers
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)
 [WebServer]     at endReadableNT (node:internal/streams/readable:2147:12)
 [WebServer]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
-[WebServer] 10:09:03 AM [vite] http proxy error: /api/v1/consultations
+[WebServer] 12:23:29 PM [vite] http proxy error: /api/v1/consultations
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)
 [WebServer]     at endReadableNT (node:internal/streams/readable:2147:12)
 [WebServer]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
-[WebServer] 10:09:07 AM [vite] http proxy error: /api/v1/consultations
+[WebServer] 12:23:33 PM [vite] http proxy error: /api/v1/consultations
 [WebServer] Error: socket hang up
 [WebServer]     at Socket.socketOnEnd (node:_http_client:821:25)
 [WebServer]     at Socket.emit (node:events:526:24)
