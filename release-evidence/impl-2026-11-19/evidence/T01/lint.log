@@ -1,5 +1,5 @@
 $ npm run lint
-exit=0 signal=none durationMs=4845
+exit=0 signal=none durationMs=5154
 --- stdout ---
 
 > patrick@0.0.0 lint

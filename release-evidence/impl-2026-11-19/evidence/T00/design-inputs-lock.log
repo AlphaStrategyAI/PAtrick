@@ -1,11 +1,11 @@
 $ npm run test:t00
-exit=0 signal=none durationMs=586
+exit=0 signal=none durationMs=820
 --- stdout ---
 
 > patrick@0.0.0 test:t00
 > node --test tests/contract/T00.test.mjs
 
-✔ pinned-design-inputs (149.31425ms)
+✔ pinned-design-inputs (168.611083ms)
 ℹ tests 1
 ℹ suites 0
 ℹ pass 1
@@ -13,6 +13,6 @@ exit=0 signal=none durationMs=586
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 280.342667
+ℹ duration_ms 317.911666
 
 --- stderr ---

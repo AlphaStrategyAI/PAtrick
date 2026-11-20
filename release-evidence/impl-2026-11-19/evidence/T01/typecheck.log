@@ -1,5 +1,5 @@
 $ npm run typecheck
-exit=0 signal=none durationMs=7647
+exit=0 signal=none durationMs=8071
 --- stdout ---
 
 > patrick@0.0.0 typecheck

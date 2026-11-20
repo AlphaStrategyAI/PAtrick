@@ -119,7 +119,7 @@ test('an owner in another domain can open a restricted Stats page without losing
     expect(requests).not.toContain('/api/v1/stats');
     await page.locator('a[href="/work"]').first().click();
     await expect(page.locator('main select')).toHaveValue('open');
-    expect(requests).toContain('/api/v1/work');
+    await expect.poll(() => requests).toContain('/api/v1/work');
   } finally {
     await page.unrouteAll({ behavior: 'wait' });
     db.close();

@@ -1,6 +1,6 @@
 {
   "task": "T28",
-  "completedAt": "2026-11-20T01:25:04.552Z",
+  "completedAt": "2026-11-20T01:50:14.821Z",
   "productClauses": [],
   "scenarios": [
     {
@@ -10,7 +10,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "654de77bcaa6332a6cb597044c497d5ac88d6cbe",
+        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -20,12 +20,12 @@
         "upstream": "192c8ec1b57a4676d0fe2e74142c693428aa7e025721a0fff1564049e4fda903",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "245429d622b55a1d18633b7f9925e7382571c3dab360a95e509e74196b728de3",
+        "tests": "529de1ca932886065f514e54e1be3f90a0eb428fa5fa311030d342117c93b7a2",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T28/bilingual-readme.log",
-      "evidenceSha256": "7060f357139e1b1160f8fa9dde03add600d9b9357965874385101437a71746e2",
-      "durationMs": 712
+      "evidenceSha256": "716949bf3e0da9900d8631073c8f8f58de6db272704e06b01b75c4c17c7ddc43",
+      "durationMs": 756
     }
   ]
 }

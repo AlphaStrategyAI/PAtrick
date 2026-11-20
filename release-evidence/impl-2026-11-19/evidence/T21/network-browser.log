@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T21.config.ts --reporter=line
-exit=0 signal=none durationMs=6209
+exit=0 signal=none durationMs=6608
 --- stdout ---
 
 
@@ -12,10 +12,10 @@ Running 5 tests using 1 worker
 [3/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from settings and retains the original receipt
 [4/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from system and retains the original receipt
 [5/5] tests/e2e/T21.spec.ts:87:1 › fresh recovery is reachable from logout and retains the original receipt
-  5 passed (5.6s)
+  5 passed (6.0s)
 
 --- stderr ---
-[WebServer] (node:23724) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:90673) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:23726) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:90675) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

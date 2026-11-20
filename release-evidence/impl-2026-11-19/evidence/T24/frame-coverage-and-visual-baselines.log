@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/visual/T24.config.ts --reporter=line
-exit=0 signal=none durationMs=40941
+exit=0 signal=none durationMs=42700
 --- stdout ---
 
 
@@ -48,10 +48,10 @@ Running 41 tests using 1 worker
 [39/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-delegation
 [40/41] tests/visual/T24-zh-reference.spec.ts:27:3 › Chinese desktop runtime reference for zh-system
 [41/41] tests/visual/T24.spec.ts:192:1 › frame-coverage · paired Vault review, back and apply runtime transitions
-  41 passed (40.3s)
+  41 passed (42.0s)
 
 --- stderr ---
-[WebServer] (node:30813) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:98682) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:30817) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:98686) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
