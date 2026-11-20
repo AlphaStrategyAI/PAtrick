@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const HARNESS_FILES = ['manifest.json', 'patrick-bridge.ts', 'patrick-judgment.ts', 'patrick-memory.ts'] as const;
+export const HARNESS_FILES = ['manifest.json', 'mcp-server.ts', 'patrick-bridge.ts', 'patrick-judgment.ts',
+  'patrick-memory.ts'] as const;
 
 export function evidenceSha256(observation: string): string {
   return createHash('sha256').update(observation, 'utf8').digest('hex');

@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { readCapability } from './capability.js';
 import { isRecord, jsonLines, tokenUsage } from './parse.js';
 import { startProbeDomain } from './probe-domain.js';
+import { bundleMcpServer, installHarnessBundle } from '../bundle.js';
 import type { BackendCapability, TerminalParse } from '../types.js';
 
 /** The model route of one call. The CLI reads the secret from its environment. */
@@ -25,7 +26,6 @@ export function modelRouteFromEnv(env: NodeJS.ProcessEnv = process.env): ModelRo
 export const PROBE_PROMPT = 'Call the patrick-memory tool once with the domain "personal", '
   + 'the knowledge id "K-001" and the withdrawal epoch 0. Then report how many records the tool returned.';
 
-const MCP_SERVER = fileURLToPath(new URL('../../harness/mcp-server.ts', import.meta.url));
 const BUNDLE_TOOLS = ['patrick-memory', 'patrick-judgment', 'patrick-bridge'];
 
 /** Writes the Codex home: the model route and the Harness bundle. */
@@ -39,8 +39,9 @@ export function installCodexBundle(home: string, route: ModelRoute | null, rpc: 
       'wire_api = "responses"');
   }
   if (rpc) {
+    const bundle = installHarnessBundle(join(home, 'bundle'));
     lines.push('', '[mcp_servers.patrick]', 'command = "node"',
-      `args = [${JSON.stringify(MCP_SERVER)}]`, '[mcp_servers.patrick.env]',
+      `args = [${JSON.stringify(bundleMcpServer(bundle.path))}]`, '[mcp_servers.patrick.env]',
       `PATRICK_HARNESS_RPC_URL = ${JSON.stringify(rpc.url)}`,
       `PATRICK_HARNESS_RPC_TOKEN = ${JSON.stringify(rpc.token)}`);
     // The bundle tools only read the admitted domain, so the CLI may run them

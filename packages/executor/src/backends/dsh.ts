@@ -1,7 +1,7 @@
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { HARNESS_FILES, canonicalJson, evidenceSha256 } from '../hash.js';
+import { canonicalJson, evidenceSha256 } from '../hash.js';
+import { bundleMcpServer, installHarnessBundle } from '../bundle.js';
 import type { BackendCapability, TerminalParse, TokenUsage } from '../types.js';
 import { readCapability } from './capability.js';
 import { isRecord, jsonLines, positiveToken } from './parse.js';
@@ -48,8 +48,6 @@ export function writeDshOverlay(home: string): { path: string; configHash: strin
   return { path, configHash: evidenceSha256(body) };
 }
 
-const HARNESS_DIR = fileURLToPath(new URL('../../harness/', import.meta.url));
-const MCP_SERVER = fileURLToPath(new URL('../../harness/mcp-server.ts', import.meta.url));
 
 /** The prompt the probe sends: it has to make the model reach the bundle. */
 export const DSH_PROBE_PROMPT = 'Call the patrick-memory tool once with the domain "personal", '
@@ -62,10 +60,7 @@ export function dshBundleDir(home: string): string {
 export function installDshProfile(home: string): { path: string; configHash: string } {
   const overlay = writeDshOverlay(home);
   const bundleDir = dshBundleDir(home);
-  mkdirSync(bundleDir, { recursive: true });
-  for (const name of HARNESS_FILES) {
-    copyFileSync(join(HARNESS_DIR, name), join(bundleDir, name));
-  }
+  installHarnessBundle(bundleDir);
   return overlay;
 }
 
@@ -89,7 +84,7 @@ export function installDshPatch(home: string, route: ModelRoute | null, rpc: { u
   if (rpc) {
     lines.push('- insert:', '    - id: memory-patrick', '      name: "@deepseek-ai/dsh-mcp-client"',
       '      config:', '        serverName: patrick', '        transport: stdio', '        command: node',
-      `        args: [${JSON.stringify(MCP_SERVER)}]`, '        env:',
+      `        args: [${JSON.stringify(bundleMcpServer(dshBundleDir(home)))}]`, '        env:',
       `          PATRICK_HARNESS_RPC_URL: ${JSON.stringify(rpc.url)}`,
       `          PATRICK_HARNESS_RPC_TOKEN: ${JSON.stringify(rpc.token)}`);
   }
