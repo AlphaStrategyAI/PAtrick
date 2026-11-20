@@ -119,20 +119,20 @@
       "command": "codex --version",
       "observation": "In the T09 Lima guest: codex-cli 0.163.0 is installed and the guest marker is present. The backend is verified: a live turn completed inside the isolated guest and the model called the patrick-memory bundle tool, which read the admitted evidence through the restricted RPC.",
       "evidenceSha256": "a4d21e4b4d2ee51562c2130eb77bc07503061cb210437fda42caf8b8250d3910",
-      "installedVersion": "0.163.0",
+      "installedVersion": "codex-cli 0.163.0",
       "matchesLockedPackage": true,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "de8520775ac1b16fdeba59f938aedebdbe2699feb888bec62b2b06c092de7682"
+      "guestEvidenceSha256": "dd1664fd5b97a00981a958cbab2c6eb8c150a1a2a658ed4c9731ddceac666f39"
     },
     "grok-build": {
-      "status": "blocked",
+      "status": "verified",
       "command": "grok --version",
-      "observation": "In the T09 Lima guest: grok is not installed. Only a macOS aarch64 build of the locked Grok Build package is published for this account, so no Linux binary could be placed in the guest and the command did not answer. Codex and DSH are verified in the same guest run.",
-      "evidenceSha256": "3a80bed291ccc735c73b82454c019c6a9a2d6147ae19553530fd108cecec1015",
-      "installedVersion": null,
-      "matchesLockedPackage": false,
+      "observation": "In the T09 Lima guest: Grok Build 1.0.88 is installed for Linux aarch64 and the guest marker is present. The backend is verified: a live turn completed inside the isolated guest and the model called the patrick-memory bundle tool, which read the admitted evidence through the restricted RPC.",
+      "evidenceSha256": "2a2dc89166d1ee0059f677263606756cd32c46fc710994a6bae06ebe444546bf",
+      "installedVersion": "grok 1.0.88 (2fe3608f7398)",
+      "matchesLockedPackage": true,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "de8520775ac1b16fdeba59f938aedebdbe2699feb888bec62b2b06c092de7682"
+      "guestEvidenceSha256": "dd1664fd5b97a00981a958cbab2c6eb8c150a1a2a658ed4c9731ddceac666f39"
     },
     "dsh-cli": {
       "status": "verified",
@@ -143,7 +143,7 @@
       "lockedPackageVersion": "0.2.2-rc.2",
       "matchesLockedPackage": true,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "de8520775ac1b16fdeba59f938aedebdbe2699feb888bec62b2b06c092de7682"
+      "guestEvidenceSha256": "dd1664fd5b97a00981a958cbab2c6eb8c150a1a2a658ed4c9731ddceac666f39"
     },
     "feishu-sdk": {
       "status": "pending",

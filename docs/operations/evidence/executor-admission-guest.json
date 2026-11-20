@@ -17,15 +17,15 @@
     },
     {
       "backend": "grok",
-      "status": "blocked",
-      "available": false,
+      "status": "verified",
+      "available": true,
       "command": "grok --version",
-      "installedVersion": null,
-      "liveTerminal": false,
-      "liveToolCall": false,
+      "installedVersion": "grok 1.0.88 (2fe3608f7398)",
+      "liveTerminal": true,
+      "liveToolCall": true,
       "isolated": true,
-      "observation": "spawn grok ENOENT\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: unavailable",
-      "evidenceSha256": "b19ec8752a594bb8285050256a7d7b97e64e2b5e433d56d2a4020606c38a5ec8"
+      "observation": "grok 1.0.88 (2fe3608f7398)\nversion: grok 1.0.88 (2fe3608f7398)",
+      "evidenceSha256": "2a2dc89166d1ee0059f677263606756cd32c46fc710994a6bae06ebe444546bf"
     },
     {
       "backend": "dsh",

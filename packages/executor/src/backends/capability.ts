@@ -123,14 +123,20 @@ export async function readCapability(input: {
 function succeededHarnessToolCall(value: unknown, failed: ReadonlySet<string>): boolean {
   if (Array.isArray(value)) return value.some((entry) => succeededHarnessToolCall(entry, failed));
   if (!isRecord(value)) return false;
-  for (const [key, inner] of Object.entries(value)) {
-    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && isHarnessToolName(inner)) {
-      const callId = typeof value.callId === 'string' ? value.callId : null;
-      if (callId && failed.has(callId)) return false;
-      return !refusedToolCall(value);
-    }
-  }
+  const callId = typeof value.callId === 'string' ? value.callId
+    : typeof value.toolCallId === 'string' ? value.toolCallId : null;
+  if (callId && failed.has(callId)) return false;
+  if (refusedToolCall(value)) return false;
+  if (namesHarnessTool(value)) return true;
   return Object.values(value).some((inner) => succeededHarnessToolCall(inner, failed));
+}
+
+/** Whether this record names one of the Harness tools. */
+function namesHarnessTool(value: Record<string, unknown>): boolean {
+  for (const [key, inner] of Object.entries(value)) {
+    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && isHarnessToolName(inner)) return true;
+  }
+  return false;
 }
 
 /** A harness tool may be named plainly or with the server prefix of its transport. */
@@ -145,8 +151,10 @@ function failedToolCallIds(values: readonly unknown[]): Set<string> {
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) { value.forEach(visit); return; }
     if (!isRecord(value)) return;
-    if (typeof value.callId === 'string' && typeof value.status === 'string' && value.status === 'failed') {
-      failed.add(value.callId);
+    const callId = typeof value.callId === 'string' ? value.callId
+      : typeof value.toolCallId === 'string' ? value.toolCallId : null;
+    if (callId && typeof value.status === 'string' && value.status === 'failed') {
+      failed.add(callId);
     }
     Object.values(value).forEach(visit);
   };

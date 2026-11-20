@@ -104,7 +104,7 @@ export const releaseEvidencePlan = {
         kind: 'admission',
         blockedBy: { type: 'json-entries-incomplete', file: 'docs/operations/evidence/executor-admission-guest.json',
           collection: 'backends', field: 'status', value: 'verified' },
-        blockedReason: '三执行器准入已在 T09 的 Lima 隔离来宾内跑过，记录见 docs/operations/evidence/executor-admission-guest.json：隔离标记存在，Codex CLI 0.163.0 与 DSH 0.2.2-rc.2 都完成了实时终端回读，模型真实调用 patrick-memory 并经受限 RPC 读回获准证据，两个后端已标 verified；Grok Build 只发布了 macOS aarch64 版本，来宾内没有可安装的 Linux 版本。',
+        blockedReason: '这一项只有当隔离来宾内三个后端都标 verified 时才算通过；记录见 docs/operations/evidence/executor-admission-guest.json：Codex CLI 0.163.0、Grok Build 1.0.88 与 DSH 0.2.2-rc.2 都在来宾内完成实时终端回读，模型真实调用 patrick-memory 并经受限 RPC 读回获准证据。',
       },
       {
         id: 'executor-guest-evidence',

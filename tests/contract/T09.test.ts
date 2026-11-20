@@ -16,7 +16,7 @@ import {
 import { sameProcessToolCall } from '../../packages/executor/src/backends/capability.js';
 import { codexInvocation } from '../../packages/executor/src/backends/codex.js';
 import { HARNESS_TOOLS, LOCKED_DSH_VERSION, dshInvocation, writeDshOverlay } from '../../packages/executor/src/backends/dsh.js';
-import { grokInvocation } from '../../packages/executor/src/backends/grok.js';
+import { grokInvocation, parseGrokTerminal } from '../../packages/executor/src/backends/grok.js';
 import { bundleFingerprint, evidenceSha256 } from '../../packages/executor/src/hash.js';
 import { processTreeStopped, stopProcessTreeAndWait } from '../../packages/executor/src/process-tree.js';
 import { assessProbe } from '../../packages/executor/src/probe.js';
@@ -195,6 +195,22 @@ test('resume checks backend identity, home, config, and a stopped process tree',
   } finally {
     await stopProcessTreeAndWait(pid);
   }
+});
+
+test('the terminal of the Grok CLI is read as the CLI writes it', () => {
+  // The CLI writes one JSON object with the stop reason and the answer.
+  const cli = parseGrokTerminal(JSON.stringify({
+    text: 'ready', stopReason: 'end_turn', sessionId: 'session-1', requestId: 'request-1',
+    usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 2, total_tokens: 15 },
+  }));
+  expect(cli).toMatchObject({ finalCount: 1, completed: true, outputsValid: true, sessionId: 'session-1',
+    answerText: 'ready', usage: { input: 12, output: 3, cached: 2 } });
+  // The older snake case shape is still read.
+  expect(parseGrokTerminal(JSON.stringify({ stop_reason: 'end_turn', result: 'ready', session_id: 'session-2' })))
+    .toMatchObject({ completed: true, sessionId: 'session-2' });
+  // A run that did not end on the owner's turn is not a finished answer.
+  expect(parseGrokTerminal(JSON.stringify({ text: 'ready', stopReason: 'max_turns', sessionId: 'session-3' })))
+    .toMatchObject({ completed: false, finalCount: 1 });
 });
 
 test('dsh starts from stdin in a dedicated home and the harness bundle is fixed', async () => {
@@ -413,6 +429,29 @@ test('a harness tool call is a JSON tool name from the same profiled process', (
     stdout: [
       '{"type":"tool_call","callId":"call-2","tool":"mcp__patrick__patrick-memory","input":{"domain":"personal"}}',
       '{"type":"tool_result","callId":"call-2","status":"failed","result":"refused"}',
+    ].join('\n'),
+    stderr: '',
+    sessionId,
+  })).toBe(false);
+  // The Grok stream names the tool inside the call it made.
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: [
+      '{"type":"tool_call","toolCallId":"tool-1","title":"use_tool","kind":"use_tool","status":"pending",'
+      + '"toolName":"use_tool","rawInput":{"tool_name":"patrick__patrick-memory",'
+      + '"tool_input":{"domain":"personal"}},"content":[],"locations":[]}',
+      '{"type":"tool_call_update","toolCallId":"tool-1","status":"completed","content":[]}',
+    ].join('\n'),
+    stderr: '',
+    sessionId,
+  })).toBe(true);
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: [
+      '{"type":"tool_call","toolCallId":"tool-2","title":"use_tool","kind":"use_tool","status":"pending",'
+      + '"toolName":"use_tool","rawInput":{"tool_name":"patrick__patrick-memory"},'
+      + '"content":[],"locations":[]}',
+      '{"type":"tool_call_update","toolCallId":"tool-2","status":"failed","content":[]}',
     ].join('\n'),
     stderr: '',
     sessionId,
