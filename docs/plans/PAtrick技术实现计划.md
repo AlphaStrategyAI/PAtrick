@@ -700,7 +700,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | `tests/contract/T04.test.ts`、`tests/integration/T10.test.ts` | custom 只传 text；原生事件先到时让出 worker，读回同一答案后只允许一次续办。补证证明重放只激活一次交付。超范围 custom 生成一个后继问题，旧卡回调和扩权被拒。 |
 | `tests/integration/T08.test.ts`、`tests/integration/T11.test.ts` | 等待决策期间的咨询独立计费，咨询 grant 拒绝业务 effect，确认父工作无新增 grant、轮次和费用。 |
 | `tests/admission/T10.test.ts`、`tests/integration/T10.test.ts` | 已提交飞书答复在停用时按历史许可+现行工作授权核验，撤权反例只留审计；实测暂缓后仍能回答。 |
-| `tests/integration/T12.test.ts`、`tests/e2e/T25.spec.ts` | 丢创建响应并暂时隐藏结果，保持未知；创建窗口内 base 变化暂停交付，核验后推进 base 保留原证据且零重发。 |
+| `tests/integration/T12.test.ts`、`tests/e2e/T25-directory-block.spec.ts` | 丢创建响应并暂时隐藏结果，保持未知；创建窗口内 base 变化暂停交付，核验后推进 base 保留原证据且零重发。 |
 | `tests/integration/T13.test.ts`、`tests/e2e/T15.spec.ts` | 在快照与订阅之间提交状态，读回一次；断线后撤权，在两个标签页重连均拒绝旧游标和迟到响应。页面显示权限变化或重新认证入口。 |
 | `tests/integration/T07.test.ts`、`tests/admission/T25.test.ts` | 固定模型/提示/工具版本，按相同的输入、样本和预算对比当前与候选。加入撤回引用、缺证据和反例，报告接受、拒绝及无法判定的原因。 |
 | `tests/admission/T27.test.ts`、`tests/recovery/T22.test.ts` | 中断模板安装后原稿和既有模板 hash 不变；同时启用两恢复机并丢获胜响应，通过读回认出唯一写者，另一方保持关闭。 |
@@ -1456,7 +1456,7 @@ export function projectionMessage(receipt: Pick<EditReceipt, 'business' | 'proje
 
 ### T17 六组设置与系统共用回执
 
-**文件** `apps/service/src/routes/settings.ts`、`apps/service/src/routes/system.ts`、`apps/service/src/routes/preferences.ts`、`apps/web/src/features/settings/SettingsPage.tsx`、`apps/web/src/features/settings/ConnectionWizard.tsx`、`apps/web/src/features/system/SystemPage.tsx`、`packages/storage/migrations/0017_settings.sql`、`tests/integration/T17.test.ts`、`tests/e2e/T17.spec.ts`。
+**文件** `apps/service/src/routes/settings.ts`、`apps/service/src/routes/work.ts`、`apps/service/src/routes/preferences.ts`、`apps/web/src/features/settings/SettingsOverview.tsx`、`apps/web/src/components/shared.tsx`、`apps/web/src/features/system/SystemCategories.tsx`、`packages/storage/migrations/0017_settings.sql`、`tests/integration/T17.test.ts`、`tests/e2e/T17.spec.ts`。
 
 **交接** `validateSettings(principal, draft: SettingsDraft): Promise<SettingsValidation>`、`submitSettings(principal, change: SettingsChangeProposal): Promise<SettingsChangeReceipt>`。handler 使用 T03注册表，T06/T10/T09供 Vault、飞书、执行探针。T21/T22通过注册表接主机与恢复操作。
 
@@ -1488,11 +1488,11 @@ export function canApply(proof: {
 
 ### T18 RSS、单网页与采集页
 
-**文件** `packages/integrations/sources/http-read.ts`、`packages/integrations/sources/rss.ts`、`packages/integrations/sources/webpage.ts`、`apps/service/src/routes/sources.ts`、`apps/web/src/features/collection/CollectionPage.tsx`、`tests/integration/T18.test.ts`。
+**文件** `packages/integrations/sources/http-read.ts`、`packages/integrations/sources/rss.ts`、`packages/integrations/sources/webpage.ts`、`apps/service/src/routes/sources.ts`、`apps/web/src/features/collection/CollectionPage.tsx`、`tests/integration/T18-routes.test.ts`。
 
 **交接** 两适配器实现 T05 的 `detectSource`/`collectSource` 契约；T17注册启用、修改、暂停/恢复/断开。HTTP读取器只接受获准的 `SourceConfig`，每跳复检 DNS 结果、连接地址、协议、目标和域。预览、启用和第一次成功采集各返回自己的回执。
 
-- [x] 红测以本地传输替身记录每跳是否请求，另构造重复条目、变更频率与登录响应。运行 `npm exec -- vitest run tests/integration/T18.test.ts`，预期第二跳未核验或登录页被误认成功。
+- [x] 红测以本地传输替身记录每跳是否请求，另构造重复条目、变更频率与登录响应。运行 `npm exec -- vitest run tests/integration/T18`，预期第二跳未核验或登录页被误认成功。
 
 ~~~ts
 await expect(readRegisteredHttp(sourceConfig, redirectFixture)).rejects.toThrow('SOURCE_TARGET_OUTSIDE_SCOPE');
@@ -1547,11 +1547,11 @@ WHERE account_id = @account_id AND valid = 1 AND kind = 'owner_decision'
 
 ### T20 通知摘要与诊断导出
 
-**文件** `packages/domain/src/notifications.ts`、`packages/host/src/diagnostics.ts`、`apps/service/src/routes/notifications.ts`、`apps/service/src/routes/diagnostics.ts`、`packages/storage/migrations/0020_notifications.sql`、`tests/integration/T20.test.ts`。
+**文件** `packages/domain/src/notifications.ts`、`packages/host/src/diagnostics.ts`、`apps/service/src/routes/notifications.ts`、`apps/service/src/routes/diagnostics.ts`、`packages/storage/migrations/0021_notifications.sql`、`tests/integration/T20-notifications.test.ts`。
 
 **交接** `dispatchNotification(intentId: string): Promise<NotificationReceipt>` 发送前检查当前对象版本、域和目的地。`prepareDiagnostics(principal, scope): Promise<DiagnosticsPreview>` 只产脱敏预览并绑定导出清单 hash。飞书测试复用 T10，通知重试复用原意图。
 
-- [x] 红测让待答通知跨过免打扰，在发送前先答题，再重放同事件。运行 `npm exec -- vitest run tests/integration/T20.test.ts`，预期过期投递或诊断脱敏断言失败。
+- [x] 红测让待答通知跨过免打扰，在发送前先答题，再重放同事件。运行 `npm exec -- vitest run tests/integration/T20`，预期过期投递或诊断脱敏断言失败。
 
 ~~~ts
 await advanceToQuietHoursEnd();
@@ -1603,7 +1603,7 @@ export function mayRevert(owned: { operationId: string; epoch: number }, current
 
 ### T22 RecoverySet、一致备份与隔离恢复
 
-**文件** `packages/host/src/recovery/backup.ts`、`packages/host/src/recovery/witness.ts`、`packages/host/src/recovery/restore.ts`、`packages/storage/migrations/0022_recovery.sql`、`deploy/recovery-set.schema.json`、`tests/recovery/T22.test.ts`。
+**文件** `packages/host/src/recovery/backup.ts`、`packages/host/src/recovery/witness.ts`、`packages/host/src/recovery/restore.ts`、`packages/storage/migrations/0023_recovery.sql`、`deploy/recovery-set.schema.json`、`tests/recovery/T22.test.ts`。
 
 **交接** `captureRecoverySet(scope: RecoveryScope): Promise<RecoverySet>` 签出完整性清单。`restoreRecoverySet(setId: string, mode: 'drill' | 'activate'): Promise<RecoveryReceipt>` 分阶段读回，默认 drill。`claimRecoveryWriter(domain: string, sealedRevision: string, activationId: string): Promise<'acquired' | 'lost' | 'unconfirmed'>` 按 §6.4 领取新 epoch，提供真实启用前的唯一凭据。`reconcilePr`、`recoverAnswer`、来源补采、Vault 编辑、通知回执与统计重建复用已有端口。
 
@@ -1717,11 +1717,11 @@ export function animateServiceLogo(
 
 ### T25 真实纵向闭环与故障演练
 
-**文件** `fixtures/pilot/acceptance.json`、`fixtures/perf/baseline.json`、`tests/support/pilot-trace.ts`、`tests/e2e/T25.spec.ts`、`tests/admission/T25.test.ts`、`tests/recovery/T25.test.ts`、`tests/integration/T25.performance.test.ts`。
+**文件** `fixtures/pilot/acceptance.json`、`fixtures/perf/baseline.json`、`tests/support/pilot-trace.ts`、`tests/e2e/T25-directory-block.spec.ts`、`tests/admission/T25.test.ts`、`tests/recovery/T25-directory-generation.test.ts`、`tests/integration/T25.performance.test.ts`。
 
 **交接** 运行 T00–T24/T27 正常入口，读取集中发布证据。每条工作线路存 source_revision、work_id、generation、标准和证据版本、grant/answer/effect 引用、PR head/tree 与 case_id，供 T26 试点评估及复演。
 
-- [x] 先定义可失败的实际跑法。以三个不同需求修订分别触发明确标准直接发布、必要回答后续办、旧卡或冲突后无发布。通过本地故障夹具在进程中断后延迟 AnswerReceipt 或返回过期 proof。运行 `npm exec -- playwright test tests/e2e/T25.spec.ts` 检查本地真服务，再在隔离授权目标采集实链路版本与回执。
+- [x] 先定义可失败的实际跑法。以三个不同需求修订分别触发明确标准直接发布、必要回答后续办、旧卡或冲突后无发布。通过本地故障夹具在进程中断后延迟 AnswerReceipt 或返回过期 proof。运行 `npm exec -- playwright test tests/e2e/T25-directory-block.spec.ts` 检查本地真服务，再在隔离授权目标采集实链路版本与回执。
 
 ~~~ts
 expect(traces.map(trace => trace.route)).toEqual(['direct-pr', 'answered-pr', 'stale-blocked']);
@@ -1751,7 +1751,7 @@ export type PilotTrace = {
 };
 ~~~
 
-- [x] 运行 `npm exec -- vitest run tests/admission/T25.test.ts tests/recovery/T25.test.ts tests/integration/T25.performance.test.ts`，再用 `node scripts/check-release-evidence.mjs <release-evidence目录>` 校验证据。预期 §8.4–8.5 的测试和结果可重取，负载报告包含 §6.3 指标，候选安装包摘要与实际验收一致。提交 `test: prove live workflow and recovery acceptance paths`。
+- [x] 运行 `npm exec -- vitest run tests/admission/T25.test.ts tests/recovery/T25-directory-generation.test.ts tests/integration/T25.performance.test.ts`，再用 `node scripts/check-release-evidence.mjs <release-evidence目录>` 校验证据。预期 §8.4–8.5 的测试和结果可重取，负载报告包含 §6.3 指标，候选安装包摘要与实际验收一致。提交 `test: prove live workflow and recovery acceptance paths`。
 
 ### T26 试点、维护和发布证据
 
