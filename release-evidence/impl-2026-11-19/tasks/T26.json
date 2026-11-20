@@ -1,6 +1,6 @@
 {
   "task": "T26",
-  "completedAt": "2026-11-20T01:50:00.367Z",
+  "completedAt": "2026-11-20T02:15:06.939Z",
   "productClauses": [
     "C1"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -26,8 +26,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T26/pilot-and-release-policy.log",
-      "evidenceSha256": "04779ccb82f014df96809b9d377a3545bec80b3f5786887981d6310bcbf9112d",
-      "durationMs": 5989
+      "evidenceSha256": "4fcfef158d965213b48eef08012b8fe448d813e33d4c18b0717b7fe2f3e05018",
+      "durationMs": 5260
     },
     {
       "id": "observed-pilot-results",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -50,8 +50,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T26/observed-pilot-results.log",
-      "evidenceSha256": "aa5b18f7a4040964c7139a545d93668bf468cfbf16ecb64f6056e1c57a869da6",
-      "durationMs": 5341,
+      "evidenceSha256": "d171c8a86cbfc4113242834e437b3f8a51a328058b6f561d712b350435fe89ce",
+      "durationMs": 5265,
       "pendingReason": "试点成果有效率、引用准确率与人工投入需要真实观察样本；当前没有可分母的试点数据。"
     }
   ]

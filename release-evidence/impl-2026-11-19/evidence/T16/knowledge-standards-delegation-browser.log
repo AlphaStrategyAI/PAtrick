@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T16.config.ts --reporter=line
-exit=0 signal=none durationMs=13281
+exit=0 signal=none durationMs=12572
 --- stdout ---
 
 
@@ -25,10 +25,10 @@ Running 18 tests using 1 worker
 [16/18] tests/e2e/T16.spec.ts:264:1 › 委托在显式确认精确提案后才生效，并可读回相同可信回执
 [17/18] tests/e2e/T16.spec.ts:283:1 › 没有委托时，提出一个范围经过可信控制后才生效
 [18/18] tests/e2e/T16.spec.ts:311:1 › 没有可引用的知识时，空状态给出接通来源的下一步
-  18 passed (12.6s)
+  18 passed (11.9s)
 
 --- stderr ---
-[WebServer] (node:89327) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:11402) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:89330) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:11407) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

@@ -1,6 +1,6 @@
 {
   "task": "T28",
-  "completedAt": "2026-11-20T01:50:14.821Z",
+  "completedAt": "2026-11-20T02:15:21.276Z",
   "productClauses": [],
   "scenarios": [
     {
@@ -10,7 +10,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -24,8 +24,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T28/bilingual-readme.log",
-      "evidenceSha256": "716949bf3e0da9900d8631073c8f8f58de6db272704e06b01b75c4c17c7ddc43",
-      "durationMs": 756
+      "evidenceSha256": "e2b1b18cdb6ae3b12ffdc3c8b3ade2403b391721d795f96d5c809ebaf82c7199",
+      "durationMs": 719
     }
   ]
 }

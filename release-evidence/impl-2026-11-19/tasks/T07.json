@@ -1,6 +1,6 @@
 {
   "task": "T07",
-  "completedAt": "2026-11-20T01:42:52.299Z",
+  "completedAt": "2026-11-20T02:08:00.997Z",
   "productClauses": [
     "C1",
     "C4"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -27,8 +27,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T07/standards-and-evaluation.log",
-      "evidenceSha256": "7bc5f1ad7cac0bbbf2026cc3fbc86eafd29e80a9a27785576926c2d1f98d176c",
-      "durationMs": 1862
+      "evidenceSha256": "807bafbbc2071d4c9e978ecc1ce9a46102e418e7778c6f4b55288a122ffb841f",
+      "durationMs": 2023
     }
   ]
 }

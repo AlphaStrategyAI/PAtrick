@@ -1,6 +1,6 @@
 {
   "task": "T17",
-  "completedAt": "2026-11-20T01:45:44.799Z",
+  "completedAt": "2026-11-20T02:10:49.803Z",
   "productClauses": [
     "C4",
     "C5",
@@ -15,7 +15,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -29,8 +29,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T17/settings-change-chain.log",
-      "evidenceSha256": "68530852a7c799118e532b2fc2293269bad6838157c3abb7875eecdf536c5e9d",
-      "durationMs": 2230
+      "evidenceSha256": "0d0782f615623de8fb0a8586c5708824abb3e2c7c12d9616ded20a3c58d645b4",
+      "durationMs": 2434
     },
     {
       "id": "settings-browser",
@@ -39,7 +39,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -53,8 +53,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T17/settings-browser.log",
-      "evidenceSha256": "03297264cb53e300c61b910db7a5b4133fc4ca64cf92a5a789701397d7334907",
-      "durationMs": 83597
+      "evidenceSha256": "d5f31f7becd5634f4d365765d64ea582fa92218eebefb3939de5abb8821bc3d5",
+      "durationMs": 82502
     }
   ]
 }

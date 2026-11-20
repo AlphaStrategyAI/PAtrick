@@ -1,6 +1,6 @@
 {
   "task": "T15",
-  "completedAt": "2026-11-20T01:44:05.688Z",
+  "completedAt": "2026-11-20T02:09:12.293Z",
   "productClauses": [
     "C2",
     "C9"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -27,8 +27,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/decisions-and-work-browser.log",
-      "evidenceSha256": "fab02a96b9bf339bf16e66cc4fb164b5a741405d5cc6218eaf0b9976223d3c7c",
-      "durationMs": 25198
+      "evidenceSha256": "387b6a33cd0c83bc8ad645c6cc37d83231b55add70e044377219fb1c7d25a90f",
+      "durationMs": 25644
     },
     {
       "id": "consultation-scope",
@@ -37,7 +37,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -51,8 +51,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/consultation-scope.log",
-      "evidenceSha256": "d61b72e3f0f0e82b70e75aebcebea2018f9a0b973c5eac08ea23b35e7c02cd84",
-      "durationMs": 1391
+      "evidenceSha256": "d1db243718d5af4ce79b3d99c495e70b7a07bb36708f34b213ddc7f334faa310",
+      "durationMs": 1496
     },
     {
       "id": "work-control",
@@ -61,7 +61,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -75,8 +75,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/work-control.log",
-      "evidenceSha256": "dbd49d5c56ee73db43c6a7bc200fa0ad1f1b8d5326edc37c0fc5da524b97299c",
-      "durationMs": 1048
+      "evidenceSha256": "1695bdbbcd98c3a17d5e2eac93c6387f96fbecb4308d147b8cf64c9754e0da3e",
+      "durationMs": 1212
     },
     {
       "id": "command-journal",
@@ -85,7 +85,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -99,8 +99,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/command-journal.log",
-      "evidenceSha256": "c963fb0553a2ea39712ff2a42c63676b5283f6a5714a462e0e286365cd3f40e1",
-      "durationMs": 754
+      "evidenceSha256": "c364f20fb76fe84a3b74f1fb5f854876d110e68b69172bdac97d3e5dc1efe8b4",
+      "durationMs": 750
     }
   ]
 }

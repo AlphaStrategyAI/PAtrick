@@ -1,8 +1,8 @@
 {
   "release": "impl-2026-11-19",
-  "generatedAt": "2026-11-20T01:50:14.821Z",
+  "generatedAt": "2026-11-20T02:15:21.276Z",
   "versions": {
-    "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+    "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
     "node": "v26.13.0",
     "npm": "11.20.0",
     "platform": "darwin-arm64",

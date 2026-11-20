@@ -1,6 +1,6 @@
 {
   "task": "T00",
-  "completedAt": "2026-11-20T01:42:23.346Z",
+  "completedAt": "2026-11-20T02:07:30.527Z",
   "productClauses": [],
   "scenarios": [
     {
@@ -10,7 +10,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -24,8 +24,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T00/design-inputs-lock.log",
-      "evidenceSha256": "f4d15203e7dd0944e62258162a6521e307637fdf00914af3adc5bdb654789b8a",
-      "durationMs": 820
+      "evidenceSha256": "4fe926038f156b7afd486452ec3071dea117d30a54f523bf5433d85ed3c1711c",
+      "durationMs": 695
     },
     {
       "id": "design-inputs-recheck",
@@ -34,7 +34,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -48,8 +48,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T00/design-inputs-recheck.log",
-      "evidenceSha256": "84109a18acf7ba49f71560bcccca78a44f80e39975d72c1676cbd1708b5bea19",
-      "durationMs": 148
+      "evidenceSha256": "cc87aba069db5f70278d8c3893f05cd41c63150e7b3f75143d996348f1c3243a",
+      "durationMs": 149
     },
     {
       "id": "runtime-admission-probes",
@@ -58,7 +58,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "ce438824975cbd21ed4dbabe94f5118c172b7440",
+        "code": "b19396639f8172b3726062bc9fa5ae04e41fb7d4",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -72,8 +72,8 @@
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T00/runtime-admission-probes.log",
-      "evidenceSha256": "0d36d56a7f66a21f8a22fefd698f15782fd9395020573f434e94ddf3a6d33766",
-      "durationMs": 154,
+      "evidenceSha256": "d80d8fb08e39d9e8b86e88a8064062b829dd20b9dfec751196d03d9cfd9e8ae7",
+      "durationMs": 153,
       "note": "记录 Node/npm、平台、CLI、飞书与 Obsidian 的真实探针结果；未测到的组合保留 pending/blocked。"
     }
   ]

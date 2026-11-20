@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/unit/T20-diagnostics-client.test.ts
-exit=0 signal=none durationMs=767
+exit=0 signal=none durationMs=765
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=767
 
  Test Files  1 passed (1)
       Tests  4 passed (4)
-   Start at  09:46:04
-   Duration  240ms (import 57%, tests 27%, transform 13%, worker 3%)
+   Start at  10:11:09
+   Duration  239ms (import 56%, tests 28%, transform 13%, worker 2%)
 
 
 --- stderr ---
