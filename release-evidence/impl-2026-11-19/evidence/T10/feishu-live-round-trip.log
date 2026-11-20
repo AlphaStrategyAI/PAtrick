@@ -1,14 +1,14 @@
 $ npm exec -- vitest run tests/admission/T10.test.ts
-exit=0 signal=none durationMs=1470
+exit=0 signal=none durationMs=2179
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
 
 
  Test Files  1 passed (1)
-      Tests  2 passed (2)
-   Start at  12:44:22
-   Duration  955ms (tests 90%, import 7%, transform 2%)
+      Tests  3 passed (3)
+   Start at  16:50:43
+   Duration  1.18s (tests 85%, import 11%, transform 4%)
 
 
 --- stderr ---

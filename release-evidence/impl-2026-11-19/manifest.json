@@ -168,9 +168,9 @@
   ],
   "summary": {
     "scenarios": 57,
-    "passed": 51,
+    "passed": 52,
     "failed": 0,
-    "blocked": 4,
+    "blocked": 3,
     "pending": 2
   },
   "note": "缺真实能力时标blocked而非passed；豁免与失败保留在本清单中。"

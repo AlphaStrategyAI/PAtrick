@@ -216,6 +216,28 @@ async function submitWebAnswer() {
   }
 }
 
+test('the recorded Feishu round trip reads back defer and a later decision', () => {
+  const stored = JSON.parse(readFileSync(MATRIX, 'utf8')).feishu_deferred_card as {
+    status: string;
+    observation: string;
+    evidenceSha256: string;
+    upstream: { sdk: string; version: string };
+  };
+  expect(stored.upstream).toEqual({ sdk: '@larksuiteoapi/node-sdk', version: '1.76.0' });
+  expect(stored.status).toBe('verified');
+  expect(stored.evidenceSha256).toBe(sha256(stored.observation));
+  expect(stored.observation).toContain('pairing_message_id: om_x100b7f34326608a8b1eea24cd689a30');
+  expect(stored.observation).toContain('outbound_message_id: om_x100b7f34ccd56ca0df690c6dfae28a9');
+  expect(stored.observation).toContain('outbound_readback: match');
+  expect(stored.observation).toContain('defer_callback_message_id: om_x100b7f34cce104a0dd62f48ae5e98fa');
+  expect(stored.observation).toContain('defer_action: defer');
+  expect(stored.observation).toContain('answer_after_defer_message_id: om_x100b7f34c085acb0df234097f84ee4c');
+  expect(stored.observation).toContain('answer_after_defer_action: option-a');
+  expect(stored.observation).toContain('answer_card_distinct_from_defer: true');
+  expect(stored.observation).toContain('business_facts: none');
+  expect(stored.observation).not.toMatch(/app_secret|FEISHU_APP_SECRET|ou_|oc_|tenant_key/i);
+});
+
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }

@@ -122,7 +122,7 @@ export const releaseEvidencePlan = {
         command: vitest('tests/admission/T10.test.ts'),
         kind: 'admission',
         blockedBy: { type: 'json-status', file: 'fixtures/contracts/admission-matrix.json', path: 'feishu_deferred_card.status', value: 'blocked' },
-        blockedReason: '飞书准入探针记录 `feishu_deferred_card` 为 blocked：本机没有真实飞书应用凭据，暂缓后提交决定卡与双向收发未在真实租户验收。',
+        blockedReason: '飞书准入记录 `feishu_deferred_card` 仍是 blocked：真实租户还没有配对、双向读回，以及暂缓后再次提交决定卡的观察。',
       },
     ],
   },
