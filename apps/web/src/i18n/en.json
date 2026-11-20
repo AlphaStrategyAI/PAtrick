@@ -370,6 +370,7 @@
   "settings.quietHours": "Quiet hours",
   "settings.quietHoursStart": "Start",
   "settings.quietHoursEnd": "End",
+  "settings.feishuConfigure": "Configure the Feishu connection",
   "materials.workDirectory": "Work directory",
   "materials.noWorkDirectory": "No work directory is registered yet.",
   "materials.directoryDetails": "Directory details",

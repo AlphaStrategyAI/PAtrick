@@ -3,7 +3,7 @@ import { hostname } from 'node:os';
 import { canonicalPayload, type Json } from '@patrick/contracts';
 import { encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { confirmVault, inspectVault, loadVault, probeVaultConfirmation, VaultConfirmationBlocked } from '@patrick/integrations/vault/connection';
-import { createFeishuChannel } from '../../../../packages/integrations/feishu/connection.js';
+import { createFeishuChannel, feishuConnectionId } from '../../../../packages/integrations/feishu/connection.js';
 import type { CredentialStore } from '@patrick/host';
 import type { SqliteDatabase } from '@patrick/storage';
 import type { Principal } from '../auth.js';
@@ -88,6 +88,17 @@ export function builtinSettingsHandlers(options: Input): Record<string, Settings
       WHERE c.connection_id=? AND c.account_id=? AND c.data_domain=?`).get(draft.target, principal.account_id, draft.domain) as Channel | undefined;
     if (!row) denied();
     return row;
+  }
+
+  /** The connection of the account in this domain, if one is configured. */
+  function existingChannel(principal: Principal, draft: SettingsDraft) {
+    return db.prepare(`SELECT connection_id,config_revision,credential_version,binding_revision,channel_incarnation,
+      connection_epoch,status,app_id,credential_ref FROM channel_connections
+      WHERE account_id=? AND data_domain=? ORDER BY updated_at DESC LIMIT 1`).get(
+      principal.account_id, draft.domain) as {
+      connection_id: string; config_revision: number; credential_version: number; binding_revision: number;
+      channel_incarnation: number; connection_epoch: number; status: string; app_id: string; credential_ref: string;
+    } | undefined;
   }
   const enabledChannel: SettingsHandler = {
     binding(principal, draft) {
@@ -236,8 +247,70 @@ export function builtinSettingsHandlers(options: Input): Record<string, Settings
       return { verified, ...(!verified ? { issue: 'feishu_recheck' } : {}) };
     },
   };
+  const configuredChannel: SettingsHandler = {
+    binding(principal, draft) {
+      const input = channelConfiguration(draft);
+      const row = existingChannel(principal, draft);
+      return { revision: row?.config_revision ?? 0, deviceId: host,
+        identityId: row?.connection_id ?? input.app_id,
+        scopeHash: hash([input.app_id, input.credential_ref, row?.credential_version ?? 0, row?.binding_revision ?? 0,
+          row?.channel_incarnation ?? 0, row?.connection_epoch ?? 0, row?.status ?? 'not_configured']) };
+    },
+    async validate(principal, draft) {
+      const input = channelConfiguration(draft);
+      if (!feishuCredentials) return { valid: false };
+      if (feishuCredentials.resolve(input.credential_ref) === null) return { valid: false };
+      existingChannel(principal, draft);
+      return { valid: true };
+    },
+    authorize,
+    async apply(principal, draft, proof, beforeWrite) {
+      const input = channelConfiguration(draft);
+      const row = existingChannel(principal, draft);
+      if (!feishuCredentials || feishuCredentials.resolve(input.credential_ref) === null) {
+        throw new SettingsApplyBlocked('candidate_credential_unavailable');
+      }
+      if ((row?.config_revision ?? 0) !== proof.base_revision) throw new SettingsApplyBlocked('confirmation_changed');
+      const stamped = beforeWrite();
+      if (!row) {
+        const connectionId = feishuConnectionId(principal.account_id);
+        db.prepare(`INSERT INTO channel_connections (
+          connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
+          config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id, current_test_id,
+          owner_open_id, chat_id, status, transport_mode, reason_code, cutoff_seq, schema_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'pending-tenant', ?, 1, 1, 1, 1, 1, NULL, NULL, NULL, NULL,
+          'needs_binding', 'probe', 'NATIVE_PROBE_REQUIRED', NULL, '1.0', ?, ?)`).run(
+          connectionId, principal.account_id, draft.domain, input.app_id, input.credential_ref, stamped, stamped,
+        );
+        db.prepare('INSERT INTO channel_receipts(receipt_id,connection_id,kind,status,created_at) VALUES (?,?,?,?,?)')
+          .run(`ch_${hash([connectionId, 'configure', 1]).slice(0, 16)}`, connectionId, 'configure', 'applied', stamped);
+        return { revision: 1, effects: [{ item: 'feishu_connection', outcome: 'applied', revision: 1 }] };
+      }
+      const next = row.config_revision + 1;
+      // The old binding and the old permits are cleared with the new
+      // configuration, so a stale pairing or test cannot make it ready.
+      const epoch = row.connection_epoch + 1;
+      const updated = db.prepare(`UPDATE channel_connections SET credential_ref=?, credential_version=?, config_revision=?,
+        binding_revision=?, channel_incarnation=?, connection_epoch=?, status='needs_binding', transport_mode='probe',
+        app_id=?, reason_code='CONNECTION_CONFIGURED', current_pairing_id=NULL, current_test_id=NULL, owner_open_id=NULL,
+        chat_id=NULL, cutoff_seq=NULL, updated_at=? WHERE connection_id=? AND config_revision=? AND credential_version=?`).run(
+        input.credential_ref, row.credential_version + 1, next, row.binding_revision + 1, row.channel_incarnation + 1,
+        epoch, input.app_id, stamped, row.connection_id, row.config_revision, row.credential_version);
+      if (updated.changes !== 1) throw new SettingsApplyBlocked('confirmation_changed');
+      db.prepare(`INSERT INTO channel_receipts(receipt_id,connection_id,kind,status,created_at) VALUES (?,?,'configure','applied',?)`)
+        .run(`ch_${hash([row.connection_id, 'configure', next]).slice(0, 16)}`, row.connection_id, stamped);
+      return { revision: next, effects: [{ item: 'feishu_connection', outcome: 'applied', revision: next }] };
+    },
+    async recheck(principal, draft, applied) {
+      const input = channelConfiguration(draft);
+      const row = existingChannel(principal, draft);
+      const verified = !!row && row.config_revision === applied.revision && row.status === 'needs_binding'
+        && row.app_id === input.app_id && row.credential_ref === input.credential_ref;
+      return { verified, ...(!verified ? { issue: 'feishu_recheck' } : {}) };
+    },
+  };
   return { connect_vault: existingVault, enable_feishu: enabledChannel, disable_feishu: disabledChannel,
-    rebind_feishu: reboundChannel, rotate_feishu_credential: rotatedChannel };
+    rebind_feishu: reboundChannel, rotate_feishu_credential: rotatedChannel, set_feishu_connection: configuredChannel };
 }
 
 function denied(): never {
@@ -258,4 +331,22 @@ function candidateCredential(draft: SettingsDraft): string {
   const reference = (input as { credential_ref: string }).credential_ref;
   if (!/^cred_[A-Za-z0-9_-]+$/u.test(reference)) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
   return reference;
+}
+
+type ChannelConfiguration = { app_id: string; credential_ref: string };
+
+/** The configuration of a bot travels with the draft; the secret never does. */
+function channelConfiguration(draft: SettingsDraft): ChannelConfiguration {
+  const input = draft.input;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
+  }
+  const record = input as Record<string, unknown>;
+  if (Object.keys(record).length !== 2 || typeof record.app_id !== 'string' || !record.app_id.trim() ||
+      record.app_id.length > 200 || typeof record.credential_ref !== 'string' || !record.credential_ref.trim()) {
+    throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
+  }
+  const reference = record.credential_ref;
+  if (!/^cred_[A-Za-z0-9_-]+$/u.test(reference)) throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_draft' });
+  return { app_id: record.app_id.trim(), credential_ref: reference };
 }

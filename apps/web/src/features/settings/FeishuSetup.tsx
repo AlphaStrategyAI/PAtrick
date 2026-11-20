@@ -51,6 +51,7 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
   const { locale } = useLocale();
   const copy = feishuSetupCopy[locale];
   const [rotation, setRotation] = useState<string>();
+  const [configuration, setConfiguration] = useState<{ credential_ref: string; app_id: string }>();
   const titleId = useId();
   const connection = useScopedSnapshot('getFeishuChannel', {}, feishuConnectionSchema.parse);
   const pairing = useScopedSnapshot('getFeishuBinding', { id: 'current' }, pairingSchema.parse);
@@ -114,7 +115,11 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
     secret.value = '';
     act(async (signal) => {
       try {
-        await api.write('putFeishuCredentials', {}, body, { signal });
+        // The endpoint only holds the secret. The connection itself is created
+        // by a trusted change, so the owner proves the exact configuration.
+        const staged = await api.write('putFeishuCredentials', {}, body, { signal }) as { credential_ref?: string };
+        if (!staged.credential_ref) throw new ClientError('INVALID_RESPONSE');
+        setConfiguration({ credential_ref: staged.credential_ref, app_id: body.app_id });
       } finally { body.app_secret = ''; }
     });
   }
@@ -194,6 +199,15 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
           <label>{copy.secret}<input name="app_secret" type="password" maxLength={1024} required autoComplete="new-password" /></label>
           <button type="submit" disabled={busy}>{copy.stage}</button>
         </form> : <p>{copy.secureUnavailable}</p>)}
+        {configuration && <SettingsChangeWizard operation="set_feishu_connection"
+          targets={[{ target: configuration.app_id, device: null, revision: 0,
+            input: { credential_ref: configuration.credential_ref, app_id: configuration.app_id } }]}
+          entryLabel="settings.feishuConfigure" onChanged={() => {
+            setConfiguration(undefined);
+            void connection.refetch();
+            void pairing.refetch();
+            onChanged();
+          }} />}
         {nativeProbeRequired && <p>{copy.nativeProbeRequired}</p>}
         {status !== 'not_configured' && connection.data?.data.connection_id && <section>
           <h3>{copy.rotationStage}</h3>
@@ -204,7 +218,12 @@ function FeishuSetupDetails({ onChanged }: { onChanged: () => void }) {
           </form> : <SettingsChangeWizard operation="rotate_feishu_credential"
             targets={[{ target: connection.data.data.connection_id, device: null,
               revision: connection.data.data.config_revision ?? 0, input: { credential_ref: rotation } }]}
-            entryLabel="settings.feishuRotate" onChanged={() => { setRotation(undefined); onChanged(); }} />}
+            entryLabel="settings.feishuRotate" onChanged={() => {
+              setRotation(undefined);
+              void connection.refetch();
+              void pairing.refetch();
+              onChanged();
+            }} />}
         </section>}
         {active && <p>{copy.managed}</p>}
         {!active && status !== 'not_configured' && details?.app_id && <>

@@ -17,6 +17,7 @@ const effectKeys: Record<string, MessageKey> = {
 const operationKeys: Record<string, MessageKey> = {
   configure_source: 'settings.configureSource', connect_vault: 'settings.connectVault', change_vault: 'settings.changeVault',
   enable_work_directory: 'materials.workDirectory', change_work_directory: 'materials.workDirectory',
+  set_feishu_connection: 'settings.feishuConfigure',
   rebind_feishu: 'settings.feishuRebind', rotate_feishu_credential: 'settings.feishuRotate',
   inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', repair_network: 'settings.repairNetwork', start_backup: 'settings.startBackup',
   start_restore: 'settings.startRestore', enable_feishu: 'settings.enableFeishu', disable_feishu: 'settings.disableFeishu',

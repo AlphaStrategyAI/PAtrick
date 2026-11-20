@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Context, Hono } from 'hono';
 import { routes, type Json } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { commandFingerprint, recordCommand, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { channelPermit, createAnswerGate, type AnswerPayload } from '../../../../packages/domain/src/answer-gate.js';
-import { createFeishuChannel, type EnableProof } from '../../../../packages/integrations/feishu/connection.js';
+import { createFeishuChannel, feishuConnectionId, type EnableProof } from '../../../../packages/integrations/feishu/connection.js';
 import { claimFeishuOutboundTest, dispatchClaimedFeishuTest, type FeishuOutboundLifetime, type FeishuTestOutbound } from '../../../../packages/integrations/feishu/outbound.js';
 import { assertDomainPermission, browserAuthority, domainsWithPermission, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
@@ -71,7 +71,7 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
   assertFeishuOrigin(c.req.raw);
   const principal = await requirePermission(c.req.raw, 'owner');
   requireSecureSetup(c.req.raw);
-  const { feishuCredentials, db, now } = ready();
+  const { feishuCredentials, db } = ready();
   // The general session credential store is not an admitted system provider for Feishu.
   if (!feishuCredentials) throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_provider_not_configured' });
   if (principal.caller_id !== 'web') throw new ApiError(403, 'FORBIDDEN', { reason: 'caller' });
@@ -81,40 +81,23 @@ async function putCredential(c: Context, ready: Ready): Promise<Response> {
     throw new ApiError(422, 'UNPROCESSABLE', { reason: 'credential' });
   }
   const secret = new TextEncoder().encode(body.app_secret);
-  const appId = body.app_id.trim();
   c.header('Cache-Control', 'no-store');
   try {
+    // The endpoint only holds the secret. The connection itself is configured
+    // through a Settings change, so the owner proves the exact configuration
+    // before it becomes a connection.
     const staged = withImmediateTransaction(db, () => {
       const domain = channelDomain(db, principal, 'owner');
       assertBusinessWrite(db, domain);
-      // Bootstrap never modifies an existing binding. A rotation stages the
-      // candidate credential here and applies it through a separate Settings
-      // proof and a live connection fence.
-      if (db.prepare('SELECT 1 FROM channel_connections WHERE account_id = ?').get(principal.account_id)) {
-        // The connection stays on its current credential until the owner proves
-        // the change; only the candidate is staged here.
-        let candidate: string;
-        try { candidate = feishuCredentials.put(secret, 10 * 60 * 1000); }
-        catch { throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_store' }); }
-        const row = db.prepare(`SELECT credential_version FROM channel_connections WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1`)
-          .get(principal.account_id) as { credential_version: number } | undefined;
-        return { credential_ref: candidate, version: (row?.credential_version ?? 0) + 1 };
-      }
-      const stamped = now().toISOString();
-      assertBusinessWrite(db, domain);
-      let credentialRef: string;
-      try { credentialRef = feishuCredentials.put(secret, 10 * 60 * 1000); }
+      let candidate: string;
+      try { candidate = feishuCredentials.put(secret, 10 * 60 * 1000); }
       catch { throw new ApiError(503, 'UNAVAILABLE', { reason: 'credential_store' }); }
+      // The gate may have closed while the secret was stored; the staged
+      // credential must not become authority.
       assertBusinessWrite(db, domain);
-      db.prepare(`INSERT INTO channel_connections (
-        connection_id, account_id, data_domain, app_id, tenant_key, credential_ref, credential_version,
-        config_revision, channel_incarnation, connection_epoch, binding_revision, current_pairing_id, current_test_id,
-        owner_open_id, chat_id, status, transport_mode, reason_code, cutoff_seq, schema_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'pending-tenant', ?, 1, 1, 1, 1, 1, NULL, NULL, NULL, NULL,
-        'needs_binding', 'probe', 'NATIVE_PROBE_REQUIRED', NULL, '1.0', ?, ?)`).run(
-        connectionIdFor(principal), principal.account_id, domain, appId, credentialRef, stamped, stamped,
-      );
-      return { credential_ref: credentialRef, version: 1 };
+      const row = db.prepare(`SELECT credential_version FROM channel_connections WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1`)
+        .get(principal.account_id) as { credential_version: number } | undefined;
+      return { credential_ref: candidate, version: (row?.credential_version ?? 0) + 1 };
     });
     return c.json({ credential_ref: staged.credential_ref, version: staged.version });
   } finally {
@@ -354,7 +337,7 @@ function feishu(resources: ReturnType<Ready>, principal: Principal) {
     hub: resources.hub,
     encode: encodeHubAnswer,
     domain: principal.domains[0] ?? 'personal',
-    connectionId: `conn_${sha256(principal.account_id).slice(0, 12)}`,
+    connectionId: feishuConnectionId(principal.account_id),
   });
 }
 
@@ -745,7 +728,7 @@ function isProof(value: unknown): value is EnableProof {
 }
 
 function connectionIdFor(principal: Principal): string {
-  return `conn_${sha256(principal.account_id).slice(0, 12)}`;
+  return feishuConnectionId(principal.account_id);
 }
 
 function routeRequest(operationId: string) {
@@ -754,6 +737,3 @@ function routeRequest(operationId: string) {
   return route.request;
 }
 
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}

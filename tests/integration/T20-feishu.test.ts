@@ -12,6 +12,12 @@ import { createApp, createServiceRuntime } from '../../apps/service/src/factory.
 import { issueCallerSession, runWithAuth } from '../../apps/service/src/auth.js';
 import { createTaskLifetime } from '../../apps/service/src/lifecycle.js';
 import { mountFeishuRoutes, publishPairingCode } from '../../apps/service/src/routes/feishu.js';
+import { mountAuthRoutes } from '../../apps/service/src/auth.js';
+import { mountControlRoutes } from '../../apps/service/src/control.js';
+import { mountSettingsRoutes } from '../../apps/service/src/routes/settings.js';
+import { createSettingsChanges } from '../../apps/service/src/settings/changes.js';
+import { builtinSettingsHandlers } from '../../apps/service/src/settings/builtin.js';
+import { applySettingsChange, configureFeishuConnection } from '../support/settings-change.js';
 import { claimFeishuOutboundTest, dispatchClaimedFeishuTest, type FeishuTestOutbound } from '../../packages/integrations/feishu/outbound.js';
 import { createFeishuChannel } from '../../packages/integrations/feishu/connection.js';
 
@@ -52,6 +58,13 @@ function fixture(feishuTestOutbound?: FeishuTestOutbound, integrated = false, wi
     local.use('*', (_c, next) => runWithAuth({ db, credentials, now }, next));
     mountFeishuRoutes(local, () => ({ db, now, hub, feishuCredentials: withCredentials ? credentials : undefined, feishuTestOutbound,
       feishuOutboundLifetime: withOwner ? lifetime : undefined }));
+    // The connection is configured by a trusted change, so the fixture offers
+    // the same settings flow the browser uses.
+    mountAuthRoutes(local);
+    const engine = createSettingsChanges({ db, now, handlers: builtinSettingsHandlers(
+      { db, credentials, now, hub: () => hub, feishuCredentials: credentials }) });
+    mountControlRoutes(local);
+    mountSettingsRoutes(local, () => ({ db, now, credentials, engine }));
     return local;
   }
   let app = runtime?.app ?? localApp();
@@ -65,9 +78,9 @@ function fixture(feishuTestOutbound?: FeishuTestOutbound, integrated = false, wi
   }, authorization, requestOrigin);
   const prepare = async () => {
     const prefix = '/api/v1/channels/feishu';
-    const credential = await request(`${prefix}/credentials`, { app_id: 'cli_fixture', app_secret: 'fixture-local-only' });
-    expect(credential.status).toBe(200);
-    await credential.text();
+    const configured = await configureFeishuConnection(app, { authorization: owner, appId: 'cli_fixture',
+      appSecret: 'fixture-local-only', id: 'configure-fixture' });
+    expect(configured.applied?.status).toBe(202);
     // Model a connection admitted by a supervised transport, entirely in the local fixture.
     db.prepare("UPDATE channel_connections SET tenant_key='tenant_fixture', reason_code=NULL").run();
     const pairing = await command(`${prefix}/bindings`, 'pair', {});
@@ -84,7 +97,8 @@ function fixture(feishuTestOutbound?: FeishuTestOutbound, integrated = false, wi
     } };
     return { url, payload: { test_id, preview_hash, destination } };
   };
-  return { db, runtime, serviceDb, lifetime, now, credentials, session, request, command, prepare, reopenLocalRoutes, dispose: async () => {
+  return { db, runtime, serviceDb, lifetime, now, credentials, session, request, command, prepare, reopenLocalRoutes,
+    currentApp: () => app, owner, dispose: async () => {
     lifetime.stop();
     await lifetime.join();
     await runtime?.drain();
@@ -104,6 +118,37 @@ test('closed recovery refuses credential bootstrap before storing credentials or
     expect(await response.json()).toMatchObject({ params: { reason: 'recovery_write_blocked' } });
     expect(put).not.toHaveBeenCalled();
     expect(f.db.prepare('SELECT COUNT(*) AS count FROM channel_connections').get()).toEqual({ count: 0 });
+  } finally { await f.dispose(); }
+});
+
+test('the credential endpoint only holds the secret and the trusted change configures the connection', async () => {
+  const f = fixture();
+  try {
+    const staged = await f.request('/api/v1/channels/feishu/credentials', { app_id: 'cli_fixture', app_secret: 'synthetic-local-test-value' });
+    expect(staged.status).toBe(200);
+    const { credential_ref } = await staged.json() as { credential_ref: string };
+    expect(JSON.stringify({ credential_ref })).not.toContain('synthetic-local-test-value');
+    // The endpoint alone grants no connection authority.
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM channel_connections').get()).toEqual({ n: 0 });
+
+    const configured = await applySettingsChange(f.currentApp(), { authorization: f.owner, id: 'configure-connection',
+      draft: { operation: 'set_feishu_connection', domain: 'personal', target: 'cli_fixture',
+        input: { credential_ref, app_id: 'cli_fixture' } } });
+    expect(configured.applied?.status).toBe(202);
+    expect(f.db.prepare('SELECT status,app_id,transport_mode,reason_code FROM channel_connections').get())
+      .toEqual({ status: 'needs_binding', app_id: 'cli_fixture', transport_mode: 'probe', reason_code: 'NATIVE_PROBE_REQUIRED' });
+
+    // A second configuration replaces the app and clears the old binding.
+    f.db.prepare("UPDATE channel_connections SET status='ready',owner_open_id='ou_fixture',chat_id='oc_fixture'").run();
+    const replacement = await f.request('/api/v1/channels/feishu/credentials', { app_id: 'cli_replacement', app_secret: 'synthetic-secret' });
+    const { credential_ref: next } = await replacement.json() as { credential_ref: string };
+    const reconfigured = await applySettingsChange(f.currentApp(), { authorization: f.owner, id: 'configure-replacement',
+      expectedRevision: 1,
+      draft: { operation: 'set_feishu_connection', domain: 'personal', target: 'cli_replacement',
+        input: { credential_ref: next, app_id: 'cli_replacement' } } });
+    expect(reconfigured.applied?.status).toBe(202);
+    expect(f.db.prepare('SELECT status,app_id,owner_open_id,chat_id,config_revision FROM channel_connections').get())
+      .toEqual({ status: 'needs_binding', app_id: 'cli_replacement', owner_open_id: null, chat_id: null, config_revision: 2 });
   } finally { await f.dispose(); }
 });
 
@@ -525,8 +570,11 @@ test('a stop during canonical command creation rolls back the Feishu claim befor
 });
 
 const bindings = '/api/v1/channels/feishu/bindings';
+let candidateCounter = 0;
 async function syntheticCandidate(f: ReturnType<typeof fixture>) {
-  expect((await f.request('/api/v1/channels/feishu/credentials', { app_id: 'cli_fixture', app_secret: 'synthetic-local-test-value' })).status).toBe(200);
+  const configured = await configureFeishuConnection(f.currentApp(), { authorization: f.owner, appId: 'cli_fixture',
+    appSecret: 'synthetic-local-test-value', id: 'configure-candidate-' + (++candidateCounter) });
+  expect(configured.applied?.status).toBe(202);
   f.db.prepare("UPDATE channel_connections SET tenant_key='tenant_fixture',reason_code=NULL").run();
   const first = await (await f.command(bindings, 'initial', {})).json();
   const old = String(first.receipt_url).split('/').pop()!;

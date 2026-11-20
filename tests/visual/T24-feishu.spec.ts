@@ -117,7 +117,7 @@ async function settingsNavigation(page: Page, locale: Locale, edges: Edge[], inf
 }
 
 async function form(page: Page, origin: string, locale: Locale, edges: Edge[], info: TestInfo) {
-  const copy = feishuSetupCopy[locale], region = bot(page, locale);
+  const t = messages[locale], copy = feishuSetupCopy[locale], region = bot(page, locale);
   await withChannel(page, origin, false, async ({ db, requests }) => {
     const writes = startWrites(page);
     await page.goto(origin + '/settings/interaction');
@@ -136,12 +136,22 @@ async function form(page: Page, origin: string, locale: Locale, edges: Edge[], i
     await region.getByLabel(copy.appId).fill(synthetic.app);
     await region.getByLabel(copy.secret).fill('synthetic-local-test-value');
     await region.getByRole('button', { name: copy.stage }).click();
+    // The endpoint only holds the secret; the connection is configured by a
+    // trusted change.
+    await expect(region.getByRole('heading', { name: t['settings.feishuConfigure'] })).toBeVisible();
+    expect(db.prepare('SELECT count(*) FROM channel_connections').pluck().get()).toBe(0);
+    await region.getByLabel(t['settings.selectTarget']).selectOption({ label: synthetic.app });
+    await region.getByRole('button', { name: t['wizard.next'] }).click();
+    await expect(region.getByText(t['settings.validationPassed'], { exact: true })).toBeVisible();
+    await region.getByRole('button', { name: t['wizard.next'] }).click();
+    await region.getByRole('button', { name: t['settings.confirmApply'] }).click();
     await expect(region.getByText(copy.nativeProbeRequired, { exact: true })).toBeVisible();
     await expect(region.getByRole('button', { name: copy.pairingStart })).toBeDisabled();
     const staged = db.prepare('SELECT app_id,status,transport_mode,reason_code FROM channel_connections').get();
     expect(staged).toEqual({ app_id: synthetic.app, status: 'needs_binding', transport_mode: 'probe', reason_code: 'NATIVE_PROBE_REQUIRED' });
     expect(db.prepare('SELECT count(*) FROM channel_pairings').pluck().get()).toBe(0);
-    expect(writes).toEqual([{ method: 'POST', path: prefix + '/credentials' }]);
+    expect(writes[0]).toEqual({ method: 'POST', path: prefix + '/credentials' });
+    expect(writes.some((write) => write.path === '/api/v1/settings/changes')).toBe(true);
     await capture(info, locale + '-staged', { origin, staged, guideControlAbsent: guide, writes, requests });
   });
 }

@@ -15,6 +15,11 @@ import { requiresChannelReconciliation } from './channel-gate.js';
 export const PAIRING_TTL_MS = 5 * 60 * 1000;
 const CONNECTION_ID = 'conn-017';
 
+/** The connection of an account keeps one id, so every route finds the same row. */
+export function feishuConnectionId(accountId: string): string {
+  return `conn_${sha256(accountId).slice(0, 12)}`;
+}
+
 type HubAnswerBody = { choice: number } | { text: string };
 
 export type EnableProof = {

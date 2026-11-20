@@ -7,7 +7,7 @@ import { expect, test } from 'vitest';
 import { canonicalPayload, type Json } from '../../packages/contracts/src/envelope.js';
 import { MCP_TOOLS } from '../../packages/contracts/src/resources.js';
 import { createBudgetApi } from '../../packages/domain/src/budget.js';
-import { createConsultationApi } from '../../packages/domain/src/consultations.js';
+import { createConsultationApi, recordConsultationPartial } from '../../packages/domain/src/consultations.js';
 import { createDelegationApi, type AdmissionPrincipal } from '../../packages/domain/src/delegation.js';
 import { dispatchPaidNext } from '../../packages/executor/harness/patrick-bridge.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
@@ -280,6 +280,24 @@ RETURNING result_version;`);
     second.close();
     fx.close();
   }
+});
+
+test('a cancelled consultation stops streaming and never reports a finished answer', async () => {
+  const fx = temporaryDatabase();
+  const now = () => new Date(NOW);
+  try {
+    const api = createConsultationApi(fx.db, { now });
+    const created = await api.createConsultation(owner, { ...contextRequest, client_request_id: 'stream-then-cancel' });
+    recordConsultationPartial(fx.db, created.request_id, '已经流出的部分回答', NOW);
+    const streaming = await api.readConsultation(owner, created.request_id);
+    expect(streaming).toMatchObject({ status: 'pending', partial_text: '已经流出的部分回答', final_result: null });
+
+    expect(await api.cancelConsultation(owner, created.request_id, created.result_version)).toBe(true);
+    // A late chunk must not keep flowing out after the owner cancelled.
+    recordConsultationPartial(fx.db, created.request_id, '取消之后仍然到达的文字', NOW);
+    const cancelled = await api.readConsultation(owner, created.request_id);
+    expect(cancelled).toMatchObject({ status: 'cancelled', partial_text: '已经流出的部分回答', final_result: null });
+  } finally { fx.close(); }
 });
 
 test('paid-send-completes-after-crash', async () => {

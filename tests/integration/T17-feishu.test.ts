@@ -9,9 +9,14 @@ import { canonicalPayload, type Json } from '@patrick/contracts';
 import { channelTestSchema } from '@patrick/contracts/resources';
 import { createCredentialStore } from '@patrick/host';
 import { openDatabase } from '@patrick/storage';
-import { issueCallerSession, runWithAuth } from '../../apps/service/src/auth.js';
+import { issueCallerSession, mountAuthRoutes, runWithAuth } from '../../apps/service/src/auth.js';
 import { createApp } from '../../apps/service/src/app.js';
 import { mountFeishuRoutes } from '../../apps/service/src/routes/feishu.js';
+import { mountControlRoutes } from '../../apps/service/src/control.js';
+import { mountSettingsRoutes } from '../../apps/service/src/routes/settings.js';
+import { createSettingsChanges } from '../../apps/service/src/settings/changes.js';
+import { builtinSettingsHandlers } from '../../apps/service/src/settings/builtin.js';
+import { configureFeishuConnection } from '../support/settings-change.js';
 
 const stamp = '2026-11-17T05:00:00.000Z';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -30,6 +35,13 @@ function setup(withAdmittedProvider = true) {
   if (hub) {
     app.use('*', (_context, next) => runWithAuth({ db, credentials, now }, next));
     mountFeishuRoutes(app, () => ({ db, now, hub, feishuCredentials: credentials }));
+    mountAuthRoutes(app);
+    // The connection is configured by a trusted change, so the fixture offers
+    // the same settings flow the browser uses.
+    const engine = createSettingsChanges({ db, now, handlers: builtinSettingsHandlers(
+      { db, credentials, now, hub: () => hub, feishuCredentials: credentials }) });
+    mountControlRoutes(app);
+    mountSettingsRoutes(app, () => ({ db, now, credentials, engine }));
   }
   const request = (path: string, payload?: unknown, origin = 'https://localhost', authorization = session.authorization) =>
     app.request(origin + '/api/v1/channels/feishu' + path, {
@@ -41,6 +53,9 @@ function setup(withAdmittedProvider = true) {
     client_request_id: id, expected_revision: null, payload_hash: hash(canonicalPayload(payload)), payload,
   });
   return { db, credentialDirectory, credentials, request, command,
+    configure(appId: string, appSecret: string, id: string) {
+      return configureFeishuConnection(app, { authorization: session.authorization, appId, appSecret, id });
+    },
     issue(accountId: string, domain: string) {
       db.prepare('INSERT OR IGNORE INTO accounts VALUES (?, 1, 1, ?)').run(accountId, stamp);
       return issueCallerSession(db, { accountId, callerId: 'web', domain, permissions: ['owner'] }, now, credentials).authorization;
@@ -77,6 +92,10 @@ test('Feishu credentials require authenticated TLS and cannot replace an existin
     const ref = await accepted.json() as { credential_ref: string; version: number };
     expect(JSON.stringify(ref)).not.toContain(credentials.app_secret);
     expect(fx.credentials.resolve(ref.credential_ref)).toEqual(new TextEncoder().encode(credentials.app_secret));
+    // The staged secret only becomes a connection through a trusted change.
+    expect(fx.db.prepare('SELECT COUNT(*) AS n FROM channel_connections').get()).toEqual({ n: 0 });
+    const configured = await fx.configure(credentials.app_id, credentials.app_secret, 'configure-first');
+    expect(configured.applied?.status).toBe(202);
     fx.db.prepare("UPDATE channel_connections SET status = 'ready', transport_mode = 'active', connection_epoch = 8").run();
     const baseline = fx.db.prepare('SELECT * FROM channel_connections').get();
     // A second secret cannot replace the connection. It is only staged as a
@@ -97,6 +116,7 @@ test('a scoped pairing discloses the code once, and a preview cannot simulate de
   const fx = setup();
   try {
     expect((await fx.request('/credentials', credentials)).status).toBe(200);
+    await fx.configure(credentials.app_id, credentials.app_secret, 'configure-preview');
     expect((await fx.command('/bindings', 'unverified-probe')).status).toBe(409);
     expect(fx.db.prepare('SELECT COUNT(*) AS n FROM channel_pairings').get()).toEqual({ n: 0 });
     // Model an admitted native probe before advancing. The fixture never runs Feishu.
@@ -141,6 +161,7 @@ test('pairing confirmation replays only for the path of the confirmed pairing', 
   const fx = setup();
   try {
     expect((await fx.request('/credentials', credentials)).status).toBe(200);
+    await fx.configure(credentials.app_id, credentials.app_secret, 'configure-replay');
     fx.db.prepare("UPDATE channel_connections SET tenant_key = 'tenant_fixture', reason_code = NULL").run();
     const original = await fx.command('/bindings', 'original-pair');
     const oldPath = (await original.json() as { receipt_url: string }).receipt_url.replace('/api/v1/channels/feishu', '');
@@ -166,6 +187,7 @@ test('re-opening pairing preserves the expired receipt and never discloses its u
   const fx = setup();
   try {
     expect((await fx.request('/credentials', credentials)).status).toBe(200);
+    await fx.configure(credentials.app_id, credentials.app_secret, 'configure-expired');
     fx.db.prepare("UPDATE channel_connections SET tenant_key = 'tenant_fixture', reason_code = NULL").run();
     const original = await fx.command('/bindings', 'original-undisclosed');
     const originalReceipt = await original.json() as { receipt_url: string };

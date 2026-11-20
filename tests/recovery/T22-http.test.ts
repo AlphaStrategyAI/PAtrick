@@ -220,11 +220,13 @@ test('creation final clock uses actual persisted conversation domain', async () 
 test.each(['clock', 'provider'] as const)('Feishu credential setup %s closure prevents new connection authority', async (race) => {
   const f = fixture(); f.db.prepare("DELETE FROM caller_scopes WHERE data_domain='other'").run();
   const store = createCredentialStore(join(f.root, 'feishu-credentials'), now); let writes = 0;
+  // The closure either happens before the setup or while the secret is stored.
+  if (race === 'clock') f.gate.revoke('personal');
   mountFeishuRoutes(f.app, () => ({ db: f.db, hub: createLocalHubPort(join(f.root, 'hub')),
     feishuCredentials: { ...store, put(...args) {
       writes++; const reference = store.put(...args); if (race === 'provider') f.gate.revoke('personal'); return reference;
     } },
-    now() { if (race === 'clock') f.gate.revoke('personal'); return now(); } }));
+    now() { return now(); } }));
   await blocked(await f.app.request('https://localhost/api/v1/channels/feishu/credentials', { method: 'POST',
     headers: { authorization: f.authorization, origin: 'https://localhost', 'content-type': 'application/json' },
     body: JSON.stringify({ app_id: 'fixture-app', app_secret: 'fixture-secret' }) }));

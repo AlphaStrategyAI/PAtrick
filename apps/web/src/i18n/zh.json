@@ -370,6 +370,7 @@
   "settings.quietHours": "免打扰时段",
   "settings.quietHoursStart": "开始时间",
   "settings.quietHoursEnd": "结束时间",
+  "settings.feishuConfigure": "配置飞书连接",
   "materials.workDirectory": "工作目录",
   "materials.noWorkDirectory": "尚未登记工作目录。",
   "materials.directoryDetails": "目录细节",
