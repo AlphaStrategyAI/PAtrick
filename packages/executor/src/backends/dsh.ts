@@ -5,6 +5,8 @@ import { HARNESS_FILES, canonicalJson, evidenceSha256 } from '../hash.js';
 import type { BackendCapability, TerminalParse, TokenUsage } from '../types.js';
 import { readCapability } from './capability.js';
 import { isRecord, jsonLines, positiveToken } from './parse.js';
+import { startProbeDomain } from './probe-domain.js';
+import { modelRouteFromEnv, type ModelRoute } from './codex.js';
 
 export const LOCKED_DSH_VERSION = '0.2.2-rc.2';
 export const LOCKED_DSH_COMMIT = 'e8f7b93a344964de3dca1ace9e72b6e4d6de87cb';
@@ -25,14 +27,16 @@ export type Invocation = {
   args: readonly string[];
   env: { DSH_HOME: string };
   stdin: true;
+  stdinText?: string;
 };
 
-export function dshInvocation(home: string): Invocation {
+export function dshInvocation(home: string, prompt?: string): Invocation {
   return {
     command: 'dsh',
     args: ['--profile', 'headless', '--json', '--approval-policy', 'never'],
     env: { DSH_HOME: home },
     stdin: true,
+    stdinText: prompt,
   };
 }
 
@@ -45,6 +49,11 @@ export function writeDshOverlay(home: string): { path: string; configHash: strin
 }
 
 const HARNESS_DIR = fileURLToPath(new URL('../../harness/', import.meta.url));
+const MCP_SERVER = fileURLToPath(new URL('../../harness/mcp-server.ts', import.meta.url));
+
+/** The prompt the probe sends: it has to make the model reach the bundle. */
+export const DSH_PROBE_PROMPT = 'Call the patrick-memory tool once with the domain "personal", '
+  + 'the knowledge id "K-001" and the withdrawal epoch 0. Then report how many records the tool returned.';
 
 export function dshBundleDir(home: string): string {
   return join(home, 'profiles', 'headless', 'bundle');
@@ -58,6 +67,33 @@ export function installDshProfile(home: string): { path: string; configHash: str
     copyFileSync(join(HARNESS_DIR, name), join(bundleDir, name));
   }
   return overlay;
+}
+
+/** Writes the profile patch: the model route, the default model and the bundle.
+ *
+ * The Harness bundle reaches the profile as an MCP server, the same transport
+ * the Codex backend uses, so both backends call the same tools over the same
+ * restricted RPC.
+ */
+export function installDshPatch(home: string, route: ModelRoute | null, rpc: { url: string; token: string } | null): void {
+  const profile = join(home, 'profiles', 'headless');
+  mkdirSync(profile, { recursive: true });
+  const lines: string[] = [];
+  if (route) {
+    lines.push('- id: llm-pi-ai', '  config:', '    providers:', '      patrick-route:',
+      `        apiKeyEnv: ${route.tokenEnv}`, '        api: openai-responses',
+      `        baseURL: ${route.baseUrl}`, '        models:', `          - id: ${JSON.stringify(route.model)}`,
+      '- id: agent-default-model', '  config:', '    provider: patrick-route',
+      `    model: ${JSON.stringify(route.model)}`);
+  }
+  if (rpc) {
+    lines.push('- insert:', '    - id: memory-patrick', '      name: "@deepseek-ai/dsh-mcp-client"',
+      '      config:', '        serverName: patrick', '        transport: stdio', '        command: node',
+      `        args: [${JSON.stringify(MCP_SERVER)}]`, '        env:',
+      `          PATRICK_HARNESS_RPC_URL: ${JSON.stringify(rpc.url)}`,
+      `          PATRICK_HARNESS_RPC_TOKEN: ${JSON.stringify(rpc.token)}`);
+  }
+  writeFileSync(join(profile, 'cordis.patch.yml'), `${lines.join('\n')}\n`, 'utf8');
 }
 
 export function parseDshTerminal(stdout: string): TerminalParse {
@@ -94,9 +130,16 @@ export function probe(): Promise<BackendCapability> {
     backend: 'dsh',
     resumeArgs: ['--profile', 'headless', '--help'],
     resumeMark: 'resume',
-    invocation: (home) => dshInvocation(home),
+    invocation: (home) => dshInvocation(home, DSH_PROBE_PROMPT),
     parse: parseDshTerminal,
-    prepare: (home) => { installDshProfile(home); },
+    prepare: async (home) => {
+      installDshProfile(home);
+      const domain = await startProbeDomain(() => new Date());
+      installDshPatch(home, modelRouteFromEnv(), { url: domain.url, token: domain.token });
+      return async () => { await domain.close(); };
+    },
+    timeoutMs: 180_000,
+    blocked: () => modelRouteFromEnv() ? null : 'blocked: no model route is configured for this backend',
   });
 }
 

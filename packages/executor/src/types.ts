@@ -70,6 +70,8 @@ export type BackendCapability = {
   resumeSupported: boolean;
   liveTerminal: boolean;
   liveToolCall: boolean;
+  /** Why the probe could not run, when it never got that far. */
+  error?: string;
 };
 
 export type ProbeGates = {

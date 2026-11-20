@@ -25,7 +25,9 @@ export function sameProcessToolCall(input: {
 }): boolean {
   if (input.error?.includes('ENOENT')) return false;
   if (input.sessionId === null) return false;
-  return jsonValues(input.stdout).some(succeededHarnessToolCall) || jsonValues(input.stderr).some(succeededHarnessToolCall);
+  const values = [...jsonValues(input.stdout), ...jsonValues(input.stderr)];
+  const failed = failedToolCallIds(values);
+  return values.some((value) => succeededHarnessToolCall(value, failed));
 }
 
 export function versionCommand(backend: BackendId): { command: string; args: string[] } {
@@ -44,6 +46,8 @@ export async function readCapability(input: {
   prepare?: (home: string) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
   /** How long a live turn may take. A model turn is slower than a version probe. */
   timeoutMs?: number;
+  /** The reason the live turn cannot run, when the host provides no route. */
+  blocked?: () => string | null;
 }): Promise<BackendCapability> {
   const spec = versionCommand(input.backend);
   const versionResult = await runCommand(spec.command, spec.args, 8000);
@@ -52,6 +56,20 @@ export async function readCapability(input: {
   const home = mkdtempSync(join(tmpdir(), 'patrick-backend-'));
   let cleanup: void | (() => void | Promise<void>) = undefined;
   try {
+    const blocked = input.blocked?.() ?? null;
+    if (blocked) {
+      const spec = versionCommand(input.backend);
+      const result = await runCommand(spec.command, spec.args, 8000);
+      return {
+        backend: input.backend,
+        command: `${spec.command} ${spec.args.join(' ')}`,
+        version: result.exitCode === 0 && result.error === null && result.stdout.trim() ? result.stdout.trim() : null,
+        resumeSupported: false,
+        liveTerminal: false,
+        liveToolCall: false,
+        error: blocked,
+      };
+    }
     cleanup = await input.prepare?.(home);
     const invocation = input.invocation(home);
     const env = { ...process.env, ...invocation.env };
@@ -102,15 +120,38 @@ export async function readCapability(input: {
  * The name alone is not enough: a call that the approval policy turned down
  * never reached the bundle, so it must not read as a live tool call.
  */
-function succeededHarnessToolCall(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(succeededHarnessToolCall);
+function succeededHarnessToolCall(value: unknown, failed: ReadonlySet<string>): boolean {
+  if (Array.isArray(value)) return value.some((entry) => succeededHarnessToolCall(entry, failed));
   if (!isRecord(value)) return false;
   for (const [key, inner] of Object.entries(value)) {
-    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && HARNESS_TOOL_NAMES.has(inner)) {
+    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && isHarnessToolName(inner)) {
+      const callId = typeof value.callId === 'string' ? value.callId : null;
+      if (callId && failed.has(callId)) return false;
       return !refusedToolCall(value);
     }
   }
-  return Object.values(value).some(succeededHarnessToolCall);
+  return Object.values(value).some((inner) => succeededHarnessToolCall(inner, failed));
+}
+
+/** A harness tool may be named plainly or with the server prefix of its transport. */
+function isHarnessToolName(name: string): boolean {
+  if (HARNESS_TOOL_NAMES.has(name)) return true;
+  return [...HARNESS_TOOL_NAMES].some((tool) => name.endsWith(`__${tool}`));
+}
+
+/** The calls the transport reported as failed, by their call id. */
+function failedToolCallIds(values: readonly unknown[]): Set<string> {
+  const failed = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!isRecord(value)) return;
+    if (typeof value.callId === 'string' && typeof value.status === 'string' && value.status === 'failed') {
+      failed.add(value.callId);
+    }
+    Object.values(value).forEach(visit);
+  };
+  values.forEach(visit);
+  return failed;
 }
 
 /** A tool call that failed or returned nothing never reached the domain. */

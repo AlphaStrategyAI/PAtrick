@@ -397,6 +397,26 @@ test('a harness tool call is a JSON tool name from the same profiled process', (
     stderr: '{"name":"patrick-bridge"}',
     sessionId: 'session-1',
   })).toBe(true);
+  // A transport may name the tool with its server prefix.
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: [
+      '{"type":"tool_call","callId":"call-1","tool":"mcp__patrick__patrick-memory","input":{"domain":"personal"}}',
+      '{"type":"tool_result","callId":"call-1","status":"completed","result":"[]"}',
+    ].join('\n'),
+    stderr: '',
+    sessionId,
+  })).toBe(true);
+  // The same call that the transport reported as failed never reached the bundle.
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: [
+      '{"type":"tool_call","callId":"call-2","tool":"mcp__patrick__patrick-memory","input":{"domain":"personal"}}',
+      '{"type":"tool_result","callId":"call-2","status":"failed","result":"refused"}',
+    ].join('\n'),
+    stderr: '',
+    sessionId,
+  })).toBe(false);
   expect(sameProcessToolCall({
     error: null,
     stdout: '{\n  "tool_calls": [{"function": {"name": "patrick-judgment", "arguments": "{}"}}]\n}',

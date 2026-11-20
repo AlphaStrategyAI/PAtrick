@@ -29,15 +29,15 @@
     },
     {
       "backend": "dsh",
-      "status": "blocked",
-      "available": false,
+      "status": "verified",
+      "available": true,
       "command": "dsh --version",
       "installedVersion": "0.2.2-rc.2",
-      "liveTerminal": false,
-      "liveToolCall": false,
+      "liveTerminal": true,
+      "liveToolCall": true,
       "isolated": true,
-      "observation": "0.2.2-rc.2\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: 0.2.2-rc.2",
-      "evidenceSha256": "df49493b41488889fd3ab88cd0537bf1b20abbf44c49960579c26259d2094f7c"
+      "observation": "0.2.2-rc.2\nversion: 0.2.2-rc.2",
+      "evidenceSha256": "b66e4ef3a931c40f202ec06e9b531d3b117325b4af56d1601accc270828cb690"
     }
   ]
 }

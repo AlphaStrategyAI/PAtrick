@@ -50,7 +50,7 @@ test('each backend probe records the command result and the hash of that observa
     if (!capability.liveTerminal) expect(record.observation).toContain('blocked: no isolated terminal readback');
     if (!capability.liveToolCall) expect(record.observation).toContain('blocked: no live harness tool call');
   }
-}, 20000);
+}, 300_000);
 
 function noted(command: string, args: readonly string[], result: CommandResult): string {
   const lines = [`${command} ${args.join(' ')}`, `exit=${result.exitCode ?? 'null'}`];

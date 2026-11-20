@@ -108,5 +108,6 @@ export function probe(): Promise<BackendCapability> {
       return async () => { await domain.close(); };
     },
     timeoutMs: 180_000,
+    blocked: () => modelRouteFromEnv() ? null : 'blocked: no model route is configured for this backend',
   });
 }

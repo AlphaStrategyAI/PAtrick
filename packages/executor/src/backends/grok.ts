@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { EMPTY_TERMINAL, type BackendCapability, type TerminalParse } from '../types.js';
 import { readCapability } from './capability.js';
 import { isRecord, jsonLines, tokenUsage } from './parse.js';
@@ -70,5 +71,13 @@ export function probe(): Promise<BackendCapability> {
     resumeMark: '--resume',
     invocation: (home) => grokInvocation({ home, resumeSession: null, promptFile: `${home}/prompt.txt` }),
     parse: parseGrokTerminal,
+    prepare: (home) => {
+      // The Grok CLI reads its task from a file, not from its standard input.
+      writeFileSync(`${home}/prompt.txt`, GROK_PROBE_PROMPT, 'utf8');
+    },
   });
 }
+
+/** The prompt the probe sends: it has to make the model reach the bundle. */
+export const GROK_PROBE_PROMPT = 'Call the patrick-memory tool once with the domain "personal", '
+  + 'the knowledge id "K-001" and the withdrawal epoch 0. Then report how many records the tool returned.';
