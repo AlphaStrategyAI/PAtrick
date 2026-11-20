@@ -1,18 +1,18 @@
 {
   "release": "impl-2026-11-19",
-  "generatedAt": "2026-11-20T00:58:36.509Z",
+  "generatedAt": "2026-11-20T01:25:04.552Z",
   "versions": {
-    "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
+    "code": "654de77bcaa6332a6cb597044c497d5ac88d6cbe",
     "node": "v26.13.0",
     "npm": "11.20.0",
     "platform": "darwin-arm64",
     "osRelease": "27.2.0",
     "schemaRange": "1..1",
     "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-    "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
+    "upstream": "192c8ec1b57a4676d0fe2e74142c693428aa7e025721a0fff1564049e4fda903",
     "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
     "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-    "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
+    "tests": "245429d622b55a1d18633b7f9925e7382571c3dab360a95e509e74196b728de3",
     "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
   },
   "environment": {
@@ -168,9 +168,9 @@
   ],
   "summary": {
     "scenarios": 56,
-    "passed": 49,
+    "passed": 50,
     "failed": 0,
-    "blocked": 5,
+    "blocked": 4,
     "pending": 2
   },
   "note": "缺真实能力时标blocked而非passed；豁免与失败保留在本清单中。"

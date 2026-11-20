@@ -1,6 +1,6 @@
 {
   "task": "T11",
-  "completedAt": "2026-11-20T00:51:50.844Z",
+  "completedAt": "2026-11-20T01:18:19.682Z",
   "productClauses": [
     "C2"
   ],
@@ -12,22 +12,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
+        "code": "654de77bcaa6332a6cb597044c497d5ac88d6cbe",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
+        "upstream": "192c8ec1b57a4676d0fe2e74142c693428aa7e025721a0fff1564049e4fda903",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
+        "tests": "245429d622b55a1d18633b7f9925e7382571c3dab360a95e509e74196b728de3",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/conversations-and-consultations.log",
-      "evidenceSha256": "23a9babd763b2b427b551365146e70842541d247f2e82cbe4bf4d12293673fa0",
-      "durationMs": 1088
+      "evidenceSha256": "add0688d665e82ac6491d16c7d476679f143a1aef06ff7ea7ea983be9091b9fc",
+      "durationMs": 1085
     },
     {
       "id": "hub-contract",
@@ -36,22 +36,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
+        "code": "654de77bcaa6332a6cb597044c497d5ac88d6cbe",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
+        "upstream": "192c8ec1b57a4676d0fe2e74142c693428aa7e025721a0fff1564049e4fda903",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
+        "tests": "245429d622b55a1d18633b7f9925e7382571c3dab360a95e509e74196b728de3",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/hub-contract.log",
-      "evidenceSha256": "fad4a0f294c0a7bcf921aa36fcb41f7f5b79a9d5da3a7bb5f8600748d2787b87",
-      "durationMs": 1449
+      "evidenceSha256": "54109d22908ded3bab5c7e1fe224c7133c9f9f96b2b0f9241532497ab5c886ba",
+      "durationMs": 1439
     },
     {
       "id": "hub-routing",
@@ -60,22 +60,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
+        "code": "654de77bcaa6332a6cb597044c497d5ac88d6cbe",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
+        "upstream": "192c8ec1b57a4676d0fe2e74142c693428aa7e025721a0fff1564049e4fda903",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
+        "tests": "245429d622b55a1d18633b7f9925e7382571c3dab360a95e509e74196b728de3",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T11/hub-routing.log",
-      "evidenceSha256": "c172ff63c44d43f5c17e46e3d6854e0ad19651d6f6390a7e945f77d10f9c26cf",
-      "durationMs": 3706
+      "evidenceSha256": "18d4bc1e69e4bad868a6463edd4b182ddff74d10cef5f41227a1ef9b3dcb65a2",
+      "durationMs": 3689
     }
   ]
 }
