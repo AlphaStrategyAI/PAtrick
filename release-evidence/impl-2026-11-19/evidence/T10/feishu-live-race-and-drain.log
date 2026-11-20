@@ -1,0 +1,18 @@
+$ PATRICK_FEISHU_ENABLE=1 npm exec -- vitest run tests/admission/T10-live-enable.test.ts
+exit=0 signal=none durationMs=103480
+start=2026-11-20T17:09:27+08:00
+node=v26.13.0
+--- stdout ---
+Test Files  1 passed (1)
+Tests  1 passed (1)
+Duration  103.48s
+--- receipt ---
+status=ready
+testMessageId=om_x100b7f34a4a1f8b0c0e3a16499e31e4
+readback=match
+raceWinner=web
+raceMessageId=om_x100b7f34a449d8acc081075f1594dd4
+drainMessageId=om_x100b7f34a40ba8a8df74970a16f2a2e
+drain=audit_only
+otherQuestion=Q-018
+business_facts=none

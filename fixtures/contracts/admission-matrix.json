@@ -27,8 +27,8 @@
       "version": "1.76.0"
     },
     "status": "verified",
-    "command": "WSClient long connection; im.v1.message.create+get; card.action.trigger defer then option-a",
-    "observation": "feishu_deferred_card\nsdk: @larksuiteoapi/node-sdk@1.76.0\ntransport: websocket long-connection\npairing_message_id: om_x100b7f34326608a8b1eea24cd689a30\noutbound_message_id: om_x100b7f34ccd56ca0df690c6dfae28a9\noutbound_readback: match\ndefer_callback_message_id: om_x100b7f34cce104a0dd62f48ae5e98fa\ndefer_action: defer\nanswer_after_defer_message_id: om_x100b7f34c085acb0df234097f84ee4c\nanswer_after_defer_action: option-a\nanswer_card_distinct_from_defer: true\nbusiness_facts: none\nenable_status: ready\nenable_test_message_id: om_x100b7f34f81f97ecdf7cfcb2b645e6e\nenable_readback: match",
-    "evidenceSha256": "928a9a1a0b908f7a302f2874200c96f403b6729de9f297f8fbdd20d619f7b4e7"
+    "command": "WSClient long connection; im.v1.message.create+get; card.action.trigger defer then option-a; race web option B against feishu option A; drain callback audit_only",
+    "observation": "feishu_deferred_card\nsdk: @larksuiteoapi/node-sdk@1.76.0\ntransport: websocket long-connection\npairing_message_id: om_x100b7f34326608a8b1eea24cd689a30\noutbound_message_id: om_x100b7f34ccd56ca0df690c6dfae28a9\noutbound_readback: match\ndefer_callback_message_id: om_x100b7f34cce104a0dd62f48ae5e98fa\ndefer_action: defer\nanswer_after_defer_message_id: om_x100b7f34c085acb0df234097f84ee4c\nanswer_after_defer_action: option-a\nanswer_card_distinct_from_defer: true\nbusiness_facts: none\nenable_status: ready\nenable_test_message_id: om_x100b7f34f81f97ecdf7cfcb2b645e6e\nenable_readback: match\nrace_enable_test_message_id: om_x100b7f34a4a1f8b0c0e3a16499e31e4\nrace_enable_readback: match\nrace_winner: web\nrace_message_id: om_x100b7f34a449d8acc081075f1594dd4\nrace_verified_count: 1\ndrain_message_id: om_x100b7f34a40ba8a8df74970a16f2a2e\ndrain_disposition: audit_only\nstopped_work_grant_count: 0\nother_web_question: Q-018\nother_web_validity: verified",
+    "evidenceSha256": "54c9b3fdb0f3dc320319ce5b3408ef4d40056e4f90f354c5f2136d5e5a71ac08"
   }
 }

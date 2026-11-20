@@ -238,6 +238,16 @@ test('the recorded Feishu round trip reads back defer and a later decision', () 
   expect(stored.observation).toContain('enable_status: ready');
   expect(stored.observation).toContain('enable_test_message_id: om_x100b7f34f81f97ecdf7cfcb2b645e6e');
   expect(stored.observation).toContain('enable_readback: match');
+  expect(stored.observation).toContain('race_enable_test_message_id: om_x100b7f34a4a1f8b0c0e3a16499e31e4');
+  expect(stored.observation).toContain('race_enable_readback: match');
+  expect(stored.observation).toContain('race_winner: web');
+  expect(stored.observation).toContain('race_message_id: om_x100b7f34a449d8acc081075f1594dd4');
+  expect(stored.observation).toContain('race_verified_count: 1');
+  expect(stored.observation).toContain('drain_message_id: om_x100b7f34a40ba8a8df74970a16f2a2e');
+  expect(stored.observation).toContain('drain_disposition: audit_only');
+  expect(stored.observation).toContain('stopped_work_grant_count: 0');
+  expect(stored.observation).toContain('other_web_question: Q-018');
+  expect(stored.observation).toContain('other_web_validity: verified');
   expect(stored.observation).not.toMatch(/app_secret|FEISHU_APP_SECRET|ou_|oc_|tenant_key/i);
 });
 

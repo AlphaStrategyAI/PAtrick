@@ -716,12 +716,11 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
-| T10 真实双入口竞答与排空 | 配对、双向读回、暂缓后选项 A 和可信启用已完成；竞答和排空还没有在这条连接上重放 | `T10/feishu-live-round-trip` passed |
 | T21 已登记设备的双启动顺序与企业 DNS | 没有登记设备和实测记录 | `T21/registered-device-vpn-admission` blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
 | T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
-| T25 真实三执行器、双入口答复与飞书排空 | 隔离执行器已在来宾内通过准入，真实渠道与演练仓库仍未接入 | `T25/provider-backed-work-routes` pending |
+| T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空；演练仓库和三条真实工作路线仍未接入 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |
 
 设计复核的六项已经全部落地：工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层、整理中／核验中／空／失败／离线的句子，以及咨询生成中流式显示且状态保持「正在回答」。
@@ -1252,7 +1251,7 @@ export function requiresChannelReconciliation(intent: {
 }
 ~~~
 
-- [ ] 重跑 T10 集成。另测停用同时撤销委托，hub 已接收的旧答复只审计，工作 grant 数为零；Web 仍能提交其他打开的问题。用 `npm exec -- vitest run tests/admission/T10.test.ts` 从实际飞书应用检查配对、启用、暂缓后再次答题、双入口竞答与排空。预期真实消息 ID、回调和答复可读回，测试样例无业务事实。提交 `feat: verify and drain Feishu decision delivery`。
+- [x] 重跑 T10 集成。另测停用同时撤销委托，hub 已接收的旧答复只审计，工作 grant 数为零；Web 仍能提交其他打开的问题。用 `npm exec -- vitest run tests/admission/T10.test.ts` 从实际飞书应用检查配对、启用、暂缓后再次答题、双入口竞答与排空。预期真实消息 ID、回调和答复可读回，测试样例无业务事实。提交 `feat: verify and drain Feishu decision delivery`。
 
 ### T11 工作对话与受限咨询
 

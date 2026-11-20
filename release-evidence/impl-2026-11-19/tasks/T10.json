@@ -1,6 +1,6 @@
 {
   "task": "T10",
-  "completedAt": "2026-11-20T04:44:23.450Z",
+  "completedAt": "2026-11-20T09:14:05.273Z",
   "productClauses": [
     "C2",
     "C5"
@@ -53,7 +53,32 @@
       "evidenceFile": "evidence/T10/feishu-live-round-trip.log",
       "evidenceSha256": "d67fecc60503be2458de9a63dd8855055b66f2b11407899462f317a711af02e7",
       "durationMs": 1776,
-      "note": "真实租户完成了配对、双向读回、暂缓后的选项 A，以及可信启用。双入口竞答和排空还没有在这条连接上重放。"
+      "note": "真实租户完成了配对、双向读回、暂缓后的选项 A，以及可信启用。同一连接上的双入口竞答和排空见 feishu-live-race-and-drain。"
+    },
+    {
+      "id": "feishu-live-race-and-drain",
+      "command": "PATRICK_FEISHU_ENABLE=1 npm exec -- vitest run tests/admission/T10-live-enable.test.ts",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "2178a81fb2bd5e6f92e9df5fae8aab62e889ab75",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "a276a134a51ede1b0228b3beb6f91aac9538e2eaf918bf6702878363d5c5cf0d",
+        "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
+        "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "1d4c991d690064254bb8ce1507a4b43102d088d480dc9ce98319d783a9aea639",
+        "fixtures": "e83661e18b130d880978664b62c8686667c4d8e5a6e986d766ea49549c150162"
+      },
+      "evidenceFile": "evidence/T10/feishu-live-race-and-drain.log",
+      "evidenceSha256": "2f6b4b40f9a659e42c7e7dee8f84320dab65a048c41263332d776b2276393ea3",
+      "durationMs": 103480,
+      "note": "同一条真实连接上，Web 选项 B 与飞书选项 A 竞答只核验一次，胜方为 web；停用后的飞书回调只审计，W-017 grant 数为 0，W-018 的 Web 答复仍可核验。样例不含业务事实。"
     }
   ]
 }
