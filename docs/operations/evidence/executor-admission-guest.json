@@ -8,24 +8,24 @@
       "status": "verified",
       "available": true,
       "command": "codex --version",
-      "installedVersion": "codex-cli 0.163.0",
+      "installedVersion": "codex-cli 0.169.1",
       "liveTerminal": true,
       "liveToolCall": true,
       "isolated": true,
-      "observation": "codex-cli 0.163.0\nversion: codex-cli 0.163.0",
-      "evidenceSha256": "a4d21e4b4d2ee51562c2130eb77bc07503061cb210437fda42caf8b8250d3910"
+      "observation": "codex-cli 0.169.1\nversion: codex-cli 0.169.1",
+      "evidenceSha256": "f561f6449f8e027a8a8d73af66d86ba64c05fe532ee1281a2a76b3a1b5709679"
     },
     {
       "backend": "grok",
       "status": "verified",
       "available": true,
       "command": "grok --version",
-      "installedVersion": "grok 1.0.88 (2fe3608f7398)",
+      "installedVersion": "grok 1.0.89 (28be5bb1bf65)",
       "liveTerminal": true,
       "liveToolCall": true,
       "isolated": true,
-      "observation": "grok 1.0.88 (2fe3608f7398)\nversion: grok 1.0.88 (2fe3608f7398)",
-      "evidenceSha256": "2a2dc89166d1ee0059f677263606756cd32c46fc710994a6bae06ebe444546bf"
+      "observation": "grok 1.0.89 (28be5bb1bf65)\nversion: grok 1.0.89 (28be5bb1bf65)",
+      "evidenceSha256": "26cb990bf7fbac48e9d4daa4e2193836101fcee7b33438209b8efdbc4b72be96"
     },
     {
       "backend": "dsh",
