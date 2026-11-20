@@ -44,8 +44,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       TARGET_ARCH: ${{ matrix.arch }}
-      NODE_VERSION: '24.9.0'
-      NODE_HEADERS_SHA256: '4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c157fbf48'
+      NODE_VERSION: '26.13.0'
+      NODE_HEADERS_SHA256: '519e269c3e78bf513fdf53d2ab114b763173a7c9424bd477d4e182d782ea366f'
     defaults:
       run:
         shell: bash

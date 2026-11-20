@@ -6,9 +6,9 @@
     "gitBlob": "18225180547a5f36a8a569c76b52eb4326d3264e"
   },
   "archive": {
-    "name": "node-v24.9.0-headers.tar.xz",
-    "bytes": 577884,
-    "sha256": "4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c157fbf48"
+    "name": "node-v26.13.0-headers.tar.xz",
+    "bytes": 584092,
+    "sha256": "519e269c3e78bf513fdf53d2ab114b763173a7c9424bd477d4e182d782ea366f"
   },
   "inputs": [
     {
@@ -20,30 +20,30 @@
     {
       "name": "node_api.h",
       "destination": "node/node_api.h",
-      "bytes": 10592,
-      "sha256": "d14db85d16f182045c42745a6e44b96e932dfe6e3bfcaac7a1096fae8412c579",
-      "archivePath": "node-v24.9.0/include/node/node_api.h"
+      "bytes": 10370,
+      "sha256": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "archivePath": "node-v26.13.0/include/node/node_api.h"
     },
     {
       "name": "node_api_types.h",
       "destination": "node/node_api_types.h",
-      "bytes": 1603,
-      "sha256": "8d5d854088d5725fec9775510e0aeeeb790a41ad083c49bb721d950b86e6bd61",
-      "archivePath": "node-v24.9.0/include/node/node_api_types.h"
+      "bytes": 1930,
+      "sha256": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "archivePath": "node-v26.13.0/include/node/node_api_types.h"
     },
     {
       "name": "js_native_api.h",
       "destination": "node/js_native_api.h",
-      "bytes": 32399,
-      "sha256": "c024813df81c100be91fa339b57294fbf5cca3a93b9c91775db9e886dedad114",
-      "archivePath": "node-v24.9.0/include/node/js_native_api.h"
+      "bytes": 33170,
+      "sha256": "82d3708ce120f8000ec34d72e1aa70b0d7d8a43027986293681374a71b2cb840",
+      "archivePath": "node-v26.13.0/include/node/js_native_api.h"
     },
     {
       "name": "js_native_api_types.h",
       "destination": "node/js_native_api_types.h",
-      "bytes": 7033,
-      "sha256": "0410c31e227f81e2981363c4d543f4832ac3df785343ec64cee621742ff8a034",
-      "archivePath": "node-v24.9.0/include/node/js_native_api_types.h"
+      "bytes": 8335,
+      "sha256": "c12406a8c0036aefdb66b98065fc88e2e7a053c1f274deef33af6c26c099b933",
+      "archivePath": "node-v26.13.0/include/node/js_native_api_types.h"
     },
     {
       "name": "stdbool.h",

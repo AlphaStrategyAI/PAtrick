@@ -275,10 +275,10 @@ test('the lima definition is the only executor yaml', () => {
   expect(yaml).not.toMatch(/location:\s*"~"/);
   expect(yaml).toContain('loadDotSSHPubKeys: false');
   expect(yaml).toContain('/etc/patrick-executor-vm');
-  expect(yaml).toContain('node_version=24.22.3');
+  expect(yaml).toContain('node_version=26.13.0');
   expect(yaml).toContain('https://nodejs.org/dist/v${node_version}/${node_dist}.tar.xz');
-  expect(yaml).toContain('6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c');
-  expect(yaml).toContain('4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb');
+  expect(yaml).toContain('406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92');
+  expect(yaml).toContain('d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997');
   expect(yaml).toContain('/usr/local/bin');
   expect(yaml).toContain('/usr/bin/node');
   expect(script).toContain('delete');

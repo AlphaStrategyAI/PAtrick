@@ -10,7 +10,7 @@ import { directoryHeadersSha256, nativeSources } from '../deploy/lib/deployment-
 
 const MiB = 1024 * 1024;
 const repo = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
-const archive = 'node-v24.9.0-headers.tar.xz';
+const archive = 'node-v26.13.0-headers.tar.xz';
 const clt = '/Library/Developer/CommandLineTools';
 const unavailable = reason => ({ status: 'unavailable', reason });
 const scanUnavailable = Object.freeze(unavailable('verified-private-sdk-and-resource-inputs-unavailable'));
@@ -77,8 +77,8 @@ export function hostCheck(host, target) {
   const intel = target === 'x64' && host.machine === 'x86_64' && host.cpuVendor === 'GenuineIntel' && host.kernelBuildArch === 'X86_64' &&
     (host.translated === '' || host.translated === '0');
   const arm = target === 'arm64' && host.machine === 'arm64' && host.kernelBuildArch === 'ARM64' && host.translated === '0';
-  return host.platform === 'darwin' && host.arch === target && host.node === 'v24.9.0' &&
-    host.modules === '137' && (intel || arm) ? 'consistent-with-runner-target' : unavailable('native-host-mismatch');
+  return host.platform === 'darwin' && host.arch === target && host.node === 'v26.13.0' &&
+    host.modules === '147' && (intel || arm) ? 'consistent-with-runner-target' : unavailable('native-host-mismatch');
 }
 // No independently checked target-specific header inventory is available.
 // Only read the three fixed SDK files. Never give the host include trees to clang.

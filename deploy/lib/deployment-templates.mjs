@@ -15,7 +15,7 @@ const templates = new Map([
   [deploymentPaths.service, ['service-launchd-template', '4a1abcdf6623764e61d673295935df6c495a5461af2012b177a1ca166bb3d332']],
   [deploymentPaths.hub, ['hub-launchd-template', '57502d907c6d1c90c3c384d6ac46a2e15febdd7367583c3e1c315b1c2cf8a322']],
   [deploymentPaths.worker, ['worker-launchd-template', '72ef5cac63d4e326f0fc25b135eefd94c1dca4d57b9b1e404541e1dc12ce9d5d']],
-  [deploymentPaths.lima, ['lima-executor-template', 'cc79f86740be5cc0c40d6ca82c2126c535bfa75fcb556854dea238fdf5676c45']],
+  [deploymentPaths.lima, ['lima-executor-template', '1e54d49f3f691d9735f837a7b9c91caae286f6822e51f5f798a93926b4f44a13']],
 ]);
 const byDigest = new Map([...templates].map(([path, [, digest]]) => [digest, path]));
 const jobs = ['service', 'hub', 'worker'];
@@ -60,7 +60,7 @@ export function directoryCommands(arch) {
   const compile = ['--no-default-config', '-target', target + '-apple-macos14.0', '-std=c++17',
     '-Wall', '-Wextra', '-Werror', '-fno-modules', '-fno-autolink', '-nostdinc', '-nostdinc++',
     '-isysroot', 'tools/sdk', '-isystem', 'tools/sdk/usr/include/c++/v1', '-isystem', 'tools/resource',
-    '-isystem', 'tools/sdk/usr/include', '-I', 'node-v24.9.0/include/node', '-DNAPI_VERSION=8',
+    '-isystem', 'tools/sdk/usr/include', '-I', 'node-v26.13.0/include/node', '-DNAPI_VERSION=8',
     '-fvisibility=hidden', '-fvisibility-inlines-hidden'];
   return [
     ...['directory-module', 'directory-core'].map(unit => ({ tool: 'compiler',
@@ -108,7 +108,7 @@ export function checkDirectoryAuthority(authority, target, buildHost) {
   requireDirectory(['commit','pinned-snapshot'].includes(observation.source.kind) && /^[a-f0-9]{40}$/.test(observation.source.commit) &&
     [observation.source.snapshotSha256, observation.source.lockSha256, observation.inventorySha256, observation.packageFilesSha256, native.sha256].every(hashValue) &&
     native.path === sqlitePath && native.format === 'mach-o' && native.architecture === target.arch &&
-    native.observedArchitecture === target.arch && native.observedNode === 'v24.9.0' && native.observedModules === '137' &&
+    native.observedArchitecture === target.arch && native.observedNode === 'v26.13.0' && native.observedModules === '147' &&
     native.observedLoad === true && byteCount(native.bytes) && /^\d+\.\d+\.\d+$/.test(native.sqlite));
 }
 

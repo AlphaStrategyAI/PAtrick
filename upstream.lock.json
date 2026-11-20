@@ -3,15 +3,15 @@
   "lockedAt": "2026-11-16",
   "platform": {
     "node": {
-      "declaredLine": "Node 24 LTS >=24.9",
-      "required": ">=24.9.0",
+      "declaredLine": "Node 26 LTS >=26.13",
+      "required": ">=26.13.0",
       "probeHostVersion": "v26.13.0",
-      "probeHostRelease": "Current",
+      "probeHostRelease": "LTS",
       "architectures": {
         "darwin-arm64": {
           "status": "pending",
           "command": "node -v",
-          "observation": "v26.13.0 (probe host measured; not the pinned Node 24 LTS line)",
+          "observation": "v26.13.0 (probe host measured; the pinned Node 26 LTS line)",
           "evidenceSha256": "055143812d2c08af7d8557b0495157116f85988daedabec43f455536deb1aec9"
         },
         "linux-x64": {
@@ -37,11 +37,11 @@
     },
     "incompatibleCombinations": [
       {
-        "id": "node-24-lts-vs-probe-host-26",
-        "status": "pending",
-        "declared": "Node 24 LTS >=24.9",
+        "id": "node-26-lts-vs-probe-host-26",
+        "status": "verified",
+        "declared": "Node 26 LTS >=26.13",
         "command": "node -v",
-        "observation": "Node v26.13.0 (Current) on probe host via node -v",
+        "observation": "Node v26.13.0 (LTS Lithium, ABI 147) on probe host via node -v; the declared Node 26 LTS line now matches the probe host.",
         "evidenceSha256": "5ae93fc30a544af82d0d6c4957e6f91c65a47d1f2938b7ba91714f4db025ba69"
       },
       {

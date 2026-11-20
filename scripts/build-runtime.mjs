@@ -597,7 +597,7 @@ async function verifyArtifact(root, profile) {
   if (v3) {
     const directory = actual.find(row => row.path === deployment.directoryPath);
     const expected = deployment.directoryIdentity(await readFile(resolve(root, deployment.directoryPath)), observed.arch);
-    if (observed.platform !== 'darwin' || observed.node !== 'v24.9.0' || observed.modules !== '137' ||
+    if (observed.platform !== 'darwin' || observed.node !== 'v26.13.0' || observed.modules !== '147' ||
         observed.napi !== '10' || canonicalize(expected) !== canonicalize(inventory.directoryNative) ||
         directory.mode !== '100755' || addon.mode !== '100755' || !digestPattern.test(inventory.directoryBuildSha256)) fail('RUNTIME_INVENTORY_INVALID');
   }
@@ -631,7 +631,7 @@ async function readDirectoryAuthority(values, buildHost) {
   // host additionally binds the machine reported by the operating system.
   const target = { os: buildHost.os, arch: buildHost.processArch };
   deployment.checkDirectoryTarget(target);
-  if (process.version !== 'v24.9.0' || process.versions.modules !== '137' || process.versions.napi !== '10') fail('RUNTIME_DIRECTORY_TARGET_UNSUPPORTED');
+  if (process.version !== 'v26.13.0' || process.versions.modules !== '147' || process.versions.napi !== '10') fail('RUNTIME_DIRECTORY_TARGET_UNSUPPORTED');
   const info = await regularFile(path);
   if (info.size > LIMITS.artifactBytes) fail('RUNTIME_DIRECTORY_AUTHORITY_INVALID');
   const raw = await readFile(path);
@@ -674,7 +674,7 @@ async function buildDirectoryModule(staging, values, authority, buildHost, snaps
     if (result.status !== 0) fail('RUNTIME_DIRECTORY_TOOL_FAILED');
     return result.stdout;
   }
-  run('/usr/bin/tar', ['-xf', 'headers.tar.xz', 'node-v24.9.0/include/node']);
+  run('/usr/bin/tar', ['-xf', 'headers.tar.xz', 'node-v26.13.0/include/node']);
   for (const input of authority.inputs) {
     const slash = input.path.indexOf('/');
     const root = input.path.startsWith('sdk/') ? sdk : resource;
@@ -766,7 +766,7 @@ async function buildRuntime(values, recipe) {
       splitting: true,
       format: 'esm',
       platform: 'node',
-      target: ['node24.9'],
+      target: ['node26.13'],
       external: ['better-sqlite3'],
       preserveSymlinks: true,
       tsconfigRaw: { compilerOptions: {} },

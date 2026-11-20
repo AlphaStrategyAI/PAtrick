@@ -1,7 +1,7 @@
 # Intel diagnostic input fixture
 
 This directory is only for an offline test. The manifest records the reviewed
-module source, four official Node 24.9.0 header member digests, three private
+module source, four official Node 26.13.0 header member digests, three private
 standard headers and one ABI assertion header. The archive fields record how
 the member pins were derived; this helper does not read or verify an archive.
 

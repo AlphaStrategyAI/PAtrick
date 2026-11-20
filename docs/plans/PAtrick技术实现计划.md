@@ -6,7 +6,7 @@
 
 **架构** `patrick-service` 提供同源 Web、领域命令及只读投影，SQLite/blob 持有领域事实，Autoloop 独占任务、等待和重试。固定处理器把执行、对账和文件操作连接到三个后端、GitHub、飞书与 Obsidian，各自保留精确版本及回执。
 
-**技术栈** TypeScript、Node ≥24.9.0、npm workspaces、Hono、SQLite/WAL、React/Vite、Autoloop、Codex CLI/Grok Build/DSH、Obsidian Desktop、飞书官方 Node SDK。
+**技术栈** TypeScript、Node ≥26.13.0、npm workspaces、Hono、SQLite/WAL、React/Vite、Autoloop、Codex CLI/Grok Build/DSH、Obsidian Desktop、飞书官方 Node SDK。
 
 ## 全局约束
 
@@ -63,7 +63,7 @@ v1.7 起本文同时是实施记录。§10 的复选框追踪红测、实现、�
 
 | 位置 | 选型 | 选择理由与准入条件 |
 |---|---|---|
-| 语言/构建 | TypeScript、Node 24 LTS（≥24.9）、npm workspaces、ESM | 一套语言贯通UI、合同与服务；Mac arm64/x64及Linux CI验证原生依赖 |
+| 语言/构建 | TypeScript、Node 26 LTS（≥26.13）、npm workspaces、ESM | 一套语言贯通UI、合同与服务；Mac arm64/x64及Linux CI验证原生依赖 |
 | Web | React 19、Vite 7、React Router 7、TanStack Query 5 | 客户端路由与读模型缓存；静态产物由同源服务提供，无SSR进程 |
 | 组件/样式 | Radix Primitives、CSS变量/CSS Modules、现有SVG资产 | 自建少量语义组件；不引入另一套视觉主题，同组件用fixture表达292个画面 |
 | 语言/内容 | FormatJS/react-intl、Intl、统一Markdown白名单渲染 | 中英消息键、日期时区及复数；禁任意HTML/脚本/远程嵌入 |
@@ -1052,7 +1052,7 @@ expect(await readDraftText(edit.edit_id)).toBe('# 原稿仍在');
 expect(retry.business.state).not.toBe('adopted');
 ~~~
 
-- [x] Reader复用 T05 的一源一责任方，归档稳定文件身份、附件、原字节及证据依赖。FTS5 中文预分词和别名查询按域/撤回 epoch 过滤。DraftWriter 复核已授权目录后，在同文件系统的受管暂存区写完整内容并 fsync，再原子占用目标名，例如使用通过设备测试的 `fs.link` 并同步父目录。重试核对持久编辑意图和写入证明；身份无法确认时保留现存字节并返回冲突。Projector按域与视图持锁，核验完整清单后推进单调指针。活动编辑以非空键规范化。[Node 文件 API](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromiseslinkexistingpath-newpath)
+- [x] Reader复用 T05 的一源一责任方，归档稳定文件身份、附件、原字节及证据依赖。FTS5 中文预分词和别名查询按域/撤回 epoch 过滤。DraftWriter 复核已授权目录后，在同文件系统的受管暂存区写完整内容并 fsync，再原子占用目标名，例如使用通过设备测试的 `fs.link` 并同步父目录。重试核对持久编辑意图和写入证明；身份无法确认时保留现存字节并返回冲突。Projector按域与视图持锁，核验完整清单后推进单调指针。活动编辑以非空键规范化。[Node 文件 API](https://nodejs.org/docs/latest-v26.x/api/fs.html#fspromiseslinkexistingpath-newpath)
 
 ~~~ts
 export function editKey(
@@ -1653,7 +1653,7 @@ expect(obsidianFileUri('个人 Vault', '知识笔记/证据 #1.md')).toContain('
 expect(await fs.readFile(existingOwnerTemplate, 'utf8')).toBe(ownerTemplateBefore);
 ~~~
 
-- [x] 按 §6.2.1 和 T00 的包签名/版本锁安装或复用桌面端，登记本机 vault alias 并用 T06 输出真实接通证明。重用 T06 的 `obsidianFileUri` 和 `publishCreateOnly`，将经 hash 校验且已同步的暂存模板放入允许的 Vault 相对路径。目标已经存在时核验路径安全并保留正文。直接复制到目标路径会暴露写入中的文件。[Node copyFile 合同](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromisescopyfilesrc-dest-mode)
+- [x] 按 §6.2.1 和 T00 的包签名/版本锁安装或复用桌面端，登记本机 vault alias 并用 T06 输出真实接通证明。重用 T06 的 `obsidianFileUri` 和 `publishCreateOnly`，将经 hash 校验且已同步的暂存模板放入允许的 Vault 相对路径。目标已经存在时核验路径安全并保留正文。直接复制到目标路径会暴露写入中的文件。[Node copyFile 合同](https://nodejs.org/docs/latest-v26.x/api/fs.html#fspromisescopyfilesrc-dest-mode)
 
 ~~~js
 export async function installMissingTemplate(stagedPath, destination) {

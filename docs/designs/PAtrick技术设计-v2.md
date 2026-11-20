@@ -117,7 +117,7 @@ flowchart TB
 | 实际PR、部署与线上版本 | 远端目标 | 发布后读回；本地记录是核验凭据 |
 | Markdown系统视图、全文/向量索引 | 上述权威数据的投影 | 可重建；不是授权入口，也不足以恢复整个业务系统 |
 
-首版采用TypeScript、Hono同源API、版本化JSON Schema、SQLite/WAL与文件blob；Node精确版本满足上游要求（研究基线≥24.9.0）。React构建产物由服务提供，无额外SSR进程；业务命令用HTTP，增量通知用SSE，断线可轮询同一快照。领域代码不依赖UI类型、上游内核或执行器session。
+首版采用TypeScript、Hono同源API、版本化JSON Schema、SQLite/WAL与文件blob；Node精确版本满足上游要求（研究基线≥26.13.0）。React构建产物由服务提供，无额外SSR进程；业务命令用HTTP，增量通知用SSE，断线可轮询同一快照。领域代码不依赖UI类型、上游内核或执行器session。
 
 源码按`apps/web`、`apps/service`与`packages/`下的合同/领域/存储/集成/执行/主机模块组织；模板在`assets/vault-kit`，夹具与评测数据在`fixtures`，与实现计划§2.2一致。常驻Autoloop hub/worker与一个patrick-service，执行器按任务启动；数据库、密钥及执行器HOME在同步根外。首版不引入消息集群、独立图数据库或另一套业务调度器。
 

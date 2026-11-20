@@ -107,7 +107,7 @@ Edit your originals, supplements, and standards drafts in Obsidian. In PAtrick, 
 
 ## Install and run
 
-Use Node.js 24.9.0 and npm 11 or later. From a local checkout, run these commands at the repository root to start the sample-data demo.
+Use Node.js 26.13.0 and npm 11 or later. From a local checkout, run these commands at the repository root to start the sample-data demo.
 
 ```sh
 npm ci

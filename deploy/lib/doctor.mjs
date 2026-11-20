@@ -95,7 +95,7 @@ export async function inspectLocalHost(registeredHost) {
   const host = binding.value;
   const checks = {};
   const [major, minor] = process.versions.node.split('.').map(Number);
-  checks.node_runtime = check(major > 24 || major === 24 && minor >= 9 ? 'ready' : 'blocked', 'core',
+  checks.node_runtime = check(major > 26 || major === 26 && minor >= 13 ? 'ready' : 'blocked', 'core',
     { version: process.versions.node, platform: platform(), architecture: arch() }, 'Use the pinned supported Node runtime.');
   const uid = process.geteuid?.();
   checks.service_identity = check(!host ? 'unavailable' : uid === host.serviceUid && hostname() === host.captureHost ? 'ready' : 'blocked', 'core',

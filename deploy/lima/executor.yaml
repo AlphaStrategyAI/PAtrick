@@ -43,14 +43,14 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends ca-certificates curl xz-utils python3 make g++
-    node_version=24.22.3
+    node_version=26.13.0
     machine="$(uname -m)"
     if [ "$machine" = "aarch64" ]; then
       node_arch=arm64
-      node_sha=6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c
+      node_sha=406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92
     elif [ "$machine" = "x86_64" ]; then
       node_arch=x64
-      node_sha=4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
+      node_sha=d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997
     else
       echo "unsupported architecture ${machine}" >&2
       exit 1

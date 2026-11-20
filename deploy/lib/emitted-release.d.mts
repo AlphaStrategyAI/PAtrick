@@ -17,7 +17,7 @@ export type DirectoryNativeIdentity = Readonly<{
 }>;
 export type EmittedRuntimeIdentity = Readonly<{ node: string; modules: string; npm: string; native: EmittedNativeIdentity }>;
 export type NativeByteRuntimeIdentity = EmittedRuntimeIdentity & Readonly<{
-  node: 'v24.9.0'; modules: '137'; napi: '10'; directoryNative: DirectoryNativeIdentity;
+  node: 'v26.13.0'; modules: '147'; napi: '10'; directoryNative: DirectoryNativeIdentity;
 }>;
 export type EmittedRuntimeMaterial = Readonly<{
   path: string; mode: '100644' | '100755'; bytes: number; sha256: string;

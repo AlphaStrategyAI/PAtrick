@@ -23,7 +23,7 @@ async function digest(path: string) {
   return hash.digest('hex');
 }
 
-// Opt in with the verified Darwin arm64 Node 24.9.0 and matching Apple CLT.
+// Opt in with the verified Darwin arm64 Node 26.13.0 and matching Apple CLT.
 describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, () => {
   let root: string;
   let node: string;
@@ -34,7 +34,7 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
   let unregistered: string;
 
   beforeAll(async () => {
-    expect([process.platform, process.arch, process.version]).toEqual(['darwin', 'arm64', 'v24.9.0']);
+    expect([process.platform, process.arch, process.version]).toEqual(['darwin', 'arm64', 'v26.13.0']);
     expect(await digest(process.execPath)).toBe(nodeSha);
     expect(await digest(clang)).toBe(clangSha);
     root = await mkdtemp('/private/tmp/patrick-role-');

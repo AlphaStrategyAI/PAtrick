@@ -74,13 +74,14 @@ it('keeps typed linker edges and redacts unsupported paths even inside tool outp
 
 it('requires positive native Intel evidence when the translation oid is absent', async () => {
   const { hostCheck } = await helper();
-  const host = { platform: 'darwin', arch: 'x64', node: 'v24.9.0', modules: '137', machine: 'x86_64',
+  const host = { platform: 'darwin', arch: 'x64', node: 'v26.13.0', modules: '147', machine: 'x86_64',
     translated: '', cpuVendor: 'GenuineIntel', kernelBuildArch: 'X86_64' };
   expect(hostCheck(host, 'x64')).toBe('consistent-with-runner-target');
   expect(hostCheck({ ...host, kernelBuildArch: 'ARM64' }, 'x64')).toEqual(unavailable('native-host-mismatch'));
   expect(hostCheck({ ...host, cpuVendor: '' }, 'x64')).toEqual(unavailable('native-host-mismatch'));
   expect(hostCheck({ ...host, translated: '1' }, 'x64')).toEqual(unavailable('native-host-mismatch'));
-  expect(hostCheck({ ...host, modules: '147' }, 'x64')).toEqual(unavailable('native-host-mismatch'));
+  // A host on another Node ABI line is not the runner target.
+  expect(hostCheck({ ...host, modules: '137' }, 'x64')).toEqual(unavailable('native-host-mismatch'));
   expect(hostCheck(host, 'arm64')).toEqual(unavailable('native-host-mismatch'));
 });
 

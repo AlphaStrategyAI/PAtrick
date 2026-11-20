@@ -282,7 +282,7 @@ test('reconciles a lost terminal acknowledgement in a separate public-only proce
     const sealed = readFileSync(terminal);
     const expected = { status: 'completed', receipt: JSON.parse(sealed.toString()).payload.receipt };
     const reader = join(f.dir, 'public-reader.mjs');
-    buildSync({ bundle: true, platform: 'node', target: 'node24', format: 'esm', outfile: reader,
+    buildSync({ bundle: true, platform: 'node', target: 'node26', format: 'esm', outfile: reader,
       stdin: { resolveDir: process.cwd(), contents: `
         import assert from 'node:assert/strict';
         import { fstatSync, lstatSync } from 'node:fs';

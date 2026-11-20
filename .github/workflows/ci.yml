@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['24.9']
+        node: ['26.13.0']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

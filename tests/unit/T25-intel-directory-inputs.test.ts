@@ -336,8 +336,8 @@ it('pins the source and fixture headers while recording official archive member 
     source: { path: string; gitBlob: string }; archive: { name: string; bytes: number; sha256: string };
     inputs: Array<Pin & { archivePath?: string }>;
   };
-  expect(manifest.archive).toEqual({ name: 'node-v24.9.0-headers.tar.xz', bytes: 577884,
-    sha256: '4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c157fbf48' });
+  expect(manifest.archive).toEqual({ name: 'node-v26.13.0-headers.tar.xz', bytes: 584092,
+    sha256: '519e269c3e78bf513fdf53d2ab114b763173a7c9424bd477d4e182d782ea366f' });
   expect(manifest.inputs.map(row => [row.name, row.destination])).toEqual(layout.map(row => [...row]));
   const source = readFileSync(new URL('../../packages/integrations/sources/native/directory-module.cc', import.meta.url));
   const sourcePin = manifest.inputs.find(row => row.name === 'directory-module.cc')!;
@@ -349,7 +349,7 @@ it('pins the source and fixture headers while recording official archive member 
   }
   const archived = manifest.inputs.filter(row => row.archivePath);
   expect(archived.map(row => row.archivePath)).toEqual(['node_api.h', 'node_api_types.h', 'js_native_api.h', 'js_native_api_types.h']
-    .map(name => `node-v24.9.0/include/node/${name}`));
+    .map(name => `node-v26.13.0/include/node/${name}`));
 });
 
 it('declares absent byte-order macros an error in the uncompiled ABI fixture', () => {

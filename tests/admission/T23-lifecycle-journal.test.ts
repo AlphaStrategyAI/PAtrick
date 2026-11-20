@@ -255,7 +255,7 @@ test('a lost terminal response is recovered in a public-key-only process with re
   const receipt = { evidenceId: 'receipt', claimSha256: claim.subject.claimSha256,
     evidenceSha256: digest(readFileSync(join(f.base, 'native-readback'))) };
   const runner = join(f.base, 'read.mjs');
-  buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node24', outfile: runner,
+  buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node26', outfile: runner,
     stdin: { resolveDir: process.cwd(), contents: `
       import { createPublicKey, verify } from 'node:crypto';
       import { readFileSync } from 'node:fs';
@@ -323,7 +323,7 @@ test('two processes that have both signed claims race to publish once, then exit
   const f = fixture();
   await f.writer().reserve(f.request);
   const runner = join(f.base, 'contend.mjs');
-  buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node24', outfile: runner,
+  buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node26', outfile: runner,
     stdin: { resolveDir: process.cwd(), contents: `
       import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
       import { once } from 'node:events';

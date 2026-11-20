@@ -1,4 +1,4 @@
-import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
+import { createHash, createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -124,7 +124,7 @@ class TestAuthenticator {
   }
 }
 
-function cosePublicKey(publicKey: ReturnType<typeof generateKeyPairSync>['publicKey']): Uint8Array {
+function cosePublicKey(publicKey: KeyObject): Uint8Array {
   const jwk = publicKey.export({ format: 'jwk' });
   if (!jwk.x || !jwk.y) throw new Error('AUTHENTICATOR_KEY_INVALID');
   return isoCBOR.encode(new Map<number, number | Uint8Array>([

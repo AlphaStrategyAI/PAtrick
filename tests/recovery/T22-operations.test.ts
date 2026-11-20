@@ -196,7 +196,7 @@ test('verification-only reader returns the authenticated terminal in a fresh pro
   const moduleRoot = fileURLToPath(new URL('../../node_modules', import.meta.url));
   const runner = join(f.root, 'verification.mjs');
   buildSync({
-    bundle: true, platform: 'node', format: 'esm', target: 'node24',
+    bundle: true, platform: 'node', format: 'esm', target: 'node26',
     alias: { 'better-sqlite3': sqlite }, external: [sqlite], outfile: runner,
     stdin: { resolveDir: dirname(source), contents: `
       import { createPublicKey, verify } from 'node:crypto';

@@ -285,7 +285,7 @@ describe.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('independently configured 
     expect(sidecar.directoryBuild.authority).toMatchObject({ buildHost: arm64Host, buildMode: 'native', target: arm64Target });
     expect(checked.directoryAuthoritySha256).toBe(sha256(bytes(sidecar.directoryBuild.authority)));
     expect(checked).toMatchObject({ profile: nativeProfile, directoryNativeSha256: pins.directoryNativeSha256,
-      nativeSha256: checked.runtime.native.sha256, runtime: { node: 'v24.9.0', modules: '137', napi: '10', directoryNative: {
+      nativeSha256: checked.runtime.native.sha256, runtime: { node: 'v26.13.0', modules: '147', napi: '10', directoryNative: {
         path: directoryPath, fileType: 'MH_BUNDLE', architecture: process.arch, interfaceVersion: 1, napiVersion: 8 } } });
     expect(checked.materials.filter(row => row.path.endsWith('.node')).map(row => [row.path, row.role, row.mode])).toEqual([
       [directoryPath, 'directory-diagnostic-addon', '100755'], [checked.runtime.native.path, 'native-addon', '100755']]);

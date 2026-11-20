@@ -56,19 +56,19 @@ const headersSha256 = '4db1e4f2bc0a1787810a24a54e351e3e49889a13cbf987041a5d462c1
 const approvedArm64ClangSha256 = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
 const moduleSkip = process.platform !== 'darwin'
   ? 'the native module fixture requires Darwin'
-  : headersArchive === undefined ? 'set PATRICK_T25_NODE_HEADERS_ARCHIVE to the official Node 24.9.0 headers archive' : '';
+  : headersArchive === undefined ? 'set PATRICK_T25_NODE_HEADERS_ARCHIVE to the official Node 26.13.0 headers archive' : '';
 
 test.skipIf(Boolean(moduleSkip))(`native directory module exposes only its fixed handshake${moduleSkip ? ` (skipped: ${moduleSkip})` : ''}`, async () => {
-  expect(process.version, 'use the verified Node 24.9.0 binary').toBe('v24.9.0');
+  expect(process.version, 'use the verified Node 26.13.0 binary').toBe('v26.13.0');
   const arch = process.arch;
   expect(arch, `no approved Darwin ${arch} compiler profile for the module fixture`).toBe('arm64');
   const scratch = await mkdtemp(join(tmpdir(), 'patrick-directory-module-'));
   try {
     // Extract the very bytes hashed here, even when the supplied path is later changed.
     const archive = await readFile(headersArchive!).catch(cause => {
-      throw new Error('Cannot read the Node 24.9.0 headers archive supplied by PATRICK_T25_NODE_HEADERS_ARCHIVE', { cause });
+      throw new Error('Cannot read the Node 26.13.0 headers archive supplied by PATRICK_T25_NODE_HEADERS_ARCHIVE', { cause });
     });
-    expect(createHash('sha256').update(archive).digest('hex'), 'Node 24.9.0 headers SHA-256').toBe(headersSha256);
+    expect(createHash('sha256').update(archive).digest('hex'), 'Node 26.13.0 headers SHA-256').toBe(headersSha256);
     const privateArchive = join(scratch, 'headers.tar.xz');
     await writeFile(privateArchive, archive);
     const developer = '/Library/Developer/CommandLineTools';
@@ -78,7 +78,7 @@ test.skipIf(Boolean(moduleSkip))(`native directory module exposes only its fixed
       expect(result.status, result.error?.message ?? `${command}: ${result.stderr}`).toBe(0);
       return result.stdout.trimEnd();
     }
-    run('/usr/bin/tar', ['-xf', privateArchive, 'node-v24.9.0/include/node']);
+    run('/usr/bin/tar', ['-xf', privateArchive, 'node-v26.13.0/include/node']);
     const native = fileURLToPath(new URL('../../packages/integrations/sources/native/', import.meta.url));
     const sdk = await realpath(join(developer, 'SDKs/MacOSX.sdk'));
     const tool = (name: string) => join(developer, 'usr/bin', name);
@@ -88,7 +88,7 @@ test.skipIf(Boolean(moduleSkip))(`native directory module exposes only its fixed
       '-stdlib=libc++', '-isystem', join(sdk, 'usr/include/c++/v1'), `--ld-path=${tool('ld')}`,
       '-mmacosx-version-min=14.0', '-DNAPI_VERSION=8', '-fvisibility=hidden', '-fvisibility-inlines-hidden',
       '-bundle', '-undefined', 'dynamic_lookup', '-Wl,-exported_symbol,_napi_register_module_v1',
-      '-Wl,-exported_symbol,_node_api_module_get_api_version_v1', '-I', join(scratch, 'node-v24.9.0/include/node'),
+      '-Wl,-exported_symbol,_node_api_module_get_api_version_v1', '-I', join(scratch, 'node-v26.13.0/include/node'),
       join(native, 'directory-module.cc'), join(native, 'directory-core.cc'), '-o', binary,
     ];
     const compiler = tool('clang++');
@@ -122,7 +122,7 @@ test.skipIf(Boolean(moduleSkip))(`native directory module exposes only its fixed
     `, binary]));
     expect(handshake).toEqual({
       info: { format: 'patrick-directory-module', interfaceVersion: 1, napiVersion: 8 },
-      node: 'v24.9.0', abi: '137', runtimeNapi: '10', arch: process.arch, execPath: process.execPath,
+      node: 'v26.13.0', abi: '147', runtimeNapi: '10', arch: process.arch, execPath: process.execPath,
     });
     console.info(JSON.stringify({ compiler, compilerSha256, compilerVersion: run(compiler, ['--version']),
       sdk, compileArgs, arch, machHeader, dependencies, symbols, handshake,

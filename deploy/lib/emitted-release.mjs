@@ -222,7 +222,7 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   shape(schema, 'min max', 'schema interval');
   check(typeof version === 'string' && /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version) && uint(schema.min) && uint(schema.max) && schema.max >= schema.min, 'invalid release/schema');
   shape(inv.observed, 'platform arch node modules npm' + (v3 ? ' napi' : ''), 'runtime observation');
-  if (v3) check(inv.observed.node === 'v24.9.0' && inv.observed.modules === '137' && inv.observed.napi === '10', 'directory runtime mismatch');
+  if (v3) check(inv.observed.node === 'v26.13.0' && inv.observed.modules === '147' && inv.observed.napi === '10', 'directory runtime mismatch');
   const { platform, arch, node, modules, npm } = inv.observed;
   check(platform === 'darwin' && target.os === platform && ['arm64','x64'].includes(arch) && target.arch === arch &&
     typeof node === 'string' && /^v\d+\.\d+\.\d+$/.test(node) && typeof modules === 'string' && /^\d+$/.test(modules) && typeof npm === 'string' && semver.test(npm), 'target/runtime mismatch');
