@@ -1,6 +1,6 @@
 {
   "task": "T20",
-  "completedAt": "2026-11-20T00:06:38.785Z",
+  "completedAt": "2026-11-20T00:54:36.978Z",
   "productClauses": [
     "C5",
     "C6"
@@ -13,22 +13,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T20/notifications-and-diagnostics.log",
-      "evidenceSha256": "84313b8ff0149d8a7d01cbd18562635348adbb548e821aa990d4f90ac236729f",
-      "durationMs": 3207
+      "evidenceSha256": "43fd01cc67f5e4f744b2b38d763af8d461101babbfb360a3ab34095fc7cf6f92",
+      "durationMs": 3334
     },
     {
       "id": "diagnostics-browser",
@@ -37,22 +37,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T20/diagnostics-browser.log",
-      "evidenceSha256": "5244773cd9ce562796c411b6bc4529f9210e8d38f5a31c22b2a6d11e190fbd3b",
-      "durationMs": 3102
+      "evidenceSha256": "11ea588d282372a7d5e73092cc0a7eff590e33fd938b5c757eab926237259bae",
+      "durationMs": 3098
     },
     {
       "id": "diagnostics-client",
@@ -61,22 +61,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T20/diagnostics-client.log",
-      "evidenceSha256": "40516fd913ac1602bf5cc036e08d13d06834ccc63de161fdf8044fd9b79274f3",
-      "durationMs": 750
+      "evidenceSha256": "dbaf824f5dc2f830ee9de4b6592729a5a8d7d91b8d4a54dc2b6d8c6ce70381f9",
+      "durationMs": 792
     }
   ]
 }

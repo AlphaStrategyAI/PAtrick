@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T18.config.ts --reporter=line
-exit=0 signal=none durationMs=4104
+exit=0 signal=none durationMs=4165
 --- stdout ---
 
 
@@ -11,7 +11,7 @@ Running 1 test using 1 worker
   1 passed (3.5s)
 
 --- stderr ---
-[WebServer] (node:51580) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:7661) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:51582) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:7663) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

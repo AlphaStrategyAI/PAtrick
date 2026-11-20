@@ -1,6 +1,6 @@
 {
   "task": "T25",
-  "completedAt": "2026-11-20T00:10:12.183Z",
+  "completedAt": "2026-11-20T00:58:12.353Z",
   "productClauses": [
     "C1",
     "C2",
@@ -18,22 +18,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/pilot-trace-consistency.log",
-      "evidenceSha256": "8d78850a241f689089489d3e0d68e30fb016ad6dcb16859d4d77ad40de267af7",
-      "durationMs": 1195
+      "evidenceSha256": "0d1ec31c867e69d5883f949f7710bec77eb6a1ede3f64c87a113d6bd68eece70",
+      "durationMs": 1154
     },
     {
       "id": "directory-block-browser",
@@ -42,22 +42,22 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/directory-block-browser.log",
-      "evidenceSha256": "a9b9aa7bf6a7d8d8f7a9a01e7c82de9b3f032993686a542453bb2b624e543749",
-      "durationMs": 5091
+      "evidenceSha256": "bf91078bcf148b2a55731a1c3264dac203445715d84eda86f15ecf43222e087a",
+      "durationMs": 4956
     },
     {
       "id": "provider-backed-work-routes",
@@ -66,22 +66,22 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "5125c4ec8e36b938147dfb1bb71a47ff35a9ea2e",
+        "code": "de330bf4834777ddcb3c342abf0d6faa9435757d",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
         "osRelease": "27.2.0",
         "schemaRange": "1..1",
         "designInputs": "f80df31bd0d3339c4f37bc66bfe21605366b48e750edd59594a106e50f1bc1d6",
-        "upstream": "c5ff4a7c880b95f50c51c035b5ec5fbd709ab0e8b0f615bb3bf02e4f711431d4",
+        "upstream": "214f3c3e841875c4f57638da30d32b593895a62346b36fa3094bbda17a192f7c",
         "lockfile": "267674104925a1cbee17c1396d1572dabbbcbf8fcad75641cae4597810cd8259",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "6162eb6c97315a6727d710e61d718ec6f28f978f8c52dfb6edf3eeda9ee8c311",
+        "tests": "cf441fd09213955e40f02d62525cc092ddd1cae88dc2216f84cf30cef130b133",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/provider-backed-work-routes.log",
-      "evidenceSha256": "575537e84c83e46b7ec2b816daa44a0f85994dad4c3439393410c3a71aa8068a",
-      "durationMs": 938,
+      "evidenceSha256": "e96df4813692241bceb66f08d5b2d0d681a691f03df74a8deccc4b9aa35a735a",
+      "durationMs": 912,
       "pendingReason": "三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。"
     }
   ]
