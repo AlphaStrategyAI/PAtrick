@@ -96,7 +96,7 @@ export function probe(): Promise<BackendCapability> {
     resumeMark: 'resume',
     invocation: (home) => dshInvocation(home),
     parse: parseDshTerminal,
-    prepare: installDshProfile,
+    prepare: (home) => { installDshProfile(home); },
   });
 }
 

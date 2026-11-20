@@ -13,6 +13,8 @@ export type BackendLaunch = {
   args: readonly string[];
   env: Readonly<Record<string, string>>;
   stdin: boolean;
+  /** The text the backend reads from its standard input. */
+  stdinText?: string;
 };
 
 export function sameProcessToolCall(input: {
@@ -23,7 +25,7 @@ export function sameProcessToolCall(input: {
 }): boolean {
   if (input.error?.includes('ENOENT')) return false;
   if (input.sessionId === null) return false;
-  return jsonValues(input.stdout).some(valueNamesHarnessTool) || jsonValues(input.stderr).some(valueNamesHarnessTool);
+  return jsonValues(input.stdout).some(succeededHarnessToolCall) || jsonValues(input.stderr).some(succeededHarnessToolCall);
 }
 
 export function versionCommand(backend: BackendId): { command: string; args: string[] } {
@@ -38,15 +40,19 @@ export async function readCapability(input: {
   resumeMark: string;
   invocation: (home: string) => BackendLaunch;
   parse: (stdout: string) => TerminalParse;
-  prepare?: (home: string) => void;
+  /** Prepares the backend home. It may return the cleanup of what it started. */
+  prepare?: (home: string) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
+  /** How long a live turn may take. A model turn is slower than a version probe. */
+  timeoutMs?: number;
 }): Promise<BackendCapability> {
   const spec = versionCommand(input.backend);
   const versionResult = await runCommand(spec.command, spec.args, 8000);
   const versionText = versionResult.stdout.trim();
   const version = versionResult.exitCode === 0 && versionResult.error === null && versionText ? versionText : null;
   const home = mkdtempSync(join(tmpdir(), 'patrick-backend-'));
+  let cleanup: void | (() => void | Promise<void>) = undefined;
   try {
-    input.prepare?.(home);
+    cleanup = await input.prepare?.(home);
     const invocation = input.invocation(home);
     const env = { ...process.env, ...invocation.env };
     let resumeSupported = false;
@@ -58,7 +64,8 @@ export async function readCapability(input: {
     const headless = await runClosed(invocation.command, invocation.args, {
       env,
       pipeStdin: invocation.stdin,
-      timeoutMs: 8000,
+      stdinText: invocation.stdinText,
+      timeoutMs: input.timeoutMs ?? 8000,
     });
     const parsed = input.parse(headless.stdout);
     const liveTerminal = headless.closed
@@ -84,17 +91,33 @@ export async function readCapability(input: {
       liveToolCall,
     };
   } finally {
+    if (typeof cleanup === 'function') await cleanup();
     rmSync(home, { recursive: true, force: true });
   }
 }
 
-function valueNamesHarnessTool(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(valueNamesHarnessTool);
+/**
+ * A tool call only counts when it carries a harness tool that was not refused.
+ *
+ * The name alone is not enough: a call that the approval policy turned down
+ * never reached the bundle, so it must not read as a live tool call.
+ */
+function succeededHarnessToolCall(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(succeededHarnessToolCall);
   if (!isRecord(value)) return false;
   for (const [key, inner] of Object.entries(value)) {
-    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && HARNESS_TOOL_NAMES.has(inner)) return true;
-    if (valueNamesHarnessTool(inner)) return true;
+    if (TOOL_NAME_KEYS.has(key) && typeof inner === 'string' && HARNESS_TOOL_NAMES.has(inner)) {
+      return !refusedToolCall(value);
+    }
   }
+  return Object.values(value).some(succeededHarnessToolCall);
+}
+
+/** A tool call that failed or returned nothing never reached the domain. */
+function refusedToolCall(value: Record<string, unknown>): boolean {
+  if (value.error !== undefined && value.error !== null && value.error !== false) return true;
+  if (value.status === 'failed') return true;
+  if ('result' in value && value.result === null) return true;
   return false;
 }
 

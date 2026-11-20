@@ -78,4 +78,4 @@ test('the executor admission evidence names what each backend can do', async () 
     // A backend that is not ready must say why; readiness is never assumed.
     if (!record.available) expect(record.observation).toMatch(/blocked:/u);
   }
-}, 120_000);
+}, 300_000);

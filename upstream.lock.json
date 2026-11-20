@@ -115,14 +115,14 @@
   },
   "probes": {
     "codex-cli": {
-      "status": "blocked",
+      "status": "verified",
       "command": "codex --version",
-      "observation": "In the T09 Lima guest: codex-cli 0.163.0 is installed and the guest marker is present. The live terminal readback and the live harness tool call did not succeed, so the backend stays blocked: the model credential is not provisioned inside the guest.",
-      "evidenceSha256": "14426a5d66ba2fa64b7edeb8c8b842ada206591c6a4a696e166d75307c36b30c",
+      "observation": "In the T09 Lima guest: codex-cli 0.163.0 is installed and the guest marker is present. The backend is verified: a live turn completed inside the isolated guest and the model called the patrick-memory bundle tool, which read the admitted evidence through the restricted RPC.",
+      "evidenceSha256": "a4d21e4b4d2ee51562c2130eb77bc07503061cb210437fda42caf8b8250d3910",
       "installedVersion": "0.163.0",
       "matchesLockedPackage": true,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "c16dde3adf79def56baaa4bb50f205bfc2d868caaf828bf5018c538b21028c85"
+      "guestEvidenceSha256": "5d0af5ec8b5819c332510546155b76d7d070f634ff7867183f3019a461f8ad53"
     },
     "grok-build": {
       "status": "blocked",
@@ -132,18 +132,18 @@
       "installedVersion": null,
       "matchesLockedPackage": false,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "c16dde3adf79def56baaa4bb50f205bfc2d868caaf828bf5018c538b21028c85"
+      "guestEvidenceSha256": "5d0af5ec8b5819c332510546155b76d7d070f634ff7867183f3019a461f8ad53"
     },
     "dsh-cli": {
       "status": "blocked",
       "command": "dsh --version",
-      "observation": "In the T09 Lima guest: 0.2.2-rc.2 is installed, which matches the locked package line. The live terminal readback and the live harness tool call did not succeed, so the backend stays blocked: the model credential is not provisioned inside the guest.",
+      "observation": "In the T09 Lima guest: 0.2.2-rc.2 is installed, which matches the locked package line. The live terminal readback and the live harness tool call did not succeed, so the backend stays blocked: the headless profile has no model route yet.",
       "evidenceSha256": "aad723bdc3b810a033b7c180a1ce3055ddc2684e36233a3e9707141f7c2d5382",
       "installedVersion": "0.2.2-rc.2",
       "lockedPackageVersion": "0.2.2-rc.2",
       "matchesLockedPackage": true,
       "guestEvidence": "docs/operations/evidence/executor-admission-guest.json",
-      "guestEvidenceSha256": "c16dde3adf79def56baaa4bb50f205bfc2d868caaf828bf5018c538b21028c85"
+      "guestEvidenceSha256": "5d0af5ec8b5819c332510546155b76d7d070f634ff7867183f3019a461f8ad53"
     },
     "feishu-sdk": {
       "status": "pending",

@@ -379,6 +379,18 @@ test('a harness tool call is a JSON tool name from the same profiled process', (
     stderr: '',
     sessionId,
   })).toBe(true);
+  // A call the approval policy refused never reached the bundle.
+  expect(sameProcessToolCall({
+    error: null,
+    stdout: [
+      '{"type":"thread.started","thread_id":"thread-1"}',
+      '{"type":"item.completed","item":{"type":"mcp_tool_call","server":"patrick","tool":"patrick-memory",'
+      + '"arguments":{"domain":"personal"},"result":null,'
+      + '"error":{"message":"MCP tool call requires approval, but approval policy is never"},"status":"failed"}}',
+    ].join('\n'),
+    stderr: '',
+    sessionId,
+  })).toBe(false);
   expect(sameProcessToolCall({
     error: null,
     stdout: '{"type":"session","sessionId":"session-1"}',

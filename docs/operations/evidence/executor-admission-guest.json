@@ -5,15 +5,15 @@
   "backends": [
     {
       "backend": "codex",
-      "status": "blocked",
-      "available": false,
+      "status": "verified",
+      "available": true,
       "command": "codex --version",
       "installedVersion": "codex-cli 0.163.0",
-      "liveTerminal": false,
-      "liveToolCall": false,
+      "liveTerminal": true,
+      "liveToolCall": true,
       "isolated": true,
-      "observation": "codex-cli 0.163.0\nblocked: no isolated terminal readback\nblocked: no live harness tool call\nversion: codex-cli 0.163.0",
-      "evidenceSha256": "fa855c9d615b6e5fb3e425f7090263bded0b7673cc8a1b861b57dc1108b4851f"
+      "observation": "codex-cli 0.163.0\nversion: codex-cli 0.163.0",
+      "evidenceSha256": "a4d21e4b4d2ee51562c2130eb77bc07503061cb210437fda42caf8b8250d3910"
     },
     {
       "backend": "grok",
