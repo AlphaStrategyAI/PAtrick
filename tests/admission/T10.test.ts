@@ -25,10 +25,14 @@ test.each(['absent', 'present'] as const)(
       }
       const beforeProbe = credentialEnvironment.map((key) => process.env[key]);
       let probe: ReturnType<typeof probeDeferredCard>;
+      const previousFile = process.env.PATRICK_FEISHU_CREDENTIALS_FILE;
       try {
         for (const key of credentialEnvironment) delete process.env[key];
+        process.env.PATRICK_FEISHU_CREDENTIALS_FILE = join(directory, 'absent.env');
         probe = probeDeferredCard();
       } finally {
+        if (previousFile === undefined) delete process.env.PATRICK_FEISHU_CREDENTIALS_FILE;
+        else process.env.PATRICK_FEISHU_CREDENTIALS_FILE = previousFile;
         for (const [index, key] of credentialEnvironment.entries()) {
           const previous = beforeProbe[index];
           if (previous === undefined) delete process.env[key];

@@ -39,7 +39,15 @@ test('a missing or empty credentials file reports no credential', () => {
 
 test('the probe finds the credential in the file without putting the secret in the observation', () => {
   const path = credentialsFile({ FEISHU_APP_ID: 'file-app', FEISHU_APP_SECRET: 'file-secret' });
-  const without = probeDeferredCard();
+  const absent = join(tmpdir(), 'patrick-feishu-credentials-absent.env');
+  const previousFile = process.env.PATRICK_FEISHU_CREDENTIALS_FILE;
+  process.env.PATRICK_FEISHU_CREDENTIALS_FILE = absent;
+  let without: ReturnType<typeof probeDeferredCard>;
+  try { without = probeDeferredCard(); }
+  finally {
+    if (previousFile === undefined) delete process.env.PATRICK_FEISHU_CREDENTIALS_FILE;
+    else process.env.PATRICK_FEISHU_CREDENTIALS_FILE = previousFile;
+  }
   const with_ = (() => {
     const previous = process.env.PATRICK_FEISHU_CREDENTIALS_FILE;
     process.env.PATRICK_FEISHU_CREDENTIALS_FILE = path;
