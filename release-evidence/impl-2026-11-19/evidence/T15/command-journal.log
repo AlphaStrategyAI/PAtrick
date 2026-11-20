@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=718
 
  Test Files  1 passed (1)
       Tests  6 passed (6)
-   Start at  12:23:38
-   Duration  211ms (import 74%, transform 18%, tests 4%, worker 3%)
+   Start at  12:45:21
+   Duration  211ms (import 76%, transform 16%, tests 4%, worker 3%)
 
 
 --- stderr ---

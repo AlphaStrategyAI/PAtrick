@@ -1,5 +1,5 @@
 $ npm exec -- playwright test --config tests/e2e/T24-responsive.config.ts --reporter=line
-exit=0 signal=none durationMs=12844
+exit=0 signal=none durationMs=13521
 --- stdout ---
 
 
@@ -19,10 +19,10 @@ Running 12 tests using 1 worker
 [10/12] tests/e2e/T24-responsive.spec.ts:244:5 › zh › 200% browser zoom in an isolated profile
 [11/12] tests/e2e/T24-responsive.spec.ts:287:1 › layout checks detect horizontal overflow and an obscured action
 [12/12] tests/e2e/T24-responsive.spec.ts:312:1 › registration preserves a deliberate keyboard focus move while the service responds
-  12 passed (12.0s)
+  12 passed (12.7s)
 
 --- stderr ---
-[WebServer] (node:99804) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (node:12185) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
-(node:99807) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:12192) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)

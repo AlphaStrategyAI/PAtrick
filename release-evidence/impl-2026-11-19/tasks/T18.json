@@ -1,6 +1,6 @@
 {
   "task": "T18",
-  "completedAt": "2026-11-20T04:25:19.932Z",
+  "completedAt": "2026-11-20T04:47:02.335Z",
   "productClauses": [
     "C6"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T18/rss-and-webpage-collection.log",
-      "evidenceSha256": "54d999df5089bd3f3585997fde0ccfa4c01c462227c11d38407610e615ce130b",
-      "durationMs": 2210
+      "evidenceSha256": "5100a107b4cdf0febefec8d7d3d7e3034996acdd0458702bb0e7dfe1fb2a8b68",
+      "durationMs": 2228
     },
     {
       "id": "collection-browser",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T18/collection-browser.log",
-      "evidenceSha256": "3a1d8701f5b338967e63d9a5cc3316faa467e2a2f517d32f85f5d4a5d2426a93",
-      "durationMs": 4176
+      "evidenceSha256": "c64e38f039b0d8e620069127758c7f5d782bc3dbcf22dfc90367ddab603cbb77",
+      "durationMs": 4167
     }
   ]
 }

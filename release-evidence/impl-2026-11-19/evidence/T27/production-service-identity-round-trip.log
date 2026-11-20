@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/admission/T27-rehearsal.test.ts
-exit=0 signal=none durationMs=5141
+exit=0 signal=none durationMs=5172
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=5141
 
  Test Files  1 passed (1)
       Tests  11 passed (11)
-   Start at  12:29:25
-   Duration  4.60s (tests 98%, import 1%, transform 1%)
+   Start at  12:51:24
+   Duration  4.66s (tests 98%, import 1%, transform 1%)
 
 
 --- stderr ---

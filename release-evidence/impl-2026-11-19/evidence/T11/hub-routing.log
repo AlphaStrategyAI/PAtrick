@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/contract/T11.routing.test.ts
-exit=0 signal=none durationMs=3844
+exit=0 signal=none durationMs=3726
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=3844
 
  Test Files  1 passed (1)
       Tests  4 passed (4)
-   Start at  12:22:44
-   Duration  3.33s (tests 95%, import 4%, transform 1%)
+   Start at  12:44:26
+   Duration  3.19s (tests 94%, import 5%, transform 1%)
 
 
 --- stderr ---

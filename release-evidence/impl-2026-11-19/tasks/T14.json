@@ -1,6 +1,6 @@
 {
   "task": "T14",
-  "completedAt": "2026-11-20T04:23:11.156Z",
+  "completedAt": "2026-11-20T04:44:54.023Z",
   "productClauses": [
     "C9"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T14/bilingual-shell.log",
-      "evidenceSha256": "36343284f8f76ca6d7bcf351df2e04a4131896bb91401775ba6c1004bcecc877",
-      "durationMs": 1364
+      "evidenceSha256": "f5e510540bee6a3f8a9d0fdf5a46683b7067fa21069c8fc0e6d2b533a03b8022",
+      "durationMs": 1367
     }
   ]
 }

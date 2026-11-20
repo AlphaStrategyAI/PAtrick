@@ -1,5 +1,5 @@
 $ node scripts/lock-design-inputs.mjs
-exit=0 signal=none durationMs=132
+exit=0 signal=none durationMs=135
 --- stdout ---
 292 frames / 65 exports
 

@@ -1,6 +1,6 @@
 {
   "task": "T15",
-  "completedAt": "2026-11-20T04:23:38.769Z",
+  "completedAt": "2026-11-20T04:45:21.591Z",
   "productClauses": [
     "C2",
     "C9"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -23,12 +23,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/decisions-and-work-browser.log",
-      "evidenceSha256": "c420c3b0adbee49379d9525149947886301f42535cac99fc926fd8329f3d9499",
-      "durationMs": 24395
+      "evidenceSha256": "8c31d2b11891ac6d938980f4b006d384cf691d0724729ea29ad1eba606a18331",
+      "durationMs": 24444
     },
     {
       "id": "consultation-scope",
@@ -37,7 +37,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -47,12 +47,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/consultation-scope.log",
-      "evidenceSha256": "b8c9fd3722e9fd572b90d986b1d61b3239f3fb0074b35499776e217a5f0ca438",
-      "durationMs": 1450
+      "evidenceSha256": "b60a4eceed79ee8b26fc3e1a717a655c3e2244947edcada2f96fd10a4479796b",
+      "durationMs": 1363
     },
     {
       "id": "work-control",
@@ -61,7 +61,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -71,12 +71,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/work-control.log",
-      "evidenceSha256": "47afb5523ff61d0e5431287091b722694cdc2a47a4c95df5896e21bbed455040",
-      "durationMs": 1049
+      "evidenceSha256": "4bf9fff596b483b1740641006957ce05a0fae0ab3252ab7636c72cdaed823810",
+      "durationMs": 1042
     },
     {
       "id": "command-journal",
@@ -85,7 +85,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -95,11 +95,11 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T15/command-journal.log",
-      "evidenceSha256": "743ba0d15e8a419e70fd14f61b013067c39d7ba7aed31e3ff76a9033df6a63ee",
+      "evidenceSha256": "6f6510816eb994324b6d2a2be34a087ac3fd4231ac36d9fa42de24c051d77bfd",
       "durationMs": 718
     }
   ]

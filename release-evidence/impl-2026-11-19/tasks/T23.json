@@ -1,6 +1,6 @@
 {
   "task": "T23",
-  "completedAt": "2026-11-20T04:27:47.198Z",
+  "completedAt": "2026-11-20T04:49:43.843Z",
   "productClauses": [
     "C8"
   ],
@@ -12,7 +12,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -22,12 +22,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/release-candidate-admission.log",
-      "evidenceSha256": "66d05252eda0237d385c164d5a6449261f87ad1416ac9a648bde6e33ffc20c81",
-      "durationMs": 17793
+      "evidenceSha256": "b39b983a199b9fc9b1d9fe7e8bd3f5c8c303e41ebad211506c43ba51324263fb",
+      "durationMs": 17419
     },
     {
       "id": "runtime-build-and-relocate",
@@ -36,7 +36,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -46,12 +46,37 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/runtime-build-and-relocate.log",
-      "evidenceSha256": "5b461f35143999c13a5f42d9b04669a22ab57c12857ef6bb61a6bef013174a8b",
-      "durationMs": 103856
+      "evidenceSha256": "e6d77370fcf77463e22a5807673a51e71ab7ad961fbfbb3d84136d7cf605992b",
+      "durationMs": 103507
+    },
+    {
+      "id": "darwin-hosted-dual-architecture-candidates",
+      "command": "node scripts/verify-hosted-candidates.mjs",
+      "kind": "admission",
+      "exitCode": 0,
+      "status": "passed",
+      "versions": {
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
+        "node": "v26.13.0",
+        "npm": "11.20.0",
+        "platform": "darwin-arm64",
+        "osRelease": "27.2.0",
+        "schemaRange": "1..1",
+        "designInputs": "a276a134a51ede1b0228b3beb6f91aac9538e2eaf918bf6702878363d5c5cf0d",
+        "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
+        "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+        "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
+        "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
+      },
+      "evidenceFile": "evidence/T23/darwin-hosted-dual-architecture-candidates.log",
+      "evidenceSha256": "46a96f54b075f1a14922dafa808c8f93e6eeb4f106ac7dee64a9ff3af761780b",
+      "durationMs": 14593,
+      "note": "下载已登记运行的两个架构产物，独立核对归档摘要、清单摘要、载荷数量与原生扩展的 Mach-O 架构，并登记候选摘要供 T25 验收。"
     },
     {
       "id": "empty-host-install-and-upgrade",
@@ -60,7 +85,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -70,12 +95,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T23/empty-host-install-and-upgrade.log",
-      "evidenceSha256": "145b878d44666797d752ce0cf91d529bb6e78f732cee9dd72ba6aa47eb53c77c",
-      "durationMs": 1344,
+      "evidenceSha256": "83edfa6081ca05a17c887f1f652d5d279e506f79de93d9454f3727e8308518f9",
+      "durationMs": 1428,
       "blockedReason": "空机安装、重启与升级只对真实安装目录有证据；本机没有已安装的 PAtrick.app，候选包的 installable 仍为 false。"
     }
   ]

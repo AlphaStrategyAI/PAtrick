@@ -1,6 +1,6 @@
 {
   "task": "T25",
-  "completedAt": "2026-11-20T04:29:06.406Z",
+  "completedAt": "2026-11-20T04:51:06.209Z",
   "productClauses": [
     "C1",
     "C2",
@@ -18,7 +18,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -28,12 +28,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/pilot-trace-consistency.log",
-      "evidenceSha256": "a0fca35c3630fc51b7e08cea55169f748b235496f0f7fd610eadf88b90e2246f",
-      "durationMs": 1188
+      "evidenceSha256": "782f8f1272577b9fef5f9cb311ac23f94767924e64b36a8e6f3227727c4d6920",
+      "durationMs": 1152
     },
     {
       "id": "directory-block-browser",
@@ -42,7 +42,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -52,12 +52,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/directory-block-browser.log",
-      "evidenceSha256": "8966c1c5f04ac31a232794467cf66775b919c0afd6862acb5a1eedb694ee1484",
-      "durationMs": 4874
+      "evidenceSha256": "9be3139728f29effb6c3ded22f192511239d81a2f5e085a62da92db3703450b5",
+      "durationMs": 5171
     },
     {
       "id": "provider-backed-work-routes",
@@ -66,7 +66,7 @@
       "exitCode": 0,
       "status": "pending",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -76,12 +76,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T25/provider-backed-work-routes.log",
-      "evidenceSha256": "7b35be74a14788c6718e45e0be9e4b8ec68933be6a001e0ed1682d5042223eb7",
-      "durationMs": 907,
+      "evidenceSha256": "f011b4bea71041e139ffaf3cb36e303a6c9e8f8a09b31eb01bdf4662ef43ea40",
+      "durationMs": 950,
       "pendingReason": "三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。"
     }
   ]

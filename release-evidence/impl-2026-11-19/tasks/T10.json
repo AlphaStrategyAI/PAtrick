@@ -1,6 +1,6 @@
 {
   "task": "T10",
-  "completedAt": "2026-11-20T04:22:41.503Z",
+  "completedAt": "2026-11-20T04:44:23.450Z",
   "productClauses": [
     "C2",
     "C5"
@@ -13,7 +13,7 @@
       "exitCode": 0,
       "status": "passed",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -23,12 +23,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T10/exact-answer-and-resume.log",
-      "evidenceSha256": "40c6bbc24798dce9372f10574b9962e5d902fe842ba39471c84101384f3fc9d9",
-      "durationMs": 1651
+      "evidenceSha256": "8fc69e95dc66a442dc30a5643c80f471444951dc3203ddd760aa7553027d8c5c",
+      "durationMs": 1786
     },
     {
       "id": "feishu-live-round-trip",
@@ -37,7 +37,7 @@
       "exitCode": 0,
       "status": "blocked",
       "versions": {
-        "code": "5767d03bb37eea49aefe910567688a7ad075ca75",
+        "code": "9b4cd82c8bb20aad50b891ca72a2963390c760c5",
         "node": "v26.13.0",
         "npm": "11.20.0",
         "platform": "darwin-arm64",
@@ -47,12 +47,12 @@
         "upstream": "a187da6ecdb799126ac3d934cedea6cb6b0eaa6ceb3275e4a39c8d0b2855da3b",
         "lockfile": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
         "migrations": "23:ba266f4ebe785190ab332086ebd013e1d47e52a6b4d4335c24b2c7ab9f344981",
-        "tests": "3304f2bd73492a628bf4825bb1e0024a3a3b963502331e4d142a8af013b236db",
+        "tests": "451cffebc570ab2cbe5a148e8bc6b30db036b0ff2e4a4a3fa400813ec60cd6c8",
         "fixtures": "8163521e1ae86612b2f37d178354f93a76debfa4395b393f331a6cde610aea4e"
       },
       "evidenceFile": "evidence/T10/feishu-live-round-trip.log",
-      "evidenceSha256": "1a6f8bb1b7d2778e4128d3abb9446b4c7d715d71f6e5f70d319e2a780fea2694",
-      "durationMs": 1468,
+      "evidenceSha256": "228d59de4f03ae28cfea585c30a4318e06b29efbfdb0777cc4578214f54b0555",
+      "durationMs": 1470,
       "blockedReason": "飞书准入探针记录 `feishu_deferred_card` 为 blocked：本机没有真实飞书应用凭据，暂缓后提交决定卡与双向收发未在真实租户验收。"
     }
   ]

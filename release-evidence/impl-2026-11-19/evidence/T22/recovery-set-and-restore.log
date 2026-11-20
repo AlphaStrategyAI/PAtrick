@@ -1,5 +1,5 @@
 $ npm exec -- vitest run tests/recovery/T22.test.ts
-exit=0 signal=none durationMs=2463
+exit=0 signal=none durationMs=2508
 --- stdout ---
 
  RUN  v5.1.0 /Users/fengpengcheng/同步空间/事业职业/PAtrick/.worktrees/impl-patrick-plan
@@ -7,8 +7,8 @@ exit=0 signal=none durationMs=2463
 
  Test Files  1 passed (1)
       Tests  16 passed (16)
-   Start at  12:25:42
-   Duration  1.95s (tests 94%, import 3%, transform 2%)
+   Start at  12:47:24
+   Duration  2.00s (tests 94%, import 3%, transform 3%)
 
 
 --- stderr ---
