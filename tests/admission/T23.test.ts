@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, test } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, renameSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,8 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { canonicalize, verifyRelease, requireInstallableRelease, readRegularFile, admitReadRoot } from '../../deploy/lib/release.mjs';
 
 const temporary: string[] = [];
-async function packRelease(options: { sourceRoot: string; commit: string; version: string; arch: string; schema: { min: number; max: number }; output: string; evidenceDirectory?: string }, timeout = 3000) {
-  execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/pack-release.mjs', import.meta.url)), options.sourceRoot, options.commit, options.version, options.arch, String(options.schema.min), String(options.schema.max), options.output, ...(options.evidenceDirectory ? [options.evidenceDirectory] : [])], { stdio: 'pipe', timeout, env: { ...process.env } });
+async function packRelease(options: { sourceRoot: string; commit: string; version: string; arch: string; schema: { min: number; max: number }; output: string; evidenceDirectory?: string; signingKey?: string; keyId?: string; policyOutput?: string; requiredEvidence?: string[] }, timeout = 3000) {
+  execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/pack-release.mjs', import.meta.url)), options.sourceRoot, options.commit, options.version, options.arch, String(options.schema.min), String(options.schema.max), options.output, ...(options.evidenceDirectory ? [options.evidenceDirectory] : []),
+    ...(options.signingKey ? ['--sign', options.signingKey, '--key-id', options.keyId ?? 'publisher'] : []),
+    ...(options.requiredEvidence ? ['--required-evidence', options.requiredEvidence.join(',')] : []),
+    ...(options.policyOutput ? ['--policy', options.policyOutput] : [])], { stdio: 'pipe', timeout, env: { ...process.env } });
 }
 afterEach(() => temporary.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -339,4 +342,25 @@ describe('T23 finite release candidates', () => {
     expect(existsSync(f.output)).toBe(false);
   });
 
+});
+
+test('the release packer signs the candidate with the release key and pins its public half', async () => {
+  const f = fixture();
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const key = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const keyFile = join(f.root, 'release.pem');
+  writeFileSync(keyFile, key, { mode: 0o600 });
+  const policyFile = join(f.root, 'policy.json');
+  await packRelease({ ...f.options, signingKey: keyFile, keyId: 'publisher', policyOutput: policyFile, requiredEvidence: ['T25'] });
+  const bundle = JSON.parse(readFileSync(f.output, 'utf8'));
+  expect(bundle.signatures).toHaveLength(1);
+  expect(bundle.signatures[0].keyId).toBe('publisher');
+  const policy = JSON.parse(readFileSync(policyFile, 'utf8'));
+  expect(policy.keys[0].publicKey).toContain('BEGIN PUBLIC KEY');
+  expect(policy.requiredEvidence).toEqual(['T25']);
+  const verified = await verifyRelease(f.output, { readRoot: f.root, policy, expected: f.expected });
+  expect(verified.status).toBe('verified-candidate');
+  // A candidate that no release key signed is refused.
+  await packRelease(f.options);
+  await expect(verifyRelease(f.output, { readRoot: f.root, policy, expected: f.expected })).rejects.toThrow(/signature/);
 });
