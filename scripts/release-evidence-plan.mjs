@@ -189,6 +189,14 @@ export const releaseEvidencePlan = {
       { id: 'release-candidate-admission', command: vitest('tests/admission/T23.test.ts'), kind: 'admission' },
       { id: 'runtime-build-and-relocate', command: vitest('tests/admission/T23-build.test.ts'), kind: 'admission' },
       {
+        id: 'darwin-hosted-dual-architecture-candidates',
+        command: 'node scripts/verify-hosted-candidates.mjs',
+        kind: 'admission',
+        blockedBy: { type: 'env-absent', name: 'PATRICK_DARWIN_RELEASE_RUN' },
+        blockedReason: '双架构托管候选包只对已登记的 GitHub Actions 运行有证据；没有运行号就没有可独立核对的产物。',
+        note: '下载已登记运行的两个架构产物，独立核对归档摘要、清单摘要、载荷数量与原生扩展的 Mach-O 架构，并登记候选摘要供 T25 验收。',
+      },
+      {
         id: 'empty-host-install-and-upgrade',
         command: vitest('tests/admission/T23-install-preview.test.ts'),
         kind: 'admission',

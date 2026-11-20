@@ -54,3 +54,16 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 | x64 | `ea6497920175379818611e368e915afe1577dbcb69653c737631eff068e0b7c2` | `55d4d4f8e86ae18a012313c79c0a4eed91b6696ced9a54cdc5a662bca0458ea7` | `cee9cf07008d0f80a10b5225fdf4d8d5e542e73bfed1b8d95af0791787a1958a` |
 
 以上为未签名构建材料，不是通过 T25 的发布资产。签名人登记、真实主机安装与启动、重启和升级验收仍待完成。
+
+## 2026-11-20 Node 26 LTS 双架构构建
+
+提交 `d5b894fed0d2c99dc655a1b4d5c5a194d12ea729` 的 [GitHub Actions 构建](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/44674778804) 中，Apple Silicon 与 Intel 两个任务均一次通过，均使用 Node 26.13.0（ABI 147）。下载六份产物后独立核对：工具链观察记录的 Node 头文件归档摘要为 `519e269c3e78bf513fdf53d2ab114b763173a7c9424bd477d4e182d782ea366f`（584092 字节），与工作流固定值一致；部署材料内层 tar 的摘要与随附 `SHA256SUMS` 一致；两个归档各含 456 个载荷文件；`better_sqlite3.node` 分别独立解包并用 `file` 确认为 `Mach-O 64-bit bundle arm64` 与 `Mach-O 64-bit bundle x86_64`，字节摘要与读回回执一致；两者都实测加载成功并记录 SQLite 3.53.2。源码候选的字节摘要与随附 `SHA256SUMS` 一致，清单为 322 个文件、schema `1..1`、无签名、`installable: false`。
+
+| 架构 | GitHub ZIP SHA-256 | 部署材料 tar SHA-256 | 运行时清单 SHA-256 | 源码候选 SHA-256 |
+| --- | --- | --- | --- | --- |
+| arm64 | `390073de74353943e6e9f21529f94b4085a58ef54571bd49b13520d4902e335f` | `567b21943a027fe8361d488f51e3d109fbeeede8224dbfe5eccce39997e0a34d` | `72788df5c2fc3600748ce806aa3eb89bc712acef0c3ded0040e19d475431c114` | `9a09a4d6bb64cece421f401adc6aa500625bf948605d5415e9e660ded5912368` |
+| x64 | `fb2894a3f2ec154b3e2dad45e04af5291f1491fd3614ac0fc7b434f262621d71` | `4002c18604bf37cc04460c3ee0bd00891256a228a17e86c7dd6bfe30e0d9ead8` | `1ff4b5034262575d12587f62f79aa655c6e357cef59e46b426a0113f87d47b75` | `7fe1cffa71fe22ade68f970835fb0dfa1b65c1348d70bbdc72dc966327c7c4ba` |
+
+原生扩展摘要：arm64 `cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d`，x64 `52ee7e68839aef1cb09a5acb1bd3d05e28b7259e8f0c18d9a760500efbf09211`。这是交给 T25 验收的未签名构建材料；签名、发布资产、目标主机的空机安装与升级仍需实测。
+
+上述核对由 `node scripts/verify-hosted-candidates.mjs` 重新执行：脚本下载已登记运行的产物，按各自随附的摘要核对归档、清单、载荷数量与源码候选，并独立解包原生扩展读取 Mach-O 架构，任何一项不符即以非零状态拒绝。登记回执保存在 [darwin-candidates-2026-11-20.json](evidence/darwin-candidates-2026-11-20.json)，作为后续签名、T25 验收与 T26 发布的候选输入。

@@ -719,7 +719,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T10 从实际飞书应用配对与双向验证 | 没有真实飞书应用凭据 | `T10/feishu-live-round-trip` blocked |
 | T21 已登记设备的双启动顺序与企业 DNS | 没有登记设备和实测记录 | `T21/registered-device-vpn-admission` blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
-| T23 在目标机下载并安装候选包 | 候选包已能用发布密钥签名并写出信任策略，安装仍需已安装主机与该密钥 | `T23/empty-host-install-and-upgrade` blocked |
+| T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
 | T25 真实三执行器、双入口答复与飞书排空 | 隔离执行器已在来宾内通过准入，真实渠道与演练仓库仍未接入 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |
