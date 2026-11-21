@@ -1,15 +1,16 @@
+import { hostname } from 'node:os';
 import type { CredentialStore } from '@patrick/host';
 import type { SqliteDatabase } from '@patrick/storage';
 import { createMacNetworkActuator, readMacRoute, readMacSecureProxy } from '../../../../packages/host/src/network/native.js';
 import { createNodeNetworkProbePorts } from '../../../../packages/host/src/network/node-probes.js';
-import { createNetworkInspector } from '../../../../packages/host/src/network/probes.js';
+import { connectivityProbeHosts, createNetworkInspector, parseConnectivityHostname } from '../../../../packages/host/src/network/probes.js';
 import { createNetworkControlAuthority, createNetworkSettingsHandler, networkReceiptToApplied } from '../../../../packages/host/src/network/settings.js';
 import { createNetworkSupervisor, networkRepairPolicyDigest, type RepairReceipt } from '../../../../packages/host/src/network/supervisor.js';
 import { parseNetworkPolicy, type NetworkPolicy } from '../../../../packages/host/src/network/vpn.js';
 import { assertDomainPermission, canConfirm, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
 import { assertSettingsControl, settingsControlHash } from './authority.js';
-import { draftHash, type SettingsDraft, type SettingsHandler, type StoredSettingsChange } from './changes.js';
+import { draftHash, SettingsApplyBlocked, type SettingsDraft, type SettingsHandler, type StoredSettingsChange } from './changes.js';
 
 export type NetworkRepairConfiguration = Readonly<Omit<Parameters<typeof createNetworkSettingsHandler>[0],
   'db' | 'now' | 'authority' | 'reject'>>;
@@ -60,8 +61,18 @@ export function networkSettingsHandlers(options: {
   db: SqliteDatabase; credentials: CredentialStore; now: () => Date; networkRepair?: NetworkRepairConfiguration;
 }): Readonly<Partial<Record<string, SettingsHandler>>> {
   const { db, credentials, now, networkRepair } = options;
-  if (!networkRepair) return {};
   const reject = (reason: string): never => { throw new ApiError(403, 'FORBIDDEN', { reason }); };
+  const connectivity = connectivitySettingsHandler({
+    db, now, deviceId: hostname(),
+    authorize(principal, draft, proof, controlReceiptId) {
+      assertDomainPermission(db, principal, draft.domain, 'owner', false);
+      assertSettingsControl(db, credentials, principal, now(), controlReceiptId, {
+        operation: draft.operation, target: draft.target, domain: draft.domain,
+        draftHash: proof.draft_hash, validationId: proof.validation_id, objectRevision: proof.base_revision,
+      });
+    },
+  });
+  if (!networkRepair) return { set_connectivity_targets: connectivity };
   const authority = createNetworkControlAuthority({ db, now, reject,
     assertControl({ principal, draft, proof, controlReceiptId }) {
       assertDomainPermission(db, principal, draft.domain, 'owner', false);
@@ -72,7 +83,10 @@ export function networkSettingsHandlers(options: {
     },
   });
   const handler = createNetworkSettingsHandler({ ...networkRepair, db, now, reject, authority });
-  return { repair_network: withNetworkRecovery({ ...networkRepair, db, now, reject, authority }, handler) };
+  return {
+    set_connectivity_targets: connectivity,
+    repair_network: withNetworkRecovery({ ...networkRepair, db, now, reject, authority }, handler),
+  };
 }
 
 type RecoverySourceRow = {
@@ -271,3 +285,87 @@ export function registeredNetworkTargets(db: SqliteDatabase, configuration: Netw
 }
 import { createHash } from 'node:crypto';
 import { canonicalPayload, type Json } from '@patrick/contracts';
+
+const connectivityTarget = 'connectivity';
+type ConnectivityRow = {
+  verified_intranet: string; verified_public: string; verified_revision: number;
+  pending_intranet: string | null; pending_public: string | null; pending_revision: number | null;
+};
+
+function connectivityHosts(input: Json): { intranet: string; public: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  if (Object.keys(record).length !== 2 || !Object.hasOwn(record, 'intranet_host') || !Object.hasOwn(record, 'public_host')) return null;
+  try {
+    return { intranet: parseConnectivityHostname(record.intranet_host), public: parseConnectivityHostname(record.public_host) };
+  } catch { return null; }
+}
+
+function connectivityRow(db: SqliteDatabase, accountId: string, domain: string): ConnectivityRow | undefined {
+  return db.prepare(`SELECT verified_intranet, verified_public, verified_revision, pending_intranet, pending_public, pending_revision
+    FROM connectivity_probe_targets WHERE account_id=? AND data_domain=?`).get(accountId, domain) as ConnectivityRow | undefined;
+}
+
+export function verifiedConnectivityHosts(db: SqliteDatabase, accountId: string, domain: string): { intranet: string; public: string } {
+  const row = connectivityRow(db, accountId, domain);
+  return connectivityProbeHosts(row ? { intranet: row.verified_intranet, public: row.verified_public } : null);
+}
+
+export function connectivitySettingsHandler(options: {
+  db: SqliteDatabase; now: () => Date; deviceId: string; authorize: SettingsHandler['authorize'];
+}): SettingsHandler {
+  const { db, deviceId, authorize } = options;
+  return {
+    binding(principal, draft) {
+      if (draft.operation !== 'set_connectivity_targets' || draft.target !== connectivityTarget) {
+        throw new ApiError(422, 'UNPROCESSABLE', { reason: 'settings_input' });
+      }
+      const current = connectivityRow(db, principal.account_id, draft.domain);
+      const hosts = verifiedConnectivityHosts(db, principal.account_id, draft.domain);
+      return {
+        revision: current?.verified_revision ?? 0, deviceId, identityId: deviceId,
+        scopeHash: createHash('sha256').update(canonicalPayload([hosts.intranet, hosts.public, current?.verified_revision ?? 0])).digest('hex'),
+      };
+    },
+    async validate(_principal, draft) {
+      return { valid: draft.target === connectivityTarget && connectivityHosts(draft.input) !== null };
+    },
+    authorize,
+    async apply(principal, draft, proof, beforeWrite) {
+      const hosts = connectivityHosts(draft.input);
+      if (!hosts || draft.target !== connectivityTarget) throw new SettingsApplyBlocked('connectivity_host');
+      beforeWrite();
+      const current = connectivityRow(db, principal.account_id, draft.domain);
+      const base = current?.verified_revision ?? 0;
+      if (base !== proof.base_revision) throw new SettingsApplyBlocked('confirmation_changed');
+      const pending = base + 1;
+      const verified = verifiedConnectivityHosts(db, principal.account_id, draft.domain);
+      db.prepare(`INSERT INTO connectivity_probe_targets
+        (account_id, data_domain, verified_intranet, verified_public, verified_revision, pending_intranet, pending_public, pending_revision)
+        VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT(account_id, data_domain) DO UPDATE SET
+          pending_intranet=excluded.pending_intranet, pending_public=excluded.pending_public, pending_revision=excluded.pending_revision
+        WHERE connectivity_probe_targets.verified_revision=?`).run(
+        principal.account_id, draft.domain, verified.intranet, verified.public, base, hosts.intranet, hosts.public, pending, base);
+      const stored = connectivityRow(db, principal.account_id, draft.domain);
+      if (stored?.pending_intranet !== hosts.intranet || stored.pending_public !== hosts.public || stored.pending_revision !== pending) {
+        throw new SettingsApplyBlocked('confirmation_changed');
+      }
+      return { revision: pending, effects: [{ item: 'connectivity_targets', outcome: 'applied', revision: pending }] };
+    },
+    async recheck(principal, draft, applied) {
+      const hosts = connectivityHosts(draft.input);
+      const current = connectivityRow(db, principal.account_id, draft.domain);
+      if (!hosts || !current || current.pending_intranet !== hosts.intranet || current.pending_public !== hosts.public ||
+          current.pending_revision !== applied.revision || current.verified_revision + 1 !== applied.revision) {
+        return { verified: false, issue: 'connectivity_recheck' };
+      }
+      const updated = db.prepare(`UPDATE connectivity_probe_targets
+        SET verified_intranet=pending_intranet, verified_public=pending_public, verified_revision=pending_revision,
+            pending_intranet=NULL, pending_public=NULL, pending_revision=NULL
+        WHERE account_id=? AND data_domain=? AND pending_revision=? AND verified_revision=?`).run(
+        principal.account_id, draft.domain, applied.revision, current.verified_revision);
+      return updated.changes === 1 ? { verified: true } : { verified: false, issue: 'connectivity_recheck' };
+    },
+  };
+}

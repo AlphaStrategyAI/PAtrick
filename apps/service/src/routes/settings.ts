@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { Hono } from 'hono';
+import { connectivityProbeHosts } from '../../../../packages/host/src/network/probes.js';
 import { commandEnvelope, emptySchema, settingsChangePayload, settingsControlPayload, settingsDraftSchema } from '@patrick/contracts';
 import { domainsWithPermission, readPresentedToken, requireSession, snapshot, type Principal } from '../auth.js';
 import { ApiError } from '../errors.js';
@@ -17,7 +19,7 @@ export const settingsGroups = [
   { id: 'collection', operations: ['configure_source', 'enable_github_source'] },
   { id: 'materials', operations: ['connect_vault', 'change_vault', 'enable_work_directory', 'change_work_directory'] },
   { id: 'execution', operations: ['inspect_executor'] },
-  { id: 'operation', operations: ['inspect_host', 'repair_network', 'start_backup', 'start_restore'] },
+  { id: 'operation', operations: ['inspect_host', 'set_connectivity_targets', 'repair_network', 'start_backup', 'start_restore'] },
   { id: 'interaction', operations: ['set_feishu_connection', 'enable_feishu', 'disable_feishu', 'rebind_feishu',
     'rotate_feishu_credential'] },
   { id: 'preferences', operations: [] },
@@ -150,6 +152,16 @@ export function mountSettingsRoutes(app: Hono, ready: Ready): void {
   }
 }
 
+function connectivityTarget(db: SqliteDatabase, principal: Principal, domain: string) {
+  const row = db.prepare(`SELECT verified_intranet AS intranet, verified_public AS public, verified_revision AS revision
+    FROM connectivity_probe_targets WHERE account_id=? AND data_domain=?`).get(principal.account_id, domain) as
+    { intranet: string; public: string; revision: number } | undefined;
+  const hosts = connectivityProbeHosts(row ? { intranet: row.intranet, public: row.public } : null);
+  return [{ target: 'connectivity', device: hostname(), status: row && row.revision > 0 ? 'verified' : 'default',
+    revision: row?.revision ?? 0, label: `${hosts.intranet} / ${hosts.public}`,
+    input: { intranet_host: hosts.intranet, public_host: hosts.public } }];
+}
+
 function getDomain(db: SqliteDatabase, principal: Principal, permission: string, requested?: string): string {
   const domains = domainsWithPermission(db, principal, permission);
   const chosen = requested ?? domains[0];
@@ -162,6 +174,7 @@ function registeredTargets(db: SqliteDatabase, principal: Principal, domain: str
   recoveryTargets?: (principal: Principal, domain: string, operation: string) => readonly unknown[]) {
   if (!domainsWithPermission(db, principal, 'owner', false).includes(domain)) return [];
   if (operation === 'start_backup' || operation === 'start_restore') return recoveryTargets?.(principal, domain, operation) ?? [];
+  if (operation === 'set_connectivity_targets') return connectivityTarget(db, principal, domain);
   if (operation === 'repair_network') return networkTargets?.(principal, domain) ?? [];
   if (operation === 'connect_vault') return db.prepare(`SELECT v.vault_id AS target,c.device_id AS device,
     v.status,v.config_revision AS revision FROM vaults v JOIN vault_clients c ON c.vault_id=v.vault_id
@@ -183,6 +196,11 @@ function registeredTargets(db: SqliteDatabase, principal: Principal, domain: str
  */
 function originOf(db: SqliteDatabase, principal: Principal, domain: string, operation: string):
 'detected' | 'suggested' | 'user' | 'inherited' {
+  if (operation === 'set_connectivity_targets') {
+    const saved = db.prepare('SELECT 1 FROM connectivity_probe_targets WHERE account_id=? AND data_domain=? AND verified_revision>0')
+      .get(principal.account_id, domain);
+    return saved ? 'user' : 'suggested';
+  }
   if (['inspect_executor', 'inspect_host', 'repair_network', 'start_backup', 'start_restore'].includes(operation)) return 'inherited';
   if (operation === 'enable_github_source') return 'detected';
   if (operation === 'configure_source') {

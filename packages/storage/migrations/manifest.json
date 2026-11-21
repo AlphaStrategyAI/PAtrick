@@ -90,5 +90,9 @@
   {
     "file": "0028_consultation_stream.sql",
     "sha256": "5df8da9d7a274b59a8d5f5788b2e61e80e5cd8c35c7ecb6d774f71914f9c24d1"
+  },
+  {
+    "file": "0029_connectivity_targets.sql",
+    "sha256": "aef446bc62f35222c3fbdf36ef109d8ee7b5e1e125e5bec0e7bdc2c77ee09cbf"
   }
 ]

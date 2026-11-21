@@ -30,6 +30,8 @@
 
 v1.7 起本文同时是实施记录。§10 的复选框追踪红测、实现、验证和提交的实际状态，§9.1 记录仍然缺少真实设备、真实渠道、真实主机或真实试点的验收步骤及其原因。逐场景的命令、退出码、版本和证据 hash 在 `release-evidence/`，由 `scripts/check-release-evidence.mjs` 校验；缺真实能力时标 blocked 或 pending，不写 passed。原型和本地夹具不构成真实后端、渠道或设备验收。
 
+2026-11-21：内网与外网连通性目标改为运行设置，不写死在探针里。当前值是内网 `git.lifepilot.xyz`、外网 `www.google.com`。T17 的对应步骤尚未完成，T21 实机验收改用这两项。
+
 ## 1. 目标、范围与完成标准
 
 让本人随时咨询；有证据、有委托时自动推进，缺关键取舍时给出A/B与自定义决定；回答后续办同一工作，将真实结果沉淀为案例、标准和经过验证的自动化能力。
@@ -285,7 +287,7 @@ SSE `id` 是可续接的游标，事件正文带 `event_id`、`type`、`resource
 | 标准 | `GET /standards`、`/standards/:id/versions`、`/evaluations/:id`；`POST /standard-candidates`、`/standard-candidates/:id/evaluations`、`/standard-candidates/:id/adoptions` | 提议、评测、采纳分开；采纳由策略/可信本人决定驱动，不能直接PATCH active_version |
 | 委托 | `GET /delegations`、`/delegations/:id`；`POST /delegation-proposals`、`/delegations/:id/controls` | 范围差异、预算与期限可审阅；精确可信回执才改变授权 |
 | 来源 | `GET /sources`、`/sources/:id`、`/sources/:id/receipts`；`POST /sources/detect` | detect只在已获准范围探测；新增/修改/启停最终走统一SettingsChangeProposal |
-| 设置 | `GET /settings`；`POST /settings/inspections`、`/settings/validations`、`/settings/changes`；`GET /settings/changes/:id` | 六组操作注册表；验证结果有期限/设备/身份；生效与复查分别记录 |
+| 设置 | `GET /settings`；`POST /settings/inspections`、`/settings/validations`、`/settings/changes`；`GET /settings/changes/:id` | 六组操作注册表；验证结果有期限/设备/身份；生效与复查分别记录。运行组的内网/外网连通性主机名只走 changes，不走 preferences |
 | 飞书配置 | `GET /channels/feishu`；`POST /channels/feishu/inspections`、`/validations`、`/credentials` | credentials专用TLS入口仅存安全提供器并返属主/草稿绑定的短期引用，不入通用inbox/outbox；配置/轮换/启停走settings/changes |
 | 本人配对 | `POST /channels/feishu/bindings`、`/bindings/:id/confirm`；`GET /channels/feishu/bindings/:id` | 创建随机码、读候选发送者；必须已登录Web本人显式确认，app/tenant/配置/身份版本与TTL重验，不信任首个发送者 |
 | 往返测试 | `POST /channels/feishu/tests`、`/tests/:id/send`；`GET /channels/feishu/tests/:id` | 创建不可变预览不发送；send显式绑定test_id/preview_hash与目的地；独立读回发送/回传证明，verified后仍待启用 |
@@ -378,11 +380,15 @@ MCP只暴露patrick_consult、patrick_consult_result、patrick_memory_query；To
 | `/settings/collection` | 已有来源、添加/预览、修改/暂停/恢复/断开、首次采集状态 | 默认仅新增；历史范围/费用另确认；重复源定位已有条目，暂停不取消任务/删除证据 |
 | `/settings/materials` | VaultConnectionCard、三步接通向导：检测/选择→预览范围→确认与往返；目录细节折叠 | 沿用已有应用/编辑机/Vault映射；编辑器/收录/导回分别报告，位置只配置一次；失效证明不接通，关应用后台继续 |
 | `/settings/execution` | 三后端状态、默认执行器/时长、委托预算只读链接、登录修复 | 实际隔离后台探针；桌面登录不能假就绪，不能静默付费回退 |
-| `/settings/operation` | 已登记主机、网络/磁盘、备份目标与时间、可信恢复入口 | 保存/生效/复查分开；恢复到隔离目录，未核对撤回/未决效果不开放 |
+| `/settings/operation` | 已登记主机、网络/磁盘、备份目标与时间、内网/外网连通性目标、可信恢复入口 | 保存/生效/复查分开；连通性目标只收主机名，当前内网 `git.lifepilot.xyz`、外网 `www.google.com`；恢复到隔离目录，未核对撤回/未决效果不开放 |
 | `/settings/interaction` | FeishuConnectionCard、三步向导：应用→本人绑定→往返验证；待启用/维护/排空 | 当前绑定的测试返回后显式可信启用；缺权限/过期/非本人/unknown可处理；停用先核对，测试不记业务 |
 | `/settings/preferences` | 系统/中英、减少动效、必要通知、免打扰 | 普通偏好白名单；不夹带机器人配置，语言切换保留业务状态 |
 
 首期仅保留当前需要的日常字段、逐源配置与两个按步骤展开的接入区；标准与委托不在设置里重复实现。来源写入口和工作资料变更共用SourceConfig处理器；Settings与System也共用操作账本，不能分别维护“已修复”。
+
+#### 网络连通性目标
+
+运行设置保存两个连通性网站，供 T21 探针使用，不作为采集来源。内网目标走 OpenVPN，外网目标走 Shadowrocket。当前值是内网 `git.lifepilot.xyz`、外网 `www.google.com`。只接受主机名，固定探测 HTTPS 443；不含方案、账号、路径、查询、端口或 IP 字面量。调用探针时不能另传 URL。保存走 SettingsChangeProposal，草稿和未复查的值不替换正在使用的目标。改任一项后，旧的双路径证据失效。经另一条 VPN 或 `198.18.0.0/15` 假 IP 到达，不计为该路径通过。
 
 #### Obsidian编辑入口
 
@@ -503,7 +509,7 @@ doctor返回状态、证据/时间、影响和一个下一步，覆盖实际服�
 
 ### 6.3 网络与资源验收
 
-心跳异常先查本机；hub正常但GitHub/GitLab不可达也触发目标诊断。401/403归身份，429退避，TLS失败不得靠关闭校验修复。VPN 只保留 OpenVPN 与 Shadowrocket：OpenVPN 默认是公司内网客户端，Shadowrocket 默认是访问公网网站的客户端。按实际设备测试两种启动顺序、并发、企业 DNS 及重连；不能并用则 dual_path=false，并按许可分机或受控轮换。
+心跳异常先查本机。hub 正常但运行设置中的连通性目标不可达时，触发目标诊断。内网目标当前为 `git.lifepilot.xyz`，由 OpenVPN 路径负责；外网目标当前为 `www.google.com`，由 Shadowrocket 路径负责。不把 GitHub 或 GitLab 当作这两项的默认值。401/403归身份，429退避，TLS失败不得靠关闭校验修复。VPN 只保留 OpenVPN 与 Shadowrocket。按实际设备测试两种启动顺序、两个已生效目标的并发、企业 DNS 及重连；不能并用则 dual_path=false，并按许可分机或受控轮换。
 
 所有路由/DNS/代理/VPN动作持同一主机锁与network_epoch；回退只撤本轮拥有且仍匹配版本的变更。重试有次数、冷却与总时长，MFA只产生一个待处理问题；修复后同时复验故障目标、原健康目标和peer。网络恢复不创建新业务根，不越过待答/暂停门禁。
 
@@ -559,7 +565,7 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 | T14 UI基础与双语 · 8–12 | T00,T01,T03 | AppShell、共享组件、路由、token/图标、i18n、草稿、查询缓存/订阅SDK | 系统/中英/回退、所有错误和aria、换语言保留状态、Markdown注入；ui-foundation-report |
 | T15 决策与工作页 · 10–14 | T10,T11,T13,T14 | 连续对话、A/B/custom、自由咨询、任务列表/详情/历史、控制回执 | 真实HTTP往返、重复点击、未核验不续办、过期保留输入、移动双输入；work-ui-report |
 | T16 知识/标准/委托页 · 8–14 | T06,T07,T08,T14 | 搜索引用、原稿/补充/首次标准/修订四入口、三轴EditProgress、候选/版本比较、范围提案和可信回执 | UI不直接改active标准/权限；冲突/失效/评测不足/降级可见；learning-ui-report |
-| T17 设置处理链与系统页 · 10–18 | T03,T06,T09,T10,T13,T14 | 六组设置；Vault接通/飞书三步向导与待启用/排空，复用T03/T06/T10；System同源状态、检查/修复与偏好 | 精确草稿失效、TTL/设备变化、部分应用/回滚；飞书缺权限/错租户/轮换失效/未配不阻Web；保存不续办 |
+| T17 设置处理链与系统页 · 10–18 | T03,T06,T09,T10,T13,T14 | 六组设置；Vault接通/飞书三步向导与待启用/排空，复用T03/T06/T10；System同源状态、检查/修复与偏好；运行页可改内网/外网连通性主机名 | 精确草稿失效、TTL/设备变化、部分应用/回滚；飞书缺权限/错租户/轮换失效/未配不阻Web；保存不续办；连通性目标只接受已复查的主机名 |
 | T18 RSS/网页与采集页 · 8–12 | T05,T06,T17 | 两连接器、样例/范围/历史预览、来源增改停断、CollectionReceipt | SSRF/重定向/凭据URL、RSS实体、登录页、重复、暂停在途旧回执、首次采集独立 |
 | T19 六指标统计 · 6–8 | T07,T08,T12,T13,T14 | StatsSnapshot/投影、三周期、stock/activity、任务筛选跳转、口径说明 | 去重/补偿/重建/时区跨日、跨域泄数、未知非零、语言不重复计数 |
 | T20 通知与诊断 · 4–6 | T03,T10,T13,T17 | 偏好/DND、幂等通知/摘要、复用T10飞书测试/投递端口、预览/明确发送、脱敏诊断下载 | 已答/过期不发送，失败只重试投递，不重做业务；诊断不含凭据/越域原文 |
@@ -568,7 +574,7 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 
 | ID / 预计小时 | 依赖 | 开发交付 | 必测与完成证据 |
 |---|---|---|---|
-| T21 主机网络与固定修复 · 8–14 | T03,T08,T13,T17 | Host Supervisor、锁/epoch、VPN探针、冷却/MFA、双目标复验 | hub正常目标失败、双VPN启动顺序、DNS/代理竞态、不可并用；真实设备报告 |
+| T21 主机网络与固定修复 · 8–14 | T03,T08,T13,T17 | Host Supervisor、锁/epoch、VPN探针、冷却/MFA、双目标复验；探针读取运行设置中的内网与外网网站 | hub正常目标失败、双VPN启动顺序、两个已生效目标并发、DNS/代理竞态、不可并用；真实设备报告 |
 | T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、加密离机、撤回、隔离恢复/重建；见证不可达时的所有者逐域导入 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停；见证不可达时只经可信控制导入幸存 Vault 或备份，新 epoch，不自动重发外部效果，耗时不算 2 小时交接 |
 | T27 Obsidian与Vault部署 · 7–12 | T00,T03,T06,T07 | 官方桌面安装配方、共享VaultConnection Inspector、vault-kit、设备映射/范围预览/往返检查、单设备与升级卸载 | 真实Mac打开/编辑/入库/导回；关应用仍处理；缺应用/权限、URI不可用、模板不覆盖；obsidian-install-report |
 | T23 安装与升级 · 8–12 | T00,T03,T09,T21,T22,T27 | 双架构候选包、构建/发布工作流、签名及SBOM、Caddy/TLS、launchd/Lima、整合T27、安装/维护命令 | 空Mac安装/重启、拒绝损坏/错架构包、飞书收发诊断、升级失败时保护新数据 |
@@ -716,7 +722,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
-| T21 已登记设备的双启动顺序与企业 DNS | 没有登记设备和实测记录 | `T21/registered-device-vpn-admission` blocked |
+| T21 已登记设备的双启动顺序与企业 DNS | 连通性目标已定为内网 `git.lifepilot.xyz`、外网 `www.google.com`，但设置页和探针尚未改用这两项，也没有登记设备的实测记录 | `T21/registered-device-vpn-admission` blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
 | T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
@@ -1484,6 +1490,7 @@ export function canApply(proof: {
 ~~~
 
 - [x] 重跑集成，再执行 `npm exec -- playwright test tests/e2e/T17.spec.ts`。预期 Grok登录过期从系统定位执行页，变更文件夹使验证失效，偏好保存按账户读回，飞书待启用/停用、Vault三轴健康分别可见。提交 `feat: connect settings and system to typed change receipts`。
+- [x] 在运行设置增加内网和外网连通性目标，分别写入 `apps/service/src/settings/network.ts`、`apps/web/src/features/settings/SettingsGroup.tsx` 和 `packages/host/src/network/probes.ts`。只保存主机名；当前值是 `git.lifepilot.xyz` 和 `www.google.com`。变更走设置回执，不走偏好接口，草稿未复查前探针仍用旧值。拒绝方案、端口、路径、IP 字面量和空值，也不接受探针调用时临时传入的 URL。提交 `feat: configure intranet and public connectivity targets`。
 
 ### T18 RSS、单网页与采集页
 
@@ -1577,7 +1584,7 @@ export function interrupts(signal: { current: boolean; kind: 'decision' | 'block
 
 **交接** `inspectNetwork(targets: readonly TargetId[]): Promise<NetworkReport>` 返回接口/路由/DNS/代理、TCP/TLS/身份/peer 各级证据。`repairNetwork(proposalId: string, expectedEpoch: number): Promise<RepairReceipt>` 经 T03注册固定操作，T17展示相同结果。
 
-VPN 客户端只登记 OpenVPN 与 Shadowrocket。OpenVPN 默认承担公司内网，Shadowrocket 默认承担公网网站访问。不登记 Tunnelblick 或其他 VPN 客户端。
+VPN 客户端只登记 OpenVPN 与 Shadowrocket。OpenVPN 默认承担公司内网，Shadowrocket 默认承担公网网站访问。不登记 Tunnelblick 或其他 VPN 客户端。内网和外网连通性目标读取运行设置里已复查的主机名，不在探针请求中临时指定。当前内网目标是 `git.lifepilot.xyz`，外网目标是 `www.google.com`。OpenVPN 路径只认内网目标，Shadowrocket 路径只认外网目标；经另一条路径或 `198.18.0.0/15` 假 IP 到达，不算该路径通过。
 
 - [x] 红测保持 hub 健康而目标失败，再注入身份错误、限流、epoch 被他次操作替换。运行 `npm exec -- vitest run tests/integration/T21.test.ts`，预期误用修 VPN 或拥有权断言失败。
 
@@ -1600,7 +1607,7 @@ export function mayRevert(owned: { operationId: string; epoch: number }, current
 }
 ~~~
 
-- [ ] 重跑 T21，再以 `npm exec -- vitest run tests/admission/T21.test.ts` 跑已登记设备的双启动顺序、并发目标、企业 DNS 与重连。以实测记录 dual_path 或受控替代路径；未知用登录/权限/兼容状态提示。提交 `feat: supervise registered network targets and repair under epoch lock`。
+- [ ] 运行设置保存并复查 `git.lifepilot.xyz` 与 `www.google.com` 后，重跑 T21，再以 `npm exec -- vitest run tests/admission/T21.test.ts` 跑已登记设备的双启动顺序、这两个目标的并发访问、企业 DNS 与重连。以实测记录 dual_path 或受控替代路径；未知用登录/权限/兼容状态提示。提交 `feat: supervise registered network targets and repair under epoch lock`。
 
 ### T22 RecoverySet、一致备份与隔离恢复
 

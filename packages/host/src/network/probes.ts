@@ -1,5 +1,33 @@
+import { isIP } from 'node:net';
 import { parseNetworkPolicy } from './vpn.js';
 import type { NetworkPolicy } from './vpn.js';
+
+const connectivityLabel = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$/u;
+export const defaultConnectivityTargets = Object.freeze({
+  intranet: 'git.lifepilot.xyz',
+  public: 'www.google.com',
+});
+
+/** A connectivity target is a DNS hostname. It is not a URL, port, path, or address. */
+export function parseConnectivityHostname(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 253 || value !== value.trim()) {
+    throw new Error('CONNECTIVITY_HOST_INVALID');
+  }
+  if (/[:/?#@\s\\]/u.test(value) || value.includes('..') || value.startsWith('.') || value.endsWith('.')) {
+    throw new Error('CONNECTIVITY_HOST_INVALID');
+  }
+  const host = value.toLowerCase();
+  if (isIP(host)) throw new Error('CONNECTIVITY_HOST_INVALID');
+  const labels = host.split('.');
+  if (labels.length < 2 || labels.some((label) => !connectivityLabel.test(label))) throw new Error('CONNECTIVITY_HOST_INVALID');
+  return host;
+}
+
+/** Probe hosts come from the last rechecked record. A missing record keeps the current defaults. */
+export function connectivityProbeHosts(verified: { intranet: string; public: string } | null): { intranet: string; public: string } {
+  if (!verified) return { intranet: defaultConnectivityTargets.intranet, public: defaultConnectivityTargets.public };
+  return { intranet: parseConnectivityHostname(verified.intranet), public: parseConnectivityHostname(verified.public) };
+}
 
 type RegisteredTarget = NetworkPolicy['targets'][number];
 export type ProbeReading = 'passed' | 'failed' | 'unknown';

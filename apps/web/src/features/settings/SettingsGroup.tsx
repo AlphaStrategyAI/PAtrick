@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
+import type { Json } from '@patrick/contracts/envelope';
 import { settingsDashboardSchema, settingsInspectionSchema, settingsReceiptSchema, settingsRecoveryOfferSchema } from '@patrick/contracts/resources';
 import { ClientError } from '../../api/client.js';
 import { asClientError, useScopedSnapshot, useService } from '../../api/query.js';
@@ -10,6 +11,7 @@ import { FeishuSetup } from './FeishuSetup.js';
 import { SettingsChangeWizard } from './SettingsChangeWizard.js';
 
 const effectKeys: Record<string, MessageKey> = {
+  connectivity_targets: 'settings.connectivityTargets',
   vault_connection: 'settings.connectVault', feishu_mode: 'settings.enableFeishu',
   feishu_draining: 'settings.feishuDraining', feishu_disabled: 'settings.feishuDisabled',
   feishu_rebind: 'settings.feishuRebind', feishu_credential: 'settings.feishuRotate',
@@ -19,9 +21,31 @@ const operationKeys: Record<string, MessageKey> = {
   enable_work_directory: 'materials.workDirectory', change_work_directory: 'materials.workDirectory',
   set_feishu_connection: 'settings.feishuConfigure',
   rebind_feishu: 'settings.feishuRebind', rotate_feishu_credential: 'settings.feishuRotate',
-  inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', repair_network: 'settings.repairNetwork', start_backup: 'settings.startBackup',
+  inspect_executor: 'settings.executorCheck', inspect_host: 'settings.hostCheck', set_connectivity_targets: 'settings.connectivityTargets',
+  repair_network: 'settings.repairNetwork', start_backup: 'settings.startBackup',
   start_restore: 'settings.startRestore', enable_feishu: 'settings.enableFeishu', disable_feishu: 'settings.disableFeishu',
 };
+
+type SettingsTarget = { target: string; device: string | null; label?: string; status?: string; revision: number; input?: Json };
+
+function ConnectivityTargets({ target, onChanged }: { target: SettingsTarget; onChanged: () => void }) {
+  const { t } = useLocale();
+  const saved = target.input && typeof target.input === 'object' && !Array.isArray(target.input) ? target.input : {};
+  const savedIntranet = typeof saved.intranet_host === 'string' ? saved.intranet_host : '';
+  const savedPublic = typeof saved.public_host === 'string' ? saved.public_host : '';
+  const [intranet, setIntranet] = useState(savedIntranet);
+  const [publicHost, setPublicHost] = useState(savedPublic);
+  const edited = { ...target, label: `${intranet} / ${publicHost}`, input: { intranet_host: intranet, public_host: publicHost } };
+  return <>
+    <label>{t('settings.intranetTarget')}
+      <input value={intranet} autoComplete="off" spellCheck={false} onChange={(event) => setIntranet(event.target.value)} />
+    </label>
+    <label>{t('settings.publicTarget')}
+      <input value={publicHost} autoComplete="off" spellCheck={false} onChange={(event) => setPublicHost(event.target.value)} />
+    </label>
+    <SettingsChangeWizard operation="set_connectivity_targets" targets={[edited]} entryLabel="settings.connectivityTargets" onChanged={onChanged} />
+  </>;
+}
 
 export function SettingsGroup({ group }: { group: string }) {
   const { locale, t } = useLocale();
@@ -54,8 +78,11 @@ export function SettingsGroup({ group }: { group: string }) {
       <ul>
         {current.operations.map(({ operation, registered, kind, targets }) => <li key={operation}>
           {t(operationKeys[operation] ?? 'status.unknown')}: {t(registered ? 'settings.registered' : 'settings.notConfigured')}
-          {registered && kind === 'change' && targets.length > 0 && <SettingsChangeWizard operation={operation} targets={targets}
-            entryLabel={operationKeys[operation] ?? 'status.unknown'} onChanged={() => { void settings.refetch(); }} />}
+          {operation === 'set_connectivity_targets' && registered && targets[0] &&
+            <ConnectivityTargets target={targets[0]} onChanged={() => { void settings.refetch(); }} />}
+          {operation !== 'set_connectivity_targets' && registered && kind === 'change' && targets.length > 0 &&
+            <SettingsChangeWizard operation={operation} targets={targets}
+              entryLabel={operationKeys[operation] ?? 'status.unknown'} onChanged={() => { void settings.refetch(); }} />}
           {registered && kind === 'inspect' && <button type="button" disabled={checking}
             onClick={() => { void runChecks(); }}>{t(checking ? 'status.refreshing' : 'settings.runChecks')}</button>}
         </li>)}
