@@ -30,7 +30,7 @@
 
 v1.7 起本文同时是实施记录。§10 的复选框追踪红测、实现、验证和提交的实际状态，§9.1 记录仍然缺少真实设备、真实渠道、真实主机或真实试点的验收步骤及其原因。逐场景的命令、退出码、版本和证据 hash 在 `release-evidence/`，由 `scripts/check-release-evidence.mjs` 校验；缺真实能力时标 blocked 或 pending，不写 passed。原型和本地夹具不构成真实后端、渠道或设备验收。
 
-2026-11-21：内网与外网连通性目标改为运行设置，不写死在探针里。当前值是内网 `git.lifepilot.xyz`、外网 `www.google.com`。T17 的对应步骤尚未完成，T21 实机验收改用这两项。
+2026-11-21：内网与外网连通性目标改为运行设置，不写死在探针里。当前值是内网 `git.lifepilot.xyz`、外网 `www.google.com`。本机两种启动顺序不能并用，T21 记录 `dual_path=false`，替代路径是 `controlled_rotation`。
 
 ## 1. 目标、范围与完成标准
 
@@ -722,7 +722,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
-| T21 已登记设备的双启动顺序与企业 DNS | 连通性目标已定为内网 `git.lifepilot.xyz`、外网 `www.google.com`，但设置页和探针尚未改用这两项，也没有登记设备的实测记录 | `T21/registered-device-vpn-admission` blocked |
+| T21 已登记设备的双启动顺序与企业 DNS | 2026-11-21 本机实测不能并用：单独 OpenVPN 时内网通过，单独 Shadowrocket 时外网代理通过，两种同时启动都失败。替代路径定为 `controlled_rotation`。证据是 `docs/operations/evidence/t21-registered-device-2026-11-21.json` | 本次准入通过。`release-evidence/impl-2026-11-19` 里的 T21 行仍是采集当时的 blocked |
 | T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
 | T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
@@ -1607,7 +1607,7 @@ export function mayRevert(owned: { operationId: string; epoch: number }, current
 }
 ~~~
 
-- [ ] 运行设置保存并复查 `git.lifepilot.xyz` 与 `www.google.com` 后，重跑 T21，再以 `npm exec -- vitest run tests/admission/T21.test.ts` 跑已登记设备的双启动顺序、这两个目标的并发访问、企业 DNS 与重连。以实测记录 dual_path 或受控替代路径；未知用登录/权限/兼容状态提示。提交 `feat: supervise registered network targets and repair under epoch lock`。
+- [x] 运行设置保存并复查 `git.lifepilot.xyz` 与 `www.google.com` 后，重跑 T21，再以 `npm exec -- vitest run tests/admission/T21.test.ts` 跑已登记设备的双启动顺序、这两个目标的并发访问、企业 DNS 与重连。以实测记录 dual_path 或受控替代路径；未知用登录/权限/兼容状态提示。提交 `feat: supervise registered network targets and repair under epoch lock`。
 
 ### T22 RecoverySet、一致备份与隔离恢复
 

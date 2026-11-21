@@ -71,4 +71,14 @@ VPN 连接轮询至多 150 次，每次间隔 100 ms，但断开命令本身立�
 
 真实环回测试使用临时本地证书、HTTPS 服务和 CONNECT 代理，实际检查固定 IP、多地址、可信 TLS、代理隧道、身份、429、重定向和代理提前关闭。实际 HTTPS 请求以仅有原 IP SAN 的证书成功，以仅有 localhost SAN 的证书被拒绝。不访问外网；不受信任证书保持 TLS 失败。浏览器覆盖固定修复选择、设置/System 同回执和返回路径、MFA 指引，以及原确认过期后的新恢复流程、不可用原因和退出取消。所有原生命令均为 fixture。
 
-`tests/admission/T21.test.ts` 的本地 harness 仅修改临时配置文件，真实设备 gate 默认跳过。`PATRICK_T21_LIVE_EVIDENCE` 只用于读取真实登记报告，不会连接 VPN，也不能替代现场动作。尚需登记设备、账号、客户端版本及范围批准后验证：OpenVPN 与 Shadowrocket 的两种启动顺序、并发目标、企业 DNS、重连/路由收敛、真实 networksetup 权限与精确回退、peer/原健康目标保持，以及冲突时获准的分机或受控轮换。未测保持未知。
+`tests/admission/T21.test.ts` 的本地 harness 仅修改临时配置文件，真实设备 gate 默认跳过。`PATRICK_T21_LIVE_EVIDENCE` 只读取已记录的登记报告，不会自己连接 VPN。
+
+## 2026-11-21 本机登记设备
+
+设备 `pengchengdemac-mini`，OpenVPN Connect 3.8.1（5790）与 Shadowrocket 2.2.90（3378）。内网目标 `git.lifepilot.xyz`，外网目标 `www.google.com`。证据在 `docs/operations/evidence/t21-registered-device-2026-11-21.json`。
+
+单独打开 OpenVPN 时，内网解析到 `10.1.3.3`，经 `utun` 网关 `10.0.23.13`，TLS 证书包含 `git.lifepilot.xyz`。此时外网代理端口关闭，`www.google.com` 超时。
+
+单独打开 Shadowrocket 时，`www.google.com` 经 `127.0.0.1:1082` 完成 TLS，证书名称匹配。两个名字的系统 DNS 都落在 `198.18.0.0/15`，这条路由本身不计为路径通过。
+
+先开 OpenVPN 再开 Shadowrocket，以及相反顺序，企业 DNS `10.1.3.1` 都不可达，内网隧道不再出现。先开 OpenVPN 时外网代理返回 HTTP 503；先开 Shadowrocket 时外网代理仍能出示 `www.google.com` 证书，但重连 OpenVPN 不能恢复内网。因此 `dual_path=false`。所有者选择 `controlled_rotation`：同一台机器按需切换，不同时启用两个客户端。准入结论只在观测后一小时内有效；之后要重新测量，不能把这份旧文件当成新的现场动作。

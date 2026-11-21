@@ -1,0 +1,136 @@
+{
+  "mode": "registered-device",
+  "approvedDeviceId": "pengchengdemac-mini",
+  "environmentDigest": "d41151470b503a00422e1f29976dd7aa0f9de84b690ba0ea88b5d70d78acfc51",
+  "environmentBasis": "device=pengchengdemac-mini\nos=macOS 26.5 (25F71) darwin-arm64\nopenvpn=OpenVPN Connect 3.8.1 (5790)\nshadowrocket=Shadowrocket 2.2.90 (3378)\nintranet=git.lifepilot.xyz\npublic=www.google.com",
+  "versions": {
+    "openvpn-intranet": "OpenVPN Connect 3.8.1 (5790)",
+    "shadowrocket-public": "Shadowrocket 2.2.90 (3378)"
+  },
+  "policy": {
+    "schema_version": "1.0",
+    "device_id": "pengchengdemac-mini",
+    "revision": 1,
+    "targets": [
+      {
+        "id": "hub",
+        "role": "hub"
+      },
+      {
+        "id": "intranet",
+        "role": "target"
+      },
+      {
+        "id": "public",
+        "role": "target"
+      },
+      {
+        "id": "peer",
+        "role": "peer"
+      }
+    ],
+    "vpn_paths": [
+      {
+        "id": "openvpn-intranet",
+        "client": "openvpn",
+        "targets": [
+          "intranet"
+        ]
+      },
+      {
+        "id": "shadowrocket-public",
+        "client": "shadowrocket",
+        "targets": [
+          "public"
+        ]
+      }
+    ],
+    "repairs": [],
+    "limits": {
+      "maximum_attempts": 1,
+      "cooldown_ms": 5000,
+      "deadline_ms": 5000
+    },
+    "fallback": "controlled_rotation"
+  },
+  "result": {
+    "dual_path": false,
+    "state": "conflict",
+    "fallback": "controlled_rotation",
+    "reason": "OpenVPN alone reached git.lifepilot.xyz at 10.1.3.3 over utun with a matching TLS certificate. Shadowrocket alone reached www.google.com through its local proxy with a matching certificate, while DNS stayed in 198.18.0.0/15. Running both clients, in either order, removed the intranet route and enterprise DNS. Reconnecting OpenVPN did not restore them. The owner selected controlled rotation rather than simultaneous use."
+  },
+  "trials": [
+    {
+      "deviceId": "pengchengdemac-mini",
+      "policyRevision": 1,
+      "environmentDigest": "d41151470b503a00422e1f29976dd7aa0f9de84b690ba0ea88b5d70d78acfc51",
+      "order": [
+        "openvpn-intranet",
+        "shadowrocket-public"
+      ],
+      "observedAt": "2026-11-21T14:31:27.070Z",
+      "concurrentAccess": "failed",
+      "enterpriseDns": "failed",
+      "reconnect": "failed",
+      "peer": "failed"
+    },
+    {
+      "deviceId": "pengchengdemac-mini",
+      "policyRevision": 1,
+      "environmentDigest": "d41151470b503a00422e1f29976dd7aa0f9de84b690ba0ea88b5d70d78acfc51",
+      "order": [
+        "shadowrocket-public",
+        "openvpn-intranet"
+      ],
+      "observedAt": "2026-11-21T14:36:22.543Z",
+      "concurrentAccess": "failed",
+      "enterpriseDns": "failed",
+      "reconnect": "failed",
+      "peer": "passed"
+    }
+  ],
+  "observations": [
+    {
+      "at": "2026-11-21T14:28:26.429Z",
+      "phase": "openvpn-only",
+      "intranet": "passed",
+      "public": "failed",
+      "detail": "git.lifepilot.xyz resolved to 10.1.3.3 via 10.1.3.1, routed utun15 gateway 10.0.23.13, TLS certificate included git.lifepilot.xyz. www.google.com timed out and the Shadowrocket proxy was closed."
+    },
+    {
+      "at": "2026-11-21T14:29:25.091Z",
+      "phase": "openvpn-then-shadowrocket",
+      "intranet": "failed",
+      "public": "failed",
+      "detail": "Shadowrocket replaced the tunnel with 198.18.0.1. Intranet DNS became 198.18.0.30, enterprise DNS 10.1.3.1 was unreachable, and direct TLS to 10.1.3.3 failed. The public proxy returned HTTP 503."
+    },
+    {
+      "at": "2026-11-21T14:31:27.070Z",
+      "phase": "openvpn-reconnect-while-shadowrocket",
+      "intranet": "failed",
+      "public": "failed",
+      "detail": "OpenVPN reported connected, but no 10.0.23 tunnel remained. Intranet still resolved only inside 198.18.0.0/15 and the public proxy still returned HTTP 503."
+    },
+    {
+      "at": "2026-11-21T14:32:04.219Z",
+      "phase": "shadowrocket-only",
+      "intranet": "failed",
+      "public": "proxy-only",
+      "detail": "www.google.com completed TLS through 127.0.0.1:1082 and presented a www.google.com certificate. System DNS for both names stayed in 198.18.0.0/15, so the route itself is not counted as a passed path."
+    },
+    {
+      "at": "2026-11-21T14:34:22.160Z",
+      "phase": "shadowrocket-then-openvpn",
+      "intranet": "failed",
+      "public": "proxy-only",
+      "detail": "OpenVPN reported connected, but the only tunnel address was 198.18.0.1. Enterprise DNS stayed unreachable. The public proxy still presented a www.google.com certificate."
+    },
+    {
+      "at": "2026-11-21T14:36:22.543Z",
+      "phase": "openvpn-reconnect-while-shadowrocket",
+      "intranet": "failed",
+      "public": "proxy-only",
+      "detail": "Reconnecting OpenVPN did not create a 10.0.23 route or restore enterprise DNS. The public proxy remained healthy."
+    }
+  ]
+}
