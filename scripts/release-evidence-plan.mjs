@@ -230,9 +230,10 @@ export const releaseEvidencePlan = {
       { id: 'pilot-and-release-policy', command: vitest('tests/unit/T26.test.ts'), kind: 'unit' },
       {
         id: 'observed-pilot-results',
-        command: vitest('tests/unit/T26.test.ts'),
+        command: 'node scripts/summarize-pilot.mjs --require-observed "$PATRICK_PILOT_FACTS"',
         kind: 'admission',
-        pendingBy: { type: 'json-all-pending', file: 'fixtures/pilot/acceptance.json', collection: 'routes', field: 'status' },
+        pendingBy: { type: 'env-absent', name: 'PATRICK_PILOT_FACTS' },
+        skipWhenPending: true,
         pendingReason: '试点成果有效率、引用准确率与人工投入需要真实观察样本；当前没有可分母的试点数据。',
       },
     ],

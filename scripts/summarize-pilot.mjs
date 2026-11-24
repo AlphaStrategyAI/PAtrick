@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-const usage = `Usage: node scripts/summarize-pilot.mjs <reviewed-pilot-facts.json>
+const usage = `Usage: node scripts/summarize-pilot.mjs [--require-observed] <reviewed-pilot-facts.json>
 
 Summarize one frozen work scope and standard domain from supplied, reviewed evidence.
 Input JSON fields:
@@ -383,10 +383,16 @@ function run(args) {
     console.log(usage);
     return;
   }
-  if (args.length !== 1 || args[0].startsWith('-')) fail('arguments', usage.split('\n')[0]);
+  const requireObserved = args[0] === '--require-observed';
+  const paths = requireObserved ? args.slice(1) : args;
+  if (paths.length !== 1 || !paths[0] || paths[0].startsWith('-')) fail('arguments', usage.split('\n')[0]);
   const policy = readJson(new URL('../fixtures/pilot/quality-policy.json', import.meta.url), 'quality policy');
-  const document = readJson(args[0], 'input');
-  console.log(JSON.stringify(summarizePilot(document, policy), null, 2));
+  const document = readJson(paths[0], 'input');
+  const summary = summarizePilot(document, policy);
+  if (requireObserved && summary.work.inScope === summary.work.outcomes.unknown) {
+    fail('workFacts', 'no observed in-scope terminal outcomes');
+  }
+  console.log(JSON.stringify(summary, null, 2));
 }
 
 if (import.meta.main) {

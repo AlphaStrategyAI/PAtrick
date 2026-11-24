@@ -152,8 +152,11 @@ for (const task of tasks) {
     process.stdout.write(`${task}/${scenario.id} … `);
     const blocked = evaluatePrecondition(scenario.blockedBy);
     const pending = !blocked && evaluatePrecondition(scenario.pendingBy);
-    const run = runCommand(scenario.command);
-    const failed = run.exitCode !== 0;
+    const skip = pending && scenario.skipWhenPending;
+    const run = skip
+      ? { exitCode: -1, output: scenario.pendingReason ?? 'observation not supplied', durationMs: 0 }
+      : runCommand(scenario.command);
+    const failed = !skip && run.exitCode !== 0;
     const status = failed ? 'failed' : blocked ? 'blocked' : pending ? 'pending' : 'passed';
     summary.scenarios += 1;
     summary[status] += 1;

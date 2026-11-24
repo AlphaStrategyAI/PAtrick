@@ -21,12 +21,12 @@ function work(workId: string, fields: object = {}) {
   return { workId, revision: 1, inScope: true, ...fields };
 }
 
-function run(document: object | string) {
+function run(document: object | string, ...options: string[]) {
   const dir = mkdtempSync(join(tmpdir(), 'patrick-t26-'));
   try {
     const path = join(dir, 'evidence.json');
     writeFileSync(path, typeof document === 'string' ? document : JSON.stringify(document));
-    return spawnSync(process.execPath, [fileURLToPath(script), path], { encoding: 'utf8', cwd: dir });
+    return spawnSync(process.execPath, [fileURLToPath(script), ...options, path], { encoding: 'utf8', cwd: dir });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -40,6 +40,21 @@ function output(document: object) {
 }
 
 describe('T26 offline pilot summary', () => {
+  it('requires observed in-scope work before collecting pilot results', () => {
+    const incomplete = run(input([
+      work('unknown'),
+      work('outside', { inScope: false, outcome: 'completed' }),
+    ]), '--require-observed');
+    expect(incomplete.status).toBe(1);
+    expect(incomplete.stderr).toContain('no observed in-scope terminal outcomes');
+    const observed = run(input([
+      work('unknown'),
+      work('failed', { outcome: 'failed' }),
+    ]), '--require-observed');
+    expect(observed.status, observed.stderr).toBe(0);
+    expect(JSON.parse(observed.stdout).work).toMatchObject({ inScope: 2, outcomes: { failed: 1, unknown: 1 } });
+  });
+
   it('freezes only plan quality and maintenance limits', () => {
     const path = new URL('../../fixtures/pilot/quality-policy.json', import.meta.url);
     expect(() => readFileSync(path, 'utf8')).not.toThrow();
