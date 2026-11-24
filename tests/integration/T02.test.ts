@@ -96,6 +96,7 @@ test('openDatabase sets foreign keys, WAL, and the tested busy timeout', () => {
       'collection_rounds',
       'command_inbox',
       'command_records',
+      'connectivity_probe_targets',
       'consultations',
       'control_proposals',
       'control_receipts',

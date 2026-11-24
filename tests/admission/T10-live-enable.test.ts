@@ -150,7 +150,7 @@ function waitForCode(
         sender?: { sender_id?: { open_id?: string } };
       }) {
         const message = data.message ?? {};
-        let text = '';
+        let text: string;
         try { text = JSON.parse(message.content || '{}').text || ''; } catch { text = ''; }
         const openId = data.sender?.sender_id?.open_id ?? '';
         if (message.message_type !== 'text' || message.chat_type !== 'p2p' || text.trim() !== code) return;
