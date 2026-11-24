@@ -14,7 +14,7 @@ import { sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doc
 import { createObsidianDoctor } from '../obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
-import { validateBrowserAuthority } from '../../apps/service/src/auth.js';
+import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority } from '../../apps/service/src/auth.js';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
@@ -891,6 +891,11 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
     started = true;
   }
   return { roleRuntime, bindAnswers, assertPrivateTargets, assertStartupAllowed, install, signal: shutdown.signal,
+    assertServiceCurrent(database: SqliteDatabase) {
+      assertClearance('service');
+      requireCut(attached.service?.db === database);
+      attached.service.assertLive();
+    },
     openMain(role: 'service' | 'worker', path: string) {
       try { return opener.main(role, path, () => assertClearance(role)); }
       catch (error) { quiesce(); throw error; }
@@ -1083,12 +1088,48 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
 
 export function createProvisionedServiceRuntime(provisioning: RuntimeProvisioning) {
   const { serviceOptions } = requireRuntimeProvisioning(provisioning);
+  const { identity } = provisioning.registration;
   const owner = maintenanceOwners.get(provisioning);
-  if (!owner) return createServiceRuntime(serviceOptions);
+  let database!: SqliteDatabase;
+  let file!: DatabaseFile;
+  let stale = false;
   let reserve!: () => ServiceCloseHold | undefined;
-  const runtime = createServiceRuntime({ ...serviceOptions, registerCloseHold(port) { reserve = port; } });
-  boundMaintenance.set(runtime, { owner, reserve, provisioning });
-  return runtime;
+  function assertCurrent(live: SqliteDatabase, accountId: string) {
+    if (stale || live !== database || accountId !== identity.accountId || !identity.domains.includes(OWNER_DOMAIN)) {
+      throw new Error('OWNER_BOOTSTRAP_UNAVAILABLE');
+    }
+    try {
+      owner?.assertServiceCurrent(database);
+      if (!sameFile(liveDatabaseFile(database), file) || !sameFile(fileIdentity(serviceOptions.databasePath!), file)) {
+        throw new Error('RECOVERY_SERVICE_HANDLE_MISMATCH');
+      }
+    } catch (error) {
+      stale = true;
+      throw error;
+    }
+  }
+  const runtime = createServiceRuntime({
+    ...serviceOptions,
+    ownerBootstrapCurrent(live, accountId) {
+      try { assertCurrent(live, accountId); return true; }
+      catch { return false; }
+    },
+    bindRecoveryOperations(resources) {
+      const recovery = serviceOptions.bindRecoveryOperations!(resources);
+      database = resources.database;
+      file = liveDatabaseFile(database);
+      return recovery;
+    },
+    ...(owner ? { registerCloseHold(port: () => ServiceCloseHold | undefined) { reserve = port; } } : {}),
+  });
+  if (owner) boundMaintenance.set(runtime, { owner, reserve, provisioning });
+  return Object.assign(runtime, {
+    issueOwnerBootstrap() {
+      if (runtime.read().status !== 'running') throw new Error('OWNER_BOOTSTRAP_UNAVAILABLE');
+      assertCurrent(database, identity.accountId);
+      return issueFirstOwnerBootstrapTicket(database, identity.accountId);
+    },
+  });
 }
 
 export async function cleanRuntimeStartup(error: unknown) {

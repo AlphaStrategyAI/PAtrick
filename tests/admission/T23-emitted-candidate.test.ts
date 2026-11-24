@@ -1424,7 +1424,7 @@ const scenarioRunner = String.raw`
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire, registerHooks } from 'node:module';
 import { hostname } from 'node:os';
@@ -1478,9 +1478,11 @@ if (id === 'relocated-node-import') {
   await mkdir(recoveryRoot);
   const now = new Date().toISOString();
   let database;
+  let admission;
   const service = { databasePath: join(dataRoot, 'service.sqlite'), credentialDirectory: credentials,
     recoveryRuntime: { attach(context) {
       database = context.database;
+      admission = context.admission;
       database.prepare('INSERT OR IGNORE INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at) VALUES(?,?,?,?,?,?,?)')
         .run('personal', 'epoch', 'open', 'activation', 'witness', 'fixture', now);
       context.admission.admit({ domain: 'personal', writerEpoch: 'epoch', activationId: 'activation', witnessRevision: 'witness' });
@@ -1500,9 +1502,49 @@ if (id === 'relocated-node-import') {
     const home = await fetch(listener.url + '/');
     assert.equal(home.status, 200);
     assert.match(await home.text(), /<title>PAtrick/);
+    const challenge = async (ticket) => {
+      const response = await fetch(listener.url + '/api/v1/auth/challenge', {
+        method: 'POST',
+        headers: { origin: registration.origin, 'content-type': 'application/json', 'x-patrick-bootstrap': ticket },
+        body: JSON.stringify({ rp_id: registration.rpId }),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    const first = listener.issueOwnerBootstrap();
+    assert.ok(Date.parse(first.expires_at) > Date.now());
+    const pending = await challenge(first.ticket);
+    assert.equal(pending.status, 200);
+    assert.equal(pending.body.challenge.user.name, identity.accountId);
+    const second = listener.issueOwnerBootstrap();
+    const third = listener.issueOwnerBootstrap();
+    assert.notEqual(third.ticket, second.ticket);
+    assert.equal((await challenge(second.ticket)).status, 403);
+    assert.notEqual(database.prepare('SELECT consumed_at FROM auth_challenges WHERE challenge_id = ?')
+      .get(pending.body.challenge_id).consumed_at, null);
+    assert.deepEqual(database.prepare('SELECT account_id, ticket_hash FROM bootstrap_tickets WHERE consumed_at IS NULL').all(),
+      [{ account_id: identity.accountId, ticket_hash: digest(third.ticket) }]);
+    admission.revoke('personal');
+    assert.throws(() => listener.issueOwnerBootstrap(), /RECOVERY_WRITE_BLOCKED/);
+    assert.equal((await challenge(third.ticket)).status, 409);
+    admission.admit({ domain: 'personal', writerEpoch: 'epoch', activationId: 'activation', witnessRevision: 'witness' });
+    database.prepare('INSERT INTO passkey_credentials VALUES (?,?,?,?,?)')
+      .run('registered', identity.accountId, Buffer.from('fixture'), 0, now);
+    assert.throws(() => listener.issueOwnerBootstrap(), /OWNER_PASSKEY_ALREADY_REGISTERED/);
+    assert.equal((await challenge(third.ticket)).body.params.reason, 'owner_passkey_already_registered');
+    database.prepare('DELETE FROM passkey_credentials WHERE credential_id = ?').run('registered');
+    const inactiveDatabase = service.databasePath + '.inactive';
+    await rename(service.databasePath, inactiveDatabase);
+    try {
+      const inactive = await challenge(third.ticket);
+      assert.equal(inactive.status, 409);
+      assert.equal(inactive.body.params.reason, 'owner_bootstrap_unavailable');
+    } finally {
+      await rename(inactiveDatabase, service.databasePath);
+    }
     outcome.drain = await listener.drain({ timeoutMs: 5000 });
     assert.equal(outcome.drain.listener, 'closed');
     assert.equal(outcome.drain.runtime.status, 'closed');
+    assert.throws(() => listener.issueOwnerBootstrap(), /OWNER_BOOTSTRAP_UNAVAILABLE/);
   } else {
     assert.equal(id, 'worker-role-readback');
     const commit = '45aecbf578289cda72d1fc773dcad069bfe7778b';

@@ -13,8 +13,9 @@ import { COSEALG } from '@simplewebauthn/server/helpers';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { MCP_TOOLS, routes } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
-import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { assertRecoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { ApiError, errorBody } from './errors.js';
+import { assertBusinessWrite } from './recovery-runtime.js';
 
 export const ORIGIN = 'http://localhost';
 export const RP_ID = 'localhost';
@@ -70,6 +71,7 @@ export type AuthContext = {
   credentials: CredentialStore;
   now: () => Date;
   browserAuthority?: BrowserAuthority;
+  ownerBootstrapCurrent?: (database: SqliteDatabase, accountId: string) => boolean;
 };
 
 type ChallengePurpose = 'registration' | 'authentication' | 'control';
@@ -130,6 +132,22 @@ export function issueBootstrapTicket(
       VALUES (?, ?, ?, NULL, ?)`).run(sha256(ticket), input.accountId, expiresAt, createdAt);
   });
   return { ticket, expires_at: expiresAt };
+}
+
+export function issueFirstOwnerBootstrapTicket(db: SqliteDatabase, accountId: string, now: () => Date = () => new Date()) {
+  return withImmediateTransaction(db, () => {
+    assertRecoveryWriteAllowed(db, OWNER_DOMAIN);
+    if (db.prepare('SELECT 1 FROM passkey_credentials WHERE account_id = ? LIMIT 1').get(accountId)) {
+      throw new Error('OWNER_PASSKEY_ALREADY_REGISTERED');
+    }
+    const issued = now();
+    const spentAt = issued.toISOString();
+    db.prepare('UPDATE bootstrap_tickets SET consumed_at = ? WHERE account_id = ? AND consumed_at IS NULL')
+      .run(spentAt, accountId);
+    db.prepare(`UPDATE auth_challenges SET consumed_at = ?
+      WHERE account_id = ? AND purpose = 'registration' AND consumed_at IS NULL`).run(spentAt, accountId);
+    return issueBootstrapTicket(db, { accountId }, () => issued);
+  });
 }
 
 export function issueCallerSession(
@@ -368,11 +386,14 @@ async function verifyChallenge(c: Context): Promise<Response> {
   if (!credential || typeof credential !== 'object' || !('id' in credential) || typeof credential.id !== 'string') {
     throw new ApiError(422, 'UNPROCESSABLE', { reason: 'credential' });
   }
-  const { db, credentials, now } = authContext();
+  const context = authContext();
+  const { db, credentials, now } = context;
   const row = loadChallenge(db, body.challenge_id, now());
   if (row.purpose === 'registration') {
+    if (!row.account_id) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'challenge' });
+    assertRegistrationCurrent(context, row.account_id);
     const verified = await verifyRegistration(credential, row.challenge);
-    const session = storeRegistration(db, credentials, now, row, verified);
+    const session = storeRegistration(context, row, row.account_id, verified);
     return c.json({ session: publicSession(session.principal) }, 200, { 'set-cookie': session.cookie });
   }
   if (row.purpose === 'authentication') {
@@ -459,13 +480,24 @@ function openSessionStream(c: Context): Promise<Response> {
   });
 }
 
+function assertRegistrationCurrent({ db, ownerBootstrapCurrent }: AuthContext, accountId: string) {
+  if (!ownerBootstrapCurrent) return;
+  if (!ownerBootstrapCurrent(db, accountId)) throw new ApiError(409, 'CONFLICT', { reason: 'owner_bootstrap_unavailable' });
+  assertBusinessWrite(db, OWNER_DOMAIN);
+  if (db.prepare('SELECT 1 FROM passkey_credentials WHERE account_id = ? LIMIT 1').get(accountId)) {
+    throw new ApiError(409, 'CONFLICT', { reason: 'owner_passkey_already_registered' });
+  }
+}
+
 async function beginRegistration(ticket: string): Promise<{ challenge_id: string; challenge: unknown }> {
-  const { db, now } = authContext();
+  const context = authContext();
+  const { db, now } = context;
   const nowIso = now().toISOString();
   const ticketHash = sha256(ticket);
   const pending = db.prepare(`SELECT account_id FROM bootstrap_tickets
     WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?`).get(ticketHash, nowIso) as { account_id: string } | undefined;
   if (!pending) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
+  assertRegistrationCurrent(context, pending.account_id);
   const options = await generateRegistrationOptions({
     rpName: 'PAtrick',
     rpID: browserAuthority().rpId,
@@ -477,19 +509,21 @@ async function beginRegistration(ticket: string): Promise<{ challenge_id: string
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
   });
   const challengeId = `ch_${randomUUID()}`;
-  const createdAt = nowIso;
-  const expiresAt = new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString();
   withImmediateTransaction(db, () => {
+    assertRegistrationCurrent(context, pending.account_id);
+    const consumedAt = now();
+    const createdAt = consumedAt.toISOString();
+    const expiresAt = new Date(consumedAt.getTime() + CHALLENGE_TTL_MS).toISOString();
     const consumed = db.prepare(`UPDATE bootstrap_tickets
       SET consumed_at = ?
-      WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?
-      RETURNING account_id`).get(nowIso, ticketHash, nowIso) as { account_id: string } | undefined;
-    if (!consumed) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
+      WHERE ticket_hash = ? AND account_id = ? AND consumed_at IS NULL AND expires_at > ?`)
+      .run(createdAt, ticketHash, pending.account_id, createdAt);
+    if (consumed.changes !== 1) throw new ApiError(403, 'FORBIDDEN', { reason: 'bootstrap' });
     db.prepare(`INSERT INTO auth_challenges (
       challenge_id, account_id, purpose, challenge, challenge_hash, origin, rp_id, expires_at, consumed_at, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`).run(
       challengeId,
-      consumed.account_id,
+      pending.account_id,
       'registration',
       options.challenge,
       sha256(options.challenge),
@@ -585,16 +619,15 @@ async function verifyAssertion(db: SqliteDatabase, credential: object, expectedC
 }
 
 function storeRegistration(
-  db: SqliteDatabase,
-  credentials: CredentialStore,
-  now: () => Date,
+  context: AuthContext,
   row: ChallengeRow,
+  accountId: string,
   registration: Awaited<ReturnType<typeof verifyRegistration>>,
 ): { principal: Principal; cookie: string } {
-  if (!row.account_id) throw new ApiError(401, 'UNAUTHENTICATED', { reason: 'challenge' });
-  const accountId = row.account_id;
+  const { db, credentials, now } = context;
   const nowIso = now().toISOString();
   return withImmediateTransaction(db, () => {
+    assertRegistrationCurrent(context, accountId);
     consumeAuthChallenge(db, row, nowIso);
     db.prepare(`INSERT INTO passkey_credentials (credential_id, account_id, public_key, counter, created_at)
       VALUES (?, ?, ?, ?, ?)`).run(

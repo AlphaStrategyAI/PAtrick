@@ -352,7 +352,13 @@ describe('T23 installed runtime build and bootstrap', () => {
       let attachments = 0;
       const service = {
         databasePath: join(dataRoot, 'https.sqlite'), credentialDirectory: join(dataRoot, 'https-credentials'),
-        recoveryRuntime: { attach(resources) { database = resources.database; attachments++; } },
+        recoveryRuntime: { attach(resources) {
+          database = resources.database;
+          attachments++;
+          database.prepare(\`INSERT INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at)
+            VALUES(?,?,?,?,?,?,?)\`).run('personal', 'epoch', 'open', 'activation', 'witness', 'fixture', new Date().toISOString());
+          resources.admission.admit({ domain: 'personal', writerEpoch: 'epoch', activationId: 'activation', witnessRevision: 'witness' });
+        } },
         bindRecoveryOperations() { return { root: dataRoot, targets: {},
           authority: { keyId: 'fixture', async sign() { throw new Error('unexpected'); }, async verify() { return false; } } };
         },
@@ -375,13 +381,12 @@ describe('T23 installed runtime build and bootstrap', () => {
       const now = new Date().toISOString();
       const future = new Date(Date.now() + 60000).toISOString();
       database.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(identity.accountId, 1, 1, now);
-      const ticket = 'synthetic-bootstrap';
       const token = 'synthetic-session';
       const hash = (value) => createHash('sha256').update(value).digest('hex');
-      database.prepare('INSERT INTO bootstrap_tickets VALUES (?,?,?,NULL,?)').run(hash(ticket), identity.accountId, future, now);
       database.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?)').run(hash(token), identity.accountId, 'web', 1, future, now, 'fixture');
       const listener = await startServiceListener(runtime, provisioning);
       try {
+        const { ticket } = listener.issueOwnerBootstrap();
         function post(path, body, overrides = {}, method = 'POST') {
           return new Promise((done, fail) => {
             const payload = body && JSON.stringify(body);

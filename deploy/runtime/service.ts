@@ -22,8 +22,8 @@ type ListenerState = 'running' | 'draining' | 'closed' | 'close_failed';
 type WebMaterial = { path: string; bytes: number; sha256: string };
 
 const owners = new WeakMap<ServiceRuntime, RuntimeProvisioning>();
-const startedIngress = new WeakMap<ServiceRuntime, object>();
-export function ownsMaintenanceIngress(runtime: ServiceRuntime, ingress: object) {
+const startedIngress = new WeakMap<object, object>();
+export function ownsMaintenanceIngress(runtime: object, ingress: object) {
   return startedIngress.get(runtime) === ingress;
 }
 
@@ -282,7 +282,14 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     const cleanup = await drain();
     throw Object.assign(new Error('LISTENER_RUNTIME_NOT_RUNNING'), { cleanup, readCleanup: read });
   }
-  return { url, stop, drain, read, ...(maintenance ? { maintenance } : {}) };
+  return {
+    url, stop, drain, read,
+    issueOwnerBootstrap() {
+      if (!admitting) throw new Error('OWNER_BOOTSTRAP_UNAVAILABLE');
+      return runtime.issueOwnerBootstrap();
+    },
+    ...(maintenance ? { maintenance } : {}),
+  };
 }
 
 export async function runInstalledService(provisioning: RuntimeProvisioning) {

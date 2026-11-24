@@ -529,8 +529,8 @@ function write(
 }
 
 export const routes: RouteDefinition[] = [
-  write('createAuthChallenge', 'POST', '/auth/challenge', 'public', z.strictObject({ rp_id: z.string().min(1) }), z.strictObject({ challenge_id: z.string().min(1), challenge: z.unknown() }), []),
-  write('verifyAuth', 'POST', '/auth/verify', 'public', z.strictObject({ challenge_id: z.string().min(1), credential: z.unknown() }), z.strictObject({ session: z.unknown() }), ['UNAUTHENTICATED']),
+  write('createAuthChallenge', 'POST', '/auth/challenge', 'public', z.strictObject({ rp_id: z.string().min(1) }), z.strictObject({ challenge_id: z.string().min(1), challenge: z.unknown() }), ['CONFLICT']),
+  write('verifyAuth', 'POST', '/auth/verify', 'public', z.strictObject({ challenge_id: z.string().min(1), credential: z.unknown() }), z.strictObject({ session: z.unknown() }), ['UNAUTHENTICATED', 'CONFLICT']),
   read('getSession', '/session', 'session', emptySchema, z.unknown()),
   write('deleteSession', 'DELETE', '/session', 'session', emptySchema, z.strictObject({ ok: z.literal(true) }), readErrors),
   { ...read('listWork', '/work', 'work.read', workListQuerySchema, workListSchema), errors: [...readErrors, 'CONFLICT', 'UNPROCESSABLE'] },

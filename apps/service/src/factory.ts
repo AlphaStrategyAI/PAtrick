@@ -62,6 +62,7 @@ export type CreateAppOptions = {
   /** Private installed owner receives this only after successful startup. */
   registerCloseHold?: (reserve: () => ServiceCloseHold | undefined) => void;
   browserAuthority?: BrowserAuthority;
+  ownerBootstrapCurrent?: AuthContext['ownerBootstrapCurrent'];
   signal?: AbortSignal;
   /** Trusted installed composition receives the exact gated handles before worker admission. */
   bindRecoveryOperations?: (resources: { database: SqliteDatabase; hub: LocalHubPort; hubDatabase: SqliteDatabase }) => RecoverySettingsConfiguration | undefined;
@@ -213,7 +214,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
       }
     }
     state.credentials ??= createCredentialStore(options.credentialDirectory ?? join(tmpdir(), `patrick-credentials-${randomUUID()}`), now);
-    return { db: state.db, credentials: state.credentials, now, browserAuthority };
+    return { db: state.db, credentials: state.credentials, now, browserAuthority, ownerBootstrapCurrent: options.ownerBootstrapCurrent };
   }
   function durableHub(): LocalHubPort {
     if (state.hub) return state.hub;
