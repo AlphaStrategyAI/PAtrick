@@ -198,7 +198,7 @@ jobs:
           admission_tmp=$(mktemp -d "$work/admission.XXXXXXXX")
           TMPDIR="$admission_tmp" PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
             node node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts --maxWorkers 1 \
-              --testNamePattern 'signed deployment includes|first install initializes Hub'
+              --testNamePattern 'signed deployment includes|first install initializes Hub|starts the packaged Hub'
 
           node --input-type=module - "$work" "$upload" > "$upload/readback-receipt.json" <<'JS'
           import { readFileSync } from "node:fs";

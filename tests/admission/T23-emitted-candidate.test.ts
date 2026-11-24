@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { createInstalledRootOwner, leased, publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
@@ -17,9 +18,10 @@ import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedRe
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
+import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+import { hubRules, PINNED_HUB_COMMIT } from '../../packages/integrations/autoloop/client.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async importOriginal => {
@@ -746,6 +748,135 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
       ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
   } finally { hub.close(); }
 }, 120_000);
+
+test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed database and holds its role lock until exit', async ({ onTestFinished }) => {
+  const fixture = await firstInstallFixture('selected-packaged-hub', onTestFinished);
+  const { instanceRoot, identity, expected, policy, pin, enrollment, run, operation, operationId, installOperations, signer, approve, planSha256 } = fixture;
+  const approved = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+  installOperations[operationId] = approved;
+  expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+  const generation = await prepareFirstInstallGeneration(() => enrollment, 'release', operationId, approved, () => {});
+  const nextRoot = join(instanceRoot, 'data', 'next-generation');
+  await cp(join(instanceRoot, 'data', generation.id), nextRoot, { recursive: true });
+  const nextGeneration: InstalledGeneration = { ...generation, id: 'next-generation', dataRoot: await pin(nextRoot),
+    roles: Object.fromEntries(await Promise.all(Object.keys(generation.roles).map(async role => [role, await pin(join(nextRoot, role))]))) as InstalledGeneration['roles'] };
+  const key = generateKeyPairSync('ed25519');
+  const { packages, releases, data, history } = enrollment.stores;
+  const controlRoot = join(instanceRoot, 'runtime', 'hub-control');
+  await mkdir(controlRoot, { mode: 0o700, recursive: true });
+  const writerPath = join(controlRoot, 'writer.sqlite');
+  await writeFile(writerPath, '', { mode: 0o600 });
+  const initializedFence = new DatabaseSync(writerPath);
+  try { initializedFence.exec('PRAGMA user_version = 1'); } finally { initializedFence.close(); }
+  const rulesInput = hubRules([process.execPath, '-e', 'process.exit(0)']);
+  const rules = canonicalize(rulesInput);
+  const rulesPath = join(controlRoot, 'rules.json');
+  await writeFile(rulesPath, rules, { mode: 0o444 });
+  const generationLock = createInstalledRootOwner({
+    root: instanceRoot, rootNode: enrollment.rootNode, lockNode: await prepareOwnerLock(instanceRoot, pin),
+  });
+  let failAfterVerification: (() => Promise<void>) | undefined;
+  const selectionOwner: ExclusiveRuntimeStaging = { withExclusiveReadRoot(read) {
+    return leased(generationLock, async lease => {
+      const result = await read(lease.root);
+      await failAfterVerification?.();
+      return result;
+    });
+  } };
+  const selected: GenerationEnrollment = {
+    installationId: enrollment.installationId, hostId: 'fixture-host', identity, root: instanceRoot,
+    target: expected.target, publicKey: fixture.pem(key.publicKey), rootNode: enrollment.rootNode,
+    stores: { packages, releases, data, history },
+    hubRole: { rootNode: await pin(controlRoot), lockNode: await prepareOwnerLock(controlRoot, pin), writerNode: await pin(writerPath) },
+    releases: [{ expected, policy }], generations: [generation, nextGeneration],
+  };
+  const store = createGenerationStore(selected, selectionOwner, {
+    async signRecord(payload) { return sign(null, payload, key.privateKey).toString('base64'); },
+  });
+  const busy = createHttpServer((_request, response) => response.end('different listener'));
+  await new Promise<void>((resolve, reject) => { busy.once('error', reject); busy.listen(0, '127.0.0.1', resolve); });
+  const address = busy.address();
+  if (!address || typeof address === 'string') throw new Error('fixture endpoint missing');
+  onTestFinished(() => new Promise<void>(resolve => { busy.close(() => resolve()); }));
+  const origin = 'http://127.0.0.1:' + address.port;
+  const registration = { rulesSha256: sha256(Buffer.from(rules)), listener: { host: '127.0.0.1' as const, port: address.port }, publicUrl: origin };
+  const start = () => startSelectedHubRole(selected, selectionOwner, registration);
+  await expect(start()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
+  const order = store.order('select-hub', null, generation.id);
+  await store.select(canonicalize({ order, signature: sign(null, bytes(order), key.privateKey).toString('base64') }));
+  const previousEnrollment = createGenerationStore({ ...selected, hubRole: undefined }, selectionOwner, {
+    async signRecord(payload) { return sign(null, payload, key.privateKey).toString('base64'); },
+  });
+  await expect(previousEnrollment.observe()).resolves.toMatchObject({ current: { order } });
+  await expect(startSelectedHubRole(selected, selectionOwner, { ...registration, rulesSha256: '0'.repeat(64) }))
+    .rejects.toThrow('INSTALLED_HUB_RULES_INVALID');
+  await expect(start()).rejects.toThrow('HUB_PROCESS_BIND_FAILED');
+  await new Promise<void>(resolve => { busy.close(() => resolve()); });
+  failAfterVerification = async () => {
+    expect((await fetch(origin + '/healthz')).status).toBe(503);
+    throw new Error('fixture lost launch confirmation');
+  };
+  try { await expect(start()).rejects.toThrow('fixture lost launch confirmation'); }
+  finally { failAfterVerification = undefined; }
+  await expect(fetch(origin + '/healthz')).rejects.toThrow();
+  const started = await start();
+  onTestFinished(async () => { started.runtime.stop(); await started.runtime.drain(); });
+  expect(started).toMatchObject({ role: 'hub', generationId: generation.id, packageSha256: expected.packageSha256 });
+  expect(started.runtime.read()).toMatchObject({ state: 'running' });
+  expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+  const activeDatabasePath = join(instanceRoot, 'data', generation.id, 'hub', 'hub.db');
+  await expect(pin(activeDatabasePath)).resolves.toEqual(generation.roles['hub/hub.db']);
+  const activeDatabase = new DatabaseSync(activeDatabasePath, { readOnly: true });
+  const configuration = activeDatabase.prepare("SELECT data FROM projections WHERE collection = 'config' AND json_extract(data, '$.version') IS NOT NULL ORDER BY json_extract(data, '$.version') DESC LIMIT 1");
+  const replacedRules = join(controlRoot, 'replacement.json');
+  const original = configuration.get();
+  expect(original).toBeDefined();
+  try {
+    await writeFile(replacedRules, canonicalize({ ...rulesInput, rules: [] }), { mode: 0o444 });
+    await rename(replacedRules, rulesPath);
+    await delay(750);
+    expect(configuration.get()).toEqual(original);
+    expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+  } finally {
+    activeDatabase.close();
+    await writeFile(replacedRules, rules, { mode: 0o444 });
+    await rename(replacedRules, rulesPath);
+  }
+  await expect(start()).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+  const next = store.order('select-next-hub', started.selectionSha256, nextGeneration.id);
+  const nextEnvelope = canonicalize({ order: next, signature: sign(null, bytes(next), key.privateKey).toString('base64') });
+  await expect(previousEnrollment.select(nextEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
+  await expect(store.select(nextEnvelope)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+  started.runtime.stop();
+  await expect(started.runtime.drain()).resolves.toMatchObject({ state: 'closed' });
+  await expect(fetch(origin + '/healthz')).rejects.toThrow();
+  const keyPath = join(instanceRoot, 'data', generation.id, 'hub', 'master.key');
+  const savedKey = join(controlRoot, 'saved-master-key');
+  await rename(keyPath, savedKey);
+  try {
+    await expect(start()).rejects.toThrow('HUB_PROCESS_MASTER_KEY_INVALID');
+    await expect(lstat(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await rename(savedKey, keyPath); }
+  const orphanedFence = new DatabaseSync(writerPath, { timeout: 0 });
+  try {
+    orphanedFence.exec('BEGIN IMMEDIATE');
+    await expect(store.select(nextEnvelope)).rejects.toThrow('INSTALLED_HUB_WRITER_BUSY');
+    const movedControlRoot = controlRoot + '-moved';
+    await rename(controlRoot, movedControlRoot);
+    try {
+      const legacyOrder = previousEnrollment.order('select-without-fence', started.selectionSha256, nextGeneration.id);
+      const legacyEnvelope = canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), key.privateKey).toString('base64') });
+      await expect(previousEnrollment.select(legacyEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
+    } finally { await rename(movedControlRoot, controlRoot); }
+  } finally { orphanedFence.close(); }
+  await expect(store.select(nextEnvelope)).resolves.toMatchObject({ current: { order: next } });
+  const restarted = await start();
+  onTestFinished(async () => { restarted.runtime.stop(); await restarted.runtime.drain(); });
+  expect(restarted.generationId).toBe(nextGeneration.id);
+  await expect(pin(join(nextRoot, 'hub', 'hub.db'))).resolves.toEqual(nextGeneration.roles['hub/hub.db']);
+  restarted.runtime.stop();
+  await expect(restarted.runtime.drain()).resolves.toMatchObject({ state: 'closed' });
+}, 240_000);
 
 test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
   const { instanceRoot, identity, expected, policy, pin, enrollment, installOperations, cli, args, run, operation, operationId,

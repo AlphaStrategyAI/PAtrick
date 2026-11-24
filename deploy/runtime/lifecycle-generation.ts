@@ -2,6 +2,7 @@ import { createPublicKey, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync,
   realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
@@ -36,13 +37,15 @@ export type GenerationEnrollment = {
   installationId: string; hostId: string; identity: HostIdentity; target: DarwinTarget;
   root: string; rootNode: GenerationNode; stores: Record<Store, GenerationNode>;
   ownerLockNode?: GenerationNode;
+  hubOwner?: Readonly<{ uid: number; gid: number }>;
+  hubRole?: Readonly<{ rootNode: GenerationNode; lockNode: GenerationNode; writerNode: GenerationNode }>;
   publicKey: string;
   releases: { expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy }[];
   generations: InstalledGeneration[];
 };
 export type GenerationOrder = {
   format: typeof format; installationSha256: string; operationId: string;
-  previous: string | null; generation: InstalledGeneration;
+  previous: string | null; generation: InstalledGeneration; hubRoleSha256?: string;
 };
 export type SignedGenerationOrder = { order: GenerationOrder; signature: string };
 export type GenerationRecordSigner = { signRecord(bytes: Uint8Array): Promise<string> };
@@ -60,6 +63,24 @@ function requireValue(value: unknown): asserts value {
 export function generationHubDatabase(roles: InstalledGeneration['roles']): HubDatabaseRole {
   if (Object.hasOwn(roles, autoloopHubDatabase)) return autoloopHubDatabase;
   return Object.hasOwn(roles, flatAutoloopHubDatabase) ? flatAutoloopHubDatabase : legacyHubDatabase;
+}
+export function hubControlRoot(root: string) {
+  return join(root, 'runtime', 'hub-control');
+}
+export function hubWriterFencePath(root: string) {
+  return join(hubControlRoot(root), 'writer.sqlite');
+}
+export function generationHubRoleDigest(enrollment: GenerationEnrollment) {
+  if (!enrollment.hubRole) return undefined;
+  const owner = enrollment.hubOwner ?? { uid: process.geteuid!(), gid: process.getegid!() };
+  return digest({ role: enrollment.hubRole, owner });
+}
+export function createInstalledHubRoleOwner(root: string, role: NonNullable<GenerationEnrollment['hubRole']>) {
+  const runtime = join(root, 'runtime');
+  const info = stat(runtime);
+  requireValue(realpathSync.native(runtime) === runtime && info.isDirectory() &&
+    info.uid === BigInt(process.geteuid!()) && (info.mode & 0o022n) === 0n);
+  return createInstalledRootOwner({ root: hubControlRoot(root), rootNode: role.rootNode, lockNode: role.lockNode });
 }
 function token(value: unknown): asserts value is string {
   requireValue(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value));
@@ -98,10 +119,10 @@ const stat = (path: string) => lstatSync(path, { bigint: true });
 const pin = (info: ReturnType<typeof stat>): GenerationNode => ({
   device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs),
 });
-function checkNode(path: string, expected: GenerationNode, directory: boolean) {
+function checkNode(path: string, expected: GenerationNode, directory: boolean, owner: number = process.geteuid!()) {
   const info = stat(path);
   requireValue(realpathSync.native(path) === path && (directory ? info.isDirectory() : info.isFile() && info.nlink === 1n) &&
-    info.uid === BigInt(process.geteuid!()) && (info.mode & 0o022n) === 0n &&
+    info.uid === BigInt(owner) && (info.mode & 0o022n) === 0n &&
     canonicalize(pin(info)) === canonicalize(expected));
   return info;
 }
@@ -144,6 +165,12 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   requireValue(key.asymmetricKeyType === 'ed25519' && e.root !== sep && resolve(e.root) === e.root);
   token(e.installationId);
   token(e.hostId);
+  if (e.hubOwner !== undefined) {
+    requireValue(e.hubRole && canonicalize(Object.keys(e.hubOwner).sort()) === '["gid","uid"]' &&
+      [e.hubOwner.uid, e.hubOwner.gid].every(value => Number.isInteger(value) && value > 0 && value <= 0x7fffffff));
+  }
+  const hubRoleOwner = e.hubRole && createInstalledHubRoleOwner(e.root, e.hubRole);
+  const hubRoleSha256 = generationHubRoleDigest(e);
   const identity = projectIdentity(e.identity);
   requireValue(canonicalize(identity) === canonicalize(e.identity) && e.target.os === 'darwin' && ['arm64', 'x64'].includes(e.target.arch));
   const installationSha256 = digest({ format, installationId: e.installationId, hostId: e.hostId, identity,
@@ -170,13 +197,18 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }
   }
 
-  function order(operationId: string, previous: string | null, generationId: string): GenerationOrder {
+  function buildOrder(operationId: string, previous: string | null, generationId: string, roleSha256: string | undefined): GenerationOrder {
     enrolled();
     token(operationId);
     if (previous !== null) hash(previous);
     const generation = generations.get(generationId);
     requireValue(generation);
-    return { format, installationSha256, operationId, previous, generation: structuredClone(generation) };
+    if (roleSha256 !== undefined) hash(roleSha256);
+    return { format, installationSha256, operationId, previous, generation: structuredClone(generation),
+      ...(roleSha256 === undefined ? {} : { hubRoleSha256: roleSha256 }) };
+  }
+  function order(operationId: string, previous: string | null, generationId: string) {
+    return buildOrder(operationId, previous, generationId, hubRoleSha256);
   }
   function signatureValid(payload: Buffer, signature: string) {
     return typeof signature === 'string' && /^[A-Za-z0-9+/]{86}==$/.test(signature) &&
@@ -184,7 +216,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   }
   function authenticate(signed: SignedGenerationOrder): Entry {
     const { operationId, previous, generation } = signed.order;
-    const exact = order(operationId, previous, generation.id);
+    const exact = buildOrder(operationId, previous, generation.id, signed.order.hubRoleSha256);
     const payload = bytes(exact);
     requireValue(canonicalize(signed.order) === payload.toString() && signatureValid(payload, signed.signature) &&
       canonicalize(signed) === canonicalize({ order: exact, signature: signed.signature }) && bytes(signed).length <= recordLimit);
@@ -208,10 +240,14 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       if (entry !== hubEntry) requireValue(!lstatSync(join(path, entry), { throwIfNoEntry: false }));
     }
     if (hubEntry === autoloopHubDirectory) {
-      const hubDirectory = checkNode(join(path, hubEntry), g.roles[hubEntry]!, true);
-      requireValue((hubDirectory.mode & 0o7777n) === 0o700n);
+      const hubDirectory = checkNode(join(path, hubEntry), g.roles[hubEntry]!, true, e.hubOwner?.uid);
+      const hubDatabase = checkNode(join(path, hubName), g.roles[hubName]!, false, e.hubOwner?.uid);
+      requireValue((hubDirectory.mode & 0o7777n) === 0o700n &&
+        (e.hubOwner === undefined || (hubDirectory.gid === BigInt(e.hubOwner.gid) &&
+          hubDatabase.gid === BigInt(e.hubOwner.gid) && (hubDatabase.mode & 0o7777n) === 0o600n)));
+    } else {
+      checkNode(join(path, hubName), g.roles[hubName]!, false);
     }
-    checkNode(join(path, hubName), g.roles[hubName]!, false);
     for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
     for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);
   }
@@ -397,7 +433,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       });
     }, true, enrolled);
   }
-  async function select(envelope: string) {
+  async function selectReserved(envelope: string, checkRole?: () => void) {
     enrolled();
     requireValue(typeof envelope === 'string' && Buffer.byteLength(envelope) <= recordLimit);
     const signed = JSON.parse(envelope) as SignedGenerationOrder;
@@ -405,21 +441,28 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     const next = authenticate(signed);
     const id = next.order.operationId;
     let attempted = false;
+    function checkSelection(lease: Lease) {
+      checkRole?.();
+      boundary(lease);
+    }
     try {
       const result = await leased(owner, async lease => {
         const state = await readState(lease, id);
-        boundary(lease);
+        checkSelection(lease);
         if (state.pending?.sha256 === next.sha256) throw uncertain(id);
         if (state.historical) {
           requireValue(state.historical.sha256 === next.sha256);
           return verifyObservation(lease, state, id);
         }
         requireValue(!state.pending && (state.current?.sha256 ?? null) === next.order.previous);
+        const currentRoleSha256 = state.current?.order.hubRoleSha256;
+        if ((currentRoleSha256 !== undefined && currentRoleSha256 !== hubRoleSha256) ||
+            next.order.hubRoleSha256 !== hubRoleSha256) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
         requireValue(selectionHistory().filter(name => name.endsWith('.json')).length < maxRecords);
-        if (state.current) { await withGeneration(lease, state.current.order.generation, async () => {}); boundary(lease); }
+        if (state.current) { await withGeneration(lease, state.current.order.generation, async () => {}); checkSelection(lease); }
         return withGeneration(lease, next.order.generation, async () => {
           const before = await readState(lease, id, next.order.generation.id);
-          boundary(lease);
+          checkSelection(lease);
           requireValue(canonicalize(before) === canonicalize(state));
           const stage = join(e.root, '.selection-' + id);
           const record = join(history, id + '.json');
@@ -430,17 +473,17 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             const node = pin(fstatSync(fd, { bigint: true }));
             const body: RecordBody = { format: 'patrick-installed-selection-record-v1', authorization: signed, node };
             const signature = await Reflect.apply(registeredSign, signer, [bytes(body)]);
-            boundary(lease);
+            checkSelection(lease);
             const envelope = bytes({ body, signature });
             requireValue(signatureValid(bytes(body), signature) && envelope.length <= recordLimit);
             const confirmed = await readState(lease, id, next.order.generation.id, node);
-            boundary(lease);
+            checkSelection(lease);
             requireValue(canonicalize(confirmed) === canonicalize(state));
             checkNode(stage, node, false);
             writeFileSync(fd, envelope);
             fsyncSync(fd);
           } finally { closeSync(fd); }
-          boundary(lease);
+          checkSelection(lease);
           linkSync(stage, record);
           syncDirectory(history, e.stores.history);
           // After this point the record forbids a second attempt even on restart.
@@ -451,17 +494,17 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           // signature proves the earlier pointer barrier even if the final history
           // flush loses its acknowledgement. Disappearance of the link fails closed.
           const visible = await readState(lease, id);
-          boundary(lease);
+          checkSelection(lease);
           requireValue(visible.current?.sha256 === next.sha256 && visible.pending?.sha256 === next.sha256);
           const selected = pin(stat(currentPath));
           const payload = completionBytes(next, selected);
           const signature = await Reflect.apply(registeredSign, signer, [payload]);
-          boundary(lease);
+          checkSelection(lease);
           const confirmed = await readState(lease, id);
-          boundary(lease);
+          checkSelection(lease);
           requireValue(signatureValid(payload, signature) && canonicalize(confirmed) === canonicalize(visible));
           requireValue(canonicalize(pin(stat(currentPath))) === canonicalize(selected));
-          boundary(lease);
+          checkSelection(lease);
           linkSync(currentPath, join(history, id + '.' + Buffer.from(signature, 'base64').toString('hex') + '.durable'));
           syncDirectory(history, e.stores.history);
           const observed = await readState(lease, id);
@@ -476,6 +519,39 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       if (attempted) throw uncertain(id);
       throw error;
     }
+  }
+  async function select(envelope: string) {
+    if (!hubRoleOwner) {
+      if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
+      return selectReserved(envelope, () => {
+        if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
+      });
+    }
+    return leased(hubRoleOwner, async lease => {
+      const path = hubWriterFencePath(e.root);
+      const writerNode = e.hubRole!.writerNode;
+      function checkWriter() {
+        lease.guard();
+        const info = checkNode(path, writerNode, false, e.hubOwner?.uid);
+        requireValue((info.mode & 0o7777n) === 0o600n);
+      }
+      checkWriter();
+      const fence = new DatabaseSync(path, { timeout: 0 });
+      try {
+        checkWriter();
+        try { fence.exec('BEGIN IMMEDIATE'); }
+        catch (error) {
+          const code = (error as { errcode?: number })?.errcode;
+          if (code !== undefined && [5, 6].includes(code & 0xff)) {
+            throw new Error('INSTALLED_HUB_WRITER_BUSY', { cause: error });
+          }
+          throw error;
+        }
+        requireValue(fence.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
+          fence.prepare('PRAGMA user_version').get()?.user_version === 1);
+        return await selectReserved(envelope, () => { checkWriter(); requireValue(fence.isTransaction); });
+      } finally { fence.close(); }
+    }, true, enrolled);
   }
   return Object.freeze({ order, observe, select, useConfirmed });
 }

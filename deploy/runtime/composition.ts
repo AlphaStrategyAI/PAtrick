@@ -5,7 +5,7 @@ import {
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
 } from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
-export { startSelectedRuntimeRole } from './role-launch.js';
+export { startSelectedHubRole, startSelectedRuntimeRole } from './role-launch.js';
 import type { SelectedRuntimePaths } from './role-launch.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';

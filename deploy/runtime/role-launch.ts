@@ -1,9 +1,14 @@
+import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
-import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
+import { leased, type ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
+import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
+import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
-import { generationHubDatabase, withConfirmedGeneration, type GenerationEnrollment } from './lifecycle-generation.js';
+import { startHubProcess, type HubProcess } from './hub-process.js';
+import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, hubControlRoot,
+  hubWriterFencePath, withConfirmedGeneration,
+  type GenerationEnrollment } from './lifecycle-generation.js';
 
 export type SelectedRuntimePaths = Readonly<{
   role: 'service' | 'worker';
@@ -36,6 +41,110 @@ function closed(result: CleanupResult) {
 function hasCleanup(error: unknown): error is StartupCleanup {
   return error instanceof Error && 'readCleanup' in error && typeof error.readCleanup === 'function' &&
     'drainCleanup' in error && typeof error.drainCleanup === 'function';
+}
+
+export type HubRoleRegistration = Readonly<{
+  rulesSha256: string;
+  listener: Readonly<{ host: '127.0.0.1' | '::1'; port: number }>;
+  publicUrl: string;
+}>;
+
+type StartedHub = Readonly<{
+  role: 'hub';
+  generationId: string;
+  selectionSha256: string;
+  packageSha256: string;
+  runtime: Pick<HubProcess, 'read' | 'stop' | 'drain'>;
+}>;
+
+export async function startSelectedHubRole(
+  enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined,
+  registration: HubRoleRegistration,
+): Promise<StartedHub> {
+  const binding = bindRegistration(() => registration);
+  const generationBinding = bindRegistration(() => enrollment);
+  const { root, hubOwner, hubRole } = generationBinding.value;
+  const { listener, publicUrl, rulesSha256 } = binding.value;
+  const { host, port } = listener;
+  const { uid, gid } = hubOwner ?? { uid: process.geteuid!(), gid: process.getegid!() };
+  const url = URL.parse(publicUrl);
+  const authority = host === '::1' ? '[::1]' : host;
+  if (!hubRole || !['127.0.0.1', '::1'].includes(host) || !Number.isInteger(port) || port < 1 || port > 65535 ||
+      uid === 0 || !url || url.origin !== publicUrl ||
+      (url.protocol !== 'https:' && publicUrl !== new URL(`http://${authority}:${port}`).origin) ||
+      !/^[0-9a-f]{64}$/.test(rulesSha256)) throw new Error('INSTALLED_HUB_REGISTRATION_INVALID');
+
+  const roleRoot = hubControlRoot(root);
+  const rulesPath = join(roleRoot, 'rules.json');
+  const roleOwner = createInstalledHubRoleOwner(root, hubRole);
+  const roleSha256 = generationHubRoleDigest(generationBinding.value);
+  let resolveReady!: (value: StartedHub) => void;
+  let rejectReady!: (error: unknown) => void;
+  const ready = new Promise<StartedHub>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const lifetime = leased(roleOwner, async lease => {
+    let runtime: HubProcess | undefined;
+    const rulesRoot = admitReadRoot(roleRoot, { allowAncestorEntriesChange: true });
+    function validateRole() {
+      lease.guard();
+      rulesRoot.validate();
+      const rules = lstatSync(rulesPath, { bigint: true });
+      if (!rules.isFile() || rules.nlink !== 1n || rules.uid !== BigInt(process.geteuid!()) ||
+          ((rules.mode & 0o7777n) !== 0o444n && (uid !== process.geteuid!() || (rules.mode & 0o7777n) !== 0o400n))) {
+        throw new Error('INSTALLED_HUB_RULES_INVALID');
+      }
+    }
+    try {
+      const identity = await withConfirmedGeneration(enrollment, owner, async (selected, deployment, guard) => {
+        if (selected.order.hubRoleSha256 !== roleSha256) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
+        const generation = selected.order.generation;
+        const database = generation.roles[autoloopHubDatabase];
+        const hub = deployment.autoloopHub;
+        if (!database || !hub) throw new Error('INSTALLED_HUB_MATERIAL_REQUIRED');
+        function validate() {
+          validateRole();
+          guard();
+        }
+        validate();
+        const rules = await readRegularFile(rulesPath, 128 * 1024, { root: roleRoot, validate });
+        if (sha256(rules) !== rulesSha256) throw new Error('INSTALLED_HUB_RULES_INVALID');
+        await startHubProcess({ entry: hub.entry, commit: hub.commit, database, rulesPath, rulesSha256,
+          writerFence: { path: hubWriterFencePath(root), node: hubRole.writerNode },
+          hubHome: join(root, 'data', generation.id, autoloopHubDirectory), uid, gid, host, port, publicUrl },
+        validate, child => { runtime = child; });
+        validate();
+        return { generationId: generation.id, selectionSha256: selected.sha256, packageSha256: deployment.packageSha256 };
+      });
+      validateRole();
+      const child = runtime!;
+      await child.activate();
+      validateRole();
+      if (child.read().state !== 'running') throw new Error('INSTALLED_HUB_START_FAILED');
+      resolveReady(Object.freeze({ role: 'hub', ...identity, runtime: Object.freeze({
+        read: child.read, stop: child.stop,
+        async drain(options?: { timeoutMs?: number }) {
+          const result = await child.drain(options);
+          if (result.state === 'closed') await lifetime;
+          return result;
+        },
+      }) }));
+      await child.exited;
+    } catch (error) {
+      if (runtime) {
+        runtime.stop();
+        const state = await runtime.drain();
+        if (state.state !== 'closed') {
+          rejectReady(Object.assign(new Error('INSTALLED_ROLE_CLEANUP_UNCONFIRMED', { cause: error }), {
+            role: 'hub', readCleanup: runtime.read, drainCleanup: runtime.drain,
+          }));
+          await runtime.exited;
+        }
+      }
+      throw error;
+    }
+  }, true, () => { binding.validate(); generationBinding.validate(); });
+  void lifetime.catch(rejectReady);
+  return ready;
 }
 
 export async function startSelectedRuntimeRole(
