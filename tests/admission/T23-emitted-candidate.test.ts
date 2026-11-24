@@ -635,8 +635,8 @@ async function prepareOwnerLock(root: string, pin: (path: string) => Promise<Gen
   return pin(lockPath);
 }
 
-test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
-  const instanceRoot = join(dir, 'first-install-cli');
+async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void) {
+  const instanceRoot = join(dir, name);
   await mkdir(instanceRoot, { mode: 0o700 });
   const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
   const pin = async (path: string) => {
@@ -651,8 +651,8 @@ test('first-install CLI publishes only the approved release and reads back the s
   const { expected, policy } = complete;
   await cp(complete.packagePath, join(instanceRoot, 'packages', expected.packageSha256 + '.json'));
   const identity = { accountId: 'owner', scopeId: 'workspace', deviceId: 'darwin', domains: ['personal'], configRevision: 'r1' };
-  const certificate = join(dir, 'install-session.pem');
-  const privateKey = join(dir, 'install-session.key');
+  const certificate = join(dir, name + '-session.pem');
+  const privateKey = join(dir, name + '-session.key');
   child(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', privateKey,
     '-out', certificate, '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], dir, '/usr/bin/openssl');
   const ca = await readFile(certificate, 'utf8');
@@ -697,13 +697,6 @@ test('first-install CLI publishes only the approved release and reads back the s
       return run;
     } },
   };
-  const ownerLockNode = await prepareOwnerLock(instanceRoot, pin);
-  const pinnedEnrollment = { ...enrollment, owner: undefined, ownerLockNode };
-  const installedOwner = createInstalledRootOwner({ root: instanceRoot, rootNode: enrollment.rootNode, lockNode: ownerLockNode });
-  await leased(installedOwner, async () => {
-    await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_LEASE' });
-  });
-  await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toMatchObject({ status: 'preview' });
   const approvals = generateKeyPairSync('ed25519');
   const journal = generateKeyPairSync('ed25519');
   const pem = (key: typeof approvals.publicKey) => key.export({ type: 'spki', format: 'pem' }) as string;
@@ -733,6 +726,38 @@ test('first-install CLI publishes only the approved release and reads back the s
   const signer = { signJournal: async (bytes: Uint8Array) => sign(null, bytes, journal.privateKey).toString('base64') };
   const operation = { releaseId: 'release', planSha256, journalKeyId: 'host-controller',
     journalPublicKey: pem(journal.publicKey), approvalPublicKey: pem(approvals.publicKey) };
+  return { instanceRoot, identity, expected, policy, pin, enrollment, installOperations, cli, args, run, operation, operationId,
+    planSha256, approve, signer, journal, pem, records, releaseStore, published, bearer, ca, origin,
+    dropAcknowledgement() { loseAck = true; }, requestCount: () => requests };
+}
+
+test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed package', async ({ onTestFinished }) => {
+  const { run, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot } =
+    await firstInstallFixture('first-install-packaged-hub', onTestFinished);
+  installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+  expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+  expect(await run('prepare-generation')).toMatchObject({
+    status: 'completed', code: 'INSTALL_GENERATION_PREPARED', generationId: 'first-generation',
+  });
+  const hub = new DatabaseSync(join(instanceRoot, 'data', 'first-generation', 'hub', 'hub.db'), { readOnly: true });
+  try {
+    expect(hub.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    expect(hub.prepare('SELECT name FROM sqlite_schema WHERE type = ? ORDER BY name').all('table')).toEqual(
+      ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
+  } finally { hub.close(); }
+}, 120_000);
+
+test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
+  const { instanceRoot, identity, expected, policy, pin, enrollment, installOperations, cli, args, run, operation, operationId,
+    planSha256, approve, signer, journal, pem, records, releaseStore, published, bearer, ca, origin, dropAcknowledgement, requestCount } =
+    await firstInstallFixture('first-install-cli', onTestFinished);
+  const ownerLockNode = await prepareOwnerLock(instanceRoot, pin);
+  const pinnedEnrollment = { ...enrollment, owner: undefined, ownerLockNode };
+  const installedOwner = createInstalledRootOwner({ root: instanceRoot, rootNode: enrollment.rootNode, lockNode: ownerLockNode });
+  await leased(installedOwner, async () => {
+    await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_LEASE' });
+  });
+  await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toMatchObject({ status: 'preview' });
   await expect(runFirstInstallRelease(() => enrollment, 'release', operationId, 'preview' as never,
     { ...operation, ...signer }, () => {})).rejects.toThrow();
   installOperations[operationId] = operation;
@@ -768,7 +793,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   expect(await records()).toHaveLength(2);
   const publishedInode = (await lstat(published)).ino;
   installOperations[operationId] = approved;
-  loseAck = true;
+  dropAcknowledgement();
   const [first, retry] = await Promise.all([run('execute'), run('execute')]);
   expect(first).toMatchObject({ status: 'uncertain', code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
   const readback = await run('readback');
@@ -813,7 +838,7 @@ test('first-install CLI publishes only the approved release and reads back the s
     expect(await run('prepare-generation')).toMatchObject({ status: 'uncertain', code: 'INSTALL_GENERATION_INTERRUPTED' });
     expect(await readdir(staged)).toEqual([]);
     await rm(staged, { recursive: true });
-    loseAck = true;
+    dropAcknowledgement();
     expect(await run('prepare-generation')).toMatchObject({ status: 'uncertain', code: 'INSTALL_GENERATION_INTERRUPTED' });
     const initializedInode = (await lstat(dataRoot)).ino;
     installOperations[operationId] = { ...operation, generation: { id: 'first-generation' } };
@@ -931,7 +956,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   if (hasHubInitializer) await expect(prepare(kernelPath)).rejects.toThrow();
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
-  expect(requests).toBe(0);
+  expect(requestCount()).toBe(0);
   enrollment.session = { bootstrapPlanSha256: planSha256, ca, callerId: 'web', authEpoch: 1, credentialRevision: 'local-fixture',
     readBearer: async () => bearer };
   const checkSession = () => cli.run([...args, '--check-session']);
@@ -941,10 +966,10 @@ test('first-install CLI publishes only the approved release and reads back the s
     installSession: { phase: 'authenticated-session', planSha256, observed: ['fixed-origin-tls', 'authenticated-session'],
       outstanding: ['schema-bootstrap', 'owner-passkey'], activationAuthorized: false, delegationAuthorized: false } });
   for (const privateValue of [bearer, ca, origin, instanceRoot]) expect(JSON.stringify(session)).not.toContain(privateValue);
-  expect(requests).toBe(1);
+  expect(requestCount()).toBe(1);
   enrollment.session = { ...enrollment.session, authEpoch: 2 };
   expect(await checkSession()).toMatchObject({ status: 'blocked', code: 'INSTALL_PREVIEW_SESSION' });
-  expect(requests).toBe(2);
+  expect(requestCount()).toBe(2);
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
   await writeFile(join(published, 'extra-file'), 'modified');
