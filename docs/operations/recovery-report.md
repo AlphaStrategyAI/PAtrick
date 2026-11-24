@@ -28,6 +28,18 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 真正开放还要求封存证明、当前旧写者停止且写凭据撤销的独立 fencing 证明、完整撤回、新稿保护、全部对账，以及获胜 epoch 的实际运行时安装和门禁读回。没有 `activation.enableDomain` 时不会尝试 CAS，也不会开放。实际安装前先持久化关闭的激活代次与精确对账切面；安装和注入回调后重新读权威见证，最终在无回调的 immediate 事务内同时比较 gate、代次、见证和两库切面，再发布准入及权威回执。更新的撤回或后续意图变化会保持关闭；失败会条件撤销旧准入能力，并在提供时调用运行时撤销端口。数据库 gate 不是进程 fencing，主机所有写入口必须实际消费它。
 
+### 部署独立见证
+
+在独立于当前和候选写者的主机上，使用专用服务账户运行仓库的 `scripts/recovery-witness.mjs`。使用本机持久文件系统中的 `0700` 目录保存 SQLite 文件及其 WAL/SHM，设置由同一账户持有的 `0600` 配置文件和 TLS 私钥。CA 证书与服务端证书也由该账户持有，禁止组或其他用户写入。服务端证书须覆盖客户端访问的名称，客户端证书按独立身份发放。
+
+首次登记每个域时，从可信主机登记读回当前写者及 epoch，再执行 `node scripts/recovery-witness.mjs initialize STORE DOMAIN WRITER EPOCH`。`STORE` 指向见证主机上的状态文件。重复登记已有域会失败。日常启动执行 `node scripts/recovery-witness.mjs serve CONFIG`。状态文件丢失或登记域不存在时，启动失败。应保留现有故障证据并重新核定权威状态，避免用初始值覆盖已推进的写者 epoch 或撤回水位。
+
+`CONFIG` 是 JSON，字段为 `store`、`authorityId`、`host`（监听 IP）、`port`、`caPath`、`certPath`、`keyPath` 和 `clients`。文件值使用绝对物理路径。`clients` 中每项包含客户端证书的 `fingerprint`（冒号分隔的 SHA-256 指纹）和 `domains`，只有包含 `writerId` 的证书可以对登记域提交 CAS。持久状态只保存控制记录。每次 CAS 使用原子 SQL 更新精确比较 revision，服务端按证书绑定的写者身份检查状态转换。
+
+写者侧从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWitnessPort`，使用 HTTPS `origin`、相同 `authorityId`、CA 证书及本机客户端证书和私钥建立端口，再交给 `createRecoveryWitness`。恢复运行时仍须从已登记的可信控制端口核验封存证明、旧写者隔离和完整撤回日志。正式验收在独立主机上记录权威读回和 RPO/RTO。
+
+2026-11-25 的本机验证覆盖双向 TLS、域和写者权限、双候选竞争、CAS 后响应丢失、独立进程重启读回，以及缺失状态、未登记域、不安全文件权限和 SQLite 辅助文件符号链接的拒绝路径。`npm run test:recovery` 通过 385 项，`npm run lint` 和 `npm run typecheck` 通过。
+
 ## 可选加密离机备份端口
 
 `createResticRecoveryBackup` 提供真实的无 shell 子进程与流式输出适配器。只接受明确授权并已确认离机性质的登记远程目标，核对精确 restic 版本、资料域和独立恢复凭据引用。密钥通过凭据端口注入进程环境，不进入 manifest/回执或命令参数。

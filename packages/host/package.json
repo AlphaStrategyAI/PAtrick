@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/credentials.ts",
-    "./recovery": "./src/recovery/index.ts"
+    "./recovery": "./src/recovery/index.ts",
+    "./recovery/https-witness": "./src/recovery/https-witness.mjs"
   }
 }
