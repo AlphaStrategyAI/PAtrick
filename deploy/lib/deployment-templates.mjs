@@ -10,12 +10,18 @@ export const deploymentPaths = Object.freeze({
   worker: 'deploy/launchd/com.patrick.autoloop-worker.plist',
   lima: 'deploy/lima/executor.yaml',
 });
+export const servicePreflight = Object.freeze({
+  source: 'deploy/host-controller/service-bootstrap.ts',
+  path: 'runtime/service-bootstrap-v1.mts',
+  sha256: 'f4c0a603a39a098516754a2a7aa2d46d657f97ee6de200f5e20b3890210a251d',
+});
 const templates = new Map([
   [deploymentPaths.caddy, ['caddy-template', '915c1bba63f43d6ba86fe5b4d2c475f5e8d084a8a6e12106248878edb711abfb']],
   [deploymentPaths.service, ['service-launchd-template', '4a1abcdf6623764e61d673295935df6c495a5461af2012b177a1ca166bb3d332']],
   [deploymentPaths.hub, ['hub-launchd-template', '57502d907c6d1c90c3c384d6ac46a2e15febdd7367583c3e1c315b1c2cf8a322']],
   [deploymentPaths.worker, ['worker-launchd-template', '72ef5cac63d4e326f0fc25b135eefd94c1dca4d57b9b1e404541e1dc12ce9d5d']],
   [deploymentPaths.lima, ['lima-executor-template', '1e54d49f3f691d9735f837a7b9c91caae286f6822e51f5f798a93926b4f44a13']],
+  [servicePreflight.path, ['service-bootstrap', servicePreflight.sha256]],
 ]);
 const byDigest = new Map([...templates].map(([path, [, digest]]) => [digest, path]));
 const jobs = ['service', 'hub', 'worker'];

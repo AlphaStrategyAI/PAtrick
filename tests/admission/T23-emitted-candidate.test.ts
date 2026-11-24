@@ -484,6 +484,18 @@ test('requires an independent complete profile pin and the genuine deployment st
   expect(token.profile).toBe('deployment-complete');
   await withStagedDeployment(checked, token, async admitted => {
     expect(admitted.profile).toBe('deployment-complete');
+    const preflightPath = 'runtime/service-bootstrap-v1.mts';
+    const preflightSource = await readFile(join(root, 'deploy/host-controller/service-bootstrap.ts'));
+    expect(admitted.servicePreflight).toEqual({ path: join(destination, preflightPath), sha256: sha256(preflightSource) });
+    expect(checked.materials).toContainEqual({
+      path: preflightPath, role: 'service-bootstrap', mode: '100644',
+      bytes: preflightSource.length, sha256: sha256(preflightSource),
+    });
+    expect(await readFile(admitted.servicePreflight!.path)).toEqual(preflightSource);
+    const preflight = spawnSync(process.execPath, ['--no-addons', admitted.servicePreflight!.path], {
+      cwd: destination, env: {}, encoding: 'utf8',
+    });
+    expect([preflight.status, preflight.stdout, preflight.stderr]).toEqual([76, '', '']);
     for (const [key, [path, role]] of Object.entries(roles)) {
       const source = await readFile(join(root, path));
       expect(templates).toContainEqual({ path, role, mode: '100644', bytes: source.length, sha256: sha256(source) });
@@ -1319,11 +1331,16 @@ test('refuses independently re-signed incomplete, aliased or substituted templat
   expect((await verifyEmittedRuntimeCandidate(candidate, control)).profile).toBe('deployment-complete');
   const reasons = { omit: /missing deployment template/, extra: /deployment template alias/, alias: /missing deployment template/,
     duplicate: /duplicate or ambiguous/, role: /role\/mode mismatch/, mode: /deployment template profile\/mode\/content/,
-    substitute: /deployment template profile\/mode\/content/, 'under-web': /deployment template alias/, version: /unsupported inventory/ };
+    substitute: /deployment template profile\/mode\/content/, 'under-web': /deployment template alias/, version: /unsupported inventory/,
+    'preflight-substitute': /deployment template profile\/mode\/content mismatch: runtime\/service-bootstrap-v1\.mts/ };
   for (const variant of Object.keys(reasons) as (keyof typeof reasons)[]) {
     const options = await signedVariant(candidate, false, undefined, fixture, variant);
     await expect(verifyEmittedRuntimeCandidate(candidate, options)).rejects.toThrow(reasons[variant]);
   }
+  const legacy = await signedVariant(candidate, false, undefined, fixture, 'preflight-legacy');
+  const verifiedLegacy = await verifyEmittedRuntimeCandidate(candidate, legacy);
+  expect(verifiedLegacy.profile).toBe('deployment-complete');
+  expect(verifiedLegacy.materials.some(({ path }) => path === 'runtime/service-bootstrap-v1.mts')).toBe(false);
 }, 120_000);
 
 test('checks profile selection for build, capture, material inspection and independent readback', async () => {
@@ -1332,7 +1349,7 @@ test('checks profile selection for build, capture, material inspection and indep
   const snapshot = (profile: string) => JSON.parse(child([build, 'snapshot', '--profile', profile, ...source]));
   const v1 = snapshot('runtime-only');
   const v2 = snapshot('deployment-complete');
-  expect(v2.files).toBe(v1.files + 5);
+  expect(v2.files).toBe(v1.files + 6);
   expect(v2.snapshotSha256).toBe(complete.expected.source.snapshotSha256);
   expect(v2.snapshotSha256).not.toBe(v1.snapshotSha256);
   expect(JSON.parse(child([build, 'verify', '--profile', 'deployment-complete', '--artifact-root', complete.artifact])).profile).toBe('deployment-complete');
@@ -1857,7 +1874,8 @@ type MaterialRow = { path: string; role: string; mode: string; sha256: string; b
 // Independently frame a signed contract-test variant. Its new report and all four
 // logs explicitly describe a synthetic fixture; they never reuse execution logs.
 async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: number,
-  fixture = { packagePath, expected, policy }, variant?: 'omit' | 'extra' | 'alias' | 'duplicate' | 'role' | 'mode' | 'substitute' | 'under-web' | 'version') {
+  fixture = { packagePath, expected, policy }, variant?: 'omit' | 'extra' | 'alias' | 'duplicate' | 'role' | 'mode' |
+    'substitute' | 'under-web' | 'version' | 'preflight-legacy' | 'preflight-substitute') {
   const env = JSON.parse(await readFile(fixture.packagePath,'utf8'));
   const manifest = env.manifest;
   const original = manifest.identity;
@@ -1880,6 +1898,7 @@ async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: 
   }
   if (variant) {
     const caddy = 'deploy/Caddyfile';
+    const preflight = 'runtime/service-bootstrap-v1.mts';
     const originalRow = runtime.get(caddy)!;
     if (variant === 'omit' || variant === 'alias') {
       for (const map of [runtime,payload,descriptors]) map.delete(caddy);
@@ -1894,6 +1913,13 @@ async function signedVariant(path: string, omitEntry: boolean, requestedNodes?: 
       descriptors.set(caddy, row);
     }
     if (variant === 'substitute') runtime.set(caddy, put(caddy, Buffer.from('unregistered.example.test'), originalRow.role));
+    if (variant === 'preflight-legacy') {
+      for (const map of [runtime, payload, descriptors]) map.delete(preflight);
+    }
+    if (variant === 'preflight-substitute') {
+      const altered = Buffer.concat([payload.get(preflight)!, Buffer.from('\nimport "node:child_process";\n')]);
+      runtime.set(preflight, put(preflight, altered, 'service-bootstrap'));
+    }
     if (variant === 'version') inv.schemaVersion = 3;
   }
   const nodes = new Set<string>(['.']);

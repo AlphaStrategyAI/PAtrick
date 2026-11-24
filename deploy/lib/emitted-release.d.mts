@@ -75,7 +75,10 @@ type StagedRuntimePaths = Readonly<{
   root: string; entrypoints: Readonly<Record<'composition' | 'service' | 'cli' | 'worker', string>>;
   packageSha256: string; materialSha256: string; inventorySha256: string; runtime: EmittedRuntimeIdentity;
 }>;
-export type AdmittedDeployment = Readonly<StagedRuntimePaths & { profile: 'deployment-complete'; templates: Readonly<Record<DeploymentKey, string>> }>;
+export type AdmittedDeployment = Readonly<StagedRuntimePaths & {
+  profile: 'deployment-complete'; templates: Readonly<Record<DeploymentKey, string>>;
+  servicePreflight?: Readonly<{ path: string; sha256: string }>;
+}>;
 export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntimePaths & { profile: 'runtime-only' }>;
 export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
   use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;

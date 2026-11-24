@@ -238,7 +238,8 @@ async function captureSource(root, commit, profile) {
     fail('RUNTIME_GIT_ENVIRONMENT_FORBIDDEN');
   }
   await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
-  const templatePaths = deployment.completeProfile(profile) ? Object.values(deployment.deploymentPaths) : [];
+  const preflight = deployment.servicePreflight;
+  const templatePaths = deployment.completeProfile(profile) ? [...Object.values(deployment.deploymentPaths), preflight.source] : [];
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', ...templatePaths];
@@ -264,7 +265,7 @@ async function captureSource(root, commit, profile) {
     const sha = sha256(bytes);
     if (templatePaths.includes(path)) {
       if (info.nlink !== 1) fail('RUNTIME_TEMPLATE_ALIAS');
-      deployment.checkDeploymentRecord(profile, path, fileMode(info), sha);
+      deployment.checkDeploymentRecord(profile, path === preflight.source ? preflight.path : path, fileMode(info), sha);
     }
     const blob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
     const prior = committed.get(path);
@@ -786,7 +787,11 @@ async function buildRuntime(values, recipe) {
         },
       }],
     });
-    if (deployment.completeProfile(profile)) await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
+    if (deployment.completeProfile(profile)) {
+      await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
+      const { source, path } = deployment.servicePreflight;
+      await copyRegular(resolve(sourceRoot, source), resolve(materials, path));
+    }
     await copyMigrations(sourceRoot, materials);
     await buildWeb(sourceRoot, materials, vite, exports);
     await copyRuntimePackages(toolRoot, materials, lock);

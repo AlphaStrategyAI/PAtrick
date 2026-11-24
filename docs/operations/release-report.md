@@ -53,6 +53,8 @@ GitHub 要求默认分支包含该工作流文件才能手动触发。受保护�
 
 `.github/workflows/release-darwin.yml` 的候选构建使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 26.13.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。
 
+新构建将 `runtime/service-bootstrap-v1.mts` 纳入部署材料清单。签名包验签和发布目录读回会核对该文件的固定路径、权限及摘要。登记控制器可以在已校验的目录中取得路径和摘要，用于服务角色启动前的握手。历史候选仍可读取，缺少该文件时没有握手材料回执。三服务启动继续依赖生产控制器接线和目标机验收。
+
 提交 `bee6c9e9f7eed417aef7d47cc4cd256aac715e50` 的两个托管构建均通过。下载后独立核对了 GitHub ZIP 的摘要、内层 tar 的摘要、每个归档的 452 个载荷文件和清单，以及 SQLite 扩展的 Mach-O 架构。两种架构均记录了 Node ABI 137 和 SQLite 3.53.2。[GitHub Actions 构建记录](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/44285957621)
 
 | 架构 | 部署材料 tar SHA-256 | 运行时清单 SHA-256 |
