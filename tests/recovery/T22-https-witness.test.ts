@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash, X509Certificate } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign, verify, X509Certificate } from 'node:crypto';
 import { once } from 'node:events';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:https';
@@ -8,7 +8,10 @@ import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
+import Database from 'better-sqlite3';
 import { openDatabase } from '@patrick/storage';
+import { createRecoveryBackup } from '../../packages/host/src/recovery/backup.js';
+import { createRecoveryRestorer } from '../../packages/host/src/recovery/restore.js';
 import { createRecoveryWitness, withdrawalEntryHash, type RecoveryWitnessRecord } from '../../packages/host/src/recovery/witness.js';
 import { createRecoveryWithdrawalJournal } from '../../packages/host/src/recovery/withdrawals.js';
 import { createHttpsRecoveryWithdrawalLogPort, createHttpsRecoveryWitnessPort, createRecoveryWitnessServer,
@@ -257,10 +260,41 @@ test('standalone witness opens only initialized state and serves enrolled client
     const log = logPort(origin, 'primary');
     expect(await port.readAuthoritative('personal')).toEqual({ ...initial, revision });
     const witness = createRecoveryWitness({ writerId: 'primary', port, verifySealedProof: async () => true });
-    const local = openDatabase(join(root, 'standalone-service.sqlite'));
+    const service = openDatabase(join(root, 'standalone-service.sqlite'));
+    const hub = openDatabase(join(root, 'standalone-hub.sqlite'));
+    const recoveryRoot = join(root, 'standalone-sets');
+    const versionLocks = { application: 'fixture' };
+    const keys = generateKeyPairSync('ed25519');
+    const authority = {
+      keyId: 'standalone-fixture',
+      sign: async (bytes: Uint8Array) => sign(null, bytes, keys.privateKey).toString('base64'),
+      verify: async (bytes: Uint8Array, signature: string, keyId: string) =>
+        keyId === 'standalone-fixture' && verify(null, bytes, keys.publicKey, Buffer.from(signature, 'base64')),
+    };
     const entries: WithdrawalEntry[] = [];
     try {
-      const insert = local.prepare('INSERT INTO withdrawal_events VALUES (?,?,?,?,?,?,?,?)');
+      const createdAt = '2026-11-25T00:00:00.000Z';
+      for (const database of [service, hub]) {
+        database.prepare("INSERT INTO hub_snapshots VALUES ('hub', 1, '{}', ?)").run(createdAt);
+      }
+      service.prepare("INSERT INTO accounts VALUES ('owner', 1, 1, ?)").run(createdAt);
+      service.prepare(`INSERT INTO channel_connections VALUES (
+        'feishu', 'owner', 'personal', 'app', 'tenant', 'fixture-ref', 1, 1, 4, 2, 3,
+        NULL, NULL, 'old-owner', 'old-chat', 'ready', 'active', NULL, NULL, '1.0', ?, ?)`).run(createdAt, createdAt);
+      const backup = createRecoveryBackup({
+        databases: { service, hub }, root: recoveryRoot, authority,
+        freeze: { async acquire() {
+          return { cutId: certificate.cutId, ingressFrozen: true, claimsFrozen: true, receiptsFrozen: true,
+            effectsFrozen: true, executionTreesStopped: true, uncertainCallsJournaled: true,
+            durableHandoff: true, async release() {} };
+        } },
+      });
+      const captured = await backup.captureRecoverySet({
+        setId: 'standalone-fixture', domains: [{ domain: initial.domain, writerEpoch: initial.writerEpoch, withdrawal }],
+        versionLocks, resources: [],
+      });
+      expect(captured.manifest.completeness).toEqual({ recoverable: true, gaps: [] });
+      const insert = service.prepare('INSERT INTO withdrawal_events VALUES (?,?,?,?,?,?,?,?)');
       let previousHash = emptyHash;
       for (let seq = 1; seq <= 18; seq++) {
         const value = entry(seq, previousHash);
@@ -269,14 +303,31 @@ test('standalone witness opens only initialized state and serves enrolled client
         entries.push(value);
         previousHash = value.hash;
       }
-      const journal = createRecoveryWithdrawalJournal({ database: local, witness, log });
+      const journal = createRecoveryWithdrawalJournal({ database: service, witness, log });
       expect(await journal.protectPending(initial.domain, initial.writerEpoch)).toBe('protected');
-      expect(local.prepare('SELECT COUNT(*) AS count FROM recovery_withdrawal_pending').get()).toEqual({ count: 0 });
-    } finally { local.close(); }
+      expect(service.prepare('SELECT COUNT(*) AS count FROM recovery_withdrawal_pending').get()).toEqual({ count: 0 });
+    } finally { try { service.close(); } finally { hub.close(); } }
     const current = (await witness.current(initial.domain))!;
     expect(current.withdrawal).toEqual({ seq: 18, hash: entries.at(-1)!.hash });
     expect(await witness.sealRecoveryWriter(initial.domain, current.revision, certificate, current.withdrawal)).toBe(true);
-    expect(await log.readComplete(initial.domain, (await witness.current(initial.domain))!)).toEqual(entries);
+    const isolated = await createRecoveryRestorer({
+      authority, recoveryRoot, isolationRoot: join(root, 'standalone-isolation'), versionLocks,
+      witness, withdrawalLog: log,
+      fence: { async verify() { return { stopped: true, credentialsRevoked: true, proof: certificate.fenceProof }; } },
+      replay: { externalAccess: 'read_only', async reconcileHub() { return { confirmed: true }; },
+        async recoverPendingIngest() { return { confirmed: true }; }, async rebuildProjections() { return { confirmed: true }; } },
+    }).restoreRecoverySet('standalone-fixture');
+    expect(isolated).toMatchObject({
+      orderlyHandoff: false, external_writes: 0, channels: { feishu: 'requires_reauthorization' },
+      data_domains: { personal: { status: 'blocked', reasons: ['drill_mode'] } },
+    });
+    const recovered = new Database(join(isolated.directory, 'databases/service.sqlite'), { readonly: true });
+    try {
+      expect(recovered.prepare('SELECT sequence,entry_hash,protection FROM recovery_withdrawal_log ORDER BY sequence').all())
+        .toEqual(entries.map(value => ({ sequence: value.seq, entry_hash: value.hash, protection: 'protected' })));
+      expect(recovered.prepare('SELECT status,transport_mode FROM channel_connections').get())
+        .toEqual({ status: 'requires_reauthorization', transport_mode: 'disabled' });
+    } finally { recovered.close(); }
     child.kill('SIGTERM');
     expect(await exited).toEqual([0, null]);
     const reopened = openRecoveryWitnessStore(store);

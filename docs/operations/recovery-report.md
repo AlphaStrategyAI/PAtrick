@@ -46,7 +46,7 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。水位 CAS 先核对持久化事件的序号、摘要及前一条哈希。当前 epoch 尚有已追加待确认的事件时，见证拒绝封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
 
-本机恢复套件通过 386 项。双向 TLS 演练覆盖独立子进程内的持久化、18 条撤回的分批读回、见证封存、跨 epoch 接续，以及日志缺失或更换时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
+本机恢复套件通过 386 项。双向 TLS 演练从签名 RecoverySet 恢复，在隔离库读回并补齐备份后产生的 18 条撤回，核对飞书需重新授权且外部写入为零。测试还覆盖独立进程内的持久化、见证封存、跨 epoch 接续，以及日志缺失或更换时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
 
 ## 可选加密离机备份端口
 
