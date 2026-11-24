@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -23,7 +23,9 @@ function workspace() {
 const inspect = (path: string, architecture: string) =>
   `Mach-O 64-bit bundle ${architecture === 'arm64' ? 'arm64' : 'x86_64'}: ${path}`;
 
-function buildTree(root: string, options: { commit?: string; x64Commit?: string; node?: string; modules?: string; sign?: boolean } = {}) {
+function buildTree(root: string, options: {
+  commit?: string; x64Commit?: string; inventoryCommit?: string; node?: string; modules?: string; sign?: boolean; changePayload?: 'bytes' | 'mode';
+} = {}) {
   for (const architecture of ['arm64', 'x64']) {
     const sourceCommit = (architecture === 'x64' ? options.x64Commit : undefined) ?? options.commit ?? commit;
     const materials = join(root, `patrick-darwin-${architecture}-unsigned-deployment-complete-materials`);
@@ -31,9 +33,26 @@ function buildTree(root: string, options: { commit?: string; x64Commit?: string;
     const payload = join(root, `payload-${architecture}`);
     mkdirSync(join(payload, 'metadata'), { recursive: true });
     mkdirSync(join(payload, 'node_modules/better-sqlite3/build/Release'), { recursive: true });
-    writeFileSync(join(payload, nativePath), Buffer.from(`native-${architecture}\n`));
-    const files = [{ path: nativePath, role: 'native-addon', bytes: 1, sha256: sha(Buffer.from(`native-${architecture}\n`)), mode: '100755' }];
-    const inventory = Buffer.from(JSON.stringify({ files }, null, 2) + '\n');
+    const nativeBytes = Buffer.from(`native-${architecture}\n`);
+    const runtimePath = 'runtime/cli.mjs';
+    const runtimeBytes = Buffer.from('export {};\n');
+    mkdirSync(join(payload, 'runtime'));
+    writeFileSync(join(payload, nativePath), nativeBytes);
+    chmodSync(join(payload, nativePath), 0o755);
+    writeFileSync(join(payload, runtimePath), options.changePayload === 'bytes' ? Buffer.from('export {} \n') : runtimeBytes);
+    chmodSync(join(payload, runtimePath), options.changePayload === 'mode' ? 0o755 : 0o644);
+    const files = [
+      { path: nativePath, role: 'native-addon', bytes: nativeBytes.length, sha256: sha(nativeBytes), mode: '100755' },
+      { path: runtimePath, role: 'runtime-entry', bytes: runtimeBytes.length, sha256: sha(runtimeBytes), mode: '100644' },
+    ];
+    const source = { kind: 'commit', commit: sourceCommit, snapshotSha256: 'b'.repeat(64), lockSha256: 'c'.repeat(64) };
+    const observed = { platform: 'darwin', arch: architecture, node: options.node ?? 'v26.13.0', modules: options.modules ?? '147', npm: '11.20.0' };
+    const native = { path: nativePath, sha256: sha(nativeBytes), bytes: nativeBytes.length, format: 'mach-o',
+      architecture, observedArchitecture: architecture, observedNode: observed.node,
+      observedModules: observed.modules, observedLoad: true, sqlite: '3.53.2' };
+    const inventory = Buffer.from(JSON.stringify({
+      source: { ...source, commit: options.inventoryCommit ?? sourceCommit }, observed, native, files,
+    }, null, 2) + '\n');
     writeFileSync(join(payload, 'metadata/runtime-materials.json'), inventory);
     mkdirSync(materials, { recursive: true });
     const archive = join(materials, 'runtime-materials.tar');
@@ -43,14 +62,10 @@ function buildTree(root: string, options: { commit?: string; x64Commit?: string;
     writeFileSync(join(materials, 'SHA256SUMS'), `${archiveSha256}  runtime-materials.tar\n`);
     const receipt = {
       kind: 'unsigned-deployment-complete-materials',
-      source: { kind: 'commit', commit: sourceCommit, snapshotSha256: 'b'.repeat(64), lockSha256: 'c'.repeat(64) },
-      observed: { platform: 'darwin', arch: architecture, node: options.node ?? 'v26.13.0', modules: options.modules ?? '147', npm: '11.20.0' },
-      native: { path: nativePath, sha256: sha(Buffer.from(`native-${architecture}\n`)), bytes: 1, format: 'mach-o',
-        architecture, observedArchitecture: architecture, observedNode: options.node ?? 'v26.13.0',
-        observedModules: options.modules ?? '147', observedLoad: true, sqlite: '3.53.2' },
+      source, observed, native,
       archive: { name: 'runtime-materials.tar', sha256: archiveSha256 },
       readback: { status: 'verified', profile: 'deployment-complete', files: files.length,
-        bytes: inventory.length, inventoryBytes: inventory.length, inventorySha256: sha(inventory) },
+        bytes: nativeBytes.length + runtimeBytes.length, inventoryBytes: inventory.length, inventorySha256: sha(inventory) },
     };
     writeFileSync(join(materials, 'readback-receipt.json'), JSON.stringify(receipt, null, 2));
     mkdirSync(candidate, { recursive: true });
@@ -82,8 +97,13 @@ it('registers both architectures from the downloaded bytes and their own digests
   expect(entries.arm64.commit).toBe(commit);
   expect(entries.arm64.nativeDescription).toContain('Mach-O 64-bit bundle arm64');
   expect(entries.x64.nativeDescription).toContain('Mach-O 64-bit bundle x86_64');
-  expect(entries.arm64.payloadFiles).toBe(2);
+  expect(entries.arm64.payloadFiles).toBe(3);
   expect(entries.arm64.sourceCandidateSha256).toMatch(/^[a-f0-9]{64}$/);
+});
+
+it.each(['bytes', 'mode'] as const)('rejects changed runtime %s even when the archive digest matches its receipt', changePayload => {
+  const tree = buildTree(workspace(), { changePayload });
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow('CANDIDATE_PAYLOAD_DESCRIPTOR_MISMATCH');
 });
 
 it('rejects a tampered archive, a foreign runtime, a mismatched commit and a signed source', () => {
@@ -118,6 +138,11 @@ it('binds both architecture builds to the hosted run commit', () => {
     .toThrow(/CANDIDATE_BUILD_COMMIT_MISMATCH/);
   const mixed = buildTree(workspace(), { x64Commit: 'c'.repeat(40) });
   expect(() => verifyCandidateTree(mixed, { inspectNative: inspect })).toThrow(/CANDIDATE_BUILD_COMMIT_MISMATCH/);
+});
+
+it('rejects a valid archive whose internal inventory identifies a different build', () => {
+  const tree = buildTree(workspace(), { inventoryCommit: 'c'.repeat(40) });
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect, expectedCommit: commit })).toThrow('CANDIDATE_INVENTORY_IDENTITY_MISMATCH');
 });
 
 it('checks the inventory and source manifest digests directly against their receipts', () => {
