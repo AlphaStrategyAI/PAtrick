@@ -1112,7 +1112,7 @@ describe('T23 installed runtime build and bootstrap', () => {
     });
   }, 30_000);
 
-  test.each(['success', 'default-local', 'join-timeout', 'missing-terminal', 'lost-response', 'bad-freeze', 'ordinary-first', 'inode-swap',
+  test.each(['success', 'generation-layout', 'default-local', 'join-timeout', 'missing-terminal', 'lost-response', 'bad-freeze', 'ordinary-first', 'inode-swap',
     'unbound-open', 'pre-open-exchange', 'swap-at-acquire', 'open-lease-loss', 'prior-at-open', 'prior-start', 'prior-set', 'prior-handoff', 'clearance-mismatch',
     'warm-prior', 'warm-admit', 'warm-withdraw', 'root-ancestor', 'private-descendant', 'receipt-outage', 'warm-receipt-outage',
     'lease-outage', 'post-readback-outage', 'receipt-handoff-exchanged', 'prior-other-operation', 'revoked-receipt', 'tamper-handoff', 'sign-timeout', 'lost-close', 'file-after-claim', 'close-failed', 'tamper-after-close', 'SIGINT', 'SIGTERM'] as const)('runs the signed installed maintenance cut for %s', async (mode) => {
@@ -1140,12 +1140,13 @@ const [journalRoot, setRoot, handoffRoot, normalRoot, credentialDirectory] =
   ['journal', 'sets', 'handoff', 'ordinary', 'credentials'].map((name) => join(root, name));
 for (const path of [journalRoot, setRoot, handoffRoot, normalRoot, credentialDirectory]) await mkdir(path, { mode: 0o700 });
 const databasePath = join(root, 'service.sqlite');
-const hubPath = join(root, 'operational.sqlite');
+const hubPath = join(root, mode === 'generation-layout' ? 'hub.sqlite' : 'operational.sqlite');
+const localAnswersPath = mode === 'generation-layout' ? join(root, 'answers.sqlite') : databasePath + '.hub';
 if (mode.startsWith('prior-') || mode === 'clearance-mismatch') {
   const seed = new Database(databasePath);
   seed.pragma('user_version=1'); seed.close();
 } else openRuntimeDatabase(databasePath).close();
-const answerSeed = new Database(databasePath + '.hub');
+const answerSeed = new Database(localAnswersPath);
 answerSeed.pragma('user_version=1'); answerSeed.close();
 openRuntimeDatabase(hubPath).close();
 let operational;
@@ -1261,7 +1262,7 @@ const backend = { scope: { accountId: 'owner', dataDomain: 'personal' }, admissi
 
 const parents = new Set();
 for (let directory = root; !parents.has(directory); directory = dirname(directory)) parents.add(directory);
-const files = { service: file(databasePath), worker: file(databasePath), localAnswers: file(databasePath + '.hub'), operationalHub: file(hubPath) };
+const files = { service: file(databasePath), worker: file(databasePath), localAnswers: file(localAnswersPath), operationalHub: file(hubPath) };
 const enrollment = { installationId: plan.installationId, generationId: plan.generationId, identity, roles: plan.roles,
   files, ancestors: [...parents].map(file) };
 const ownerPermit = witness.attest(canonical(enrollment));
@@ -1436,7 +1437,7 @@ const readDatabase = (db) => ({
     runtime: { dataRoot: root, profile: 'test', origin: 'http://localhost', rpId: 'localhost',
       listener: { host: '127.0.0.1', port: 0, origin: 'http://localhost' }, operationalHub: { origin: hubOrigin, commit: pin } },
     roots: [journalRoot, setRoot, handoffRoot].map(file), files: {
-      service: file(databasePath), worker: file(databasePath), operationalHub: file(hubPath), localAnswers: file(databasePath + '.hub'),
+      service: file(databasePath), worker: file(databasePath), operationalHub: file(hubPath), localAnswers: file(localAnswersPath),
     } };
 for (const role of ['service', 'worker']) startupPermits.set(role, witness.attest(canonical({ binding: expected, role })));
 const makeProvision = (hubConnection = operational, ordinaryRoot) => createRuntimeProvisioning({
@@ -1490,6 +1491,8 @@ async function scenario() {
   const capture = (timeoutMs = 5000, operationId = 'maintain') => service.maintenance.capture({ operationId, timeoutMs });
   assert.deepEqual(openedRoles.slice(-4), ['operationalHub', 'service', 'localAnswers', 'worker']);
   assert.deepEqual(releasedRoles, openedRoles);
+  assert.equal(answers.name, localAnswersPath);
+  if (mode === 'generation-layout') assert(!((await readdir(root)).includes('service.sqlite.hub')));
   assert.equal(observed().status, 'absent');
   if (['warm-prior', 'warm-admit', 'warm-withdraw'].includes(mode)) {
     await writeFile(join(journalRoot, 'maintain.claim.json'), 'uncertain prior operation');

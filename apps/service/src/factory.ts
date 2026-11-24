@@ -66,6 +66,7 @@ export type CreateAppOptions = {
   /** Trusted installed composition receives the exact gated handles before worker admission. */
   bindRecoveryOperations?: (resources: { database: SqliteDatabase; hub: LocalHubPort; hubDatabase: SqliteDatabase }) => RecoverySettingsConfiguration | undefined;
   databasePath?: string;
+  localAnswersPath?: string;
   recoveryRuntime?: RecoveryRuntimeConfiguration;
   recoveryOperations?: RecoverySettingsConfiguration;
   credentialDirectory?: string;
@@ -218,7 +219,8 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     if (state.hub) return state.hub;
     context();
     if (!state.databasePath) throw new Error('DATABASE_PATH_MISSING');
-    state.hub = (options.openLocalAnswers ?? createLocalHubPort)(`${state.databasePath}.hub`, (database) => { state.hubDatabase = database; });
+    const path = options.localAnswersPath ?? `${state.databasePath}.hub`;
+    state.hub = (options.openLocalAnswers ?? createLocalHubPort)(path, (database) => { state.hubDatabase = database; });
     return state.hub;
   }
   function vaultApi(): ReturnType<typeof createVaultApi> {

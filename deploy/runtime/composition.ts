@@ -202,7 +202,7 @@ function liveDatabaseFile(database: SqliteDatabase): DatabaseFile {
 }
 
 function createRecoveryTargetBinding(
-  identity: HostIdentity, databasePath: string, input?: OperationalRecoveryHubBinding,
+  identity: HostIdentity, databasePath: string, answerPath: string, input?: OperationalRecoveryHubBinding,
 ) {
   let operational: Readonly<{ database: SqliteDatabase; readDatabase: RecoveryDatabaseReader; file: DatabaseFile }> | undefined;
   if (input) {
@@ -216,7 +216,6 @@ function createRecoveryTargetBinding(
 
   function assertHubFile(bound: NonNullable<typeof operational>, answer?: SqliteDatabase) {
     const current = liveDatabaseFile(bound.database);
-    const answerPath = databasePath + '.hub';
     if (current.physical !== bound.file.physical || !sameFile(current, bound.file) ||
         current.physical === databasePath || current.physical === answerPath ||
         sameFile(fileIdentity(databasePath), current) || sameFile(fileIdentity(answerPath), current) ||
@@ -522,13 +521,21 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
   requireCut(roles.every((role) => validToken(role.ownerId) && Number.isSafeInteger(role.uid) && role.uid >= 0) &&
     new Set(roles.map((role) => role.ownerId)).size === roles.length &&
     plan.roles.service.uid === serviceUid && plan.roles.worker.uid === process.geteuid?.());
+  const openingOwner = openingOwners.get(input.storage);
+  requireCut(openingOwner);
+  const opener: OpeningOwner = openingOwner;
+  const enrollment = opener.enrollment;
+  const localAnswersPath = enrollment.files.localAnswers.path;
+  requireCut(enrollment.installationId === plan.installationId && enrollment.generationId === plan.generationId &&
+    sameIdentity(identity, enrollment.identity) && canonical(enrollment.roles) === canonical(plan.roles) &&
+    databasePath === enrollment.files.service.path && hub.physicalPath === enrollment.files.operationalHub.path);
   const dedicated = [journalRoot, setRoot, handoffRoot];
   const ordinaryRoots = scope.resources.map((resource) => resource.root);
   requireCut(dedicated.every((path, index) =>
-    [...dedicated.slice(index + 1), ...ordinaryRoots, databasePath, databasePath + '.hub', hub.physicalPath]
+    [...dedicated.slice(index + 1), ...ordinaryRoots, databasePath, localAnswersPath, hub.physicalPath]
       .every((other) => disjoint(path, other))));
   const ancestry = new Map<string, CutFile>();
-  for (let parent of [...dedicated, ...ordinaryRoots, databasePath, hub.physicalPath].map((path) => dirname(path))) {
+  for (let parent of [...dedicated, ...ordinaryRoots, databasePath, localAnswersPath, hub.physicalPath].map((path) => dirname(path))) {
     while (!ancestry.has(parent)) {
       ancestry.set(parent, pinPath(parent, true));
       if (dirname(parent) === parent) break;
@@ -544,14 +551,6 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
     }
   }
   assertPrivateRoot();
-  const openingOwner = openingOwners.get(input.storage);
-  requireCut(openingOwner);
-  const opener: OpeningOwner = openingOwner;
-  const enrollment = opener.enrollment;
-  requireCut(enrollment.installationId === plan.installationId && enrollment.generationId === plan.generationId &&
-    sameIdentity(identity, enrollment.identity) && canonical(enrollment.roles) === canonical(plan.roles) &&
-    databasePath === enrollment.files.service.path && databasePath + '.hub' === enrollment.files.localAnswers.path &&
-    hub.physicalPath === enrollment.files.operationalHub.path);
   const operational = opener.lookup('operationalHub', hub.database);
   const { dataRoot, profile, origin, rpId, listener, operationalHub } = registration;
   const subject: MaintenanceBinding = immutable({ ...plan, identity, captureHost, signerId: keyId, roots,
@@ -960,13 +959,17 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
     for (const key of ['vaultInitOperations', 'vaults', 'lifecycleReadbacks'] as const) ownCapability(hostCapabilities, key);
   }
   validateNestedIdentities(hostCapabilities, identity);
+  const legacyAnswersPath = service.databasePath + '.hub';
+  let localAnswersPath = legacyAnswersPath;
   if (input.maintenance) {
     const opener = openingOwners.get(input.maintenance.storage);
     requireCut(opener && operationalRecoveryHub && !provisionedStorage.has(input.maintenance.storage));
+    localAnswersPath = opener.enrollment.files.localAnswers.path;
+    requireCut(localAnswersPath === legacyAnswersPath || localAnswersPath === join(dirname(service.databasePath!), 'answers.sqlite'));
     opener.lookup('operationalHub', operationalRecoveryHub.database);
   }
   const { bindTargets: bindRecoveryTargets, assertCliRecoveryCurrent } =
-    createRecoveryTargetBinding(identity, service.databasePath!, operationalRecoveryHub);
+    createRecoveryTargetBinding(identity, service.databasePath!, localAnswersPath, operationalRecoveryHub);
   const registeredRecovery = hostCapabilities.recovery && bindRecoveryTargets(hostCapabilities.recovery, undefined, true);
   const registrationData = Object.freeze({
     ...registration,
@@ -1025,7 +1028,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
     recoveryRuntime: maintenance?.roleRuntime('worker') ?? recoveryRuntime,
     assertStartupAllowed: maintenance && (() => maintenance.assertStartupAllowed('worker')) });
   const serviceOptions: CreateAppOptions = {
-    ...storageOptions, browserAuthority,
+    ...storageOptions, browserAuthority, localAnswersPath,
     openMain: maintenance && ((path) => maintenance.openMain('service', path)),
     openLocalAnswers: maintenance?.openLocalAnswers,
     recoveryRuntime: maintenance?.roleRuntime('service') ?? recoveryRuntime,
