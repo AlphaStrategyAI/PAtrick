@@ -24,6 +24,8 @@ let LIMITS;
 let validatePaths;
 let canonicalize;
 let deployment;
+let admitReadRoot;
+let readRegularFile;
 
 async function loadRecipe(sourceRoot) {
   const script = fileURLToPath(import.meta.url);
@@ -43,6 +45,8 @@ async function loadRecipe(sourceRoot) {
   LIMITS = helper.RELEASE_LIMITS;
   validatePaths = helper.validatePaths;
   canonicalize = helper.canonicalize;
+  admitReadRoot = helper.admitReadRoot;
+  readRegularFile = helper.readRegularFile;
   await verifyRecipe(checkout, observed);
   return observed;
 }
@@ -125,7 +129,8 @@ function parse(command, argv) {
   const required = command === 'verify'
     ? ['artifact-root']
     : ['source-root', 'source-commit', ...(command === 'build' ? ['output-root'] : [])];
-  const allowed = new Set([...required, 'profile', ...(command === 'build' ? ['source-snapshot', 'directory-authority', 'directory-authority-sha256', 'node-headers'] : [])]);
+  const allowed = new Set([...required, 'profile', ...(command === 'build' ?
+    ['source-snapshot', 'directory-authority', 'directory-authority-sha256', 'node-headers', 'autoloop-root'] : [])]);
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -185,6 +190,19 @@ async function copyRegular(source, destination) {
   await mkdir(dirname(destination), { recursive: true });
   await copyFile(source, destination);
   await chmod(destination, info.mode & 0o111 ? 0o755 : 0o644);
+}
+
+async function copyAutoloopHub(sourceRoot, materialRoot) {
+  const root = admitReadRoot(sourceRoot);
+  const hub = deployment.autoloopHub;
+  for (const [path, digest] of Object.entries(hub.files)) {
+    const source = resolve(root.root, path);
+    const bytes = await readRegularFile(source, 128 * 1024, root);
+    if (sha256(bytes) !== digest) fail('AUTOLOOP_HUB_SOURCE_MISMATCH');
+    const destination = resolve(materialRoot, hub.root, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, bytes, { flag: 'wx', mode: 0o644 });
+  }
 }
 
 async function copySelected(sourceRoot, destinationRoot, selected) {
@@ -500,6 +518,7 @@ function role(path, profile) {
 async function materialRecords(root, profile) {
   const paths = (await walk(root)).filter((path) => path !== inventoryFile).sort();
   validateMaterialPaths(paths);
+  deployment.hasAutoloopHub(paths);
   if (paths.length > LIMITS.files) fail('RUNTIME_MATERIAL_LIMIT');
   const records = [];
   let total = 0;
@@ -719,6 +738,8 @@ async function buildDirectoryModule(staging, values, authority, buildHost, snaps
 
 async function buildRuntime(values, recipe) {
   const profile = values.profile;
+  const autoloopRoot = values['autoloop-root'];
+  if (autoloopRoot !== undefined && !deployment.completeProfile(profile)) fail('RUNTIME_BUILD_ARGUMENT_INVALID');
   const v3 = profile === deployment.nativeProfile;
   const buildHost = v3 ? { os: process.platform, processArch: process.arch, machine: machine() } : undefined;
   const authority = v3 ? await readDirectoryAuthority(values, buildHost) : undefined;
@@ -793,6 +814,7 @@ async function buildRuntime(values, recipe) {
       await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
       const { source, path } = deployment.servicePreflight;
       await copyRegular(resolve(sourceRoot, source), resolve(materials, path));
+      if (autoloopRoot !== undefined) await copyAutoloopHub(autoloopRoot, materials);
     }
     await copyMigrations(sourceRoot, materials);
     await buildWeb(sourceRoot, materials, vite, exports);

@@ -12,7 +12,7 @@ import { openDatabase } from '@patrick/storage';
 import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase,
   type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
-import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
+import { autoloopHub, renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
   createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
   type AdmittedDeployment, type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
@@ -518,7 +518,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
   }
 }
 
-const autoloopKernelSha256 = '3c0e567212af6939f43d570420f54091015900b7886ced793de373e488886116';
+const autoloopKernelSha256 = autoloopHub.files[autoloopHub.initializer];
 const firstDatabases = ['service.sqlite', autoloopHubDatabase, 'answers.sqlite'] as const;
 const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
 const generationReceiptName = '.patrick-bootstrap.json';
@@ -645,8 +645,9 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
         guard();
         if (!existing) {
           if (typeof operation.signJournal !== 'function') throw new Error('INSTALL_GENERATION_SIGNER_REQUIRED');
-          requireFact(typeof kernelPath === 'string');
-          const initialize = await loadAutoloopInitializer(kernelPath, guard);
+          const initializer = kernelPath ?? release.autoloopHub?.initializer;
+          requireFact(typeof initializer === 'string');
+          const initialize = await loadAutoloopInitializer(initializer, guard);
           const disk = statfsSync(data, { bigint: true });
           requireFact(disk.bsize > 0n && disk.bavail * disk.bsize >= BigInt(e.reserveBytes.data));
           writing = true;

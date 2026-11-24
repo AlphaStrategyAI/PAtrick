@@ -15,6 +15,37 @@ export const servicePreflight = Object.freeze({
   path: 'runtime/service-bootstrap-v1.mts',
   sha256: 'f4c0a603a39a098516754a2a7aa2d46d657f97ee6de200f5e20b3890210a251d',
 });
+export const autoloopHub = Object.freeze({
+  commit: '45aecbf578289cda72d1fc773dcad069bfe7778b',
+  root: 'runtime/autoloop-hub',
+  entry: 'host/http.ts',
+  initializer: 'kernel/evolve.ts',
+  files: Object.freeze({
+    'LICENSE': 'b7f53d07ea4ae2eef26a4f8b28cb7d4df95586e2aa713df408f1ffde9f5a0fea',
+    'host/command.ts': '034dc5b743f86fdf38c81294cf14c192a670ef9433c3812483249c41ea44e52a',
+    'host/files.ts': '14d330a3664aad73f5133310a28305dd74ef032f3761de7df262fac4d92f458b',
+    'host/home.ts': '0cc2d56a7a0391612c4dd21dc67ed3d0829bf938d20bbe6cb5e5a992a4e10e4e',
+    'host/http.ts': '3b44266aa1a6c709aa44623e7d6205e57a95af37fadc1319c88e0c8985706b8e',
+    'host/plugins.ts': 'ec4525b10f47dbb60b59897df30e869c58dc239c692bde7fb932be5f7bc7968a',
+    'host/runtime.ts': '73d82a1f31e3923e3c055bf8e3ac81b562eca0e550c6009df7d72b41383580bb',
+    'host/server.ts': '5bbc4bfdf22e33dd43c66be60353e4141196f19dbce90bd4b7f17ea185812491',
+    'host/state.ts': 'd52ce36ec76a00287696288203e007916f14e68922b1295722540d97f0ef7087',
+    'kernel/card-page.ts': '2390e35e7db2b9c77daee5e3921bd1ad9c024eee6abcefdaccef72b4626a23bf',
+    'kernel/credentials.ts': '1b2343615341e60937f9a2bf73948caf10d99d251988b94350bbe99ce0660e48',
+    'kernel/cron.ts': '0479d6d3fe348bf2f403da2e026a8315831c26a16e6bbe2ec8be5fc431270518',
+    'kernel/decide.ts': '17dba3f0c96dd3dbbbe755e2869cd55e0d9c7aee166a2f689566f2ca9ca14069',
+    'kernel/due.ts': '7e0896e0b3f38068d5291e1eb70756662d106a7509f2064d22ef4586d706c4a3',
+    'kernel/errors.ts': '0804b397d8e21c9747ec2e6b5938580cc0405aac6f642e6e43b1ad658a7c4745',
+    'kernel/evolve.ts': '3c0e567212af6939f43d570420f54091015900b7886ced793de373e488886116',
+    'kernel/http.ts': '6bb25b074482d5410fe24205538ed7f17898dfaf2561806e3b037738fabc755f',
+    'kernel/query.ts': 'c565018c3c6eb44f91d93cb429498d1b2ca9d998b4d2af93debd26a4a6db6f7a',
+    'kernel/rules.ts': '6f5215409d0a9a3964346e8f3e2adf17fdb54daf58c9da61538f082919424895',
+    'kernel/store.ts': '934f690ed6a8e84dd1c807175b900420f5d91c1204b743f6c83819054086deea',
+    'protocol/rules.ts': '2a85ec1f0ad5093a57279bade561519209f9e81ccf4c016ae4273d211a464315',
+    'protocol/validate.ts': '73547a3ad8dfa7fc693933d753418566b678406501d9fd02343f8783c91d4d4c',
+  }),
+});
+const autoloopPaths = Object.keys(autoloopHub.files).map(path => autoloopHub.root + '/' + path);
 const templates = new Map([
   [deploymentPaths.caddy, ['caddy-template', '915c1bba63f43d6ba86fe5b4d2c475f5e8d084a8a6e12106248878edb711abfb']],
   [deploymentPaths.service, ['service-launchd-template', '4a1abcdf6623764e61d673295935df6c495a5461af2012b177a1ca166bb3d332']],
@@ -22,6 +53,7 @@ const templates = new Map([
   [deploymentPaths.worker, ['worker-launchd-template', '72ef5cac63d4e326f0fc25b135eefd94c1dca4d57b9b1e404541e1dc12ce9d5d']],
   [deploymentPaths.lima, ['lima-executor-template', '1e54d49f3f691d9735f837a7b9c91caae286f6822e51f5f798a93926b4f44a13']],
   [servicePreflight.path, ['service-bootstrap', servicePreflight.sha256]],
+  ...Object.entries(autoloopHub.files).map(([path, digest]) => [autoloopHub.root + '/' + path, ['autoloop-hub-source', digest]]),
 ]);
 const byDigest = new Map([...templates].map(([path, [, digest]]) => [digest, path]));
 const jobs = ['service', 'hub', 'worker'];
@@ -217,6 +249,14 @@ export function releaseProfile(value = 'runtime-only') {
   return value;
 }
 export function deploymentRole(path) { return templates.get(path)?.[0]; }
+export function hasAutoloopHub(paths) {
+  const selected = new Set(paths.filter(path => path.startsWith(autoloopHub.root + '/')));
+  if (!selected.size) return false;
+  if (selected.size !== autoloopPaths.length || !autoloopPaths.every(path => selected.has(path))) {
+    throw new Error('AUTOLOOP_HUB_SOURCE_INCOMPLETE');
+  }
+  return true;
+}
 export function checkDeploymentRecord(profile, path, mode, digest) {
   const template = templates.get(path);
   if (template) {

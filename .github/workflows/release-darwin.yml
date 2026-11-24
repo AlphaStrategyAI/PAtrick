@@ -17,6 +17,7 @@ on:
       - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
       - 'tests/admission/T23-controlled-role-launch.test.ts'
+      - 'tests/admission/T23-emitted-candidate.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -31,6 +32,7 @@ on:
       - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
       - 'tests/admission/T23-controlled-role-launch.test.ts'
+      - 'tests/admission/T23-emitted-candidate.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -173,8 +175,15 @@ jobs:
           upload="$RUNNER_TEMP/patrick-native-material-upload"
           mkdir "$upload" "$work/readback"
 
+          hub_commit=$(node --input-type=module -e 'import { autoloopHub } from "./deploy/lib/deployment-templates.mjs"; console.log(autoloopHub.commit)')
+          git init --quiet "$work/autoloop"
+          git -C "$work/autoloop" fetch --quiet --depth=1 https://github.com/KKKKhazix/agent-autoloop.git "$hub_commit"
+          git -C "$work/autoloop" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$work/autoloop" rev-parse HEAD)" = "$hub_commit"
+
           node scripts/build-runtime.mjs build --profile deployment-complete \
-            --source-root "$source_root" --source-commit "$commit" --output-root "$work/materials" > "$work/build.json"
+            --source-root "$source_root" --source-commit "$commit" --output-root "$work/materials" \
+            --autoloop-root "$work/autoloop" > "$work/build.json"
           /usr/bin/tar --format=ustar --no-mac-metadata -cf "$upload/runtime-materials.tar" -C "$work/materials" .
           (
             cd "$upload"
@@ -186,6 +195,10 @@ jobs:
             --artifact-root "$work/readback" > "$work/readback.json"
           PATRICK_T23_CONTROLLED_LAUNCH=1 PATRICK_T23_CONTROLLED_MATERIALS="$work/readback" \
             node node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts
+          admission_tmp=$(mktemp -d "$work/admission.XXXXXXXX")
+          TMPDIR="$admission_tmp" PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
+            node node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts --maxWorkers 1 \
+              --testNamePattern 'signed deployment includes|first-install CLI publishes'
 
           node --input-type=module - "$work" "$upload" > "$upload/readback-receipt.json" <<'JS'
           import { readFileSync } from "node:fs";

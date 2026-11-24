@@ -82,6 +82,7 @@ type StagedRuntimePaths = Readonly<{
 export type AdmittedDeployment = Readonly<StagedRuntimePaths & {
   profile: 'deployment-complete'; templates: Readonly<Record<DeploymentKey, string>>;
   servicePreflight?: Readonly<{ path: string; sha256: string }>;
+  autoloopHub?: Readonly<{ commit: string; root: string; entry: string; initializer: string }>;
 }>;
 export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntimePaths & { profile: 'runtime-only' }>;
 export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,

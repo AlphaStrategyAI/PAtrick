@@ -187,6 +187,8 @@ beforeAll(async () => {
 const nativeProfile = 'deployment-complete-native-v3' as const;
 const directoryPath = 'native/patrick-directory.node';
 const directoryScenario = 'directory-module-info-relocated';
+const upstreamHubSource = process.env.PATRICK_T23_AUTOLOOP_SOURCE;
+const archivedHubMaterials = process.env.PATRICK_T23_AUTOLOOP_MATERIALS;
 async function buildSignedFixture(temporary: string, profile?: 'deployment-complete') {
   const fixture = await buildFixture(temporary, profile);
   return { ...fixture, expected: { ...fixture.expected, ...(profile && { profile }) } };
@@ -202,10 +204,13 @@ async function buildFixture(temporary: string, profile?: 'deployment-complete' |
   const built = join(temporary, 'original');
   const artifact = join(temporary, 'relocated');
   const flags = [...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : []),
+    ...(profile === 'deployment-complete' && upstreamHubSource ? ['--autoloop-root', upstreamHubSource] : []),
     ...(v3 ? ['--directory-authority', process.env.PATRICK_T25_TEST_RECIPE!,
       '--directory-authority-sha256', process.env.PATRICK_T25_TEST_RECIPE_SHA256!, '--node-headers', process.env.PATRICK_T25_NODE_HEADERS_ARCHIVE!] : [])];
   const buildAt = (path: string) => JSON.parse(child([build, 'build', ...source, '--output-root', path, ...flags]));
-  const first = buildAt(built);
+  const fromArchive = profile === 'deployment-complete' && archivedHubMaterials;
+  const first = fromArchive ? undefined : buildAt(built);
+  if (fromArchive) await cp(fromArchive, built, { recursive: true });
   const second = v3 ? buildAt(artifact) : undefined;
   if (!v3) await cp(built, artifact, { recursive: true });
   else expect(first.inventorySha256).toBe(second.inventorySha256);
@@ -435,6 +440,33 @@ beforeAll(async () => {
   await mkdir(dir);
   complete = await buildSignedFixture(dir, 'deployment-complete');
 }, 120_000);
+
+test.skipIf(!upstreamHubSource)('signed deployment includes the pinned Hub source and refuses an altered closure', async () => {
+  const prefix = 'runtime/autoloop-hub/';
+  const records = complete.material.materials.filter(({ path }) => path.startsWith(prefix));
+  expect(records).toHaveLength(22);
+  for (const { path, role, sha256: digest } of records) {
+    expect(role).toBe('autoloop-hub-source');
+    expect(digest).toBe(sha256(await readFile(join(upstreamHubSource!, path.slice(prefix.length)))));
+  }
+  const initializer = prefix + 'kernel/evolve.ts';
+  const materialPath = join(complete.artifact, initializer);
+  const inventoryPath = join(complete.artifact, 'metadata/runtime-materials.json');
+  const [original, originalInventory] = await Promise.all([readFile(materialPath), readFile(inventoryPath)]);
+  const altered = Buffer.concat([original, Buffer.from('\n')]);
+  const inventory = JSON.parse(originalInventory.toString()) as { files: { path: string; bytes: number; sha256: string }[] };
+  Object.assign(inventory.files.find(row => row.path === initializer)!, { bytes: altered.length, sha256: sha256(altered) });
+  const alteredInventory = bytes(inventory);
+  try {
+    await writeFile(materialPath, altered);
+    await writeFile(inventoryPath, alteredInventory);
+    await expect(inspectEmittedRuntimeMaterial({ ...complete.input, expectedInventorySha256: sha256(alteredInventory) }))
+      .rejects.toThrow('deployment template profile/mode/content mismatch: ' + initializer);
+  } finally {
+    await writeFile(materialPath, original);
+    await writeFile(inventoryPath, originalInventory);
+  }
+}, 60_000);
 
 test('legacy profiles keep their own runtime target checks independently of native recipe approval', async () => {
   const other = process.arch === 'arm64' ? intelTarget : arm64Target;
@@ -759,10 +791,11 @@ test('first-install CLI publishes only the approved release and reads back the s
   await expect(prepare(wrongKernel, operationId, { ...operation, ...signer })).rejects.toThrow('AUTOLOOP_BOOTSTRAP_SOURCE_INVALID');
   expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
   expect(await run('prepare-generation')).toMatchObject({ status: 'unavailable', code: 'INSTALL_GENERATION_ENROLLMENT_REQUIRED' });
-  const kernelPath = process.env.PATRICK_T23_AUTOLOOP_KERNEL;
+  const kernelPath = upstreamHubSource ? undefined : process.env.PATRICK_T23_AUTOLOOP_KERNEL;
+  const hasHubInitializer = Boolean(kernelPath || upstreamHubSource);
   const dataRoot = join(instanceRoot, 'data', 'first-generation');
   let generation: InstalledGeneration;
-  if (kernelPath) {
+  if (hasHubInitializer) {
     await expect(prepare(kernelPath, 'wrong-operation')).rejects.toThrow();
     await expect(prepare(kernelPath, operationId, { ...operation, planSha256: '0'.repeat(64) })).rejects.toThrow();
     expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
@@ -875,13 +908,13 @@ test('first-install CLI publishes only the approved release and reads back the s
   const selection = canonicalize({ order, signature: sign(null, bytes(order), generationKey.privateKey).toString('base64') });
   await expect(store.select(selection)).resolves.toMatchObject({ current: { order }, pending: null });
   await expect(store.observe('select-first')).resolves.toMatchObject({ current: { order }, historical: { order }, pending: null });
-  for (const name of kernelPath ? ['hub.sqlite', 'hub.db'] : ['hub.db']) {
+  for (const name of hasHubInitializer ? ['hub.sqlite', 'hub.db'] : ['hub.db']) {
     const extraHub = join(dataRoot, name);
     await writeFile(extraHub, '', { flag: 'wx', mode: 0o600 });
     try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
     finally { await unlink(extraHub); }
   }
-  if (kernelPath) {
+  if (hasHubInitializer) {
     const hubHome = join(dataRoot, 'hub');
     await chmod(hubHome, 0o755);
     try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
@@ -895,7 +928,7 @@ test('first-install CLI publishes only the approved release and reads back the s
       await rename(replacedHub, hubHome);
     }
   }
-  if (kernelPath) await expect(prepare(kernelPath)).rejects.toThrow();
+  if (hasHubInitializer) await expect(prepare(kernelPath)).rejects.toThrow();
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
   expect(requests).toBe(0);
@@ -916,7 +949,7 @@ test('first-install CLI publishes only the approved release and reads back the s
 
   await writeFile(join(published, 'extra-file'), 'modified');
   expect(await run('readback')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
-}, 120_000);
+}, upstreamHubSource ? 240_000 : 120_000);
 
 test.each(['owner-lost', 'live-ack-lost'])('reports an actual derived stage mkdir as uncertain on %s', async mode => {
   const owner = join(dir, 'parent-lease-mkdir-' + mode);

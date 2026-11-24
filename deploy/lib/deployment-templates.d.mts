@@ -2,7 +2,8 @@ import type { DarwinTarget, DirectoryNativeIdentity } from './emitted-release.mj
 export type EmittedReleaseProfile = 'runtime-only' | 'deployment-complete' | 'deployment-complete-native-v3';
 export type DeploymentJob = 'service' | 'hub' | 'worker';
 export type DeploymentKey = 'caddy' | DeploymentJob | 'lima';
-export type DeploymentRole = 'caddy-template' | 'service-launchd-template' | 'hub-launchd-template' | 'worker-launchd-template' | 'lima-executor-template' | 'service-bootstrap';
+export type DeploymentRole = 'caddy-template' | 'service-launchd-template' | 'hub-launchd-template' | 'worker-launchd-template' |
+  'lima-executor-template' | 'service-bootstrap' | 'autoloop-hub-source';
 export const nativeProfile: 'deployment-complete-native-v3';
 export const directoryPath: 'native/patrick-directory.node';
 export const directoryRole: 'directory-diagnostic-addon';
@@ -26,6 +27,10 @@ export function checkDirectoryDefinition(sections: readonly DirectorySection[], 
 export function directoryIdentity(data: Buffer, arch: DarwinTarget['arch']): DirectoryNativeIdentity;
 export const deploymentPaths: Readonly<Record<DeploymentKey, string>>;
 export const servicePreflight: Readonly<{ source: string; path: string; sha256: string }>;
+export const autoloopHub: Readonly<{
+  commit: string; root: string; entry: string; initializer: 'kernel/evolve.ts'; files: Readonly<Record<string, string>>;
+}>;
+export function hasAutoloopHub(paths: readonly string[]): boolean;
 export function releaseProfile(value?: EmittedReleaseProfile): EmittedReleaseProfile;
 export function deploymentRole(path: string): DeploymentRole | undefined;
 export function checkDeploymentRecord(profile: EmittedReleaseProfile, path: string, mode: string, digest: string): void;

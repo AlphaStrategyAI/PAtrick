@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
 
-import { checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile, nativeProfile, completeProfile, servicePreflight,
+import { autoloopHub, hasAutoloopHub, checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile, nativeProfile, completeProfile, servicePreflight,
   inventoryVersion, directoryPath, directoryRole, directoryIdentity, checkDirectoryTarget, checkDirectoryAuthority, directoryExports,
   directoryCommands, nativeSources, directoryHandshake } from './deployment-templates.mjs';
 
@@ -198,10 +198,14 @@ function makeSbom(files, inventory, lock, version, directoryBuild) {
     return { name, version, integrity: record.integrity, resolved: record.resolved, dependencies: Object.keys(dependencies[name]).filter(n => own(versions,n)),
       files: inventory.files.filter(r => r.path.startsWith(prefix + '/')) };
   });
-  if (directoryBuild) return encode({ format: 'patrick-emitted-runtime-sbom-v2', packages,
-    firstParty: [{ name: 'patrick-directory-module', source: inventory.source, sources: directoryBuild.sources,
-      material: inventory.files.find(row => row.path === directoryPath) }] });
-  return encode({ format: 'patrick-emitted-runtime-sbom-v1', packages });
+  const hubFiles = inventory.files.filter(row => row.role === 'autoloop-hub-source');
+  return encode({
+    format: directoryBuild || hubFiles.length ? 'patrick-emitted-runtime-sbom-v2' : 'patrick-emitted-runtime-sbom-v1',
+    packages,
+    ...(directoryBuild && { firstParty: [{ name: 'patrick-directory-module', source: inventory.source, sources: directoryBuild.sources,
+      material: inventory.files.find(row => row.path === directoryPath) }] }),
+    ...(hubFiles.length && { thirdPartySources: [{ name: 'agent-autoloop', commit: autoloopHub.commit, files: hubFiles }] }),
+  });
 }
 
 // Pure validation shared by the packer and the independently trusted host verifier.
@@ -231,6 +235,7 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   equal(inv.tools, { esbuild: '0.28.2', vite: '7.3.8' }, 'unsupported build tools');
   equal(inv.packages, Object.entries(versions).map(([name, version]) => ({ name, version })), 'unsupported package closure');
   table(inv.files);
+  hasAutoloopHub(inv.files.map(row => row.path));
   if (complete) {
     const materialPaths = new Set(inv.files.map(row => row.path));
     if (v3) check(materialPaths.has(addon) && materialPaths.has(directoryPath), 'missing native material');
@@ -1064,9 +1069,12 @@ async function useVerifiedTree(lease, record, receipt, root, use, stageCapture) 
   try {
     lease.guard();
     const preflight = receipt.materials.find(({ path }) => path === servicePreflight.path);
+    const hub = hasAutoloopHub(receipt.materials.map(({ path }) => path));
     const deployment = receipt.profile === 'deployment-complete' ? {
       templates: Object.fromEntries(Object.entries(deploymentPaths).map(([key, path]) => [key, join(root, path)])),
       ...(preflight && { servicePreflight: { path: join(root, preflight.path), sha256: preflight.sha256 } }),
+      ...(hub && { autoloopHub: { commit: autoloopHub.commit, root: join(root, autoloopHub.root),
+        entry: join(root, autoloopHub.root, autoloopHub.entry), initializer: join(root, autoloopHub.root, autoloopHub.initializer) } }),
     } : {};
     return await use(freeze({ root, profile: receipt.profile, ...deployment, entrypoints: Object.fromEntries(entryNames.map(name => [name, join(root, 'runtime', name + '.mjs')])),
       runtime: receipt.runtime, packageSha256: receipt.packageSha256, materialSha256: receipt.materialSha256, inventorySha256: receipt.inventorySha256 }));
