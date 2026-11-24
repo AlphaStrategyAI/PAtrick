@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
 import { assertPilotTraceConsistency, type PilotEvidence, type PilotTrace } from '../support/pilot-trace.js';
 
@@ -62,6 +64,23 @@ test('the pilot inventory leaves all three external routes pending', () => {
 test('a complete synthetic trace set is internally consistent without asserting real-provider provenance', () => {
   const { root, traces } = fixture();
   expect(assertPilotTraceConsistency(traces, root)).toEqual({ status: 'consistent', provenance: 'not_assessed' });
+});
+
+test('checks collected route files with the same validator as the local trace tests', () => {
+  const { root, traces } = fixture();
+  const script = fileURLToPath(new URL('../../scripts/check-pilot-traces.mjs', import.meta.url));
+  const path = join(root, 'traces.json');
+  const check = () => spawnSync(process.execPath, [script, path], { encoding: 'utf8' });
+  writeFileSync(path, JSON.stringify(traces.slice(0, 2)));
+  expect(check()).toMatchObject({ status: 1, stderr: 'PILOT_TRACE_INVALID\n' });
+  const content = JSON.stringify(traces);
+  writeFileSync(path, content);
+  const result = check();
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ status: 'consistent', provenance: 'not_assessed',
+    traceSha256: hash(content), routes: traces.map(({ route, evidenceRefs }) => ({ route, evidenceRefs })) });
+  writeFileSync(join(root, 'route-0/pr.json'), '{}');
+  expect(check()).toMatchObject({ status: 1, stderr: 'PILOT_EVIDENCE_INVALID\n' });
 });
 
 test('the blocked route needs evidence of a stale answer or a conflicted effect', () => {

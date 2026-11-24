@@ -54,12 +54,6 @@ function evaluatePrecondition(precondition) {
       const actual = precondition.path.split('.').reduce((value, key) => value?.[key], document);
       return actual === precondition.value;
     }
-    case 'json-all-pending': {
-      const document = readJson(join(root, precondition.file));
-      const items = document[precondition.collection];
-      return Array.isArray(items) && items.length > 0
-        && items.every((item) => item[precondition.field] === 'pending');
-    }
     case 'json-entries-incomplete': {
       // The real capability is missing unless every recorded entry says so.
       const document = readJson(join(root, precondition.file));

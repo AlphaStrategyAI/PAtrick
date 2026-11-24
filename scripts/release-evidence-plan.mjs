@@ -218,9 +218,10 @@ export const releaseEvidencePlan = {
       { id: 'directory-block-browser', command: playwright('tests/e2e/T25-directory-block.config.ts'), kind: 'browser' },
       {
         id: 'provider-backed-work-routes',
-        command: vitest('tests/admission/T25.test.ts'),
+        command: 'node scripts/check-pilot-traces.mjs "$PATRICK_T25_REVIEWED_TRACES"',
         kind: 'admission',
-        pendingBy: { type: 'json-all-pending', file: 'fixtures/pilot/acceptance.json', collection: 'routes', field: 'status' },
+        pendingBy: { type: 'env-absent', name: 'PATRICK_T25_REVIEWED_TRACES' },
+        skipWhenPending: true,
         pendingReason: '三条真实工作路线（直接交付、答后续办、过期或冲突拦截）还没有提供者侧的真实观察，试点清单保持 pending。',
       },
     ],
