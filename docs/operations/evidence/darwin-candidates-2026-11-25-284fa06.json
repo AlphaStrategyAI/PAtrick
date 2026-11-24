@@ -1,0 +1,44 @@
+{
+  "format": "patrick-hosted-candidates-v1",
+  "run": "45458890606",
+  "commit": "284fa0617b925566b9d2eee8cd94ae589b60bb7d",
+  "url": "https://github.com/AlphaStrategyAI/PAtrick/actions/runs/45458890606",
+  "node": "v26.13.0",
+  "modules": "147",
+  "architectures": {
+    "arm64": {
+      "architecture": "arm64",
+      "commit": "284fa0617b925566b9d2eee8cd94ae589b60bb7d",
+      "snapshotSha256": "506d6db70257b46ae9cf4ec6558ca91a1d92fac16cc82230321a846f80cffd78",
+      "lockSha256": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+      "node": "v26.13.0",
+      "modules": "147",
+      "npm": "11.20.0",
+      "sqlite": "3.53.2",
+      "archiveSha256": "85116ac45bceb4b884ec8412713a9f098c8976f54d37d194bf25763b552bc448",
+      "inventorySha256": "201a45c0278c14b1d1785dc2142661723752bb81e62013b9bfa062bafaf24be0",
+      "payloadFiles": 459,
+      "nativeSha256": "cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d",
+      "nativeDescription": "Mach-O 64-bit bundle arm64",
+      "sourceCandidateSha256": "dc00387f725244f3ba41a831cb5ca0157eb54c011be6bbb965d3e6307e1c432f",
+      "sourceManifestSha256": "6380222b21c42c2ff354ad2fe43aec5767eb2eb27374d892cd99d7de1cdffb5c"
+    },
+    "x64": {
+      "architecture": "x64",
+      "commit": "284fa0617b925566b9d2eee8cd94ae589b60bb7d",
+      "snapshotSha256": "506d6db70257b46ae9cf4ec6558ca91a1d92fac16cc82230321a846f80cffd78",
+      "lockSha256": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+      "node": "v26.13.0",
+      "modules": "147",
+      "npm": "11.20.0",
+      "sqlite": "3.53.2",
+      "archiveSha256": "1b576324c41069ce406db1f6e4e1efcf519e86829f01410d966448c6a1dc78fe",
+      "inventorySha256": "a2e8d6f20e970ebd58fe359394c5a142a1f598b047bd48b39b83f47d0cb6ba4e",
+      "payloadFiles": 459,
+      "nativeSha256": "52ee7e68839aef1cb09a5acb1bd3d05e28b7259e8f0c18d9a760500efbf09211",
+      "nativeDescription": "Mach-O 64-bit bundle x86_64",
+      "sourceCandidateSha256": "9152010337d8623f710c1d59373c9916b510a02f50e63095682e454aef5e2109",
+      "sourceManifestSha256": "e770c9c44b07255e65f4676cd2b0a26b259dc53385d03bded839237b47cb2c6a"
+    }
+  }
+}
