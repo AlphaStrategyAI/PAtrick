@@ -7,7 +7,7 @@ import { readPinnedAutoloopRecoveryDatabase, verifyRecoverySet } from './backup.
 import { autoloopCardIndexSql, readPinnedAutoloopSchema } from './autoloop-schema.js';
 import { assertName, canonical, containedPath, digest, durableCopy, durableJson, durableWrite, fileHash, walkFiles } from './files.js';
 import { localRecoveryCut, tableInventory, type RecoveryLocalCut } from './cut.js';
-import { verifyWithdrawalChain, type RecoveryHandoffCertificate, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
+import { claimRecoveryWriterWithCheck, verifyWithdrawalChain, type RecoveryHandoffCertificate, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
 import { assertVaultRoot, bindVaultRoot, readVaultFile, restoredVaultRoot, withVaultRoot, type BoundVaultRoot } from './vaults.js';
 import type { RecoveryDatabaseReader, RecoveryDatabases, RecoveryManifestAuthority, RecoveryReceipt, RecoveryRestoreReceipt, RecoveryVault, WithdrawalEntry } from './types.js';
 
@@ -78,6 +78,13 @@ function measureHandoff(receipt: RecoveryRestoreReceipt, timings: readonly (Hand
   }
   receipt.rpoMs = greatestDataLoss;
   receipt.rtoMs = finished - earliestInterruption;
+}
+
+async function verifyPreviousWriterFence(fence: RecoveryRestoreOptions['fence'], record: RecoveryWitnessRecord): Promise<boolean> {
+  try {
+    const proof = await fence?.verify(record.domain, record);
+    return proof?.stopped === true && proof.credentialsRevoked === true && proof.proof === record.certificate?.fenceProof;
+  } catch { return false; }
 }
 
 export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
@@ -155,12 +162,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
             sealed = Boolean(record && record.writerEpoch === domain.writerEpoch && record.certificate?.cutId === set.manifest.cutId
               && await options.witness?.verifySealed(record));
             if (!sealed) reasons.push('sealed_proof_unverified');
-            if (sealed && record && options.fence) {
-              try {
-                const proof = await options.fence.verify(domain.domain, record);
-                fenced = proof.stopped && proof.credentialsRevoked && proof.proof === record.certificate?.fenceProof;
-              } catch { fenced = false; }
-            }
+            if (sealed && record) fenced = await verifyPreviousWriterFence(options.fence, record);
             if (!fenced) reasons.push('previous_writer_not_fenced');
             if (record && options.withdrawalLog?.independence === 'independent_authority') {
               try {
@@ -207,10 +209,24 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
             && sealed && fenced && complete && replayed && Boolean(record);
           if (eligible && record && options.witness && options.activation) {
             const activationId = `${receipt.receiptId}:${domain.domain}`;
+            const cutCurrent = () => replayCut && canonical(localRecoveryCut({ service, hub }, domain.domain)) === canonical(replayCut)
+              && canonical(service.prepare('SELECT * FROM recovery_domain_gates WHERE data_domain=?').get(domain.domain)) === expectedGate;
             result.activationId = activationId;
             await checkpoint(service, receipt, directory, now);
-            const claim = await options.witness.claimRecoveryWriter(domain.domain, record.revision, activationId);
-            if (canActivateRecovery({
+            let rejected: string | undefined;
+            const claim = await claimRecoveryWriterWithCheck(options.witness, domain.domain, record.revision, activationId, async (sealedRecord) => {
+              if (canonical(sealedRecord) !== canonical(record)) rejected = 'sealed_proof_changed';
+              else if (!await verifyPreviousWriterFence(options.fence, sealedRecord)) rejected = 'previous_writer_not_fenced';
+              else {
+                try { if (!cutCurrent()) rejected = 'activation_cut_changed'; }
+                catch { rejected = 'activation_cut_changed'; }
+              }
+              return rejected === undefined;
+            });
+            if (rejected || claim === 'unsupported') {
+              result.activationId = null;
+              reasons.push(rejected ?? 'writer_claim_unconfirmed');
+            } else if (canActivateRecovery({
               manifestValid: true, sealedProofVerified: sealed, withdrawalsComplete: complete, previousWriterFenced: fenced,
               newerDraftsProtected: true, effectsReconciled: replayed, writerClaim: claim,
             })) {
@@ -221,8 +237,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
                 const pendingReason = `runtime_activation_pending:${activationId}:${replayCut.inventory}`;
                 const preparedAt = now().toISOString();
                 const prepared = withImmediateTransaction(service, () => {
-                  if (canonical(localRecoveryCut({ service, hub }, domain.domain)) !== canonical(replayCut)
-                    || canonical(service.prepare('SELECT * FROM recovery_domain_gates WHERE data_domain=?').get(domain.domain)) !== expectedGate) return false;
+                  if (!cutCurrent()) return false;
                   service.prepare('INSERT INTO recovery_quarantined_records VALUES (?,?,?,?,?,?)').run(
                     receipt.receiptId, 'recovery_activation_cut', domain.domain, domain.domain,
                     canonical({ generation: activationId, cut: replayCut, winner }), preparedAt,

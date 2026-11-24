@@ -20,7 +20,7 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 `RecoveryWitnessPort` 要求独立权威目标、线性一致读和精确 revision CAS。它只持有控制记录：domain、writer epoch/identity、open/sealed、撤回 seq/hash、交接证书、activationId 和前一 sealed revision。没有使用恢复库中的 SQL 伪装见证；默认缺端口或缺证书验证即返回 unconfirmed。
 
-候选只能以当前封存 revision 执行 sealed → open，生成新随机 epoch。CAS 成功或响应丢失后都必须从权威目标读回自身 activationId、新 epoch 与父封存 revision。竞争者只会有一个 acquired；旧 revision、其他获胜 ID、open 状态及不可达见证都不能获得新写权限。
+候选只能以当前封存 revision 执行 sealed → open，生成新随机 epoch。候选持久化 activationId 后，见证客户端重新读取封存记录并校验证书。发起 CAS 前，恢复器重新核对旧写者隔离证明、两库切面和本域门禁。任一复核失败即保留封存状态，其他合格候选仍可竞争。CAS 成功或响应丢失后都必须从权威目标读回自身 activationId、新 epoch 与父封存 revision。竞争者只会有一个 acquired；旧 revision、其他获胜 ID、open 状态及不可达见证都不能获得新写权限。
 
 `0023_recovery.sql` 在原撤回写事务中由触发器建立 durable pending 项并把本地域置为 protection_pending；历史撤回也进入待核定队列。`createRecoveryWithdrawalJournal(...).protectPending` 先形成完整有序 hash 链，调用独立撤回日志的持久写入/读回，再 CAS 推进权威见证水位并权威读回。仅此后才标 protected，并继续保持 blocked，等待正常准入。外部工具启动成功不等于撤回保护确认。
 

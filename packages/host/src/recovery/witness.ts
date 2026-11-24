@@ -18,6 +18,17 @@ export type RecoveryWitnessPort = {
 export type RecoveryWriterClaim = 'acquired' | 'lost' | 'unconfirmed';
 export type RecoveryWitness = ReturnType<typeof createRecoveryWitness>;
 
+type PreClaimCheck = (record: RecoveryWitnessRecord) => Promise<boolean>;
+type GuardedClaim = (domain: string, sealedRevision: string, activationId: string, beforeCompareAndSwap: PreClaimCheck) => Promise<RecoveryWriterClaim>;
+const guardedClaims = new WeakMap<RecoveryWitness, GuardedClaim>();
+
+export async function claimRecoveryWriterWithCheck(
+  witness: RecoveryWitness, domain: string, sealedRevision: string, activationId: string, beforeCompareAndSwap: PreClaimCheck,
+): Promise<RecoveryWriterClaim | 'unsupported'> {
+  const claim = guardedClaims.get(witness);
+  return claim ? claim(domain, sealedRevision, activationId, beforeCompareAndSwap) : 'unsupported';
+}
+
 export function createRecoveryWitness(options: {
   writerId: string; port?: RecoveryWitnessPort; verifySealedProof?: (record: RecoveryWitnessRecord) => Promise<boolean>;
 }) {
@@ -42,7 +53,36 @@ export function createRecoveryWitness(options: {
         && options.verifySealedProof && await options.verifySealedProof(record));
     } catch { return false; }
   }
-  return {
+  async function claimRecoveryWriter(domain: string, sealedRevision: string, activationId: string,
+    beforeCompareAndSwap?: PreClaimCheck): Promise<RecoveryWriterClaim> {
+    if (!domain || !sealedRevision || !activationId || !admitted()) return 'unconfirmed';
+    const before = await current(domain);
+    if (!before) return 'unconfirmed';
+    if (before.state === 'open') {
+      return before.activationId === activationId && before.writerId === options.writerId
+        && before.parentSealedRevision === sealedRevision ? 'acquired' : 'lost';
+    }
+    if (before.revision !== sealedRevision) return 'lost';
+    if (!await sealed(before)) return 'unconfirmed';
+    const { revision, ...previous } = before;
+    if (revision !== sealedRevision) return 'lost';
+    const next: Omit<RecoveryWitnessRecord, 'revision'> = {
+      ...previous, state: 'open', writerId: options.writerId, writerEpoch: randomUUID(),
+      activationId, parentSealedRevision: sealedRevision,
+    };
+    if (beforeCompareAndSwap) {
+      try {
+        if (await beforeCompareAndSwap(structuredClone(before)) !== true) return 'unconfirmed';
+      } catch { return 'unconfirmed'; }
+    }
+    try { await port!.compareAndSwap(domain, sealedRevision, next); } catch { void 0; }
+    const after = await current(domain);
+    if (!after) return 'unconfirmed';
+    if (after.state === 'open' && after.writerId === options.writerId && after.activationId === activationId
+      && after.parentSealedRevision === sealedRevision && after.writerEpoch === next.writerEpoch) return 'acquired';
+    return after.revision === sealedRevision && after.state === 'sealed' ? 'unconfirmed' : 'lost';
+  }
+  const witness = {
     current,
     verifySealed: sealed,
     async advanceWithdrawalHead(domain: string, writerEpoch: string, entry: WithdrawalEntry): Promise<boolean> {
@@ -63,29 +103,8 @@ export function createRecoveryWitness(options: {
       return Boolean(after && after.state === 'open' && after.writerId === options.writerId && after.writerEpoch === writerEpoch
         && after.withdrawal.seq === entry.seq && after.withdrawal.hash === entry.hash);
     },
-    async claimRecoveryWriter(domain: string, sealedRevision: string, activationId: string): Promise<RecoveryWriterClaim> {
-      if (!domain || !sealedRevision || !activationId || !admitted()) return 'unconfirmed';
-      const before = await current(domain);
-      if (!before) return 'unconfirmed';
-      if (before.state === 'open') {
-        return before.activationId === activationId && before.writerId === options.writerId
-          && before.parentSealedRevision === sealedRevision ? 'acquired' : 'lost';
-      }
-      if (before.revision !== sealedRevision) return 'lost';
-      if (!await sealed(before)) return 'unconfirmed';
-      const { revision, ...previous } = before;
-      if (revision !== sealedRevision) return 'lost';
-      const next: Omit<RecoveryWitnessRecord, 'revision'> = {
-        ...previous, state: 'open', writerId: options.writerId, writerEpoch: randomUUID(),
-        activationId, parentSealedRevision: sealedRevision,
-      };
-      try { await port!.compareAndSwap(domain, sealedRevision, next); } catch { void 0; }
-      const after = await current(domain);
-      if (!after) return 'unconfirmed';
-      if (after.state === 'open' && after.writerId === options.writerId && after.activationId === activationId
-        && after.parentSealedRevision === sealedRevision && after.writerEpoch === next.writerEpoch) return 'acquired';
-      return after.revision === sealedRevision && after.state === 'sealed' ? 'unconfirmed' : 'lost';
-    },
+    claimRecoveryWriter: (domain: string, sealedRevision: string, activationId: string) =>
+      claimRecoveryWriter(domain, sealedRevision, activationId),
     async sealRecoveryWriter(domain: string, openRevision: string, certificate: RecoveryHandoffCertificate, head: WithdrawalHead): Promise<boolean> {
       const before = await current(domain);
       if (!before || before.state !== 'open' || before.writerId !== options.writerId || before.revision !== openRevision
@@ -101,6 +120,8 @@ export function createRecoveryWitness(options: {
         && canonical(after.certificate) === canonical(certificate) && after.withdrawal.hash === head.hash && after.withdrawal.seq === head.seq);
     },
   };
+  guardedClaims.set(witness, claimRecoveryWriter);
+  return witness;
 }
 
 export function withdrawalEntryHash(entry: Omit<WithdrawalEntry, 'hash'>): string {

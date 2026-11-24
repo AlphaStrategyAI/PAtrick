@@ -775,6 +775,80 @@ test('C4: an uncertain intent created after replay during activation invalidates
   } finally { local.close(); }
 });
 
+test.each(['checkpoint', 'sealed proof', 'fence'] as const)(
+  'a change during %s prevents a writer CAS', async (boundary) => {
+    const local = fixture();
+    try {
+      await capture(local);
+      const remote = witnessFixture(local.head);
+      const compareAndSwap = vi.spyOn(remote.port, 'compareAndSwap');
+      const base = restoreOptions(local, remote);
+      const enableDomain = vi.fn(async () => ({ epochInstalled: true, credentialsScoped: true, runtimeGateVerified: true }));
+      let restoredDirectory: string | undefined;
+      let fenceContinues = true;
+      let changed = false;
+      let proofReads = 0;
+      function changeCut() {
+        changed = true;
+        const runtime = new Database(join(restoredDirectory!, 'databases/service.sqlite'), { fileMustExist: true });
+        try { uncertainNotification(runtime, 'before-cas'); } finally { runtime.close(); }
+      }
+      filesystemBoundary.afterSync = (path) => {
+        if (boundary !== 'checkpoint' || changed || !restoredDirectory || !path.startsWith(join(restoredDirectory, 'receipt-'))) return;
+        const saved = JSON.parse(readFileSync(path, 'utf8'));
+        if (saved.data_domains.personal?.activationId) changeCut();
+      };
+      const witness = createRecoveryWitness({
+        port: remote.port, writerId: 'new-writer', async verifySealedProof() {
+          if (++proofReads === 2 && boundary === 'sealed proof') changeCut();
+          return true;
+        },
+      });
+      const receipt = await createRecoveryRestorer({
+        ...base, witness,
+        fence: { async verify() {
+          return { stopped: fenceContinues, credentialsRevoked: fenceContinues, proof: 'review-fence' };
+        } },
+        replay: { ...base.replay, async rebuildProjections(context) {
+          restoredDirectory = context.directory;
+          if (boundary === 'fence') { changed = true; fenceContinues = false; }
+          return { confirmed: true };
+        } },
+        activation: { enableDomain },
+      }).restoreRecoverySet('set-review', 'activate');
+      expect(changed).toBe(true);
+      expect(compareAndSwap).not.toHaveBeenCalled();
+      expect(enableDomain).not.toHaveBeenCalled();
+      expect(remote.read().state).toBe('sealed');
+      expect(receipt.data_domains.personal).toMatchObject({ status: 'blocked', writerEpoch: null, activationId: null });
+      expect(receipt.data_domains.personal.reasons).toContain(boundary === 'fence' ? 'previous_writer_not_fenced' : 'activation_cut_changed');
+    } finally { local.close(); }
+  },
+);
+
+test('a wrapped witness that drops the pre-CAS check cannot activate a recovery', async () => {
+  const local = fixture();
+  try {
+    await capture(local);
+    const remote = witnessFixture(local.head);
+    const compareAndSwap = vi.spyOn(remote.port, 'compareAndSwap');
+    const claimRecoveryWriter = vi.fn((domain: string, revision: string, activationId: string) =>
+      remote.witness.claimRecoveryWriter(domain, revision, activationId));
+    const enableDomain = vi.fn(async () => ({ epochInstalled: true, credentialsScoped: true, runtimeGateVerified: true }));
+    const receipt = await createRecoveryRestorer({
+      ...restoreOptions(local, remote),
+      witness: { ...remote.witness, claimRecoveryWriter },
+      activation: { enableDomain },
+    }).restoreRecoverySet('set-review', 'activate');
+    expect(claimRecoveryWriter).not.toHaveBeenCalled();
+    expect(compareAndSwap).not.toHaveBeenCalled();
+    expect(enableDomain).not.toHaveBeenCalled();
+    expect(remote.read().state).toBe('sealed');
+    expect(receipt.data_domains.personal).toMatchObject({ status: 'blocked', activationId: null });
+    expect(receipt.data_domains.personal.reasons).toContain('writer_claim_unconfirmed');
+  } finally { local.close(); }
+});
+
 test('C4 control: a confirmed callback may settle its own row before a stable final cut', async () => {
   const local = fixture();
   try {
