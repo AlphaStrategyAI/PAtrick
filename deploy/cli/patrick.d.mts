@@ -1,5 +1,6 @@
 import type { VaultInitCliPreview } from '../runtime/vault-init-cli.js';
 import type { InstallPreviewResult } from '../runtime/install-preview.js';
+import type * as FirstInstall from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
@@ -11,7 +12,8 @@ export type CliResult = {
   command?: CliCommand; action?: CliRequest['action'];
   status: 'preview' | 'completed' | 'invalid' | 'unavailable' | 'blocked' | 'uncertain' | 'absent' | 'reserved';
   code: string; exitCode: number; nextStep?: string; identity?: HostIdentity;
-  manifestHash?: string; mode?: 'backup' | 'drill'; externalWrites?: number; checks?: Record<string, DoctorCheck>;
+  manifestHash?: string; mode?: 'backup' | 'drill'; externalWrites?: number; elapsedMs?: number;
+  rpoMs?: number | null; rtoMs?: number | null; checks?: Record<string, DoctorCheck>;
   installPreview?: Omit<Extract<InstallPreviewResult, { status: 'preview' }>, 'status'>;
   installSession?: Omit<Extract<InstallPreviewResult, { status: 'session-observed' }>, 'status'>;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
@@ -20,7 +22,11 @@ export type CliResult = {
 };
 export function parseArguments(argv: readonly string[]): CliRequest;
 /** The installed live-storage check applies to all requests except exact enrolled readback. */
-export function createPatrickCli(host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined): {
+export function createPatrickCli(
+  host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined,
+  firstInstall?: Pick<typeof FirstInstall, 'bindInstallPreviewEnrollment' | 'installBootstrapRequirements' |
+    'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'>,
+): {
   run(argv: readonly string[]): Promise<CliResult>;
 };
 

@@ -2,7 +2,6 @@
 import { pathToFileURL } from 'node:url';
 import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
-import { bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession, prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
 import { leased } from '../lib/emitted-release.mjs';
 
@@ -188,7 +187,7 @@ export function createVaultKitAdapter(host) {
     return { vaultId: receipt.vaultId, configRevision: receipt.configRevision, scopeHash: receipt.scopeHash, manifestSha256: receipt.manifestSha256 };
   } };
 }
-export function createPatrickCli(host, checkLiveStorage) {
+export function createPatrickCli(host, checkLiveStorage, firstInstall) {
   async function runCommand(request) {
     let vaultInit;
     let legacyVaultReadback;
@@ -300,6 +299,11 @@ export function createPatrickCli(host, checkLiveStorage) {
     if (installSelected || (request.action === 'preview' || checkSession) && installEnrolled) {
       if (request.action === 'preview' && request.operation !== undefined) return response(request, 'invalid', 'CLI_ARGUMENT_INVALID',
         'Use install --release ID to preview this registration.');
+      if (!firstInstall) {
+        const code = installSelected ? 'INSTALL_RELEASE_RUNTIME_REQUIRED'
+          : checkSession ? 'INSTALL_SESSION_RUNTIME_REQUIRED' : 'INSTALL_PREVIEW_RUNTIME_REQUIRED';
+        return response(request, 'unavailable', code, 'Provision the registered first-install controller.', context);
+      }
       const enrollment = installs && Object.getOwnPropertyDescriptor(installs, request.release)?.value;
       const current = () => {
         hostBinding.validate();
@@ -308,6 +312,10 @@ export function createPatrickCli(host, checkLiveStorage) {
         }
         return enrollment;
       };
+      const {
+        bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
+        prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
+      } = firstInstall;
       const binding = bindInstallPreviewEnrollment(current);
       const selected = binding.value;
       const validate = () => {

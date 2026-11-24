@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { budgetInstallVolume, observeInstallSession, previewFirstInstall, type InstallPreviewEnrollment } from '../../deploy/runtime/install-preview.js';
+import * as firstInstall from '../../deploy/runtime/install-preview.js';
 import { createPatrickCli } from '../../deploy/cli/patrick.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
@@ -351,7 +352,7 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
     expect(await guarded.run(['install', '--release', 'release'])).toMatchObject({ code: 'RECOVERY_SERVICE_HANDLE_MISMATCH' });
     let calls = 0;
     const forged = createPatrickCli({ ...provisioning.host, runtime: { ...provisioning.host.runtime,
-      previewFirstInstall: async () => { calls++; throw new Error('arbitrary observer'); } } });
+      previewFirstInstall: async () => { calls++; throw new Error('arbitrary observer'); } } }, undefined, firstInstall);
     expect(await forged.run(['install', '--release', 'release'])).toMatchObject({ code: 'INSTALL_PREVIEW_RUNTIME_REQUIRED' });
     expect(calls).toBe(0);
     expect(trace).toEqual(['acquire', 'release']);

@@ -1,6 +1,9 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
-import { observeInstallSession, prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
+import {
+  bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
+  prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
+} from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -90,6 +93,10 @@ type ProvisionedPorts = Readonly<{
 }>;
 
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
+const firstInstall = Object.freeze({
+  bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
+  prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
+});
 
 export function requireRuntimeProvisioning(provisioning: RuntimeProvisioning): ProvisionedPorts {
   const ports = provisioned.get(provisioning);
@@ -1083,7 +1090,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
         nextStep: 'Provision a fresh controller binding for the current service database.',
       };
     }
-  });
+  }, firstInstall);
 }
 
 export function createProvisionedServiceRuntime(provisioning: RuntimeProvisioning) {
