@@ -342,13 +342,15 @@ test('two processes that have both signed claims race to publish once, then exit
         return signature;
       } });
       const result = await journal.claim(request);
-      process.send(result.status, () => process.disconnect());
+      const message = result.status === 'claimed' ? { status: result.status, subject: result.subject } : { status: result.status };
+      process.send(message, () => process.disconnect());
     ` } });
   const { root, identity, plan } = f.registration;
   const children = Array.from({ length: 2 }, () => fork(runner, [], {
-    execArgv: ['--permission', '--allow-fs-read=' + f.base, '--allow-fs-write=' + f.base], silent: true,
+    cwd: f.base, env: {}, execArgv: [], silent: true,
   }));
   const exits = children.map((child) => once(child, 'exit'));
+  let winningSubject: LifecycleEvidenceSubject | undefined;
   function nextMessages() {
     return children.map((child, index) => Promise.race([
       once(child, 'message').then(([message]) => message),
@@ -362,10 +364,22 @@ test('two processes that have both signed claims race to publish once, then exit
     expect(await Promise.all(signed)).toEqual(['signed', 'signed']);
     const results = nextMessages();
     for (const child of children) child.send('publish');
-    expect((await Promise.all(results)).sort()).toEqual(['claimed', 'running_or_uncertain']);
+    const outcomes = await Promise.all(results) as { status: string; subject?: LifecycleEvidenceSubject }[];
+    expect(outcomes.map(result => result.status).sort()).toEqual(['claimed', 'running_or_uncertain']);
+    winningSubject = outcomes.find(result => result.status === 'claimed')?.subject;
     expect(await Promise.all(exits)).toEqual([[0, null], [0, null]]);
   } finally { for (const child of children) if (child.exitCode === null) child.kill(); }
-  expect(await f.writer().claim(f.request)).toEqual({ status: 'running_or_uncertain' });
+  if (!winningSubject) throw new Error('missing winning claim');
+  const controller = f.writer();
+  expect(await controller.claim(f.request)).toEqual({ status: 'running_or_uncertain' });
+  await expect(controller.reconcileCompleted(f.request, 'published-release')).rejects.toThrow();
+  expect(await f.reader().read(f.request)).toEqual({ status: 'running_or_uncertain' });
+  f.recordEvidence(winningSubject, 'published-release');
+  const completed = await controller.reconcileCompleted(f.request, 'published-release');
+  expect(completed).toMatchObject({ status: 'completed', receipt: {
+    evidenceId: 'published-release', claimSha256: winningSubject.claimSha256,
+  } });
+  expect(await f.reader().read(f.request)).toEqual(completed);
 }, 10000);
 
 test.each(['init', 'install', 'start', 'stop', 'upgrade', 'uninstall'] as const)(
