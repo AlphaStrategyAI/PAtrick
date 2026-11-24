@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { canonicalize } from '../../deploy/lib/release.mjs';
 import { verifyCandidateTree } from '../../scripts/verify-hosted-candidates.mjs';
 
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -22,8 +23,9 @@ function workspace() {
 const inspect = (path: string, architecture: string) =>
   `Mach-O 64-bit bundle ${architecture === 'arm64' ? 'arm64' : 'x86_64'}: ${path}`;
 
-function buildTree(root: string, options: { commit?: string; node?: string; modules?: string; sign?: boolean } = {}) {
+function buildTree(root: string, options: { commit?: string; x64Commit?: string; node?: string; modules?: string; sign?: boolean } = {}) {
   for (const architecture of ['arm64', 'x64']) {
+    const sourceCommit = (architecture === 'x64' ? options.x64Commit : undefined) ?? options.commit ?? commit;
     const materials = join(root, `patrick-darwin-${architecture}-unsigned-deployment-complete-materials`);
     const candidate = join(root, `patrick-darwin-${architecture}-unsigned-source-candidate`);
     const payload = join(root, `payload-${architecture}`);
@@ -41,7 +43,7 @@ function buildTree(root: string, options: { commit?: string; node?: string; modu
     writeFileSync(join(materials, 'SHA256SUMS'), `${archiveSha256}  runtime-materials.tar\n`);
     const receipt = {
       kind: 'unsigned-deployment-complete-materials',
-      source: { kind: 'commit', commit: options.commit ?? commit, snapshotSha256: 'b'.repeat(64), lockSha256: 'c'.repeat(64) },
+      source: { kind: 'commit', commit: sourceCommit, snapshotSha256: 'b'.repeat(64), lockSha256: 'c'.repeat(64) },
       observed: { platform: 'darwin', arch: architecture, node: options.node ?? 'v26.13.0', modules: options.modules ?? '147', npm: '11.20.0' },
       native: { path: nativePath, sha256: sha(Buffer.from(`native-${architecture}\n`)), bytes: 1, format: 'mach-o',
         architecture, observedArchitecture: architecture, observedNode: options.node ?? 'v26.13.0',
@@ -54,7 +56,7 @@ function buildTree(root: string, options: { commit?: string; node?: string; modu
     mkdirSync(candidate, { recursive: true });
     const envelope = {
       format: 'patrick-release-envelope-v1',
-      manifest: { format: 'patrick-release-manifest-v1', kind: 'source-candidate', commit: options.commit ?? commit,
+      manifest: { format: 'patrick-release-manifest-v1', kind: 'source-candidate', commit: sourceCommit,
         version: '0.0.0', target: { os: 'darwin', arch: architecture }, schema: { min: 1, max: 1 },
         artifacts: [{ path: 'source/package.json', mode: '100644', bytes: 1, sha256: 'd'.repeat(64) }] },
       files: [],
@@ -66,7 +68,7 @@ function buildTree(root: string, options: { commit?: string; node?: string; modu
     writeFileSync(join(candidate, 'SHA256SUMS'), `${candidateSha256}  candidate/patrick-darwin-${architecture}.candidate.json\n`);
     writeFileSync(join(candidate, 'receipt.json'), JSON.stringify({ status: 'unsigned-candidate', installable: false,
       keyId: null, sha256: candidateSha256, bytes: readFileSync(candidateFile).length,
-      manifestSha256: sha(Buffer.from(JSON.stringify(envelope.manifest))), runtime: { status: 'unavailable', prerequisites: [] } }));
+      manifestSha256: sha(Buffer.from(canonicalize(envelope.manifest))), runtime: { status: 'unavailable', prerequisites: [] } }));
   }
   return root;
 }
@@ -108,6 +110,30 @@ it('rejects a tampered archive, a foreign runtime, a mismatched commit and a sig
 it('rejects a native extension whose machine architecture does not match the target', () => {
   const tree = buildTree(workspace());
   expect(() => verifyCandidateTree(tree, { inspectNative: () => 'Mach-O 64-bit bundle x86_64' })).toThrow(/CANDIDATE_NATIVE_ARCHITECTURE_MISMATCH/);
+});
+
+it('binds both architecture builds to the hosted run commit', () => {
+  const tree = buildTree(workspace());
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect, expectedCommit: 'c'.repeat(40) }))
+    .toThrow(/CANDIDATE_BUILD_COMMIT_MISMATCH/);
+  const mixed = buildTree(workspace(), { x64Commit: 'c'.repeat(40) });
+  expect(() => verifyCandidateTree(mixed, { inspectNative: inspect })).toThrow(/CANDIDATE_BUILD_COMMIT_MISMATCH/);
+});
+
+it('checks the inventory and source manifest digests directly against their receipts', () => {
+  const tree = buildTree(workspace());
+  const materialsReceipt = join(tree, 'patrick-darwin-arm64-unsigned-deployment-complete-materials/readback-receipt.json');
+  const original = readFileSync(materialsReceipt, 'utf8');
+  const receipt = JSON.parse(original);
+  receipt.readback.inventorySha256 = 'e'.repeat(64);
+  writeFileSync(materialsReceipt, JSON.stringify(receipt));
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow(/CANDIDATE_INVENTORY_DIGEST_MISMATCH/);
+  writeFileSync(materialsReceipt, original);
+
+  const sourceReceipt = join(tree, 'patrick-darwin-arm64-unsigned-source-candidate/receipt.json');
+  const source = JSON.parse(readFileSync(sourceReceipt, 'utf8'));
+  writeFileSync(sourceReceipt, JSON.stringify({ ...source, manifestSha256: 'e'.repeat(64) }));
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow(/CANDIDATE_SOURCE_RECEIPT_DIGEST_MISMATCH/);
 });
 
 it('rejects a missing architecture and an unreadable receipt', () => {

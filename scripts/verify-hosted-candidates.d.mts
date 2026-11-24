@@ -18,6 +18,7 @@ export type HostedCandidateEntry = Readonly<{
 
 export type VerifyCandidateTreeOptions = Readonly<{
   workspace?: string;
+  expectedCommit?: string;
   inspectNative?: (path: string, architecture: string) => string;
 }>;
 

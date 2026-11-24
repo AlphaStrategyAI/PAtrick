@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { canonicalize } from '../deploy/lib/release.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
 const architectures = Object.freeze(['arm64', 'x64']);
@@ -84,6 +85,7 @@ export function verifyCandidateTree(tree, options = {}) {
   const inspect = options.inspectNative ?? ((path) => run('/usr/bin/file', ['-b', path], { failure: 'CANDIDATE_NATIVE_UNREADABLE' }));
   try {
     const entries = {};
+    let expectedCommit = options.expectedCommit;
     for (const architecture of architectures) {
       const materials = join(tree, `patrick-darwin-${architecture}-unsigned-deployment-complete-materials`);
       const candidate = join(tree, `patrick-darwin-${architecture}-unsigned-source-candidate`);
@@ -98,6 +100,8 @@ export function verifyCandidateTree(tree, options = {}) {
       if (receipt.kind !== 'unsigned-deployment-complete-materials') fail('CANDIDATE_RECEIPT_KIND_MISMATCH');
       if (receipt.readback?.status !== 'verified') fail('CANDIDATE_RECEIPT_NOT_VERIFIED');
       if (!/^[a-f0-9]{40}$/.test(receipt.source?.commit ?? '')) fail('CANDIDATE_COMMIT_MISSING');
+      expectedCommit ??= receipt.source.commit;
+      if (receipt.source.commit !== expectedCommit) fail('CANDIDATE_BUILD_COMMIT_MISMATCH');
       if (receipt.observed?.platform !== 'darwin' || receipt.observed?.arch !== architecture) fail('CANDIDATE_TARGET_MISMATCH');
       if (receipt.observed?.node !== expectedNode.node || receipt.observed?.modules !== expectedNode.modules) fail('CANDIDATE_RUNTIME_MISMATCH');
       if (receipt.native?.format !== 'mach-o' || receipt.native?.architecture !== architecture ||
@@ -129,6 +133,10 @@ export function verifyCandidateTree(tree, options = {}) {
       if ((envelope.signatures ?? []).length !== 0) fail('CANDIDATE_SOURCE_SIGNED');
       const sourceReceipt = readJson(join(candidate, 'receipt.json'));
       if (sourceReceipt.status !== 'unsigned-candidate' || sourceReceipt.installable !== false) fail('CANDIDATE_SOURCE_STATE_MISMATCH');
+      const sourceManifestSha256 = sha256(Buffer.from(canonicalize(envelope.manifest)));
+      if (sourceReceipt.sha256 !== candidateSha256 || sourceReceipt.manifestSha256 !== sourceManifestSha256) {
+        fail('CANDIDATE_SOURCE_RECEIPT_DIGEST_MISMATCH');
+      }
       entries[architecture] = {
         architecture,
         commit: receipt.source.commit,
@@ -144,7 +152,7 @@ export function verifyCandidateTree(tree, options = {}) {
         nativeSha256: native.sha256,
         nativeDescription: native.description,
         sourceCandidateSha256: candidateSha256,
-        sourceManifestSha256: sourceReceipt.manifestSha256,
+        sourceManifestSha256,
       };
     }
     return entries;
@@ -167,6 +175,7 @@ function runSummary(runId) {
   const raw = run('gh', ['run', 'view', runId, '--json', 'conclusion,headSha,url,jobs'], { failure: 'CANDIDATE_RUN_UNREADABLE' });
   const view = JSON.parse(raw);
   if (view.conclusion !== 'success') fail('CANDIDATE_RUN_INCOMPLETE');
+  if (typeof view.headSha !== 'string' || !/^[a-f0-9]{40}$/.test(view.headSha)) fail('CANDIDATE_COMMIT_MISSING');
   for (const architecture of architectures) {
     const job = (view.jobs ?? []).find(entry => new RegExp(`,\\s*${architecture}\\)$`).test(entry.name ?? ''));
     if (!job || job.conclusion !== 'success') fail('CANDIDATE_JOB_INCOMPLETE');
@@ -180,7 +189,7 @@ function main() {
   const view = runSummary(runId);
   const tree = downloadRun(runId);
   try {
-    const entries = verifyCandidateTree(tree);
+    const entries = verifyCandidateTree(tree, { expectedCommit: view.headSha });
     const receipt = {
       format: 'patrick-hosted-candidates-v1',
       run: String(runId),

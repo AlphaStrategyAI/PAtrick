@@ -70,4 +70,4 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 ## 2026-11-24 双架构候选复核
 
-包含本地备份默认配置的提交 `c37654e46e3613b3ee1e4526ed24da04ed93d5b5` 通过两个 Darwin 构建任务。`node scripts/verify-hosted-candidates.mjs 45397001813` 下载并核对两个未签名源码候选和部署归档。每套归档包含 458 个载荷文件，原生扩展的 Mach-O 架构分别为 `arm64` 和 `x86_64`。源码候选状态为 `installable: false`。目标机签名信任、安装、重启与升级仍待验收。[独立读回回执](evidence/darwin-candidates-2026-11-24.json)
+包含本地备份默认配置的提交 `c37654e46e3613b3ee1e4526ed24da04ed93d5b5` 通过两个 Darwin 构建任务。`node scripts/verify-hosted-candidates.mjs 45397001813` 下载并核对两个未签名源码候选和部署归档，验证两套产物对应同一 Actions 提交，并重算各自的源码清单摘要。每套归档包含 458 个载荷文件，原生扩展的 Mach-O 架构分别为 `arm64` 和 `x86_64`。源码候选状态为 `installable: false`。首次安装目前可通过已登记控制器预览。执行接线、目标机签名信任、实际安装、重启与升级仍待完成。[独立读回回执](evidence/darwin-candidates-2026-11-24.json)
