@@ -167,3 +167,7 @@ Darwin 候选构建通过 `--autoloop-root` 将固定提交 `45aecbf578289cda72d
 控制器在回调期间持有 SQLite 写事务。竞争操作返回 `INSTALLED_ROOT_OWNER_BUSY`，进程退出后系统释放锁。有效租约在各操作边界复核登记的物理身份，路径被替换时以 `INSTALLED_ROOT_OWNER_INVALID` 终止。Mac Pro 上的生产控制器接线和三服务实机验收仍待完成。
 
 构建 `45488254506` 为提交 `dc57b51` 生成两种架构的未签名候选。下载复验逐一核对了每份归档的 459 个文件、源码候选与清单摘要，以及 SQLite 原生模块架构。本机另用锁定版 Autoloop 内核复验首次安装和原生 Hub 数据库初始化。[双架构下载回执](evidence/darwin-candidates-2026-11-25-dc57b51.json)
+
+## 随包初始化 Autoloop Hub
+
+构建 `45494660662` 为提交 `00ce953` 生成 Apple Silicon 和 Intel 未签名候选。下载复验核对了每份归档的 481 个文件、源码候选与清单摘要，以及 SQLite 原生模块架构。两种架构均使用解包后的材料生成测试签名包，并验证首次安装能从包内初始化 `hub/hub.db`。该用例聚焦首次初始化，完整安装故障注入在本机单独验证。Mac Pro 实机安装、重启和升级仍待验收。[双架构下载回执](evidence/darwin-candidates-2026-11-25-00ce953.json)
