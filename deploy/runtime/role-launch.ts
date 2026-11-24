@@ -144,7 +144,7 @@ function launchSelectedHubRole(
         });
         validate();
         return { generationId: generation.id, selectionSha256: selected.sha256, packageSha256: deployment.packageSha256 };
-      });
+      }, signal);
       signal?.throwIfAborted();
       validateRole();
       const child = runtime!;

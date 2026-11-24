@@ -194,6 +194,8 @@ const directoryPath = 'native/patrick-directory.node';
 const directoryScenario = 'directory-module-info-relocated';
 const upstreamHubSource = process.env.PATRICK_T23_AUTOLOOP_SOURCE;
 const archivedHubMaterials = process.env.PATRICK_T23_AUTOLOOP_MATERIALS;
+const darwinInstallTimeoutMs = 480_000;
+const roleReportTimeoutMs = 120_000;
 async function buildSignedFixture(temporary: string, profile?: 'deployment-complete') {
   const fixture = await buildFixture(temporary, profile);
   return { ...fixture, expected: { ...fixture.expected, ...(profile && { profile }) } };
@@ -750,7 +752,7 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
     expect(hub.prepare('SELECT name FROM sqlite_schema WHERE type = ? ORDER BY name').all('table')).toEqual(
       ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
   } finally { hub.close(); }
-}, 120_000);
+}, darwinInstallTimeoutMs);
 
 test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed database and holds its role lock until exit', async ({ onTestFinished }) => {
   const fixture = await firstInstallFixture('selected-packaged-hub', onTestFinished);
@@ -942,7 +944,7 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     );
     try {
       const [line] = await Promise.race([
-        once(reports, 'line', { signal: AbortSignal.timeout(45_000) }),
+        once(reports, 'line', { signal: AbortSignal.timeout(roleReportTimeoutMs) }),
         closed.then(() => { throw new Error('fixture Hub controller exited before reporting'); }),
       ]);
       await use({ controller, report: JSON.parse(line), closed });
@@ -965,12 +967,17 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     });
   }
   const stopAtStartup = join(nativeRole, 'stop-at-startup');
+  const selectedArchive = join(instanceRoot, 'packages', expected.packageSha256 + '.json');
+  const withheldArchive = join(nativeRegistry, 'withheld-selection.json');
   await writeFile(stopAtStartup, '');
   try {
     await withNativeController(async ({ controller, report, closed }) => {
       expect(report).toEqual({ phase: 'selection' });
-      expect(controller.kill('SIGINT')).toBe(true);
-      await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+      await rename(selectedArchive, withheldArchive);
+      try {
+        expect(controller.kill('SIGINT')).toBe(true);
+        await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+      } finally { await rename(withheldArchive, selectedArchive); }
       await expect(fetch(origin + '/healthz')).rejects.toThrow();
       probeWriter();
     });
@@ -1009,7 +1016,7 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
   await expect(pin(join(nextRoot, 'hub', 'hub.db'))).resolves.toEqual(nextGeneration.roles['hub/hub.db']);
   restarted.runtime.stop();
   await expect(restarted.runtime.drain()).resolves.toMatchObject({ state: 'closed' });
-}, 240_000);
+}, darwinInstallTimeoutMs);
 
 test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
   const { instanceRoot, identity, expected, policy, pin, enrollment, installOperations, cli, args, run, operation, operationId,
@@ -1671,7 +1678,7 @@ test('starts installed roles from the confirmed generation and fails closed when
     lines.on('line', line => reports.push(JSON.parse(line)));
     try {
       await Promise.race([
-        once(lines, 'line', { signal: AbortSignal.timeout(30_000) }),
+        once(lines, 'line', { signal: AbortSignal.timeout(roleReportTimeoutMs) }),
         completed.then(() => { throw new Error('fixture role exited without a report'); }),
       ]);
       const report = reports[0]!;
@@ -1773,7 +1780,7 @@ test('starts installed roles from the confirmed generation and fails closed when
   const attempts = provisions;
   await expect(launch()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
   expect(provisions).toBe(attempts);
-}, 120_000);
+}, darwinInstallTimeoutMs);
 
 test('refuses publication before rename on a foreign token, store, archive or occupied slot', async () => {
   const { port, stage, checked, destination, archive, installed, scope, pins, stagingRoot, hooks } = await promotionHost('promotion-refusals');

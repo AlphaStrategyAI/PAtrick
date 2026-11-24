@@ -191,3 +191,5 @@ Darwin 控制器的 `run-role service`、`run-role hub` 和 `run-role worker` �
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
 
 提交 `6e3a199` 的构建 `45504186987` 在 Apple Silicon 和 Intel 上通过候选构建与原生控制器准入。该构建早于本机的 Hub 关停回归。
+
+构建 `45507203407` 的 Apple Silicon 准入通过，Intel 初次安装与 Hub 启动取消用例超时。Hub 现在在进入代次读取和验包阶段时检查停止信号。回归在归档尚未读取时发送 `SIGINT`，核对进程正常退出且写者锁可用。归档安装和角色启动用例采用独立的测试时限，运行时的关停时限保持原值。

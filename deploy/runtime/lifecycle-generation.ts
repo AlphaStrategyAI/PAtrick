@@ -251,8 +251,10 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
     for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);
   }
-  async function withGeneration<T>(lease: Lease, g: InstalledGeneration, use: (deployment: AdmittedDeployment) => Promise<T>) {
+  async function withGeneration<T>(lease: Lease, g: InstalledGeneration, use: (deployment: AdmittedDeployment) => Promise<T>,
+    signal?: AbortSignal) {
     boundary(lease);
+    signal?.throwIfAborted();
     requireValue(process.platform === e.target.os && process.arch === e.target.arch);
     physical(g);
     const release = releases.get(g.packageSha256)!;
@@ -263,6 +265,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       staging, expected: release.expected, policy: release.policy,
     });
     boundary(lease);
+    signal?.throwIfAborted();
     return withPublishedDeployment(receipt, { staging, releasesRoot: join(e.root, 'releases') }, async installed => {
       requireValue(installed.packageSha256 === g.packageSha256 && installed.root === join(e.root, 'releases', g.packageSha256));
       boundary(lease);
@@ -406,8 +409,9 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     enrolled();
     return result;
   }
-  async function useConfirmed<T>(use: UseConfirmation<T>) {
+  async function useConfirmed<T>(use: UseConfirmation<T>, signal?: AbortSignal) {
     return leased(owner, async lease => {
+      signal?.throwIfAborted();
       const state = await readState(lease);
       const current = state.current;
       if (!current || state.pending) throw new Error('INSTALLED_ROLE_SELECTION_REQUIRED');
@@ -427,10 +431,11 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           }
         }
         await assertCurrent();
+        signal?.throwIfAborted();
         const result = await use(structuredClone(current), deployment, guard);
         await assertCurrent();
         return result;
-      });
+      }, signal);
     }, true, enrolled);
   }
   async function selectReserved(envelope: string, checkRole?: () => void) {
@@ -568,6 +573,6 @@ export function createGenerationReader(registration: GenerationEnrollment, owner
 }
 
 export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
-  use: UseConfirmation<T>): Promise<T> {
-  return generationStorage(registration, owner).useConfirmed(use);
+  use: UseConfirmation<T>, signal?: AbortSignal): Promise<T> {
+  return generationStorage(registration, owner).useConfirmed(use, signal);
 }
