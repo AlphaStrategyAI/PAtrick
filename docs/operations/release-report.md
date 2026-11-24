@@ -93,3 +93,9 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 修复已登记代次答案库打开方式的提交 `c72280e9b66ca2cc15e97ad6f827841cc4d3af1e` 在构建 `45419588750` 上通过 Apple Silicon 与 Intel 构建。下载复验逐项核对了每套归档的 458 个载荷文件、源码清单与原生模块架构。两套候选等待发布签名和目标机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-24-c72280e.json)
 
 提交 `73de2d49752ae8814992f7a0b7e3baa6615261b9` 修复安装完成后只读会话核验重复要求安装预留空间的问题。构建 `45424554179` 在 Apple Silicon 和 Intel 上均通过。独立下载复验核对了两套未签名候选与各自归档中的 458 个载荷文件。[双架构下载回执](evidence/darwin-candidates-2026-11-24-73de2d4.json)
+
+## 2026-11-25 首次安装数据代次
+
+提交 `7b8812e67590c8ec007e2cc6b50f376c70e44d76` 的 T23 本地回归通过 92 项，8 项跳过。固定版本 Autoloop 内核用于实测首次初始化。用例覆盖三个数据库的 schema、本地签名代次回执、回执丢失后的读回、篡改拒绝以及低磁盘门禁。
+
+构建 `45432798408` 的 Intel 任务首次通过。Apple Silicon 任务首次在排队时被取消，单独重试后通过。独立下载复验核对了两套未签名候选、各自归档中的 458 个载荷文件及其原生模块架构。Mac Pro 实机验收和发布签名待完成。[双架构下载回执](evidence/darwin-candidates-2026-11-25-7b8812e.json)
