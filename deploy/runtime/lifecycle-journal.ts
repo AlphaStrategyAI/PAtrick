@@ -4,7 +4,7 @@ import {
   readSync, realpathSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, parse, resolve } from 'node:path';
-import { canonical, digest } from '../../packages/host/src/recovery/files.js';
+import { canonical, digest } from '../../packages/host/src/recovery/files.ts';
 import type { RecoveryJournalRoot } from '../../packages/host/src/recovery/operations.js';
 import type { RecoveryManifestAuthority } from '../../packages/host/src/recovery/types.js';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
@@ -45,6 +45,11 @@ const boundedName = (value: unknown): value is string => typeof value === 'strin
   && /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(value);
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) && value.length === 64;
 const generation = (value: unknown) => value === null || boundedName(value);
+
+export function lifecycleRecordName(operationId: string, kind: Kind) {
+  requireState(boundedName(operationId), 'REQUEST');
+  return `lifecycle-v1.${operationId}.${kind}.json`;
+}
 
 function requireState(ok: unknown, code: string): asserts ok {
   if (!ok) throw new Error(`LIFECYCLE_JOURNAL_${code}`);
@@ -146,7 +151,7 @@ function enrollment(current: () => LifecycleRegistration) {
       journalKeyId: keyId, evidenceVersion: version };
   }
   function path(binding: Binding, kind: Kind) {
-    return join(root.path, `lifecycle-v1.${binding.operationId}.${kind}.json`);
+    return join(root.path, lifecycleRecordName(binding.operationId, kind));
   }
   async function authenticate(record: Observed, binding: Binding, kind: Kind, parent: string | null): Promise<Payload> {
     const envelope = JSON.parse(record.bytes.toString('utf8'));
@@ -327,6 +332,19 @@ export function createLifecycleJournal(current: () => LifecycleRegistration, sig
       after.confirm();
       requireState(after.terminal?.sha256 === published && after.status.status === 'completed'
         && canonical(after.status.receipt) === canonical(receipt), 'RECORD');
+      return after.status;
+    },
+    async reconcileCompleted(request: LifecycleRequest, evidenceId: string): Promise<LifecycleStatus> {
+      const binding = journal.bind(request);
+      const before = await journal.inspect(binding);
+      before.confirm();
+      if (before.status.status !== 'running_or_uncertain') return before.status;
+      const receipt = await journal.proof({ binding, claimSha256: before.claim!.sha256 }, evidenceId);
+      const published = await publish(binding, 'terminal', before, receipt);
+      const after = await journal.inspect(binding);
+      after.confirm();
+      requireState((published === undefined || after.terminal?.sha256 === published) && after.status.status === 'completed' &&
+        canonical(after.status.receipt) === canonical(receipt), 'RECORD');
       return after.status;
     },
   };

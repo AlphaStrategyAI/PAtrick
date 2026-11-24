@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
-import { bindInstallPreviewEnrollment, previewFirstInstall } from '../runtime/install-preview.ts';
+import { bindInstallPreviewEnrollment, installBootstrapRequirements, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
 import { leased } from '../lib/emitted-release.mjs';
 
@@ -194,17 +194,19 @@ export function createPatrickCli(host, checkLiveStorage) {
       ? host?.backupReadback : undefined;
     const readbackTargets = enrolledReadback?.targets;
     const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
+    const installOperations = request.command === 'install' && request.action !== 'preview' ? host?.installOperations : undefined;
+    const installSelected = installOperations && Object.hasOwn(installOperations, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
     const lifecycle = legacyVaultReadback ? legacyVaultReadback.registration
-      : lifecycleReadbacks && !vaultInit && Object.hasOwn(lifecycleReadbacks, request.operation)
+      : lifecycleReadbacks && !vaultInit && !installSelected && Object.hasOwn(lifecycleReadbacks, request.operation)
         ? typedInit ? Object.getOwnPropertyDescriptor(lifecycleReadbacks, request.operation)?.value
           : lifecycleReadbacks[request.operation] : undefined;
     const lifecycleTarget = lifecycle?.plan?.targetId;
     const requestedTarget = request.command === 'init' ? request.vault
       : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
     const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
-    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead) {
+    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead && !(installSelected && request.action === 'readback')) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
     }
@@ -274,12 +276,12 @@ export function createPatrickCli(host, checkLiveStorage) {
         return response(request, 'blocked', code, 'Inspect the signed records and independent evidence through the trusted controller.', context);
       }
     }
-    const installs = request.command === 'install' && request.action === 'preview' && request.release !== undefined
+    const installs = request.command === 'install' && request.release !== undefined
       ? host.installPreviews : undefined;
-    if (installs && Object.hasOwn(installs, request.release)) {
-      if (request.operation !== undefined) return response(request, 'invalid', 'CLI_ARGUMENT_INVALID',
+    if (installSelected || request.action === 'preview' && installs && Object.hasOwn(installs, request.release)) {
+      if (request.action === 'preview' && request.operation !== undefined) return response(request, 'invalid', 'CLI_ARGUMENT_INVALID',
         'Use install --release ID to preview this registration.');
-      const enrollment = Object.getOwnPropertyDescriptor(installs, request.release)?.value;
+      const enrollment = installs && Object.getOwnPropertyDescriptor(installs, request.release)?.value;
       const current = () => {
         hostBinding.validate();
         if (host.installPreviews !== installs || !enrollment || Object.getOwnPropertyDescriptor(installs, request.release)?.value !== enrollment) {
@@ -296,6 +298,43 @@ export function createPatrickCli(host, checkLiveStorage) {
           selected.deployment.origin !== host.origin || selected.tls.rpId !== host.rpId) throw new Error('HOST_IDENTITY_MISMATCH');
       };
       validate();
+      if (installSelected) {
+        if (hostBinding.value.runtime?.runFirstInstallRelease !== runFirstInstallRelease) return response(request, 'unavailable',
+          'INSTALL_RELEASE_RUNTIME_REQUIRED', 'Provision the registered first-install controller.', context);
+        const operation = Object.getOwnPropertyDescriptor(installOperations, request.operation)?.value;
+        if (!operation || ![Object.prototype, null].includes(Object.getPrototypeOf(operation))) throw new Error('HOST_IDENTITY_MISMATCH');
+        const operationBinding = bindRegistration(() => {
+          if (host.installOperations !== installOperations ||
+            Object.getOwnPropertyDescriptor(installOperations, request.operation)?.value !== operation ||
+            host.lifecycleReadbacks && Object.hasOwn(host.lifecycleReadbacks, request.operation)) throw new Error('HOST_IDENTITY_MISMATCH');
+          return operation;
+        });
+        const signing = captureDataField(operation, 'signJournal');
+        const validateOperation = () => { validate(); operationBinding.validate(); signing.validate(); };
+        const run = { ...operationBinding.value };
+        if (typeof signing.value === 'function') run.signJournal = async (bytes) => {
+          validateOperation();
+          const signature = await Reflect.apply(signing.value, operation, [bytes]);
+          validateOperation();
+          return signature;
+        };
+        const details = { ...context, operationId: request.operation };
+        let result;
+        try {
+          validateOperation();
+          result = await runFirstInstallRelease(current, request.release, request.operation, request.action, run, validateOperation);
+        } catch {
+          return response(request, 'blocked', 'INSTALL_RELEASE_ADMISSION_FAILED',
+            'Reconcile the signed release plan, host registration, and retained operation records.', details);
+        }
+        if (result.status === 'approval-required') return response(request, 'unavailable', 'INSTALL_RELEASE_APPROVAL_REQUIRED',
+          'Approve the exact release preview and operation ID through the enrolled controller.', details);
+        if (result.status === 'completed') return response(request, 'completed', 'INSTALL_RELEASE_PUBLISHED',
+          'Retain the publication receipt and complete the registered host bootstrap.', {
+            ...details, lifecycleReceipt: result.receipt, prerequisites: installBootstrapRequirements,
+          });
+        return projectLifecycle(request, details, result);
+      }
       // Only the specific module installed by trusted provisioning can select this route.
       // Never execute a function selected by registration, command input or candidate contents.
       if (host.runtime?.previewFirstInstall !== previewFirstInstall) return response(request, 'unavailable',

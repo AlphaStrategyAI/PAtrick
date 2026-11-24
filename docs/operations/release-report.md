@@ -70,4 +70,8 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 ## 2026-11-24 双架构候选复核
 
-包含本地备份默认配置的提交 `c37654e46e3613b3ee1e4526ed24da04ed93d5b5` 通过两个 Darwin 构建任务。`node scripts/verify-hosted-candidates.mjs 45397001813` 下载并核对两个未签名源码候选和部署归档，验证两套产物对应同一 Actions 提交，并重算各自的源码清单摘要。每套归档包含 458 个载荷文件，原生扩展的 Mach-O 架构分别为 `arm64` 和 `x86_64`。源码候选状态为 `installable: false`。首次安装目前可通过已登记控制器预览。执行接线、目标机签名信任、实际安装、重启与升级仍待完成。[独立读回回执](evidence/darwin-candidates-2026-11-24.json)
+包含本地备份默认配置的提交 `c37654e46e3613b3ee1e4526ed24da04ed93d5b5` 通过两个 Darwin 构建任务。`node scripts/verify-hosted-candidates.mjs 45397001813` 下载并核对两个未签名源码候选和部署归档，验证两套产物对应同一 Actions 提交，并重算各自的源码清单摘要。每套归档包含 458 个载荷文件，原生扩展的 Mach-O 架构分别为 `arm64` 和 `x86_64`。源码候选状态为 `installable: false`。[独立读回回执](evidence/darwin-candidates-2026-11-24.json)
+
+已登记控制器可用 `patrick install --release ID` 预览，再用 `--execute --operation ID` 发布签名部署包。控制器分开登记批准公钥和操作日志公钥。批准签名绑定安装实例、发行 ID、操作 ID 和预览摘要。执行在独占租约内复核空目录、签名包和配置，按包摘要原子发布。完成回执依赖对发布目录的逐文件读回。丢失响应后用 `--readback --operation ID` 查询同一操作，也可用只含公钥的登记读回。若发布目录已经落地且回执尚未写入，用同一批准重新执行可在验证目录后补写回执。补写只读取已发布内容并同步父目录与日志。
+
+`INSTALL_RELEASE_PUBLISHED` 表示发布目录已通过核验。目标机仍需完成可信发布签名、数据库初始化、TLS、所有者通行密钥登记、已认证会话以及服务启动、重启和升级验收。

@@ -1,14 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { accessSync, constants, lstatSync, opendirSync, realpathSync, statfsSync } from 'node:fs';
+import { createPublicKey, verify } from 'node:crypto';
+import { accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, opendirSync, realpathSync, statfsSync } from 'node:fs';
 import { request } from 'node:https';
 import { hostname, machine } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { GenerationNode } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
-import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, type ExclusiveRuntimeStaging,
-  type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy } from '../lib/emitted-release.mjs';
+import {
+  deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
+  type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
+} from '../lib/emitted-release.mjs';
 import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
+import { createLifecycleJournal, createLifecycleJournalReader, lifecycleRecordName,
+  type LifecycleRegistration, type LifecycleRequest, type LifecycleStatus } from './lifecycle-journal.ts';
 
 const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
 const budgets = ['releases', 'data', 'lima'] as const;
@@ -31,7 +36,12 @@ export type InstallPreviewEnrollment = {
     readBearer(signal: AbortSignal): Promise<string> };
 };
 
-const bootstrapRequirements = ['schema-bootstrap', 'fixed-origin-tls', 'owner-passkey', 'authenticated-session'] as const;
+export const installBootstrapRequirements = Object.freeze(['schema-bootstrap', 'fixed-origin-tls', 'owner-passkey', 'authenticated-session'] as const);
+const bootstrapRequirements = installBootstrapRequirements;
+export type InstallReleaseEnrollment = {
+  releaseId: string; planSha256: string; journalPublicKey: string; journalKeyId: string; approvalPublicKey: string;
+  approval?: string; signJournal?(bytes: Uint8Array): Promise<string>;
+};
 type LocalPlan = {
   installationId: string; releaseId: string; packageSha256: string; planSha256: string;
   activeSchema: number; targetSchema: number; volumes: { roles: Budget[]; requiredBytes: string }[];
@@ -55,6 +65,15 @@ function physical(path: string, pin: GenerationNode, uid: number) {
     info.ino.toString() === pin.inode && info.birthtimeNs.toString() === pin.birthtimeNs);
   accessSync(path, constants.R_OK | constants.W_OK | constants.X_OK);
 }
+function syncStore(path: string, pin: GenerationNode, uid: number) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const info = fstatSync(fd, { bigint: true });
+    requireFact(info.uid === BigInt(uid) && (info.mode & 0o022n) === 0n && String(info.dev) === pin.device &&
+      String(info.ino) === pin.inode && String(info.birthtimeNs) === pin.birthtimeNs);
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+}
 function exactDirectory(path: string, expected: readonly string[]) {
   const remaining = new Set(expected);
   const dir = opendirSync(path);
@@ -63,19 +82,19 @@ function exactDirectory(path: string, expected: readonly string[]) {
     requireFact(!remaining.size);
   } finally { dir.closeSync(); }
 }
-function layout(e: InstallPreviewEnrollment, root: string, empty: boolean) {
+function layout(e: InstallPreviewEnrollment, root: string, empty: boolean, history: readonly string[] = []) {
   requireFact(root === e.root && e.deployment.instanceRoot === root);
   physical(root, e.rootNode, e.uid);
   if (empty) exactDirectory(root, stores);
   for (const name of stores) {
     const path = join(root, name);
     physical(path, e.stores[name], e.uid);
-    if (empty) exactDirectory(path, name === 'packages' ? [e.expected.packageSha256 + '.json'] : []);
+    if (empty) exactDirectory(path, name === 'packages' ? [e.expected.packageSha256 + '.json'] : name === 'history' ? history : []);
   }
 }
 type VolumeReading = { device: string; required: bigint; available: bigint };
 /** Pure arithmetic. Distinct Darwin device IDs cannot prove separate APFS allocation pools. */
-export function budgetInstallVolume(readings: Record<Budget, VolumeReading>) {
+export function budgetInstallVolume(readings: Record<Budget, VolumeReading>, checkAvailable = true) {
   const device = readings.releases.device;
   let available = readings.releases.available;
   let required = 0n;
@@ -85,10 +104,10 @@ export function budgetInstallVolume(readings: Record<Budget, VolumeReading>) {
     required += reading.required;
     if (reading.available < available) available = reading.available;
   }
-  requireFact(required <= available);
+  if (checkAvailable) requireFact(required <= available);
   return [{ roles: [...budgets], requiredBytes: String(required) }];
 }
-function capacity(e: InstallPreviewEnrollment, materialBytes: bigint) {
+function capacity(e: InstallPreviewEnrollment, materialBytes: bigint, checkAvailable: boolean) {
   const read = (role: Budget): VolumeReading => {
     const reserve = e.reserveBytes[role];
     requireFact(Number.isSafeInteger(reserve) && reserve > 0);
@@ -97,7 +116,7 @@ function capacity(e: InstallPreviewEnrollment, materialBytes: bigint) {
     return { device: e.stores[role].device, required: BigInt(reserve) + (role === 'releases' ? materialBytes : 0n),
       available: disk.bsize * disk.bavail };
   };
-  return budgetInstallVolume({ releases: read('releases'), data: read('data'), lima: read('lima') });
+  return budgetInstallVolume({ releases: read('releases'), data: read('data'), lima: read('lima') }, checkAvailable);
 }
 function nativeHost(e: InstallPreviewEnrollment) {
   requireFact(process.platform === 'darwin' && e.expected.target.os === process.platform &&
@@ -250,88 +269,214 @@ export function observeInstallSession(current: Registry, releaseId: string) {
 async function inspectInstall(current: Registry, releaseId: string, phase: 'bootstrap' | 'authenticated-session'): Promise<InstallPreviewResult> {
   let stage: Stage = 'REGISTRATION';
   try {
-    const { value: e, validate } = bindInstallPreviewEnrollment(current);
-    requireFact(e && id(e.installationId) && id(releaseId) && releaseId === e.releaseId);
-    const identity = projectIdentity(e.identity);
-    identity.domains.sort();
-    requireFact(e.expected.profile === 'deployment-complete' && /^[a-f0-9]{64}$/.test(e.expected.packageSha256) &&
-      Number.isSafeInteger(e.targetSchema) && e.targetSchema >= e.expected.activeSchema &&
-      e.targetSchema >= e.expected.schema.min && e.targetSchema <= e.expected.schema.max);
-    stage = 'HOST';
-    nativeHost(e);
-    stage = 'LEASE';
-    const result = await leased(e.owner, async lease => {
-      const guard = () => { validate(); lease.guard(); };
-      guard();
-      stage = 'LAYOUT';
-      layout(e, lease.root, phase === 'bootstrap');
-      stage = 'HOST';
-      const nodeRoot = admitReadRoot(dirname(e.node.path));
-      const binary = stat(e.node.path);
-      requireFact(binary.isFile() && (binary.mode & 0o111n) !== 0n && (binary.mode & 0o022n) === 0n);
-      const nodeBytes = await readRegularFile(e.node.path, 256 * 1024 * 1024,
-        { root: nodeRoot.root, validate() { guard(); nodeRoot.validate(); } });
-      guard();
-      requireFact(sha256(nodeBytes) === e.node.sha256);
-      stage = 'PACKAGE';
-      guard();
-      const staging = deriveRuntimeStaging(lease, lease.root);
-      const archive = join(e.root, 'packages', e.expected.packageSha256 + '.json');
-      const artifact = stat(archive);
-      const receipt = await verifyEmittedRuntimeCandidate(archive,
-        { staging, expected: e.expected, policy: e.policy });
-      guard();
-      const materialBytes = receipt.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
-      stage = 'CAPACITY';
-      const volumes = capacity(e, materialBytes);
-      stage = 'DEPLOYMENT';
-      const source = (role: keyof typeof e.templates) => Buffer.from(e.templates[role]);
-      const rendered = renderDeploymentTemplates({ caddy: source('caddy'), service: source('service'),
-        hub: source('hub'), worker: source('worker') }, e.deployment);
-      const descriptors = Object.values(deploymentPaths).map(path => {
-        const row = receipt.materials.find(file => file.path === path);
-        requireFact(row);
-        return row;
-      });
-      requireFact(new URL(e.deployment.origin).hostname === e.tls.rpId && /^[0-9a-f]{64}$/.test(e.tls.caSha256));
-      const planSha256 = digest({ format: 'patrick-first-install-preview-v2', installationId: e.installationId, releaseId,
-        identity, uid: e.uid, hostname: e.hostname, node: e.node, root: e.root, rootNode: e.rootNode, stores: e.stores,
-        policy: e.policy, expected: e.expected, manifestSha256: receipt.manifestSha256, targetSchema: e.targetSchema,
-        reserveBytes: e.reserveBytes, volumes, deployment: e.deployment, renderedSha256: digest(rendered), descriptors,
-        required: bootstrapRequirements, tls: e.tls });
-      let credentialBindingSha256: string | undefined;
+    const reportStage = (next: Stage) => { stage = next; };
+    return await withInstallLease(current, releaseId, reportStage, async (e, lease, guard) => {
+      const { local, confirm } = await inspectLeasedInstall(e, lease, guard, reportStage, { empty: phase === 'bootstrap' });
       if (phase === 'authenticated-session') {
         stage = 'SESSION';
         const credential = e.session;
-        requireFact(credential && credential.bootstrapPlanSha256 === planSha256);
-        guard();
+        requireFact(credential && credential.bootstrapPlanSha256 === local.planSha256);
         await checkSession(e, credential, guard);
         guard();
-        credentialBindingSha256 = digest({ planSha256, callerId: credential.callerId, authEpoch: credential.authEpoch,
+        const credentialBindingSha256 = digest({ planSha256: local.planSha256, callerId: credential.callerId, authEpoch: credential.authEpoch,
           credentialRevision: credential.credentialRevision });
+        confirm();
+        return { ...local, status: 'session-observed' as const,
+          phase: 'authenticated-session' as const, credentialBindingSha256, observed: ['fixed-origin-tls', 'authenticated-session'] as const,
+          outstanding: ['schema-bootstrap', 'owner-passkey'] as const };
       }
-      stage = 'LAYOUT';
-      layout(e, lease.root, phase === 'bootstrap');
-      stage = 'HOST';
-      nativeHost(e);
-      nodeRoot.validate();
-      const checked = stat(archive);
-      requireFact(checked.dev === artifact.dev && checked.ino === artifact.ino && checked.ctimeNs === artifact.ctimeNs);
-      const now = stat(e.node.path);
-      requireFact(now.dev === binary.dev && now.ino === binary.ino && now.ctimeNs === binary.ctimeNs);
-      stage = 'CAPACITY';
-      capacity(e, materialBytes);
-      stage = 'LEASE';
-      guard();
-      const local = { installationId: e.installationId, releaseId, packageSha256: receipt.packageSha256,
-        planSha256, activeSchema: e.expected.activeSchema, targetSchema: e.targetSchema, volumes,
-        activationAuthorized: false as const, delegationAuthorized: false as const };
-      if (credentialBindingSha256 !== undefined) return { ...local, status: 'session-observed' as const,
-        phase: 'authenticated-session' as const, credentialBindingSha256, observed: ['fixed-origin-tls', 'authenticated-session'] as const,
-        outstanding: ['schema-bootstrap', 'owner-passkey'] as const };
       return { ...local, status: 'preview' as const, phase: 'bootstrap' as const, outstanding: [...bootstrapRequirements] as const };
-    }, true, validate);
-    validate();
-    return result;
+    });
   } catch { return { status: 'blocked', code: `INSTALL_PREVIEW_${stage}` }; }
+}
+
+async function withInstallLease<T>(current: Registry, releaseId: string, reportStage: (stage: Stage) => void,
+  work: (enrollment: InstallPreviewEnrollment, lease: RuntimeLease, guard: () => void) => Promise<T>): Promise<T> {
+  const { value: e, validate } = bindInstallPreviewEnrollment(current);
+  requireFact(e && id(e.installationId) && id(releaseId) && releaseId === e.releaseId);
+  projectIdentity(e.identity);
+  requireFact(e.expected.profile === 'deployment-complete' && /^[a-f0-9]{64}$/.test(e.expected.packageSha256) &&
+    Number.isSafeInteger(e.targetSchema) && e.targetSchema >= e.expected.activeSchema &&
+    e.targetSchema >= e.expected.schema.min && e.targetSchema <= e.expected.schema.max);
+  reportStage('HOST');
+  nativeHost(e);
+  reportStage('LEASE');
+  const result = await leased(e.owner, async lease => {
+    const guard = () => { validate(); lease.guard(); };
+    guard();
+    const outcome = await work(e, lease, guard);
+    guard();
+    return outcome;
+  }, true, validate);
+  validate();
+  return result;
+}
+
+async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeLease, guard: () => void,
+  reportStage: (stage: Stage) => void, options: { empty: boolean; history?: readonly string[]; checkAvailable?: boolean;
+    publication?: NonNullable<ExclusiveRuntimeStaging['publication']> }) {
+  reportStage('LAYOUT');
+  layout(e, lease.root, options.empty, options.history);
+  reportStage('HOST');
+  const nodeRoot = admitReadRoot(dirname(e.node.path));
+  const binary = stat(e.node.path);
+  requireFact(binary.isFile() && (binary.mode & 0o111n) !== 0n && (binary.mode & 0o022n) === 0n);
+  const nodeBytes = await readRegularFile(e.node.path, 256 * 1024 * 1024,
+    { root: nodeRoot.root, validate() { guard(); nodeRoot.validate(); } });
+  guard();
+  requireFact(sha256(nodeBytes) === e.node.sha256);
+  reportStage('PACKAGE');
+  const staging = deriveRuntimeStaging(lease, lease.root, options.publication);
+  const archive = join(e.root, 'packages', e.expected.packageSha256 + '.json');
+  const artifact = stat(archive);
+  const receipt = await verifyEmittedRuntimeCandidate(archive, { staging, expected: e.expected, policy: e.policy });
+  guard();
+  const materialBytes = receipt.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
+  reportStage('CAPACITY');
+  const volumes = capacity(e, materialBytes, options.checkAvailable ?? true);
+  reportStage('DEPLOYMENT');
+  const source = (role: keyof typeof e.templates) => Buffer.from(e.templates[role]);
+  const rendered = renderDeploymentTemplates({ caddy: source('caddy'), service: source('service'),
+    hub: source('hub'), worker: source('worker') }, e.deployment);
+  const descriptors = Object.values(deploymentPaths).map(path => {
+    const row = receipt.materials.find(file => file.path === path);
+    requireFact(row);
+    return row;
+  });
+  requireFact(new URL(e.deployment.origin).hostname === e.tls.rpId && /^[0-9a-f]{64}$/.test(e.tls.caSha256));
+  const identity = projectIdentity(e.identity);
+  identity.domains.sort();
+  const { installationId, releaseId } = e;
+  const planSha256 = digest({ format: 'patrick-first-install-preview-v2', installationId, releaseId,
+    identity, uid: e.uid, hostname: e.hostname, node: e.node, root: e.root, rootNode: e.rootNode, stores: e.stores,
+    policy: e.policy, expected: e.expected, manifestSha256: receipt.manifestSha256, targetSchema: e.targetSchema,
+    reserveBytes: e.reserveBytes, volumes, deployment: e.deployment, renderedSha256: digest(rendered), descriptors,
+    required: bootstrapRequirements, tls: e.tls });
+  const confirm = () => {
+    reportStage('LAYOUT');
+    layout(e, lease.root, options.empty, options.history);
+    reportStage('HOST');
+    nativeHost(e);
+    nodeRoot.validate();
+    const checked = stat(archive);
+    requireFact(checked.dev === artifact.dev && checked.ino === artifact.ino && checked.ctimeNs === artifact.ctimeNs);
+    const now = stat(e.node.path);
+    requireFact(now.dev === binary.dev && now.ino === binary.ino && now.ctimeNs === binary.ctimeNs);
+    reportStage('CAPACITY');
+    capacity(e, materialBytes, options.checkAvailable ?? true);
+    reportStage('LEASE');
+    guard();
+  };
+  confirm();
+  const local: LocalPlan = { installationId, releaseId, planSha256, packageSha256: receipt.packageSha256,
+    activeSchema: e.expected.activeSchema, targetSchema: e.targetSchema, volumes,
+    activationAuthorized: false, delegationAuthorized: false };
+  return { local, staging, receipt, confirm };
+}
+
+export function installReleaseApproval(input: Pick<LocalPlan, 'installationId' | 'releaseId' | 'planSha256'>, operationId: string) {
+  const { installationId, releaseId, planSha256 } = input;
+  return Buffer.from(canonicalize({ format: 'patrick-install-release-approval-v1', installationId, releaseId, operationId, planSha256 }));
+}
+
+function installVerificationKey(key: string) {
+  requireFact(typeof key === 'string' && key.length <= 2048);
+  const publicKey = createPublicKey(key);
+  requireFact(publicKey.asymmetricKeyType === 'ed25519');
+  return publicKey;
+}
+
+function verifyInstallSignature(publicKey: ReturnType<typeof installVerificationKey>, bytes: Uint8Array, signature: string) {
+  if (typeof signature !== 'string' || signature.length !== 88) return false;
+  const decoded = Buffer.from(signature, 'base64');
+  return decoded.length === 64 && decoded.toString('base64') === signature && verify(null, bytes, publicKey, decoded);
+}
+
+export async function runFirstInstallRelease(current: Registry, releaseId: string, operationId: string,
+  action: 'execute' | 'readback', operation: InstallReleaseEnrollment, validateOperation: () => void):
+Promise<LifecycleStatus | { status: 'approval-required' }> {
+  const { planSha256, journalKeyId, approval, signJournal } = operation;
+  requireFact((action === 'execute' || action === 'readback') && id(operationId) && id(journalKeyId) && operation.releaseId === releaseId &&
+    typeof planSha256 === 'string' && /^[0-9a-f]{64}$/.test(planSha256));
+  const approvalKey = installVerificationKey(operation.approvalPublicKey);
+  const journalKey = installVerificationKey(operation.journalPublicKey);
+  requireFact(!approvalKey.equals(journalKey));
+  if (action === 'execute' && (typeof signJournal !== 'function' || approval === undefined)) return { status: 'approval-required' };
+  let attempted = false;
+  try {
+    return await withInstallLease(() => { validateOperation(); return current(); }, releaseId, () => {}, async (e, lease, guard) => {
+      if (action === 'execute') {
+        requireFact(approval && verifyInstallSignature(approvalKey,
+          installReleaseApproval({ installationId: e.installationId, releaseId, planSha256 }, operationId), approval));
+      }
+      layout(e, lease.root, false);
+      const history = join(e.root, 'history');
+      const destination = join(history, `.release-${operationId}`);
+      const releasesRoot = join(e.root, 'releases');
+      const publication = { stagingRoot: history, releasesRoot };
+      const req: LifecycleRequest = { operationId, command: 'install', targetId: releaseId, planSha256, expectedGeneration: null };
+      const evidenceId = 'published-release';
+      let material: Awaited<ReturnType<typeof inspectLeasedInstall>> | undefined;
+      let reconciling = false;
+      async function inspect(empty: boolean, records?: readonly string[]) {
+        const checked = await inspectLeasedInstall(e, lease, guard, () => {}, { empty, history: records, publication, checkAvailable: empty });
+        requireFact(checked.local.planSha256 === planSha256);
+        return checked;
+      }
+      const registration: LifecycleRegistration = {
+        root: { path: history, device: Number(e.stores.history.device), inode: Number(e.stores.history.inode) },
+        identity: { ...projectIdentity(e.identity), installationId: e.installationId },
+        plan: { command: 'install', targetId: releaseId, planSha256, expectedGeneration: null,
+          nextGeneration: null, releaseSha256: e.expected.packageSha256 },
+        authority: { keyId: journalKeyId, async verify(bytes, signature, id) {
+          return id === journalKeyId && verifyInstallSignature(journalKey, bytes, signature);
+        } },
+        evidence: { version: 'install-release-v1', async observe(subject, expectedId) {
+          guard();
+          requireFact(expectedId === evidenceId);
+          const { receipt, staging } = material ??= await inspect(false);
+          return await withPublishedDeployment(receipt, { staging, releasesRoot }, async () => {
+            guard();
+            if (reconciling) {
+              requireFact(!lstatSync(destination, { throwIfNoEntry: false }));
+              exactDirectory(releasesRoot, [receipt.packageSha256]);
+              syncStore(releasesRoot, e.stores.releases, e.uid);
+              syncStore(history, e.stores.history, e.uid);
+            }
+            return { evidenceId, claimSha256: subject.claimSha256,
+              evidenceSha256: digest({ subject, packageSha256: receipt.packageSha256, manifestSha256: receipt.manifestSha256,
+                materialSha256: receipt.materialSha256 }) };
+          });
+        } },
+      };
+      const journalRegistration = () => { guard(); return registration; };
+      const previous = await createLifecycleJournalReader(journalRegistration).read(req);
+      if (action === 'readback' || previous.status === 'completed') return previous;
+      requireFact(e.stores.history.device === e.stores.releases.device);
+      const journal = createLifecycleJournal(journalRegistration, { sign: signJournal! });
+      if (previous.status === 'running_or_uncertain') {
+        attempted = true;
+        reconciling = true;
+        return await journal.reconcileCompleted(req, evidenceId);
+      }
+      const reservation = lifecycleRecordName(operationId, 'reservation');
+      await inspect(true, previous.status === 'reserved' ? [reservation] : []);
+      const reserved = await journal.reserve(req);
+      if (reserved.status !== 'reserved') return reserved;
+      attempted = true;
+      const claim = await journal.claim(req);
+      if (claim.status !== 'claimed') return claim;
+      material = await inspect(true, [reservation, lifecycleRecordName(operationId, 'claim')]);
+      const { receipt, staging, confirm } = material;
+      await journal.readOwnedClaim(claim.token);
+      confirm();
+      const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination });
+      await journal.readOwnedClaim(claim.token);
+      await publishStagedDeployment(receipt, stage);
+      return await journal.markCompleted(claim.token, evidenceId);
+    });
+  } catch (error) {
+    if (attempted) return { status: 'running_or_uncertain' };
+    throw error;
+  }
 }

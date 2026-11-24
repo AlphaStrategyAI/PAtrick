@@ -1,6 +1,7 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
-import { previewFirstInstall } from './install-preview.js';
+import { previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
+export { installReleaseApproval } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -976,6 +977,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
   const host: RegisteredHost = {
     ...hostCapabilities,
     get installPreviews() { return hostCapabilities.installPreviews; },
+    get installOperations() { return ownCapability(hostCapabilities, 'installOperations'); },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
     identity,
     captureHost: registrationData.captureHost,
@@ -990,6 +992,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
       createRecoveryBackupReader,
       createLifecycleJournalReader,
       previewFirstInstall,
+      runFirstInstallRelease,
       selectVaultInit,
       createNetworkInspector,
       createNodeNetworkProbePorts,
@@ -1057,7 +1060,8 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const { host } = provisioning;
   const publicVaultInit = hasVaultInitReadback(host);
   if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
-  if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
+  if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 &&
+    Object.getOwnPropertyNames(host.installOperations ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
     try {
       if (publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);

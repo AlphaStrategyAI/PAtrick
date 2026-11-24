@@ -1,8 +1,8 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { watch } from 'node:fs';
-import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,6 +13,9 @@ import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, d
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
+import { createInstalledCli } from '../../deploy/runtime/cli.js';
+import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 
 const test = runTest;
 let hook: ReturnType<typeof registerHooks>;
@@ -560,6 +563,127 @@ async function promotionHost(label: string) {
   return { port, hooks, checked, stage, destination, installed: join(releasesRoot, checked.packageSha256),
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
+
+test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async () => {
+  const instanceRoot = join(dir, 'first-install-cli');
+  await mkdir(instanceRoot, { mode: 0o700 });
+  const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
+  const pin = async (path: string) => {
+    const info = await lstat(path, { bigint: true });
+    return { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) };
+  };
+  const storePins = await Promise.all(stores.map(async name => {
+    const path = join(instanceRoot, name);
+    await mkdir(path, { mode: 0o700 });
+    return [name, await pin(path)];
+  }));
+  const { expected, policy } = complete;
+  await cp(complete.packagePath, join(instanceRoot, 'packages', expected.packageSha256 + '.json'));
+  const identity = { accountId: 'owner', scopeId: 'workspace', deviceId: 'darwin', domains: ['personal'], configRevision: 'r1' };
+  const origin = registration.origin;
+  const uid = process.geteuid!();
+  const captureHost = hostname();
+  const node = await realpath(process.execPath);
+  let loseAck = false;
+  let queue: Promise<unknown> = Promise.resolve();
+  const enrollment: InstallPreviewEnrollment = {
+    installationId: 'first-install', releaseId: 'release', identity, hostname: captureHost, uid, root: instanceRoot,
+    rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
+    expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
+    deployment: { ...registration, instanceRoot, certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
+      keyPath: join(instanceRoot, 'caddy/trust', 'key.ref') },
+    templates: Object.fromEntries(await Promise.all(Object.entries(deploymentPaths).map(async ([role, path]) => [role, await readFile(join(root, path), 'utf8')]))),
+    tls: { rpId: new URL(origin).hostname, caSha256: digest },
+    owner: { withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
+      const run = queue.then(async () => {
+        const result = await read(instanceRoot);
+        if (loseAck) { loseAck = false; throw new Error('lost owner response'); }
+        return result;
+      });
+      queue = run.catch(() => {});
+      return run;
+    } },
+  };
+  const approvals = generateKeyPairSync('ed25519');
+  const journal = generateKeyPairSync('ed25519');
+  const pem = (key: typeof approvals.publicKey) => key.export({ type: 'spki', format: 'pem' }) as string;
+  const installOperations: Record<string, InstallReleaseEnrollment> = {};
+  const provisioning = createRuntimeProvisioning({
+    registration: { identity, captureHost, serviceUid: uid, minimumFreeBytes: 1, dataRoot: join(instanceRoot, 'data'),
+      profile: 'test', origin, rpId: enrollment.tls.rpId, listener: { ...registration.listener, origin } },
+    hostCapabilities: { installPreviews: { release: enrollment }, installOperations },
+    service: { databasePath: join(instanceRoot, 'data', 'service.sqlite'), credentialDirectory: join(instanceRoot, 'credentials'),
+      recoveryRuntime: { attach() { throw new Error('unexpected runtime start'); } },
+      bindRecoveryOperations() { throw new Error('unexpected recovery startup'); } },
+  });
+  const cli = createInstalledCli(provisioning);
+  const args = ['install', '--release', 'release'];
+  const operationId = 'publish';
+  const run = (action: string) => cli.run([...args, '--operation', operationId, '--' + action]);
+  const preview = await cli.run(args);
+  expect(preview.status, preview.code).toBe('preview');
+  const planSha256 = preview.installPreview!.planSha256;
+  const approve = (plan: string, id = operationId, key = approvals.privateKey) => sign(null, installReleaseApproval({
+    installationId: enrollment.installationId, releaseId: 'release', planSha256: plan,
+  }, id), key).toString('base64');
+  const records = () => readdir(join(instanceRoot, 'history'));
+  const releaseStore = join(instanceRoot, 'releases');
+  const published = join(releaseStore, expected.packageSha256);
+  const signer = { signJournal: async (bytes: Uint8Array) => sign(null, bytes, journal.privateKey).toString('base64') };
+  const operation = { releaseId: 'release', planSha256, journalKeyId: 'host-controller',
+    journalPublicKey: pem(journal.publicKey), approvalPublicKey: pem(approvals.publicKey) };
+  await expect(runFirstInstallRelease(() => enrollment, 'release', operationId, 'preview' as never,
+    { ...operation, ...signer }, () => {})).rejects.toThrow();
+  installOperations[operationId] = operation;
+  expect(await run('readback')).toMatchObject({ status: 'absent' });
+  expect(await run('execute')).toMatchObject({ status: 'unavailable', code: 'INSTALL_RELEASE_APPROVAL_REQUIRED' });
+  for (const invalid of [approve('0'.repeat(64)), approve(planSha256, 'other-operation'),
+    approve(planSha256, operationId, journal.privateKey)]) {
+    installOperations[operationId] = { ...operation, ...signer, approval: invalid };
+    expect(await run('execute')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
+  }
+  installOperations[operationId] = { ...operation, ...signer, approvalPublicKey: operation.journalPublicKey,
+    approval: approve(planSha256, operationId, journal.privateKey) };
+  expect(await run('execute')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
+  installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256) };
+  const dataReserve = enrollment.reserveBytes.data;
+  enrollment.reserveBytes.data++;
+  expect(await run('execute')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
+  enrollment.reserveBytes.data = dataReserve;
+  expect(await records()).toEqual([]);
+  expect(await readdir(releaseStore)).toEqual([]);
+  const approved = installOperations[operationId]!;
+  let interruptedTerminal = false;
+  installOperations[operationId] = { ...approved, async signJournal(bytes) {
+    if (JSON.parse(Buffer.from(bytes).toString()).kind === 'terminal') {
+      interruptedTerminal = true;
+      throw new Error('terminal signing interrupted');
+    }
+    return signer.signJournal(bytes);
+  } };
+  expect(await run('execute')).toMatchObject({ status: 'uncertain', code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
+  expect(interruptedTerminal).toBe(true);
+  expect(await run('readback')).toMatchObject({ status: 'uncertain' });
+  expect(await records()).toHaveLength(2);
+  const publishedInode = (await lstat(published)).ino;
+  installOperations[operationId] = approved;
+  loseAck = true;
+  const [first, retry] = await Promise.all([run('execute'), run('execute')]);
+  expect(first).toMatchObject({ status: 'uncertain', code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
+  const readback = await run('readback');
+  expect(readback).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED', operationId,
+    prerequisites: ['schema-bootstrap', 'fixed-origin-tls', 'owner-passkey', 'authenticated-session'] });
+  expect(retry.lifecycleReceipt).toEqual(readback.lifecycleReceipt);
+  installOperations[operationId] = operation;
+  expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
+  expect(await readdir(releaseStore)).toEqual([expected.packageSha256]);
+  expect((await lstat(published)).ino).toBe(publishedInode);
+  expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
+  expect(await readdir(join(instanceRoot, 'lima'))).toEqual([]);
+  expect(await records()).toHaveLength(3);
+  await writeFile(join(published, 'extra-file'), 'modified');
+  expect(await run('readback')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
+}, 120_000);
 
 test.each(['owner-lost', 'live-ack-lost'])('reports an actual derived stage mkdir as uncertain on %s', async mode => {
   const owner = join(dir, 'parent-lease-mkdir-' + mode);

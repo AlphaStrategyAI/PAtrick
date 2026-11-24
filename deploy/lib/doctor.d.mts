@@ -1,5 +1,5 @@
 import type { selectVaultInit, VaultInitCliEntry } from '../runtime/vault-init-cli.js';
-import type { InstallPreviewEnrollment, previewFirstInstall } from '../runtime/install-preview.js';
+import type { InstallPreviewEnrollment, InstallReleaseEnrollment, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.js';
 import type { createLifecycleJournalReader, LifecycleRegistration } from '../runtime/lifecycle-journal.js';
 import type { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import type { createNetworkInspector } from '../../packages/host/src/network/probes.js';
@@ -28,6 +28,7 @@ export type RegisteredHost = {
     createRecoveryBackupReader?: typeof createRecoveryBackupReader;
     selectVaultInit?: typeof selectVaultInit;
     previewFirstInstall?: typeof previewFirstInstall;
+    runFirstInstallRelease?: typeof runFirstInstallRelease;
     createLifecycleJournalReader?: typeof createLifecycleJournalReader;
     createNetworkInspector?: typeof createNetworkInspector;
     createNodeNetworkProbePorts?: typeof createNodeNetworkProbePorts;
@@ -38,6 +39,7 @@ export type RegisteredHost = {
   backupReadback?: Parameters<typeof createRecoveryBackupReader>[0];
   vaultInitOperations?: Readonly<Record<string, VaultInitCliEntry>>;
   installPreviews?: Readonly<Record<string, InstallPreviewEnrollment>>;
+  installOperations?: Readonly<Record<string, InstallReleaseEnrollment>>;
   lifecycleReadbacks?: Readonly<Record<string, LifecycleRegistration>>;
   recoveryReadbacks?: readonly { targetId: string; backupOperationId: string; drillOperationId: string; manifestHash: string }[];
   network?: {
