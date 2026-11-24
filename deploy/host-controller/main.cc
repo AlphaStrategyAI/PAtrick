@@ -17,7 +17,7 @@
 #include <unistd.h>
 
 namespace {
-constexpr char node_sha[] = "ac1b8926054c59ba572f0a3dd2e520413f88201058848917946446151182c18d";
+constexpr char node_sha[] = "533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4";
 constexpr int control_fd = 3;
 
 bool private_directory(const std::string& path, struct stat& metadata) {

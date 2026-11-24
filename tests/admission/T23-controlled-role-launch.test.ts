@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const clang = '/Library/Developer/CommandLineTools/usr/bin/clang++';
 const clangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
-const nodeSha = 'ac1b8926054c59ba572f0a3dd2e520413f88201058848917946446151182c18d';
+const nodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const entry = fileURLToPath(new URL('../../deploy/host-controller/service-bootstrap.ts', import.meta.url));
 
