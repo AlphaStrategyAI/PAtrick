@@ -271,7 +271,8 @@ async function inspectInstall(current: Registry, releaseId: string, phase: 'boot
   try {
     const reportStage = (next: Stage) => { stage = next; };
     return await withInstallLease(current, releaseId, reportStage, async (e, lease, guard) => {
-      const { local, confirm } = await inspectLeasedInstall(e, lease, guard, reportStage, { empty: phase === 'bootstrap' });
+      const bootstrap = phase === 'bootstrap';
+      const { local, confirm } = await inspectLeasedInstall(e, lease, guard, reportStage, { empty: bootstrap, checkAvailable: bootstrap });
       if (phase === 'authenticated-session') {
         stage = 'SESSION';
         const credential = e.session;

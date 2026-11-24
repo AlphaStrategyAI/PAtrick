@@ -7,7 +7,7 @@ import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, test as runTest } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
 import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
@@ -18,6 +18,15 @@ import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+
+const lowSpace = vi.hoisted(() => ({ path: '' }));
+vi.mock('node:fs', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, statfsSync(path: string, options?: { bigint?: boolean }) {
+    const observed = fs.statfsSync(path, options);
+    return path === lowSpace.path && options?.bigint ? { ...observed, bavail: 0n } : observed;
+  } };
+});
 
 const test = runTest;
 let hook: ReturnType<typeof registerHooks>;
@@ -743,7 +752,8 @@ test('first-install CLI publishes only the approved release and reads back the s
   enrollment.session = { bootstrapPlanSha256: planSha256, ca, callerId: 'web', authEpoch: 1, credentialRevision: 'local-fixture',
     readBearer: async () => bearer };
   const checkSession = () => cli.run([...args, '--check-session']);
-  const session = await checkSession();
+  lowSpace.path = join(instanceRoot, 'data');
+  const session = await checkSession().finally(() => { lowSpace.path = ''; });
   expect(session).toMatchObject({ action: 'check-session', status: 'completed', code: 'INSTALL_SESSION_OBSERVED',
     installSession: { phase: 'authenticated-session', planSha256, observed: ['fixed-origin-tls', 'authenticated-session'],
       outstanding: ['schema-bootstrap', 'owner-passkey'], activationAuthorized: false, delegationAuthorized: false } });
