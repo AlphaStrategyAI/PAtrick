@@ -1,8 +1,8 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { createReadStream } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { closeSync, createReadStream, openSync } from 'node:fs';
+import { chmod, copyFile, mkdir, mkdtemp, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { constants, machine } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +54,8 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
   let controller: string;
   let unregistered: string;
   let mismatchedNode: string;
+  let registeredController: string;
+  let registryRoot: string;
 
   beforeAll(async () => {
     expect([process.platform, process.version]).toEqual(['darwin', 'v26.13.0']);
@@ -84,6 +86,8 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     controller = join(root, 'controller');
     unregistered = join(root, 'unregistered');
     mismatchedNode = join(root, 'mismatched-node');
+    registeredController = join(root, 'registered-controller');
+    registryRoot = join(root, 'registry');
     await mkdir(cwd, { mode: 0o700 });
     await mkdir(join(cwd, 'home'), { mode: 0o700 });
     await copyFile(process.execPath, node);
@@ -93,6 +97,11 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     await copyFile(entry, bootstrap);
     await chmod(node, 0o500);
     await chmod(bootstrap, 0o400);
+    await mkdir(registryRoot, { mode: 0o755 });
+    const registeredNode = join(registryRoot, 'node');
+    await copyFile(node, registeredNode);
+    await chmod(registeredNode, 0o555);
+    await writeFile(join(root, 'descriptor-sentinel'), '', { mode: 0o600, flag: 'wx' });
     const directory = await stat(root, { bigint: true });
     const header = [
       '#define PATRICK_SYNTHETIC_REGISTRATION 1',
@@ -104,12 +113,19 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     ].join('\n');
     const headerPath = join(root, 'registration.h');
     const mismatchedHeader = join(root, 'mismatched-node.h');
+    const registryHeader = join(root, 'registry.h');
     await writeFile(headerPath, `${header}\nconstexpr char fixture_node_sha[] = "${nodeSha}";\n`);
     await writeFile(mismatchedHeader, `${header}\nconstexpr char fixture_node_sha[] = "${'0'.repeat(64)}";\n`);
+    await writeFile(registryHeader, [
+      '#define PATRICK_NATIVE_REGISTRY_TEST 1',
+      `constexpr char registry_root[] = ${JSON.stringify(registryRoot)};`,
+      `constexpr auto registry_owner = ${directory.uid}U;`,
+    ].join('\n'));
     const args = ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-arch', darwinArch, '-isysroot', sdk,
       '-isystem', join(sdk, 'usr/include/c++/v1'), '--ld-path=' + linker];
     for (const [output, extra] of [
       [unregistered, []], [controller, ['-include', headerPath]], [mismatchedNode, ['-include', mismatchedHeader]],
+      [registeredController, ['-include', registryHeader]],
     ] as const) {
       const argv = [...args, ...extra, source, '-o', output];
       const result = spawnSync(clang, argv, {
@@ -143,6 +159,75 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
       env: {}, cwd: root, timeout: 5000, encoding: 'utf8',
     });
     expect([result.error, result.signal, result.status]).toEqual([undefined, null, 78]);
+  });
+
+  async function enrolledRole(role: string) {
+    const directory = join(registryRoot, role);
+    const account = join(directory, 'account');
+    const entry = join(directory, 'entry.mjs');
+    const sentinel = await stat(join(root, 'descriptor-sentinel'), { bigint: true });
+    await mkdir(directory, { recursive: true, mode: 0o755 });
+    await writeFile(account, `${process.getuid!()}:${process.getgid!()}\n`, { mode: 0o444, flag: 'wx' });
+    await writeFile(entry, [
+      'import { fstatSync } from "node:fs";',
+      'let inherited = false;',
+      'try {',
+      '  const descriptor = fstatSync(3, { bigint: true });',
+      `  inherited = descriptor.dev === ${sentinel.dev}n && descriptor.ino === ${sentinel.ino}n;`,
+      '} catch (error) { if (error.code !== "EBADF") throw error; }',
+      'console.log(JSON.stringify({ role: ' + JSON.stringify(role) + ', cwd: process.cwd(),',
+      '  uid: process.getuid(), gid: process.getgid(), argv: process.argv.slice(2), umask: process.umask(),',
+      '  inherited, options: process.env.NODE_OPTIONS ?? null, caller: process.env.PATRICK_FIXTURE_PARENT ?? null }));',
+    ].join('\n'), { mode: 0o444, flag: 'wx' });
+    return { directory, account, entry };
+  }
+
+  function runRegisteredRole(role: string) {
+    const descriptor = openSync(join(root, 'descriptor-sentinel'), 'r');
+    try {
+      return spawnSync(registeredController, ['run-role', role], {
+        cwd: root,
+        env: { PATRICK_FIXTURE_PARENT: 'ignored', NODE_OPTIONS: '--unsupported-fixture-option' },
+        timeout: 5000, encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe', descriptor],
+      });
+    } finally { closeSync(descriptor); }
+  }
+
+  test('the native registry dispatches only admitted role entries for the enrolled account', async ({ onTestFinished }) => {
+    for (const role of ['service', 'hub', 'worker']) {
+      expect(runRegisteredRole(role).status).toBe(78);
+      const { directory } = await enrolledRole(role);
+      onTestFinished(() => rm(directory, { recursive: true, force: true }));
+      const result = runRegisteredRole(role);
+      expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        role, cwd: directory, uid: process.getuid!(), gid: process.getgid!(), argv: [], umask: 0o077,
+        inherited: false, options: null, caller: null,
+      });
+    }
+    expect(runRegisteredRole('editor').status).toBe(64);
+    expect(runRegisteredRole('../service').status).toBe(64);
+  });
+
+  test('the native registry refuses mutable entries, links and a mismatched account', async () => {
+    const { directory, entry, account } = await enrolledRole('worker');
+    await chmod(directory, 0o775);
+    try { expect(runRegisteredRole('worker').status).toBe(78); }
+    finally { await chmod(directory, 0o755); }
+    await chmod(entry, 0o664);
+    try { expect(runRegisteredRole('worker').status).toBe(78); }
+    finally { await chmod(entry, 0o444); }
+    execFileSync('/bin/chmod', ['+a', 'everyone allow write', entry]);
+    try { expect(runRegisteredRole('worker').status).toBe(78); }
+    finally { execFileSync('/bin/chmod', ['-a#', '0', entry]); }
+    const saved = account + '.saved';
+    await rename(account, saved);
+    await symlink(saved, account);
+    try { expect(runRegisteredRole('worker').status).toBe(78); }
+    finally { await unlink(account); }
+    await writeFile(account, `${process.getuid!()}:${process.getgid!() + 1}\n`, { mode: 0o444, flag: 'wx' });
+    expect(runRegisteredRole('worker').status).toBe(78);
   });
 
   async function runLocalChild(server: Server, executable: string, sentinels: number[],

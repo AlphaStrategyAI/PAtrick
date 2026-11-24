@@ -8,6 +8,7 @@ import { createServer } from 'node:https';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
+import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -859,31 +860,52 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     await expect(start()).rejects.toThrow('HUB_PROCESS_MASTER_KEY_INVALID');
     await expect(lstat(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { await rename(savedKey, keyPath); }
-  const controller = spawn(process.execPath, ['--input-type=module', '--eval', `
+  const nativeRegistry = join(dir, 'selected-packaged-hub-registry');
+  const nativeRole = join(nativeRegistry, 'hub');
+  await mkdir(nativeRole, { mode: 0o755, recursive: true });
+  const registeredNode = join(nativeRegistry, 'node');
+  await cp(process.execPath, registeredNode);
+  await chmod(registeredNode, 0o555);
+  await writeFile(join(nativeRole, 'account'), `${process.getuid!()}:${process.getgid!()}\n`, { mode: 0o444, flag: 'wx' });
+  const controllerInput = JSON.stringify([
+    join(instanceRoot, 'releases', expected.packageSha256, 'runtime', 'composition.mjs'),
+    join(root, 'deploy', 'lib', 'emitted-release.mjs'),
+    selected, generationLockRegistration, registration,
+  ]);
+  await writeFile(join(nativeRole, 'entry.mjs'), `
     import { pathToFileURL } from 'node:url';
-    const [entry, lockModule, enrollment, lockRegistration, registration] = JSON.parse(process.argv[1]);
+    const [entry, lockModule, enrollment, lockRegistration, registration] = JSON.parse(${JSON.stringify(controllerInput)});
     const { startSelectedHubRole } = await import(pathToFileURL(entry).href);
     const { createInstalledRootOwner, leased } = await import(pathToFileURL(lockModule).href);
     const lock = createInstalledRootOwner(lockRegistration);
     const owner = { withExclusiveReadRoot(read) { return leased(lock, lease => read(lease.root)); } };
     try {
       const started = await startSelectedHubRole(enrollment, owner, registration);
-      process.send({ pid: started.runtime.read().pid });
+      process.stdout.write(JSON.stringify({ pid: started.runtime.read().pid }) + '\\n');
     } catch (error) {
-      process.send({ error: String(error?.message) }, () => process.disconnect());
+      process.stdout.write(JSON.stringify({ error: String(error?.message) }) + '\\n');
+      process.exitCode = 1;
     }
-  `, '--', JSON.stringify([
-    join(instanceRoot, 'releases', expected.packageSha256, 'runtime', 'composition.mjs'),
-    join(root, 'deploy', 'lib', 'emitted-release.mjs'),
-    selected, generationLockRegistration, registration,
-  ])], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  `, { mode: 0o444, flag: 'wx' });
+  const nativeHeader = join(nativeRegistry, 'registration.h');
+  await writeFile(nativeHeader, [
+    '#define PATRICK_NATIVE_REGISTRY_TEST 1',
+    `constexpr char registry_root[] = ${JSON.stringify(nativeRegistry)};`,
+    `constexpr auto registry_owner = ${process.geteuid!()}U;`,
+  ].join('\n'));
+  const controllerPath = join(nativeRegistry, 'patrick-host-controller');
+  child(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-include', nativeHeader,
+    join(root, 'deploy', 'host-controller', 'main.cc'), '-o', controllerPath], dir, '/usr/bin/xcrun');
+  const controller = spawn(controllerPath, ['run-role', 'hub'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const reports = createInterface({ input: controller.stdout });
   const controllerClosed = new Promise<void>(resolve => controller.once('close', () => resolve()));
   let pausedHub: number | undefined;
   try {
-    const [reported] = await Promise.race([
-      once(controller, 'message', { signal: AbortSignal.timeout(45_000) }),
+    const [line] = await Promise.race([
+      once(reports, 'line', { signal: AbortSignal.timeout(45_000) }),
       controllerClosed.then(() => { throw new Error('fixture Hub controller exited before reporting'); }),
     ]);
+    const reported = JSON.parse(line);
     const reportedPid = reported.pid;
     expect(Number.isSafeInteger(reportedPid) && reportedPid > 0, reported.error).toBe(true);
     expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
@@ -900,6 +922,7 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
       await expect(previousEnrollment.select(legacyEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
     } finally { await rename(movedControlRoot, controlRoot); }
   } finally {
+    reports.close();
     controller.kill('SIGKILL');
     if (pausedHub !== undefined) process.kill(pausedHub, 'SIGCONT');
     await controllerClosed;

@@ -181,3 +181,11 @@ Darwin 候选构建通过 `--autoloop-root` 将固定提交 `45aecbf578289cda72d
 目前的安装准入覆盖同一系统账号下的签名包和合成规则。本机用例强制停止已就绪的 Hub 进程并终止控制器，验证代次选择在写者存活期间持续受阻，并在 Hub 退出后恢复。生产部署还需为独立 Hub 账号配置对发布材料、规则和数据的访问，接通原生控制器与 launchd，并在获准的 Mac Pro 上验收。
 
 构建 `45500908733` 在 Apple Silicon 和 Intel 上通过归档复验与 Hub 启动、规则替换和控制器退出回归。下载后独立核对了每套归档的 481 个载荷文件、源码候选与清单摘要，以及 SQLite 原生模块架构。两份候选均未签名。[双架构下载回执](evidence/darwin-candidates-2026-11-25-2f1c45c.json)
+
+## 原生角色入口
+
+Darwin 控制器的 `run-role service`、`run-role hub` 和 `run-role worker` 共用 `/Library/Application Support/PAtrick/controller-v1` 宿主登记。该目录中的 `node` 为登记的 Node 可执行文件。每个角色目录含 `account` 和 `entry.mjs`。`account` 的一行内容为数字 `UID:GID`，末尾带换行。`entry.mjs` 由宿主提供，负责注入已登记的运行时能力和发布验签材料。
+
+控制器逐级检查登记目录的 root 属主、权限及扩展 ACL，核对调用进程的真实与有效 UID/GID。通过后以角色登记目录为工作目录执行对应入口，并清理继承的环境和额外文件描述符。角色入口可从自己的登记设置工作目录和专用 `HOME`。
+
+本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包，并验证控制器退出时的写者锁。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。

@@ -1,9 +1,7 @@
-// Only the admission test supplies a compile-time synthetic registration.
 #include <cstring>
 #include <sysexits.h>
 
-#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__)) && defined(PATRICK_SYNTHETIC_REGISTRATION)
-#include <CommonCrypto/CommonDigest.h>
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #include <cerrno>
 #include <climits>
 #include <cstdio>
@@ -11,12 +9,47 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <string>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <unistd.h>
 
+#ifdef PATRICK_SYNTHETIC_REGISTRATION
+#include <CommonCrypto/CommonDigest.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#else
+#include <charconv>
+#include <sys/acl.h>
+#endif
+
 namespace {
+
+// Enumerate the open descriptors themselves. A soft limit need not cover every inherited fd.
+bool confine_descriptors(int last_allowed_fd) {
+  DIR* directory = opendir("/dev/fd");
+  if (!directory) return false;
+  bool ok = true;
+  while (ok) {
+    errno = 0;
+    dirent* entry = readdir(directory);
+    if (!entry) {
+      ok = errno == 0;
+      break;
+    }
+    if (entry->d_name[0] == '.') continue;
+    char* end = nullptr;
+    long number = strtol(entry->d_name, &end, 10);
+    if (errno || *end || number < 0 || number > INT_MAX) {
+      ok = false;
+      break;
+    }
+    if (number > last_allowed_fd && number != dirfd(directory)) {
+      ok = fcntl(static_cast<int>(number), F_SETFD, FD_CLOEXEC) == 0;
+    }
+  }
+  return closedir(directory) == 0 && ok;
+}
+
+#ifdef PATRICK_SYNTHETIC_REGISTRATION
 constexpr int control_fd = 3;
 
 bool private_directory(const std::string& path, struct stat& metadata) {
@@ -50,32 +83,6 @@ bool matches_file(const std::string& path, mode_t permissions, const char* expec
     snprintf(hex + i * 2, 3, "%02x", static_cast<unsigned>(bytes[i]));
   }
   return strcmp(hex, expected_sha) == 0;
-}
-
-// Enumerate the open descriptors themselves. A soft limit need not cover every inherited fd.
-bool confine_descriptors() {
-  DIR* directory = opendir("/dev/fd");
-  if (!directory) return false;
-  bool ok = true;
-  while (ok) {
-    errno = 0;
-    dirent* entry = readdir(directory);
-    if (!entry) {
-      ok = errno == 0;
-      break;
-    }
-    if (entry->d_name[0] == '.') continue;
-    char* end = nullptr;
-    long number = strtol(entry->d_name, &end, 10);
-    if (errno || *end || number < 0 || number > INT_MAX) {
-      ok = false;
-      break;
-    }
-    if (number > control_fd && number != dirfd(directory)) {
-      ok = fcntl(static_cast<int>(number), F_SETFD, FD_CLOEXEC) == 0;
-    }
-  }
-  return closedir(directory) == 0 && ok;
 }
 
 bool connect_control(const std::string& path) {
@@ -115,7 +122,7 @@ int launch() {
   // private root does not establish immutable, independently owned production materials.
   umask(0077);
   if (chdir(cwd.c_str()) != 0 || !connect_control(root + "/control.sock") ||
-      !confine_descriptors()) return EX_UNAVAILABLE;
+      !confine_descriptors(control_fd)) return EX_UNAVAILABLE;
   char no_addons[] = "--no-addons";
   char* argv[] = {node.data(), no_addons, bootstrap.data(), nullptr};
   std::string home_var = "HOME=" + home;
@@ -126,13 +133,111 @@ int launch() {
   execve(node.c_str(), argv, envp);
   return EX_UNAVAILABLE;
 }
+#else
+#ifndef PATRICK_NATIVE_REGISTRY_TEST
+constexpr char registry_root[] = "/Library/Application Support/PAtrick/controller-v1";
+constexpr uid_t registry_owner = 0;
+#endif
+
+bool no_extended_acl(int fd) {
+  acl_t acl = acl_get_fd_np(fd, ACL_TYPE_EXTENDED);
+  if (acl == nullptr) return errno == ENOENT;
+  acl_entry_t entry;
+  errno = 0;
+  const bool empty = acl_get_entry(acl, ACL_FIRST_ENTRY, &entry) == -1 && errno == EINVAL;
+  acl_free(acl);
+  return empty;
+}
+
+int open_protected(int parent, const char* name, bool directory) {
+  const int fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK |
+                        (directory ? O_DIRECTORY : 0));
+  if (fd < 0) return -1;
+  struct stat metadata {};
+  if (fstat(fd, &metadata) == 0 && metadata.st_uid == registry_owner &&
+      (metadata.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID | S_ISVTX)) == 0 && no_extended_acl(fd) &&
+      (directory ? S_ISDIR(metadata.st_mode) : S_ISREG(metadata.st_mode) && metadata.st_nlink == 1)) return fd;
+  close(fd);
+  return -1;
+}
+
+int open_registry() {
+#ifdef PATRICK_NATIVE_REGISTRY_TEST
+  return open_protected(AT_FDCWD, registry_root, true);
+#else
+  int parent = open_protected(AT_FDCWD, "/", true);
+  for (const char* component : {"Library", "Application Support", "PAtrick", "controller-v1"}) {
+    if (parent < 0) return -1;
+    const int child = open_protected(parent, component, true);
+    close(parent);
+    parent = child;
+  }
+  return parent;
+#endif
+}
+
+bool admits_account(int directory) {
+  const int fd = open_protected(directory, "account", false);
+  if (fd < 0) return false;
+  char text[48];
+  const ssize_t length = read(fd, text, sizeof(text));
+  char trailing;
+  const bool complete = length > 0 && read(fd, &trailing, 1) == 0;
+  const bool closed = close(fd) == 0;
+  if (!closed || !complete || length < 4 || length >= static_cast<ssize_t>(sizeof(text)) || text[length - 1] != '\n') return false;
+  const char* end = text + length - 1;
+  uid_t uid;
+  gid_t gid;
+  const auto user = std::from_chars(text, end, uid);
+  if (user.ec != std::errc{} || user.ptr == end || *user.ptr != ':') return false;
+  const auto group = std::from_chars(user.ptr + 1, end, gid);
+  return group.ec == std::errc{} && group.ptr == end && uid != 0 &&
+         uid == getuid() && uid == geteuid() && gid == getgid() && gid == getegid();
+}
+
+bool has_protected_file(int directory, const char* name) {
+  const int fd = open_protected(directory, name, false);
+  return fd >= 0 && close(fd) == 0;
+}
+
+int launch_registered_role(const char* role) {
+  const int registry = open_registry();
+  if (registry < 0) return EX_CONFIG;
+  const int directory = open_protected(registry, role, true);
+  const bool usable_node = has_protected_file(registry, "node");
+  close(registry);
+  if (directory < 0) return EX_CONFIG;
+  const bool admitted = usable_node && admits_account(directory) && has_protected_file(directory, "entry.mjs");
+  if (!admitted) {
+    close(directory);
+    return EX_CONFIG;
+  }
+  const bool entered = fchdir(directory) == 0;
+  if (close(directory) != 0 || !entered || !confine_descriptors(STDERR_FILENO)) return EX_UNAVAILABLE;
+  umask(0077);
+  std::string node = std::string(registry_root) + "/node";
+  std::string entry = std::string(registry_root) + "/" + role + "/entry.mjs";
+  char* argv[] = {node.data(), entry.data(), nullptr};
+  char encoding[64];
+  snprintf(encoding, sizeof(encoding), "__CF_USER_TEXT_ENCODING=0x%X:0x0:0x0", getuid());
+  char* envp[] = {encoding, nullptr};
+  execve(node.c_str(), argv, envp);
+  return EX_UNAVAILABLE;
+}
+#endif
 }  // namespace
 #endif
 
 int main(int argc, char** argv) {
-  if (argc != 3 || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
-#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__)) && defined(PATRICK_SYNTHETIC_REGISTRATION)
+  if (argc != 3 || strcmp(argv[1], "run-role") ||
+      (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker"))) return EX_USAGE;
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
+#ifdef PATRICK_SYNTHETIC_REGISTRATION
+  if (strcmp(argv[2], "service")) return EX_USAGE;
   return launch();
+#else
+  return launch_registered_role(argv[2]);
+#endif
 #else
   return EX_CONFIG;
 #endif
