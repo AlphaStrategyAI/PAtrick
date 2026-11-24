@@ -297,7 +297,8 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   };
 }
 
-export async function runInstalledService(provisioning: RuntimeProvisioning, assertSelected?: () => void) {
+export async function runInstalledService(provisioning: RuntimeProvisioning, assertSelected?: () => void,
+  options?: { manageSignals?: boolean }) {
   assertSelected?.();
   let runtime: ServiceRuntime;
   try { runtime = createInstalledService(provisioning); }
@@ -345,8 +346,10 @@ export async function runInstalledService(provisioning: RuntimeProvisioning, ass
     monitorDrain();
   }
 
-  process.on('SIGTERM', signal);
-  process.on('SIGINT', signal);
+  if (options?.manageSignals !== false) {
+    process.on('SIGTERM', signal);
+    process.on('SIGINT', signal);
+  }
   try {
     maintenanceSignals.set(runtime, { held: false, settled() { this.held = false; uninstallSignals(); } });
     listener = await startServiceListener(runtime, provisioning, assertSelected);

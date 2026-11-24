@@ -16,7 +16,9 @@ npm run build:runtime -- --source-root <physical-checkout> --source-commit <full
 
 独立登记的可信主机控制器通过 `createRuntimeProvisioning` 提供一致的账户、设备、范围、域、配置版本、有效 UID 和可执行能力，再调用 `createInstalledCli`、`createInstalledService` 或 `createInstalledWorker`。复制或序列化的对象不具备原始凭据身份。直接执行未登记的 CLI、service 或 worker 入口返回缺失能力诊断及退出码 3。
 
-T23 本机准入通过 `startSelectedRuntimeRole` 验证从已确认代次启动发行包内的 service 或 worker。入口在独占租约内核验签名包、发布目录及代次数据路径。worker 在 Hub 健康检查后复核租约，service 在监听前复核租约。启动后丢失确认时停止并排空角色，排空未确认时可继续查询和等待关闭。该入口只接受测试配置。生产控制器还需跨进程协调 maintenance 和三个 launchd 任务，并在 Mac Pro 上验收。
+T23 本机准入通过 `startSelectedRuntimeRole` 验证从已确认代次启动发行包内的 service 或 worker。入口在独占租约内核验签名包、发布目录及代次数据路径。worker 在 Hub 健康检查后复核租约，service 在监听前复核租约。启动后丢失确认时停止并排空角色，排空未确认时可继续查询和等待关闭。
+
+宿主角色脚本可用 `runInstalledRuntimeRole` 以前台进程运行 service 或 worker。它从代次验证开始处理 `SIGINT` 和 `SIGTERM`，确认运行时和 HTTP 监听器关闭后返回。打包准入覆盖配给阶段中断、等待代次回执时排空，以及 service 和 worker 就绪后的进程关停。当前代次入口只接受测试配置。生产控制器还需要跨账号的代次准入和跨进程的 maintenance 排空，随后在 Mac Pro 验收三个 launchd 任务。
 
 服务使用 import-safe factory，在真实连接附加恢复门禁后启动工作。监听器处理请求、正文、流和连接的取消及退出，并与运行时排空一起等待实际工作完成。超时保留未解决的状态和资源。数据库关闭不能充当外部写者停止或 fencing 凭据。登记的 HTTPS origin 与精确 hostname RP ID 贯穿认证、挑战、控制、设置、飞书和 Web 客户端。监听器在 loopback 接收请求，URL 锚定登记 origin，保留来访 Origin，不从 Host 或代理头选择权限。HTTPS cookie 包括清理 cookie 都带 Secure。直接工厂保留 localhost 默认；安装入口仅在显式测试 profile 允许该配置。真实 TLS 和主机激活仍须验收。
 

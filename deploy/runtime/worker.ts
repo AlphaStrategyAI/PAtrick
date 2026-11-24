@@ -66,7 +66,8 @@ export async function createInstalledWorker(provisioning: RuntimeProvisioning, a
   }
 }
 
-export async function runInstalledWorker(provisioning: RuntimeProvisioning, assertSelected?: () => void) {
+export async function runInstalledWorker(provisioning: RuntimeProvisioning, assertSelected?: () => void,
+  options?: { manageSignals?: boolean }) {
   const runtime = await createInstalledWorker(provisioning, assertSelected);
   type Status = ReturnType<typeof runtime.read>;
   const keepAlive = setInterval(() => {
@@ -93,8 +94,10 @@ export async function runInstalledWorker(provisioning: RuntimeProvisioning, asse
       publish({ ...result, signal });
     });
   }
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  if (options?.manageSignals !== false) {
+    process.on('SIGTERM', onSignal);
+    process.on('SIGINT', onSignal);
+  }
   return { stop: runtime.stop, drain, read: runtime.read, closed };
 }
 

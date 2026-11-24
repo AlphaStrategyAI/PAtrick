@@ -1595,12 +1595,111 @@ test('starts installed roles from the confirmed generation and fails closed when
     expect(await readdir(dataRoot)).not.toContain('service.sqlite.hub');
   } finally { await started.runtime.drain(); }
   expect(attached.map(database => database.open)).toEqual([false]);
+  const foregroundEntry = join(dir, 'selected-role-foreground.mjs');
+  await writeFile(foregroundEntry, `
+    import { once } from 'node:events';
+    import { createServer } from 'node:http';
+    import { setTimeout as delay } from 'node:timers/promises';
+    import { pathToFileURL } from 'node:url';
+    const { runInstalledRuntimeRole } = await import(pathToFileURL(${JSON.stringify(join(installed, 'runtime', 'composition.mjs'))}).href);
+    const enrollment = ${JSON.stringify(pinnedEnrollment)};
+    const registration = ${JSON.stringify(provisioning.registration)};
+    const [role, mode] = process.argv.slice(2);
+    const databases = [];
+    const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+    let hub;
+    try {
+      let owner;
+      if (mode === 'before-ack') {
+        delete enrollment.ownerLockNode;
+        owner = { async withExclusiveReadRoot(use) {
+          const result = await use(enrollment.root);
+          const timeout = setTimeout(() => process.exit(1), 10000);
+          try {
+            const stop = once(process, 'SIGTERM');
+            send({ phase: 'confirmation', databaseOpen: databases[0]?.open });
+            await stop;
+            while (databases[0]?.open) await delay(20);
+            return result;
+          } finally { clearTimeout(timeout); }
+        } };
+      }
+      let worker;
+      if (role === 'worker') {
+        const commit = ${JSON.stringify(PINNED_HUB_COMMIT)};
+        hub = createServer((_request, response) => response.end(JSON.stringify({ ok: true, commit })));
+        hub.listen(0, '127.0.0.1');
+        await once(hub, 'listening');
+        registration.operationalHub = { origin: 'http://127.0.0.1:' + hub.address().port, commit };
+        worker = { keys: { owner: 'fixture-owner', worker: 'fixture-worker', source: 'fixture-source' } };
+      }
+      await runInstalledRuntimeRole(enrollment, owner, role, async paths => {
+        if (mode === 'before-open') {
+          const timeout = setTimeout(() => process.exit(1), 10000);
+          try {
+            const stop = once(process, 'SIGINT');
+            send({ phase: 'provision' });
+            await stop;
+          } finally { clearTimeout(timeout); }
+        }
+        return {
+          registration,
+          worker,
+          service: {
+            databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
+            recoveryRuntime: { attach({ database }) { databases.push(database); } },
+            bindRecoveryOperations() { return { root: ${JSON.stringify(recoveryRoot)}, authority: {
+              keyId: 'fixture', async sign() { throw Error('unused'); }, async verify() { return false; },
+            }, targets: {} }; },
+          },
+        };
+      }, started => send({ phase: 'running', role: started.role, url: started.runtime.url }));
+      send({ phase: 'stopped', databases: databases.map(database => database.open) });
+    } catch (error) {
+      send({ error: String(error?.message) });
+      process.exitCode = 1;
+    } finally {
+      hub?.close();
+    }
+  `);
+  async function checkForeground(role: 'service' | 'worker', mode: 'before-open' | 'before-ack' | 'running') {
+    const foreground = spawn(process.execPath, [foregroundEntry, role, mode], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const lines = createInterface({ input: foreground.stdout });
+    const completed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve =>
+      foreground.once('close', (code, signal) => resolve({ code, signal })));
+    const reports: Array<{ phase?: string; role?: string; url?: string; databaseOpen?: boolean; error?: string }> = [];
+    lines.on('line', line => reports.push(JSON.parse(line)));
+    try {
+      await Promise.race([
+        once(lines, 'line', { signal: AbortSignal.timeout(30_000) }),
+        completed.then(() => { throw new Error('fixture role exited without a report'); }),
+      ]);
+      const report = reports[0]!;
+      const phase = { 'before-open': 'provision', 'before-ack': 'confirmation', running: 'running' }[mode];
+      expect(report.phase, report.error).toBe(phase);
+      if (mode === 'running') expect(report.role).toBe(role);
+      if (mode === 'before-ack') expect(report.databaseOpen).toBe(true);
+      if (report.url) expect((await fetch(report.url)).status).toBe(200);
+      expect(foreground.kill(mode === 'before-open' ? 'SIGINT' : 'SIGTERM')).toBe(true);
+      await expect(Promise.race([completed, delay(10000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+      expect(reports.slice(1)).toEqual([{ phase: 'stopped', databases: mode === 'before-open' ? [] : [false] }]);
+      if (report.url) await expect(fetch(report.url)).rejects.toThrow();
+    } finally {
+      lines.close();
+      foreground.kill('SIGKILL');
+      await completed;
+    }
+  }
+  await checkForeground('service', 'before-open');
+  await checkForeground('service', 'running');
+  await checkForeground('worker', 'running');
   const retained = join(dir, 'pinned-role-selection');
   await mkdir(retained, { mode: 0o700 });
   await rename(join(instance, 'current'), join(retained, 'current'));
   for (const record of await readdir(history)) await rename(join(history, record), join(retained, record));
   const legacyOrder = store.order('select-legacy', null, generation.id);
   await store.select(canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), signer.privateKey).toString('base64') }));
+  await checkForeground('service', 'before-ack');
   loseAcknowledgement = true;
   await expect(launch()).rejects.toThrow('fixture owner acknowledgement lost');
   expect(attached.map(database => database.open)).toEqual([false, false]);

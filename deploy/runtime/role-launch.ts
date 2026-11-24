@@ -1,5 +1,6 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
@@ -27,6 +28,8 @@ export type SelectedRuntimePaths = Readonly<{
 type Service = Awaited<ReturnType<typeof import('./service.js').runInstalledService>>;
 type Worker = Awaited<ReturnType<typeof import('./worker.js').runInstalledWorker>>;
 type StartedRole = { role: 'service'; runtime: Service } | { role: 'worker'; runtime: Worker };
+type RoleProvision = (paths: SelectedRuntimePaths) => RuntimeProvisioningInput | Promise<RuntimeProvisioningInput>;
+type RoleLifecycle = { signal: AbortSignal; onStarted(role: StartedRole): void };
 type CleanupResult = ReturnType<Service['read']> | ReturnType<Worker['read']>;
 type StartupCleanup = {
   readCleanup(): CleanupResult;
@@ -38,9 +41,22 @@ function closed(result: CleanupResult) {
   return result.status === 'closed';
 }
 
+function running(result: CleanupResult) {
+  if ('listener' in result) return result.listener === 'running' && result.runtime.status === 'running';
+  return result.status === 'running';
+}
+
 function hasCleanup(error: unknown): error is StartupCleanup {
   return error instanceof Error && 'readCleanup' in error && typeof error.readCleanup === 'function' &&
     'drainCleanup' in error && typeof error.drainCleanup === 'function';
+}
+
+function wasCanceledStartup(error: unknown, reason: Error): boolean {
+  if (error === reason) return true;
+  if (!(error instanceof Error)) return false;
+  if (error.message === 'LISTENER_START_CANCELLED') return error.cause === reason;
+  return error instanceof AggregateError && error.message === 'INSTALLED_ROLE_CLEANUP_UNCONFIRMED' &&
+    error.errors.length === 1 && wasCanceledStartup(error.errors[0], reason);
 }
 
 export type HubRoleRegistration = Readonly<{
@@ -205,7 +221,17 @@ export async function startSelectedRuntimeRole(
   enrollment: GenerationEnrollment,
   owner: ExclusiveRuntimeStaging | undefined,
   role: SelectedRuntimePaths['role'],
-  provision: (paths: SelectedRuntimePaths) => RuntimeProvisioningInput | Promise<RuntimeProvisioningInput>,
+  provision: RoleProvision,
+): Promise<StartedRole> {
+  return launchSelectedRuntimeRole(enrollment, owner, role, provision);
+}
+
+async function launchSelectedRuntimeRole(
+  enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined,
+  role: SelectedRuntimePaths['role'],
+  provision: RoleProvision,
+  lifecycle?: RoleLifecycle,
 ): Promise<StartedRole> {
   if (role !== 'service' && role !== 'worker') throw new Error('INSTALLED_ROLE_INVALID');
   const { root, installationId } = enrollment;
@@ -219,7 +245,12 @@ export async function startSelectedRuntimeRole(
     throw error;
   }
   try {
+    lifecycle?.signal.throwIfAborted();
     return await withConfirmedGeneration(enrollment, owner, async (selected, deployment, guard) => {
+      function assertSelected() {
+        guard();
+        lifecycle?.signal.throwIfAborted();
+      }
       const generation = selected.order.generation;
       const dataRoot = join(root, 'data', generation.id);
       const paths = Object.freeze({
@@ -228,22 +259,24 @@ export async function startSelectedRuntimeRole(
         dataRoot, databasePath: join(dataRoot, 'service.sqlite'), localAnswersPath: join(dataRoot, 'answers.sqlite'),
         operationalHubPath: join(dataRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
       });
-      guard();
+      assertSelected();
       const composition: typeof import('./composition.js') = await import(pathToFileURL(deployment.entrypoints.composition).href);
-      guard();
+      assertSelected();
       if (typeof composition.createSelectedRuntimeProvisioning !== 'function') throw new Error('INSTALLED_ROLE_ENTRYPOINT_REQUIRED');
       const input = await provision(paths);
-      guard();
+      assertSelected();
       const provisioning = composition.createSelectedRuntimeProvisioning(input, paths);
+      const options = { manageSignals: !lifecycle };
       if (role === 'service') {
         const entry: typeof import('./service.js') = await import(pathToFileURL(deployment.entrypoints.service).href);
-        guard();
-        started = { role, runtime: await entry.runInstalledService(provisioning, guard).catch(captureStartupFailure) };
+        assertSelected();
+        started = { role, runtime: await entry.runInstalledService(provisioning, assertSelected, options).catch(captureStartupFailure) };
       } else {
         const entry: typeof import('./worker.js') = await import(pathToFileURL(deployment.entrypoints.worker).href);
-        guard();
-        started = { role, runtime: await entry.runInstalledWorker(provisioning, guard).catch(captureStartupFailure) };
+        assertSelected();
+        started = { role, runtime: await entry.runInstalledWorker(provisioning, assertSelected, options).catch(captureStartupFailure) };
       }
+      lifecycle?.onStarted(started);
       return started;
     });
   } catch (error) {
@@ -264,5 +297,54 @@ export async function startSelectedRuntimeRole(
       }
     }
     throw error;
+  }
+}
+
+export async function runInstalledRuntimeRole(
+  enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined,
+  role: SelectedRuntimePaths['role'],
+  provision: RoleProvision,
+  onReady?: (started: StartedRole) => void,
+): Promise<void> {
+  const stopping = new AbortController();
+  const requestedStop = new Error('INSTALLED_ROLE_STOP_REQUESTED');
+  let runtimeStop: (() => void) | undefined;
+  function stop() {
+    if (stopping.signal.aborted) return;
+    stopping.abort(requestedStop);
+    runtimeStop?.();
+  }
+  const drainOptions = { timeoutMs: 2_147_483_647 };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  try {
+    let started: StartedRole;
+    try {
+      started = await launchSelectedRuntimeRole(enrollment, owner, role, provision, {
+        signal: stopping.signal,
+        onStarted({ runtime }) {
+          runtimeStop = runtime.stop;
+          if (stopping.signal.aborted) runtimeStop();
+        },
+      });
+    } catch (error) {
+      if (hasCleanup(error) && !closed(error.readCleanup()) && !closed(await error.drainCleanup(drainOptions))) throw error;
+      if (wasCanceledStartup(error, requestedStop)) return;
+      throw error;
+    }
+    const { runtime } = started;
+    let result: CleanupResult;
+    try {
+      if (!stopping.signal.aborted && running(runtime.read())) onReady?.(started);
+      while (!stopping.signal.aborted && running(runtime.read())) await delay(250);
+      if (!stopping.signal.aborted) throw new Error('INSTALLED_ROLE_EXITED_UNEXPECTEDLY');
+    } finally {
+      result = await runtime.drain(drainOptions);
+    }
+    if (!closed(result)) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE');
+  } finally {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
   }
 }
