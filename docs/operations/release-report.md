@@ -83,3 +83,5 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 下载校验器重新复核构建 `45397001813`。它将包内清单的提交、构建环境和原生扩展记录与构建回执比对，再核验每个载荷的路径、长度、权限模式和 SHA-256。两种架构各有 458 个载荷文件通过，候选摘要与原登记回执一致。
 
 含首次安装发布逻辑的提交 `dc74241fe616bfbd07adf357622b367726f5958d` 在构建 `45409471389` 上通过两种架构的构建。Intel 首次通过，Apple Silicon 首次排队后被取消，单独重试后通过。下载复验通过每套归档的 458 个载荷文件和各自的 Mach-O 架构。两套候选等待正式签名及目标机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-24-dc74241.json)
+
+包含安装会话核验命令的提交 `c3fd14e9e16b3a5f654b747a716c5f4c64175e3c` 在构建 `45417098683` 上通过 Apple Silicon 与 Intel 构建。下载后逐项核对每套归档的 458 个载荷文件、源码清单与原生模块架构。两套未签名候选等待发布签名和目标机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-24-c3fd14e.json)
