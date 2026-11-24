@@ -5,6 +5,8 @@ import {
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
 } from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
+export { startSelectedRuntimeRole } from './role-launch.js';
+import type { SelectedRuntimePaths } from './role-launch.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -13,7 +15,7 @@ import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createPatrickCli, type CliResult } from '../cli/patrick.mjs';
-import { sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doctor.mjs';
+import { bindRegistration, sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doctor.mjs';
 import { createObsidianDoctor } from '../obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
@@ -939,6 +941,25 @@ export async function installRuntimeMaintenance(runtime: FactoryRuntime,
 }
 
 export function createRuntimeProvisioning(input: RuntimeProvisioningInput): RuntimeProvisioning {
+  return provisionRuntime(input);
+}
+
+export function createSelectedRuntimeProvisioning(input: RuntimeProvisioningInput, paths: SelectedRuntimePaths): RuntimeProvisioning {
+  const registration = bindRegistration(() => input.registration).value;
+  const service = { ...input.service };
+  const { operationalRecoveryHub } = input;
+  if (registration.profile !== 'test' || input.maintenance) {
+    throw new Error('INSTALLED_ROLE_CONTROLLER_REQUIRED');
+  }
+  if (!sameIdentity(registration.identity, paths.identity) || registration.dataRoot !== paths.dataRoot ||
+      service.databasePath !== paths.databasePath || service.credentialDirectory !== paths.credentialDirectory ||
+      (operationalRecoveryHub && operationalRecoveryHub.physicalPath !== paths.operationalHubPath)) {
+    throw new Error('INSTALLED_ROLE_PROVISIONING_MISMATCH');
+  }
+  return provisionRuntime({ ...input, registration, service, operationalRecoveryHub }, paths.localAnswersPath);
+}
+
+function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?: string): RuntimeProvisioning {
   const { registration, hostCapabilities = {}, operationalRecoveryHub, service, worker } = input;
   if (!registration) throw new Error('HOST_REGISTRATION_REQUIRED');
   validateIdentity(registration.identity);
@@ -972,7 +993,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
   }
   validateNestedIdentities(hostCapabilities, identity);
   const legacyAnswersPath = service.databasePath + '.hub';
-  let localAnswersPath = legacyAnswersPath;
+  let localAnswersPath = selectedAnswersPath ?? legacyAnswersPath;
   if (input.maintenance) {
     const opener = openingOwners.get(input.maintenance.storage);
     requireCut(opener && operationalRecoveryHub && !provisionedStorage.has(input.maintenance.storage));
@@ -1144,6 +1165,7 @@ export async function cleanRuntimeStartup(error: unknown) {
     code: diagnosticCode(error.cause, 'SERVICE_START_FAILED'),
     cleanup: await error.cleanup.drain(),
     readCleanup: error.cleanup.read,
+    drainCleanup: error.cleanup.drain,
   };
   return { code: diagnosticCode(error, 'SERVICE_START_FAILED') };
 }

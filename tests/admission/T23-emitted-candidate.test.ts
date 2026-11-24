@@ -2,6 +2,7 @@ import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:https';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,9 +17,9 @@ import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedRe
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning, prepareFirstInstallGeneration } from '../../deploy/runtime/composition.js';
+import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
-import { createGenerationStore, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+import { createGenerationStore, type GenerationEnrollment, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async importOriginal => {
@@ -32,6 +33,7 @@ vi.mock('node:fs', async importOriginal => {
 const test = runTest;
 let hook: ReturnType<typeof registerHooks>;
 let candidateLoads = 0;
+let authorizedRuntimePrefix: string | undefined;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ids = ['relocated-node-import', 'service-cli-drain', 'sqlite-migrate-reopen', 'worker-role-readback'];
 const entries = ['cli', 'composition', 'service', 'worker'].map(name => 'runtime/' + name + '.mjs');
@@ -173,7 +175,10 @@ beforeAll(async () => {
   temporary = await mkdtemp(join(await realpath(tmpdir()), 'emitted-admission-'));
   const prefix = pathToFileURL(temporary).href + '/';
   hook = registerHooks({ load(url, context, next) {
-    if (url.startsWith(prefix)) { candidateLoads++; throw new Error('candidate module execution during admission'); }
+    if (url.startsWith(prefix) && (!authorizedRuntimePrefix || !url.startsWith(authorizedRuntimePrefix))) {
+      candidateLoads++;
+      throw new Error('candidate module execution during admission');
+    }
     return next(url, context);
   } });
   ({ input, evidence, prepared, packagePath, expected, policy, material, artifact } = await buildSignedFixture(temporary));
@@ -1075,6 +1080,188 @@ test('publishes the exact staged deployment and authenticates its new slot in a 
     packageSha256: checked.packageSha256, materialSha256: checked.materialSha256, inventorySha256: checked.inventorySha256 });
   const paths = [...entries, ...Object.values(deploymentPaths)];
   expect(observed.files).toEqual(paths.map(path => ({ path: join(installed, path), sha256: checked.materials.find(row => row.path === path)?.sha256 })));
+}, 120_000);
+
+test('starts installed roles from the confirmed generation and fails closed when the owner loses acknowledgement', async ({ onTestFinished }) => {
+  const { port, stage, checked, installed, archive } = await promotionHost('selected-role');
+  const instance = dirname(archive);
+  await publishStagedDeployment(checked, stage);
+  authorizedRuntimePrefix = pathToFileURL(installed).href + '/';
+  onTestFinished(() => { authorizedRuntimePrefix = undefined; });
+  const pin = async (path: string) => {
+    const info = await lstat(path, { bigint: true });
+    return { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) };
+  };
+  const { expected, policy } = complete;
+  const packages = join(instance, 'packages');
+  const data = join(instance, 'data');
+  const history = join(instance, 'history');
+  const dataRoot = join(data, 'first');
+  const recoveryRoot = join(dataRoot, 'recovery');
+  const servicePath = join(dataRoot, 'service.sqlite');
+  const answersPath = join(dataRoot, 'answers.sqlite');
+  const uid = process.geteuid!();
+  const identity = { accountId: 'owner', scopeId: 'workspace', deviceId: 'darwin', domains: ['personal'], configRevision: 'r1' };
+  for (const path of [packages, data, history]) {
+    await mkdir(path, { mode: 0o700 });
+  }
+  await cp(archive, join(packages, expected.packageSha256 + '.json'));
+  async function createGeneration(id: string): Promise<InstalledGeneration> {
+    const generationRoot = join(data, id);
+    const files = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'];
+    const directories = ['credentials', 'blobs', 'projections'];
+    await mkdir(generationRoot, { mode: 0o700 });
+    for (const name of directories) await mkdir(join(generationRoot, name), { mode: 0o700 });
+    for (const name of files) await writeFile(join(generationRoot, name), '', { mode: 0o600 });
+    return {
+      id, schema: expected.activeSchema, packageSha256: expected.packageSha256,
+      releaseRoot: await pin(installed), dataRoot: await pin(generationRoot),
+      roles: Object.fromEntries(await Promise.all([...files, ...directories]
+        .map(async name => [name, await pin(join(generationRoot, name))]))) as InstalledGeneration['roles'],
+    };
+  }
+  const generation = await createGeneration('first');
+  const successor = await createGeneration('second');
+  await mkdir(recoveryRoot, { mode: 0o700 });
+  const signer = generateKeyPairSync('ed25519');
+  const enrollment: GenerationEnrollment = {
+    installationId: 'fixture-install', hostId: 'fixture-host', identity, root: instance,
+    target: expected.target, rootNode: await pin(instance),
+    stores: { packages: await pin(packages), releases: await pin(dirname(installed)), history: await pin(history), data: await pin(data) },
+    publicKey: signer.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    releases: [{ expected, policy }], generations: [generation, successor],
+  };
+  let loseAcknowledgement = false;
+  let interruptSelection = false;
+  let interruptRoleStartup: { when: Promise<void>; reason: string } | undefined;
+  const owner: ExclusiveRuntimeStaging = {
+    withExclusiveReadRoot<T>(use: (path: string) => Promise<T>) {
+      return port.withExclusiveReadRoot(async path => {
+        const operation = use(path);
+        const interruption = interruptRoleStartup;
+        const result = interruption ? await Promise.race([operation, interruption.when.then(() => {
+          throw new Error(interruption.reason);
+        })]) : await operation;
+        if (loseAcknowledgement) throw new Error('fixture owner acknowledgement lost');
+        return result;
+      });
+    },
+  };
+  const store = createGenerationStore(enrollment, owner, {
+    async signRecord(payload) {
+      if (interruptSelection && JSON.parse(Buffer.from(payload).toString()).format === 'patrick-installed-owner-flush-v1') {
+        throw new Error('fixture selection confirmation interrupted');
+      }
+      return sign(null, payload, signer.privateKey).toString('base64');
+    },
+  });
+  const origin = 'http://localhost';
+  const attached: Array<Parameters<NonNullable<RuntimeProvisioningInput['service']['recoveryRuntime']>['attach']>[0]['database']> = [];
+  const provisioning: RuntimeProvisioningInput = {
+    registration: { identity, captureHost: hostname(), serviceUid: uid, minimumFreeBytes: 0, dataRoot,
+      profile: 'test', origin, rpId: 'localhost', listener: { host: '127.0.0.1', port: 0, origin } },
+    service: { databasePath: servicePath, credentialDirectory: join(dataRoot, 'credentials'),
+      recoveryRuntime: { attach({ database }) { attached.push(database); } },
+      bindRecoveryOperations() { return { root: recoveryRoot, authority: {
+        keyId: 'fixture', async sign() { throw Error('unused'); }, async verify() { return false; },
+      }, targets: {} }; },
+    },
+  };
+  let provisions = 0;
+  const launch = (input = provisioning) => startSelectedRuntimeRole(enrollment, owner, 'service', context => {
+    provisions++;
+    expect(context).toMatchObject({ generationId: 'first', packageSha256: generation.packageSha256, dataRoot,
+      databasePath: servicePath, localAnswersPath: answersPath });
+    return input;
+  });
+  await expect(launch()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
+  expect(provisions).toBe(0);
+  const order = store.order('select-first', null, generation.id);
+  await store.select(canonicalize({ order, signature: sign(null, bytes(order), signer.privateKey).toString('base64') }));
+  await expect(launch({ ...provisioning, service: { ...provisioning.service, databasePath: join(dataRoot, 'hub.sqlite') } }))
+    .rejects.toThrow('INSTALLED_ROLE_PROVISIONING_MISMATCH');
+  expect(attached).toHaveLength(0);
+  const started = await launch();
+  try {
+    expect(started.role).toBe('service');
+    if (started.role !== 'service') throw new Error('fixture service missing');
+    expect((await fetch(started.runtime.url + '/')).status).toBe(200);
+    expect(await readdir(dataRoot)).not.toContain('service.sqlite.hub');
+  } finally { await started.runtime.drain(); }
+  expect(attached.map(database => database.open)).toEqual([false]);
+  loseAcknowledgement = true;
+  await expect(launch()).rejects.toThrow('fixture owner acknowledgement lost');
+  expect(attached.map(database => database.open)).toEqual([false, false]);
+  loseAcknowledgement = false;
+  const hubCommit = '45aecbf578289cda72d1fc773dcad069bfe7778b';
+  let healthRequested!: () => void;
+  const health = new Promise<void>(resolve => { healthRequested = resolve; });
+  const hub = createHttpServer((_request, response) => {
+    healthRequested();
+    setImmediate(() => response.end(JSON.stringify({ ok: true, commit: hubCommit })));
+  });
+  await new Promise<void>(resolve => hub.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = hub.address();
+    if (!address || typeof address === 'string') throw new Error('fixture hub address missing');
+    const workerInput: RuntimeProvisioningInput = {
+      ...provisioning,
+      registration: { ...provisioning.registration, operationalHub: { origin: `http://127.0.0.1:${address.port}`, commit: hubCommit } },
+      worker: { keys: { owner: 'fixture-owner', worker: 'fixture-worker', source: 'fixture-source' } },
+    };
+    interruptRoleStartup = { when: health, reason: 'fixture owner lost during health check' };
+    await expect(startSelectedRuntimeRole(enrollment, owner, 'worker', () => workerInput))
+      .rejects.toThrow('fixture owner lost during health check');
+    expect(attached).toHaveLength(2);
+    interruptRoleStartup = undefined;
+    const worker = await startSelectedRuntimeRole(enrollment, owner, 'worker', () => workerInput);
+    try {
+      if (worker.role !== 'worker') throw new Error('fixture worker missing');
+      expect(worker.runtime.read().status).toBe('running');
+    } finally { await worker.runtime.drain(); }
+    expect(attached.map(database => database.open)).toEqual([false, false, false]);
+  } finally {
+    interruptRoleStartup = undefined;
+    await new Promise<void>((resolve, reject) => hub.close(error => error ? reject(error) : resolve()));
+  }
+  let databaseOpened!: () => void;
+  let releaseDatabase: (() => void) | undefined;
+  interruptRoleStartup = {
+    when: new Promise<void>(resolve => { databaseOpened = resolve; }),
+    reason: 'fixture owner lost before listener bind',
+  };
+  try {
+    const input: RuntimeProvisioningInput = {
+      ...provisioning,
+      service: { ...provisioning.service, recoveryRuntime: {
+        attach({ database }) {
+          const original = database.close.bind(database);
+          const close = vi.spyOn(database, 'close').mockImplementation(() => { throw new Error('fixture SQLite close failed'); });
+          releaseDatabase = () => { close.mockRestore(); if (database.open) original(); };
+          databaseOpened();
+        },
+      } },
+    };
+    await expect(launch(input)).rejects.toMatchObject({
+      message: 'INSTALLED_ROLE_CLEANUP_UNCONFIRMED',
+      role: 'service',
+      readCleanup: expect.any(Function),
+      drainCleanup: expect.any(Function),
+    });
+  } finally {
+    interruptRoleStartup = undefined;
+    releaseDatabase?.();
+  }
+  await expect(launch({ ...provisioning, registration: { ...provisioning.registration, profile: 'production' } }))
+    .rejects.toThrow('INSTALLED_ROLE_CONTROLLER_REQUIRED');
+  const selected = await store.observe();
+  const pending = store.order('interrupted-selection', selected.current!.sha256, successor.id);
+  interruptSelection = true;
+  await expect(store.select(canonicalize({ order: pending, signature: sign(null, bytes(pending), signer.privateKey).toString('base64') })))
+    .rejects.toThrow('GENERATION_SELECTION_UNCERTAIN');
+  const attempts = provisions;
+  await expect(launch()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
+  expect(provisions).toBe(attempts);
 }, 120_000);
 
 test('refuses publication before rename on a foreign token, store, archive or occupied slot', async () => {

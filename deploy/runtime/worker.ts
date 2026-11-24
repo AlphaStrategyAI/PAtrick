@@ -46,12 +46,13 @@ export function drainGenerationWorker(provisioning: RuntimeProvisioning) {
   return generationWorkers.get(provisioning)?.drain({ timeoutMs: 2_147_483_647 });
 }
 
-export async function createInstalledWorker(provisioning: RuntimeProvisioning) {
+export async function createInstalledWorker(provisioning: RuntimeProvisioning, assertSelected?: () => void) {
   const { worker, storageOptions } = requireRuntimeProvisioning(provisioning);
   const hub = provisioning.registration.operationalHub;
   if (!hub || !worker) throw new Error('OPERATIONAL_HUB_CAPABILITIES_REQUIRED');
   storageOptions.assertStartupAllowed?.();
   await assertHubIdentity(hub.origin, hub.commit);
+  assertSelected?.();
   try {
     const { stop, drain, read } = createServiceRuntime({
       ...storageOptions,
@@ -60,13 +61,13 @@ export async function createInstalledWorker(provisioning: RuntimeProvisioning) {
     if (storageOptions.assertStartupAllowed) generationWorkers.set(provisioning, { drain });
     return { stop, drain, read };
   } catch (error) {
-    const { code, cleanup, readCleanup } = await cleanRuntimeStartup(error);
-    throw Object.assign(new Error(code), { cleanup, readCleanup });
+    const { code, ...cleanup } = await cleanRuntimeStartup(error);
+    throw Object.assign(new Error(code), cleanup);
   }
 }
 
-export async function runInstalledWorker(provisioning: RuntimeProvisioning) {
-  const runtime = await createInstalledWorker(provisioning);
+export async function runInstalledWorker(provisioning: RuntimeProvisioning, assertSelected?: () => void) {
+  const runtime = await createInstalledWorker(provisioning, assertSelected);
   type Status = ReturnType<typeof runtime.read>;
   const keepAlive = setInterval(() => {
     if (runtime.read().status === 'closed') release();

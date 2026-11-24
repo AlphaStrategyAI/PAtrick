@@ -4,7 +4,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSy
 import { join, resolve, sep } from 'node:path';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
-import type { DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
+import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { isLifecycleRecordName } from './lifecycle-journal.js';
 
@@ -41,6 +41,7 @@ export type SignedGenerationOrder = { order: GenerationOrder; signature: string 
 export type GenerationRecordSigner = { signRecord(bytes: Uint8Array): Promise<string> };
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
 type Entry = { order: GenerationOrder; sha256: string };
+type UseConfirmation<T> = (current: Entry, deployment: AdmittedDeployment, guard: () => void) => Promise<T>;
 /** current is the observed pointer. Any pending entry forbids a successor, including when
  * the new pointer is visible but its directory flush has no authenticated confirmation. */
 type State = { current: Entry | null; pending: Entry | null; historical: Entry | null };
@@ -187,7 +188,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
     for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);
   }
-  async function withGeneration<T>(lease: Lease, g: InstalledGeneration, use: () => Promise<T>) {
+  async function withGeneration<T>(lease: Lease, g: InstalledGeneration, use: (deployment: AdmittedDeployment) => Promise<T>) {
     boundary(lease);
     requireValue(process.platform === e.target.os && process.arch === e.target.arch);
     physical(g);
@@ -203,7 +204,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
       requireValue(installed.packageSha256 === g.packageSha256 && installed.root === join(e.root, 'releases', g.packageSha256));
       boundary(lease);
       physical(g);
-      try { return await use(); } finally { boundary(lease); physical(g); }
+      try { return await use(installed); } finally { boundary(lease); physical(g); }
     });
   }
   const history = join(e.root, 'history');
@@ -342,6 +343,33 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     enrolled();
     return result;
   }
+  async function useConfirmed<T>(use: UseConfirmation<T>) {
+    return leased(owner, async lease => {
+      const state = await readState(lease);
+      const current = state.current;
+      if (!current || state.pending) throw new Error('INSTALLED_ROLE_SELECTION_REQUIRED');
+      const generation = current.order.generation;
+      const selectedSha256 = current.sha256;
+      return withGeneration(lease, generation, async deployment => {
+        function guard() {
+          boundary(lease);
+          physical(generation);
+        }
+        async function assertCurrent() {
+          guard();
+          const observed = await readState(lease);
+          guard();
+          if (observed.current?.sha256 !== selectedSha256 || observed.pending) {
+            throw new Error('INSTALLED_ROLE_SELECTION_REQUIRED');
+          }
+        }
+        await assertCurrent();
+        const result = await use(structuredClone(current), deployment, guard);
+        await assertCurrent();
+        return result;
+      });
+    }, true, enrolled);
+  }
   async function select(envelope: string) {
     enrolled();
     requireValue(typeof envelope === 'string' && Buffer.byteLength(envelope) <= recordLimit);
@@ -422,7 +450,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
       throw error;
     }
   }
-  return Object.freeze({ order, observe, select });
+  return Object.freeze({ order, observe, select, useConfirmed });
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging, signer: GenerationRecordSigner) {
@@ -434,4 +462,9 @@ export function createGenerationStore(registration: GenerationEnrollment, owner:
 export function createGenerationReader(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging) {
   const { observe } = generationStorage(registration, owner);
   return Object.freeze({ observe });
+}
+
+export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging,
+  use: UseConfirmation<T>): Promise<T> {
+  return generationStorage(registration, owner).useConfirmed(use);
 }

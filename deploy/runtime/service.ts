@@ -136,7 +136,7 @@ export function createInstalledService(provisioning: RuntimeProvisioning) {
 }
 
 const maintenanceSignals = new WeakMap<ServiceRuntime, { held: boolean; settled(): void }>();
-export async function startServiceListener(runtime: ServiceRuntime, provisioning: RuntimeProvisioning) {
+export async function startServiceListener(runtime: ServiceRuntime, provisioning: RuntimeProvisioning, assertSelected?: () => void) {
   const ports = requireRuntimeProvisioning(provisioning);
   if (owners.get(runtime) !== provisioning || listenerStarted.has(runtime)) throw new Error('LISTENER_OWNER_INVALID');
   listenerStarted.add(runtime);
@@ -146,7 +146,12 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   try { materials = await loadWebMaterials(); }
   catch {
     const cleanup = await runtime.drain();
-    throw Object.assign(new Error('LISTENER_WEB_MATERIALS_INVALID'), { cleanup, readCleanup: runtime.read });
+    throw Object.assign(new Error('LISTENER_WEB_MATERIALS_INVALID'), { cleanup, readCleanup: runtime.read, drainCleanup: runtime.drain });
+  }
+  try { assertSelected?.(); }
+  catch (cause) {
+    const cleanup = await runtime.drain();
+    throw Object.assign(new Error('LISTENER_START_CANCELLED', { cause }), { cleanup, readCleanup: runtime.read, drainCleanup: runtime.drain });
   }
   let state: ListenerState = 'running';
   let admitting = true;
@@ -210,7 +215,7 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     });
   } catch {
     const cleanup = await runtime.drain();
-    throw Object.assign(new Error('LISTENER_BIND_FAILED'), { cleanup, readCleanup: runtime.read });
+    throw Object.assign(new Error('LISTENER_BIND_FAILED'), { cleanup, readCleanup: runtime.read, drainCleanup: runtime.drain });
   }
   let ingressFailed = false;
   let closing: Promise<void> | undefined;
@@ -219,7 +224,7 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   if (!address || typeof address === 'string') {
     stop();
     const cleanup = await runtime.drain();
-    throw Object.assign(new Error('LISTENER_ADDRESS_INVALID'), { cleanup, readCleanup: runtime.read });
+    throw Object.assign(new Error('LISTENER_ADDRESS_INVALID'), { cleanup, readCleanup: runtime.read, drainCleanup: runtime.drain });
   }
 
   authority = hostname + ':' + address.port;
@@ -280,7 +285,7 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   if (ports.serviceOptions.assertStartupAllowed && runtime.read().status !== 'running') {
     stop();
     const cleanup = await drain();
-    throw Object.assign(new Error('LISTENER_RUNTIME_NOT_RUNNING'), { cleanup, readCleanup: read });
+    throw Object.assign(new Error('LISTENER_RUNTIME_NOT_RUNNING'), { cleanup, readCleanup: read, drainCleanup: drain });
   }
   return {
     url, stop, drain, read,
@@ -292,12 +297,13 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   };
 }
 
-export async function runInstalledService(provisioning: RuntimeProvisioning) {
+export async function runInstalledService(provisioning: RuntimeProvisioning, assertSelected?: () => void) {
+  assertSelected?.();
   let runtime: ServiceRuntime;
   try { runtime = createInstalledService(provisioning); }
   catch (error) {
-    const { code, cleanup, readCleanup } = await cleanRuntimeStartup(error);
-    throw Object.assign(new Error(code), { cleanup, readCleanup });
+    const { code, ...cleanup } = await cleanRuntimeStartup(error);
+    throw Object.assign(new Error(code), cleanup);
   }
 
   let received: 'SIGTERM' | 'SIGINT' | undefined;
@@ -343,7 +349,7 @@ export async function runInstalledService(provisioning: RuntimeProvisioning) {
   process.on('SIGINT', signal);
   try {
     maintenanceSignals.set(runtime, { held: false, settled() { this.held = false; uninstallSignals(); } });
-    listener = await startServiceListener(runtime, provisioning);
+    listener = await startServiceListener(runtime, provisioning, assertSelected);
     monitorDrain();
     return {
       ...listener,

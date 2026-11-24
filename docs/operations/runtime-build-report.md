@@ -16,6 +16,8 @@ npm run build:runtime -- --source-root <physical-checkout> --source-commit <full
 
 独立登记的可信主机控制器通过 `createRuntimeProvisioning` 提供一致的账户、设备、范围、域、配置版本、有效 UID 和可执行能力，再调用 `createInstalledCli`、`createInstalledService` 或 `createInstalledWorker`。复制或序列化的对象不具备原始凭据身份。直接执行未登记的 CLI、service 或 worker 入口返回缺失能力诊断及退出码 3。
 
+T23 本机准入通过 `startSelectedRuntimeRole` 验证从已确认代次启动发行包内的 service 或 worker。入口在独占租约内核验签名包、发布目录及代次数据路径。worker 在 Hub 健康检查后复核租约，service 在监听前复核租约。启动后丢失确认时停止并排空角色，排空未确认时可继续查询和等待关闭。该入口只接受测试配置。生产控制器还需跨进程协调 maintenance 和三个 launchd 任务，并在 Mac Pro 上验收。
+
 服务使用 import-safe factory，在真实连接附加恢复门禁后启动工作。监听器处理请求、正文、流和连接的取消及退出，并与运行时排空一起等待实际工作完成。超时保留未解决的状态和资源。数据库关闭不能充当外部写者停止或 fencing 凭据。登记的 HTTPS origin 与精确 hostname RP ID 贯穿认证、挑战、控制、设置、飞书和 Web 客户端。监听器在 loopback 接收请求，URL 锚定登记 origin，保留来访 Origin，不从 Host 或代理头选择权限。HTTPS cookie 包括清理 cookie 都带 Secure。直接工厂保留 localhost 默认；安装入口仅在显式测试 profile 允许该配置。真实 TLS 和主机激活仍须验收。
 
 worker 连接独立管理的 Autoloop Hub，核对固定提交 `45aecbf578289cda72d1fc773dcad069bfe7778b` 以及相互区分的 owner、worker、source 角色密钥。服务的本地答题 Hub 连接与 operational Hub 各有自己的身份和资源所有者。备份须匹配独立提供的 `OperationalRecoveryHubBinding`、真实 SQLite 文件的设备/inode、原始连接及 schema reader；另一连接或硬链接指向本地答题库也会被拒绝。服务使用实际持有的 main 连接，CLI 核对其实际服务库文件；冻结租约取得前后再次检查，检查失败释放租约并保留不确定结果。CLI 的主库基线在可信登记时记录，并与确切连接关联；构造新 CLI 或执行命令都须核对同一基线。观察到身份中断后原登记持续失效，恢复旧文件也须重新取得可信登记。网络修复配置的账户、域和设备也须匹配登记。
