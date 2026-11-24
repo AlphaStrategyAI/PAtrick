@@ -791,6 +791,33 @@ test('doctor reads existing signed backup and drill completion without invoking 
   expect(readdirSync(join(f.root, 'operations'))).toEqual(before);
 });
 
+test('doctor checks enrolled off-host protection even when live recovery is available', async () => {
+  const f = fixture();
+  Object.assign(f.target.backup.options, { offHost: { async protect(set: { manifestHash: string }) {
+    return { encrypted: true, offHost: true, verified: true, domains: ['personal'], targetId: 'fixture-offsite',
+      snapshotId: 'fixture-snapshot', recoveryCredentialRef: 'fixture-ref', verifiedAt: new Date().toISOString(), manifestHash: set.manifestHash };
+  } } });
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  const { backupReadback } = verificationOnlyHost(f);
+  let confirmed = false;
+  let verifications = 0;
+  const host = {
+    ...f.host,
+    runtime: { ...f.host.runtime, createRecoveryBackupReader },
+    backupReadback: { ...backupReadback, targets: { target: { ...backupReadback.targets.target,
+      protection: { kind: 'off_host' as const, async verify() { verifications++; return confirmed; } },
+    } } },
+    recoveryReadbacks: [{ targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! }],
+  };
+  const cli = createPatrickCli(host);
+  expect((await cli.run(['doctor'])).checks?.recovery_backup).toMatchObject({ status: 'blocked' });
+  confirmed = true;
+  expect((await cli.run(['doctor'])).checks?.recovery_backup).toMatchObject({ status: 'ready' });
+  expect(verifications).toBe(2);
+  expect(f.captures()).toBe(1);
+});
+
 test('installed doctor verifies a signed backup when only its cold reader remains enrolled', async () => {
   const f = fixture();
   const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);

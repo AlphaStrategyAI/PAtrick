@@ -164,11 +164,13 @@ function bindColdData(read) {
   } };
 }
 
-function bindColdBackup(host) {
+function bindColdBackup(host, liveRecovery) {
   const cold = host?.backupReadback;
   if (!cold) return;
-  const readbacks = bindColdData(() => host.recoveryReadbacks.map(({ targetId, backupOperationId, manifestHash }) =>
-    ({ targetId, backupOperationId, manifestHash })));
+  const readbacks = bindColdData(() => host.recoveryReadbacks
+    .filter(({ targetId }) => !liveRecovery || Object.hasOwn(cold.targets, targetId))
+    .map(({ targetId, backupOperationId, manifestHash }) => ({ targetId, backupOperationId, manifestHash })));
+  if (readbacks.value.length === 0) return;
   const data = [readbacks, bindColdData(() => cold.root)];
   const verifierFields = (read) => [read, () => read()?.keyId, () => read()?.verify];
   const fields = [() => cold.root, () => cold.targets, ...verifierFields(() => cold.authority)];
@@ -198,8 +200,8 @@ export async function doctor(host, vaultId) {
   const readbacks = readbacksBinding.value;
   let coldBinding;
   let coldBindingFailed = false;
-  if (!recovery && runtime?.createRecoveryBackupReader && readbacks?.length > 0 && readbacks.length <= 16) {
-    try { coldBinding = bindColdBackup(host); }
+  if (runtime?.createRecoveryBackupReader && readbacks?.length > 0 && readbacks.length <= 16) {
+    try { coldBinding = bindColdBackup(host, recovery); }
     catch { coldBindingFailed = true; }
   }
   const vaultBinding = bindRegistration(() => host?.vaults && Object.hasOwn(host.vaults, vaultId) ? host.vaults[vaultId] : undefined);
@@ -311,8 +313,12 @@ export async function doctor(host, vaultId) {
         return backup.status === 'completed' && backup.outcome.manifestHash === manifestHash;
       })));
       validateCold();
-      checks.recovery_backup = backupReadiness(verified.every(Boolean),
-        coldReadbacks.some(({ targetId }) => cold.targets[targetId].protection?.kind === 'off_host'));
+      const liveBackup = checks.recovery_backup;
+      if (liveBackup.status !== 'blocked') {
+        const offHostConfigured = liveBackup.evidence.offHostProtection === 'unverified'
+          || coldReadbacks.some(({ targetId }) => cold.targets[targetId].protection?.kind === 'off_host');
+        checks.recovery_backup = backupReadiness(verified.every(Boolean) && (!recovery || liveBackup.status === 'ready'), offHostConfigured);
+      }
     } catch (error) {
       if (error?.message === 'HOST_IDENTITY_MISMATCH') mismatch(checks, ['recovery_backup']);
       else checks.recovery_backup = check('blocked', 'core', { code: 'SIGNED_RECOVERY_READBACK_FAILED' },
