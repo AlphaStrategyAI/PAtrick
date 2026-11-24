@@ -96,7 +96,9 @@ test('actual recovery backup previews without reservation then survives fresh CL
   expect(f.captures()).toBe(1);
   expect(JSON.stringify(completed)).not.toContain(f.root);
   const drill = await f.cli().run(['restore', '--target', 'target', '--manifest', completed.manifestHash!, '--execute', '--operation', 'drill']);
-  expect(drill).toMatchObject({ status: 'completed', mode: 'drill', externalWrites: 0 });
+  expect(drill).toMatchObject({ status: 'completed', mode: 'drill', externalWrites: 0, elapsedMs: expect.any(Number), rpoMs: null, rtoMs: null });
+  const readback = await f.cli().run(['restore', '--target', 'target', '--manifest', completed.manifestHash!, '--readback', '--operation', 'drill']);
+  expect(readback).toEqual({ ...drill, action: 'readback' });
   expect(readdirSync(join(f.root, 'isolated'))).toHaveLength(1);
 });
 test('unknown effect stays uncertain on same-command replay and readback without reinvocation', async () => {

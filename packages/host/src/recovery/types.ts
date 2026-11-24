@@ -53,7 +53,7 @@ export type RecoveryStage = { stage: string; startedAt: string; finishedAt: stri
 export type RecoveryDomainReceipt = { status: 'blocked' | 'open' | 'imported'; writerEpoch: string | null; activationId: string | null; reasons: string[] };
 export type RecoveryReceipt = {
   receiptId: string; setId: string; mode: 'drill' | 'activate' | 'owner_import'; directory: string;
-  startedAt: string; finishedAt: string; elapsedMs: number; rpoMs: number | null;
+  startedAt: string; finishedAt: string; elapsedMs: number; rpoMs: number | null; rtoMs: number | null;
   orderlyHandoff: boolean; external_writes: number; channels: { feishu: 'requires_reauthorization' };
   data_domains: Record<string, RecoveryDomainReceipt>; stages: RecoveryStage[];
   conflicts: Array<{ domain: string; vaultId?: string; path: string; backupHash: string; survivorHash: string; preservedBackupPath: string }>;

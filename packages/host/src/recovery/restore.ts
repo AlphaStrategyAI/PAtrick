@@ -6,7 +6,7 @@ import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage'
 import { verifyRecoverySet } from './backup.js';
 import { assertName, canonical, containedPath, digest, durableCopy, durableJson, durableWrite, fileHash, walkFiles } from './files.js';
 import { localRecoveryCut, tableInventory, type RecoveryLocalCut } from './cut.js';
-import { verifyWithdrawalChain, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
+import { verifyWithdrawalChain, type RecoveryHandoffCertificate, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
 import { assertVaultRoot, bindVaultRoot, readVaultFile, restoredVaultRoot, withVaultRoot, type BoundVaultRoot } from './vaults.js';
 import type { RecoveryDatabaseReader, RecoveryDatabases, RecoveryManifestAuthority, RecoveryReceipt, RecoveryRestoreReceipt, RecoveryVault, WithdrawalEntry } from './types.js';
 
@@ -53,6 +53,32 @@ function outside(source: string, target: string): void {
   if (!reverse.startsWith(`..${sep}`) && reverse !== '..') throw new Error('RECOVERY_ISOLATION_REQUIRED');
 }
 
+type HandoffTiming = NonNullable<RecoveryHandoffCertificate['timing']>;
+
+function utcTime(value: unknown): number {
+  if (typeof value !== 'string') return NaN;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value ? timestamp : NaN;
+}
+
+function measureHandoff(receipt: RecoveryRestoreReceipt, timings: readonly (HandoffTiming | undefined)[]): void {
+  if (!receipt.orderlyHandoff || timings.length === 0) return;
+  const started = utcTime(receipt.startedAt);
+  const finished = utcTime(receipt.finishedAt);
+  let earliestInterruption = started;
+  let greatestDataLoss = 0;
+  for (const timing of timings) {
+    if (!timing || timing.manifestSha256 !== receipt.manifestHash) return;
+    const interrupted = utcTime(timing.interruptedAt);
+    const recoveryPoint = utcTime(timing.recoveryPointAt);
+    if (!(recoveryPoint <= interrupted && interrupted <= started && started <= finished)) return;
+    earliestInterruption = Math.min(earliestInterruption, interrupted);
+    greatestDataLoss = Math.max(greatestDataLoss, interrupted - recoveryPoint);
+  }
+  receipt.rpoMs = greatestDataLoss;
+  receipt.rtoMs = finished - earliestInterruption;
+}
+
 export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
   const now = options.now ?? (() => new Date());
   return {
@@ -60,6 +86,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       const survivors = structuredClone(options.survivors ?? []);
       assertName(setId);
       if (mode !== 'drill' && mode !== 'activate') throw new Error('RECOVERY_MODE_INVALID');
+      const startedMs = performance.now();
       const sourceDirectory = await containedPath(options.recoveryRoot, setId);
       outside(options.recoveryRoot, options.isolationRoot);
       for (const survivor of survivors) outside(survivor.root, options.isolationRoot);
@@ -67,7 +94,6 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       if (set.manifest.setId !== setId) throw new Error('RECOVERY_SET_ID_MISMATCH');
       if (expectedManifestHash !== undefined && set.manifestHash !== expectedManifestHash) throw new Error('RECOVERY_MANIFEST_HASH_MISMATCH');
       const startedAt = now().toISOString();
-      const startedMs = performance.now();
       await mkdir(options.isolationRoot, { recursive: true, mode: 0o700 });
       const actualIsolation = await realpath(options.isolationRoot);
       outside(await realpath(options.recoveryRoot), actualIsolation);
@@ -75,7 +101,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       const directory = await mkdtemp(join(actualIsolation, `${setId}-`));
       const receipt: RecoveryRestoreReceipt = {
         receiptId: randomUUID(), setId, manifestHash: set.manifestHash, mode, directory, startedAt, finishedAt: startedAt, elapsedMs: 0,
-        rpoMs: Math.max(0, now().getTime() - Date.parse(set.manifest.createdAt)), orderlyHandoff: false, external_writes: 0,
+        rpoMs: null, rtoMs: null, orderlyHandoff: false, external_writes: 0,
         channels: { feishu: 'requires_reauthorization' }, data_domains: {}, stages: [], conflicts: [],
       };
       await stage(receipt, 'manifest_and_database_validation', now, async () => []);
@@ -102,7 +128,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       service.pragma('journal_mode=WAL');
       hub.pragma('foreign_keys=ON');
       hub.pragma('journal_mode=WAL');
-      const candidates: Array<{ domain: string; winner: RecoveryWitnessRecord; cut: RecoveryLocalCut; reason: string }> = [];
+      const candidates: Array<{ domain: string; winner: RecoveryWitnessRecord; cut: RecoveryLocalCut; reason: string; timing?: HandoffTiming }> = [];
       try {
         requireRecoverySchema(service);
         quarantineRestoredAuthority(service, now().toISOString(), receipt.receiptId, directory);
@@ -205,7 +231,8 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
                     domain: domain.domain, writerEpoch: winner.writerEpoch, activationId, witnessRevision: winner.revision, directory,
                   });
                   if (enabled.epochInstalled && enabled.credentialsScoped && enabled.runtimeGateVerified) {
-                    candidates.push({ domain: domain.domain, winner, cut: replayCut, reason: pendingReason });
+                    const timing = canonical(winner.certificate) === canonical(record.certificate) ? record.certificate?.timing : undefined;
+                    candidates.push({ domain: domain.domain, winner, cut: replayCut, reason: pendingReason, timing });
                   } else {
                     reasons.push('runtime_activation_unconfirmed');
                     await revokeCandidate(options, service, receipt, domain.domain, winner, preparedAt);
@@ -225,7 +252,6 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
         const authoritative = await Promise.all(candidates.map(async (candidate) => ({
           domain: candidate.domain, current: await options.witness?.current(candidate.domain),
         })));
-        receipt.elapsedMs = Math.max(0, performance.now() - startedMs);
         const published = withImmediateTransaction(service, () => {
           const valid = candidates.every((candidate) => {
             const row = service.prepare('SELECT * FROM recovery_domain_gates WHERE data_domain=?').get(candidate.domain) as Record<string, unknown> | undefined;
@@ -239,12 +265,15 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
               && evidence?.row_json === canonical({ generation: candidate.winner.activationId, cut: candidate.cut, winner: candidate.winner });
           });
           if (!valid) return false;
+          receipt.finishedAt = now().toISOString();
           for (const candidate of candidates) {
             receipt.data_domains[candidate.domain].status = 'open';
             persistDomain(service, candidate.domain, candidate.winner.writerEpoch, 'open', candidate.winner.activationId,
               candidate.winner.revision, receipt.receiptId, null, receipt.finishedAt);
           }
           receipt.orderlyHandoff = mode === 'activate' && Object.values(receipt.data_domains).every((domain) => domain.status === 'open');
+          receipt.elapsedMs = Math.max(0, performance.now() - startedMs);
+          measureHandoff(receipt, candidates.map(candidate => candidate.timing));
           persistReceipt(service, receipt, receipt.finishedAt);
           return true;
         });
@@ -253,6 +282,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
             receipt.data_domains[candidate.domain].reasons.push('activation_cut_changed');
             await revokeCandidate(options, service, receipt, candidate.domain, candidate.winner, receipt.finishedAt);
           }
+          receipt.finishedAt = now().toISOString();
           receipt.elapsedMs = Math.max(0, performance.now() - startedMs);
           persistReceipt(service, receipt, receipt.finishedAt);
         }

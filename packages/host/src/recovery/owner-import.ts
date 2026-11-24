@@ -44,7 +44,8 @@ export function createOwnerRecoveryImporter(options: {
         if (saved.fingerprint !== fingerprint) throw new Error('RECOVERY_IMPORT_ID_CONFLICT');
         const outcome = db.prepare("SELECT receipt_json FROM recovery_receipts WHERE receipt_id=? AND mode='owner_import'").get(input.importId) as { receipt_json: string } | undefined;
         if (!outcome) throw new Error('RECOVERY_IMPORT_OUTCOME_UNAVAILABLE');
-        return JSON.parse(outcome.receipt_json) as RecoveryReceipt;
+        const receipt = JSON.parse(outcome.receipt_json) as RecoveryReceipt;
+        return { ...receipt, rpoMs: null, rtoMs: null };
       }
       if (!options.witness) throw new Error('RECOVERY_WITNESS_STATUS_UNKNOWN');
       if (await options.witness.current(input.domain)) throw new Error('RECOVERY_WITNESS_AVAILABLE');
@@ -59,7 +60,7 @@ export function createOwnerRecoveryImporter(options: {
       const directory = await mkdtemp(join(actualIsolation, `${input.importId}-`));
       const receipt: RecoveryReceipt = {
         receiptId: input.importId, setId: input.importId, mode: 'owner_import', directory, startedAt, finishedAt: startedAt,
-        elapsedMs: 0, rpoMs: null, orderlyHandoff: false, external_writes: 0, channels: { feishu: 'requires_reauthorization' },
+        elapsedMs: 0, rpoMs: null, rtoMs: null, orderlyHandoff: false, external_writes: 0, channels: { feishu: 'requires_reauthorization' },
         data_domains: { [input.domain]: { status: 'blocked', writerEpoch: epoch, activationId: null, reasons: ['owner_import_in_progress'] } },
         stages: [], conflicts: [],
       };

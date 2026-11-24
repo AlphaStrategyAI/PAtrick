@@ -2,7 +2,7 @@ import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { openDatabase } from '@patrick/storage';
 
@@ -144,11 +144,12 @@ test('manifest hashes, signatures, schema locks and safe paths are validated bef
   } finally { fx.close(); }
 });
 
-function witnessFixture() {
+function witnessFixture(timing?: { interruptedAt: string; recoveryPointAt: string; manifestSha256: string }) {
   let record = {
     domain: 'personal', revision: 'sealed-1', writerEpoch: 'epoch-before', writerId: 'old-writer',
     state: 'sealed' as 'sealed' | 'open', withdrawal: { ...initialHead },
-    certificate: { id: 'handoff-1', cutId: 'cut-fixture', previousWriterId: 'old-writer', fenceProof: 'fence-fixture', withdrawalsReconciled: true },
+    certificate: { id: 'handoff-1', cutId: 'cut-fixture', previousWriterId: 'old-writer', fenceProof: 'fence-fixture', withdrawalsReconciled: true,
+      ...(timing && { timing }) },
     activationId: null as string | null, parentSealedRevision: null as string | null,
   };
   let loseResponse = false;
@@ -197,6 +198,8 @@ test('isolated drill keeps newer Vault bytes, expires old channel/session author
       survivors: [{ domain: 'personal', root: fx.vault }], now: () => new Date(stamp),
     }).restoreRecoverySet('set-old');
     expect(receipt.mode).toBe('drill');
+    expect(receipt.rpoMs).toBeNull();
+    expect(receipt).toHaveProperty('rtoMs', null);
     expect(receipt.external_writes).toBe(0);
     expect(receipt.channels.feishu).toBe('requires_reauthorization');
     expect(receipt.data_domains.personal.status).toBe('blocked');
@@ -271,17 +274,38 @@ test('capture refuses to call an unchained historical withdrawal ledger complete
   } finally { fx.close(); }
 });
 
-test('verified native restore opens only after full withdrawal/fence/readback gates and winning epoch installation', async () => {
+test.each(['verified timing', 'different manifest', 'missing observation', 'inconsistent times'] as const)(
+  'verified native restore opens only after full recovery gates and validates handoff timing (%s)', async (timingCase) => {
   const fx = fixture();
   try {
     const { createRecoveryBackup } = await feature<BackupModule>('backup');
     const { createRecoveryRestorer } = await feature<RestoreModule>('restore');
     const { createRecoveryWitness } = await feature<WitnessModule>('witness');
-    await createRecoveryBackup({ root: join(fx.root, 'sets'), databases: fx, freeze: fx.freeze, authority }).captureRecoverySet(fx.scope);
-    const witness = witnessFixture();
+    const recoveryPointAt = '2026-11-17T06:00:00.000Z';
+    const interruptedAt = '2026-11-17T07:00:00.000Z';
+    const set = await createRecoveryBackup({
+      root: join(fx.root, 'sets'), databases: fx, freeze: fx.freeze, authority, now: () => new Date(recoveryPointAt),
+    }).captureRecoverySet(fx.scope);
+    const witness = witnessFixture(timingCase === 'missing observation' ? undefined : {
+      interruptedAt,
+      recoveryPointAt: timingCase === 'inconsistent times' ? '2026-11-17T07:08:00.000Z' : recoveryPointAt,
+      manifestSha256: timingCase === 'different manifest' ? emptyHash : set.manifestHash,
+    });
+    let wallClock = new Date('2026-11-17T07:05:00.000Z');
+    let monotonicTime = 1000;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonicTime);
     const observed: string[] = [];
     const receipt = await createRecoveryRestorer({
-      recoveryRoot: join(fx.root, 'sets'), isolationRoot: join(fx.root, 'drills'), authority, versionLocks,
+      recoveryRoot: join(fx.root, 'sets'), isolationRoot: join(fx.root, 'drills'), versionLocks,
+      authority: {
+        ...authority,
+        async verify(bytes, signature, keyId) {
+          wallClock = new Date('2026-11-17T07:06:00.000Z');
+          monotonicTime += 60 * 1000;
+          return authority.verify(bytes, signature, keyId);
+        },
+      },
+      now: () => wallClock,
       witness: createRecoveryWitness({ port: witness.port, writerId: 'candidate', verifySealedProof: async () => true }),
       fence: { async verify() { return { stopped: true, credentialsRevoked: true, proof: 'fence-fixture' }; } },
       withdrawalLog: { independence: 'independent_authority', async readComplete() { return [initialEntry]; } },
@@ -296,13 +320,24 @@ test('verified native restore opens only after full withdrawal/fence/readback ga
         expect(input.writerEpoch).toBe(witness.read().writerEpoch);
         expect(witness.read().activationId).toBe(input.activationId);
         observed.push('install-epoch');
+        wallClock = new Date('2026-11-17T07:17:00.000Z');
+        monotonicTime += 11 * 60 * 1000;
         return { epochInstalled: true, credentialsScoped: true, runtimeGateVerified: true };
       } },
-    }).restoreRecoverySet('set-old', 'activate');
+    }).restoreRecoverySet('set-old', 'activate').finally(() => clock.mockRestore());
     expect(receipt.data_domains.personal.status).toBe('open');
     expect(receipt.orderlyHandoff).toBe(true);
+    expect(receipt.startedAt).toBe('2026-11-17T07:06:00.000Z');
+    expect(receipt.elapsedMs).toBe(12 * 60 * 1000);
     expect(receipt.external_writes).toBe(0);
+    expect(receipt.rpoMs).toBe(timingCase === 'verified timing' ? 60 * 60 * 1000 : null);
+    expect(receipt).toHaveProperty('rtoMs', timingCase === 'verified timing' ? 17 * 60 * 1000 : null);
     expect(observed).toEqual(['hub', 'ingest', 'unfinished', 'rebuild', 'install-epoch']);
+    const restored = new Database(join(receipt.directory, 'databases/service.sqlite'), { readonly: true });
+    try {
+      const durable = restored.prepare('SELECT receipt_json FROM recovery_receipts WHERE receipt_id=?').get(receipt.receiptId) as { receipt_json: string };
+      expect(JSON.parse(durable.receipt_json)).toMatchObject({ rpoMs: receipt.rpoMs, rtoMs: receipt.rtoMs });
+    } finally { restored.close(); }
   } finally { fx.close(); }
 });
 
@@ -335,6 +370,7 @@ test('witness loss permits only authenticated scoped owner import, a new epoch a
     expect(receipt.mode).toBe('owner_import');
     expect(receipt.orderlyHandoff).toBe(false);
     expect(receipt.rpoMs).toBe(null);
+    expect(receipt.rtoMs).toBe(null);
     expect(receipt.data_domains.personal.status).toBe('imported');
     expect(receipt.data_domains.personal.writerEpoch).not.toBe('epoch-before');
     expect(receipt.external_writes).toBe(0);

@@ -4,6 +4,7 @@ import type { WithdrawalEntry, WithdrawalHead } from './types.js';
 
 export type RecoveryHandoffCertificate = {
   id: string; cutId: string; previousWriterId: string; fenceProof: string; withdrawalsReconciled: boolean;
+  timing?: { interruptedAt: string; recoveryPointAt: string; manifestSha256: string };
 };
 export type RecoveryWitnessRecord = {
   domain: string; revision: string; writerEpoch: string; writerId: string; state: 'open' | 'sealed';

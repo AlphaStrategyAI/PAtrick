@@ -131,7 +131,12 @@ function projectRecovery(request, context, operation, validate, result) {
   }
   if (result.status === 'completed') return response(request, 'completed', 'RECOVERY_COMPLETED', 'Retain the signed operation and RecoverySet records.', {
     ...context, manifestHash: result.outcome.manifestHash, mode: operation.mode,
-    ...(operation.mode === 'drill' && result.outcome.receipt ? { externalWrites: result.outcome.receipt.external_writes } : {}),
+    ...(operation.mode === 'drill' && result.outcome.receipt ? {
+      externalWrites: result.outcome.receipt.external_writes,
+      elapsedMs: result.outcome.receipt.elapsedMs,
+      rpoMs: null,
+      rtoMs: null,
+    } : {}),
   });
   if (result.status === 'running_or_uncertain') return response(request, 'uncertain', 'RECOVERY_OUTCOME_UNCERTAIN', 'Read back this operation ID without repeating its effects.', context);
   return response(request, result.status, 'RECOVERY_' + result.status.toUpperCase(), 'Use the same operation ID for the next authorized execute or readback.', context);
