@@ -338,7 +338,7 @@ export type InstalledMaintenanceCut = Readonly<{
 /** An independently enrolled controller denies restarts, new effects and credential handoffs
  * synchronously in begin. Its fence outlives the T22 freeze and any caller timeout. */
 export type MaintenanceRegistration = Readonly<{
-  plan: CutPlan;
+  plan: Omit<CutPlan, 'protection'> & { protection?: CutPlan['protection'] };
   storage: MaintenanceStorage;
   generation: Readonly<{
     /** The enrolled controller signals withdrawal before permitting a contrary business effect. */
@@ -486,7 +486,11 @@ function disjoint(left: string, right: string) {
 
 function createMaintenanceOwner(input: MaintenanceRegistration, registration: RuntimeRegistration,
   databasePath: string, hub: OperationalRecoveryHubBinding, attach: NonNullable<CreateAppOptions['recoveryRuntime']>['attach']) {
-  const plan = immutable(structuredClone(input.plan));
+  const registeredPlan = structuredClone(input.plan);
+  const plan = immutable<CutPlan>({
+    ...registeredPlan,
+    protection: registeredPlan.protection === undefined ? 'local_only' : registeredPlan.protection,
+  });
   const { identity, captureHost, serviceUid } = registration;
   const { operationId, cutId, targetId, scope, journalRoot, setRoot, handoffRoot } = plan;
   const { setId } = scope;

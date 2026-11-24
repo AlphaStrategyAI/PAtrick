@@ -17,7 +17,7 @@
 - 每项写入保留精确版本与幂等回执。跨库、文件系统及外部平台通过持久意图和读回对账收口；未知结果保持未知。
 - 个人与公司资料域贯通采集、检索、模型、日志及备份。原稿、生成视图、SQLite/WAL、凭据及执行器 HOME 按 §3 和 §6 分配读写边界。
 - 发布门槛包括至少 10 个种子案例和 5 个独立留出案例；引用准确率初始目标 ≥95%，关键越权、应问未问及受控召回撤回材料零容忍。
-- 主机初始模型并发 1、队列上限 1000、附件 20MB。恢复目标 RPO ≤24 小时、RTO ≤2 小时，每周维护以 1 小时为约束。
+- 主机初始模型并发 1、队列上限 1000、附件 20MB。有序交接的恢复目标 RPO ≤24 小时、RTO ≤2 小时，每周维护以 1 小时为约束。
 - 语言模式 `system/en/zh`。触达至少 44×44px，普通文字对比度 ≥4.5:1，运行标识为 80×80px、4.8 秒循环并尊重减少动效。
 
 ---
@@ -523,7 +523,7 @@ T25以 `fixtures/perf/baseline.json` 固定负载，包含 1000 条排队更新�
 
 每日RecoverySet：冻结入口/claim/回执/effect写者，排空或停止执行树，标记未决调用；用SQLite backup API保存两库，写blob/Vault映射、人工稿/附件、修订基线/新稿意图/编辑回执、vault-kit/本机映射与冲突、未结问题/答案/咨询、配置效果、委托/评测、版本锁与撤回水位。manifest列hash、schema、完整性及缺口，校验后才标可恢复。无法冻结的输入必须有持久交接日志。
 
-RecoverySet再交受测加密备份工具（拟用restic）复制到已授权目标；活跃数据库不交网盘同步。密钥恢复材料独立保管，备份目标与域保持一致；仅本机文件或未经确认的云同步不能标异地保护。撤回日志独立有序复制，保留epoch/hash链，保护确认不是“复制命令已启动”。
+默认保存并校验本地 RecoverySet（`local_only`），供隔离演练、维护和升级使用。离机备份按需启用。启用后用 restic 将已签名的 RecoverySet 加密复制到经授权的独立目标，按资料域核对授权、独立保管恢复凭据，完整读回后保存独立保护回执。选择启用的目标缺少回执时，离机保护仍待确认。网盘同步目录仅按本地副本处理，活跃数据库置于同步根之外。
 
 RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执、渠道inbox/outbox及业务关联。恢复先隔离旧渠道未决项，不能自动重发；历史已核验答案仍按业务恢复协议去重对账。
 
@@ -533,7 +533,7 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 
 恢复命令默认演练模式、隔离目录、无生产写凭据/同步器。依次校验manifest/两库版本→追平最新撤回→保护较新Vault原稿与冲突→补采pending_ingest→对账hub事件/卡片/未决答案、配置与effect→重建投影→使旧Web会话失效→确认单写者。无法确认旧主机已停并撤销旧写凭据时，禁止恢复机对外写。通过后才逐域开放。
 
-升级先停新派工并备份，再安装候选版本、schema迁移与合同回放、研究任务灰度、切换current。新写入前可退回旧程序/库；出现新写入后须执行经验证的逆向/前向修复，不能拿旧备份覆盖。目标RPO≤24小时、RTO≤2小时，以实际恢复演练计时证明；撤回保护不能用RPO容忍过期数据复活。
+升级先停新派工并备份，再安装候选版本、schema迁移与合同回放、研究任务灰度、切换current。新写入前可退回旧程序/库；出现新写入后须执行经验证的逆向/前向修复，不能拿旧备份覆盖。有序交接目标 RPO≤24 小时、RTO≤2 小时，以实际完整演练计时证明。失去本机及本地副本的恢复能力仅在启用离机备份并完成实际恢复验收后确认。撤回保护按当前撤回水位核验。
 
 ## 7. 可执行任务清单
 
@@ -575,7 +575,7 @@ RecoverySet也保存渠道配置/绑定/配对挑战、test发送意图与回执
 | ID / 预计小时 | 依赖 | 开发交付 | 必测与完成证据 |
 |---|---|---|---|
 | T21 主机网络与固定修复 · 8–14 | T03,T08,T13,T17 | Host Supervisor、锁/epoch、VPN探针、冷却/MFA、双目标复验；探针读取运行设置中的内网与外网网站 | hub正常目标失败、双VPN启动顺序、两个已生效目标并发、DNS/代理竞态、不可并用；真实设备报告 |
-| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、加密离机、撤回、隔离恢复/重建；见证不可达时的所有者逐域导入 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停；见证不可达时只经可信控制导入幸存 Vault 或备份，新 epoch，不自动重发外部效果，耗时不算 2 小时交接 |
+| T22 备份恢复 · 8–14 | T02,T04,T06,T10,T11,T12,T17,T18,T19,T20 | 本地 RecoverySet（含原稿/附件/修订基线/新稿意图/回执/kit及客户端事实）、冻结/交接、撤回、隔离恢复/重建；可选加密离机备份；见证不可达时的所有者逐域导入 | 错位两库、未决效果、较新原稿/旧Vault映射；撤回尾部丢失、witness陈旧/不可达；飞书旧绑定/回调/ready/停用回退；旧主机未停；见证不可达时只经可信控制导入幸存 Vault 或备份，新 epoch，不自动重发外部效果，耗时不算 2 小时交接 |
 | T27 Obsidian与Vault部署 · 7–12 | T00,T03,T06,T07 | 官方桌面安装配方、共享VaultConnection Inspector、vault-kit、设备映射/范围预览/往返检查、单设备与升级卸载 | 真实Mac打开/编辑/入库/导回；关应用仍处理；缺应用/权限、URI不可用、模板不覆盖；obsidian-install-report |
 | T23 安装与升级 · 8–12 | T00,T03,T09,T21,T22,T27 | 双架构候选包、构建/发布工作流、签名及SBOM、Caddy/TLS、launchd/Lima、整合T27、安装/维护命令 | 空Mac安装/重启、拒绝损坏/错架构包、飞书收发诊断、升级失败时保护新数据 |
 | T24 视觉/动效/无障碍 · 8–14 | T15,T16,T17,T18,T19,T20 | 292帧及38类新增流程状态映射，三轴编辑进度/连接向导/64条关键设计跳转对照、受控浏览器基线、全页动效/响应式/键盘与读屏 | §5.3视觉门槛、logo真实状态/4.8秒、减少动效、200%缩放、无横向溢出 |
@@ -638,7 +638,7 @@ T14可根据稳定合同和带 demo 标识的夹具先行。首次100小时按 �
 | 隔离/设备 | `npm run test:admission` | Mac真实后台身份、三个执行器、凭据/出站边界、VPN、备份目标；不在共享CI带真实密钥 |
 | 恢复/升级 | `npm run test:recovery` | 可注入崩溃窗口、恢复集缺口、撤回/新稿、远端不确定效果、schema升级与单写者 |
 
-PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑完整UI/视觉/恢复沙箱。真实模型、平台、VPN、离机恢复在获准设备上按发布候选执行并留脱敏证据。覆盖率仅作缺口线索，不能替代反例和实际身份路径；不为简单文字或token映射重复写低价值测试。
+PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑完整UI/视觉/恢复沙箱。真实模型、平台、VPN和有序恢复在获准设备上按发布候选执行并留脱敏证据。启用离机备份的部署单独验收远端存储和离机恢复。覆盖率仅作缺口线索，不能替代反例和实际身份路径；不为简单文字或token映射重复写低价值测试。
 
 ### 8.2 必须阻止发布的反例
 
@@ -723,7 +723,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | 未完成步骤 | 缺少的前提 | 证据清单中的状态 |
 |---|---|---|
 | T21 已登记设备的双启动顺序与企业 DNS | 2026-11-21 本机实测不能并用：单独 OpenVPN 时内网通过，单独 Shadowrocket 时外网代理通过，两种同时启动都失败。替代路径定为 `controlled_rotation`。证据是 `docs/operations/evidence/t21-registered-device-2026-11-21.json` | 本次准入通过。`release-evidence/impl-2026-11-19` 里的 T21 行仍是采集当时的 blocked |
-| T22 记录实测 RPO/RTO | 没有见证主机和离机目标 | `T22/recovery-set-and-restore` passed，本地演练完成 |
+| T22 记录有序交接实测 RPO/RTO | 缺少独立见证及真实写者隔离证据。本地备份可用于此演练 | `T22/recovery-set-and-restore` passed，本地演练完成 |
 | T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
 | T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空；演练仓库和三条真实工作路线仍未接入 | `T25/provider-backed-work-routes` pending |
@@ -766,7 +766,7 @@ v1.0三轮subagent与独立Codex会话的原始意见、v1.1 Obsidian增补及�
 
 **文件** `scripts/lock-design-inputs.mjs`、`tests/contract/T00.test.mjs`、`design-inputs.lock.json`、`upstream.lock.json`、`fixtures/contracts/admission-matrix.json`。
 
-**交接** T01读取锁定的 Node/npm、平台和初始依赖选择，建立 workspace 锁文件。T09/T10/T23/T27读取探针版本、身份及状态，T24读取 `frames` 和 `exports`。Autoloop 固定 `45aecbf578289cda72d1fc773dcad069bfe7778b`，DSH 为 `e8f7b93a344964de3dca1ace9e72b6e4d6de87cb`。逐项记录 CLI、飞书消息/卡片、Obsidian 应用/安装器/架构，以及签名链与离机目标的版本、命令、证据 hash 和 `verified/blocked/pending`。应用路径相关能力留给各任务以真实路径验收。
+**交接** T01读取锁定的 Node/npm、平台和初始依赖选择，建立 workspace 锁文件。T09/T10/T23/T27读取探针版本、身份及状态，T24读取 `frames` 和 `exports`。Autoloop 固定 `45aecbf578289cda72d1fc773dcad069bfe7778b`，DSH 为 `e8f7b93a344964de3dca1ace9e72b6e4d6de87cb`。逐项记录 CLI、飞书消息/卡片、Obsidian 应用/安装器/架构，以及签名链的版本、命令、证据 hash 和 `verified/blocked/pending`。启用离机备份时追加目标探针证据。应用路径相关能力留给各任务以真实路径验收。
 
 `fixtures/contracts/admission-matrix.json` 单列 `autoloop_native_answer_resume`、`autoloop_custom_text` 和 `feishu_deferred_card`。在隔离 hub 测答复后的派发/让出行为及仅含 `text` 的答案读回，在测试应用实测暂缓后仍可提交决定卡。各项记录固定 SHA 或 SDK 版本、命令、观察结果和证据 hash；仅 text 探针记录可核验的 `expectedChosen`。T04/T10复测前保留真实状态；拒绝 `text` 时标受阻，保留原始输入和待答问题。
 
@@ -1630,7 +1630,7 @@ const competing = await Promise.all([
 expect(competing.sort()).toEqual(['acquired', 'lost']);
 ~~~
 
-- [x] 冻结入口与写者，未决调用记 uncertain，按 §6.4 用 SQLite backup API 加 Vault、blob、交接日志与版本清单构成完整集合。主机放行前把独立见证置 open；停止写者、证实已交接完整撤回日志后以 CAS 封存。加密复制并校验离机目标、hash 和恢复凭据引用。
+- [x] 冻结入口与写者，未决调用记 uncertain，按 §6.4 用 SQLite backup API 加 Vault、blob、交接日志与版本清单构成本地完整集合。主机放行前把独立见证置 open；停止写者、证实已交接完整撤回日志后以 CAS 封存。启用离机备份时加密复制并校验目标、hash 和恢复凭据引用。
 - [x] 隔离恢复先校验闭合见证、日志和 fencing，再保护新稿/冲突、补采、逐项去重对账和重建。演练使用专用见证和隔离凭据。真实切换从权威见证读回当前证明，完成 `sealed → open` CAS 并按 activation_id 读回。撤销旧 Web 会话；用新 channel_incarnation 隔离旧测试/绑定/待发消息。按以下门禁开放范围。
 
 ~~~ts
@@ -1645,7 +1645,9 @@ export function canActivateRecovery(evidence: {
 }
 ~~~
 
-- [ ] 重跑 T22。预期两个恢复候选只有一个通过 CAS，CAS 已提交但响应丢失只允许获胜 ID 继续；旧/不可达见证和失败候选保持关闭。逐项核对原事实、待确认远端效果及飞书重新授权，记录实测 RPO/RTO。提交 `feat: capture consistent recovery sets and gate restoration`。
+- [ ] 用已核验的 RecoverySet 在登记主机重跑 T22 有序交接。预期两个恢复候选只有一个通过 CAS，CAS 已提交但响应丢失只允许获胜 ID 继续；旧/不可达见证和失败候选保持关闭。逐项核对原事实、待确认远端效果及飞书重新授权，记录实测 RPO/RTO。提交 `feat: capture consistent recovery sets and gate restoration`。
+
+启用可选离机备份的部署还应独立演练远端快照读回、凭据恢复和失去本地副本后的恢复，并记录耗时及结果。
 
 ### T27 Obsidian Desktop 与 Vault 初次部署
 

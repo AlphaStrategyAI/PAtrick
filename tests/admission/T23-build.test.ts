@@ -1112,7 +1112,7 @@ describe('T23 installed runtime build and bootstrap', () => {
     });
   }, 30_000);
 
-  test.each(['success', 'join-timeout', 'missing-terminal', 'lost-response', 'bad-freeze', 'ordinary-first', 'inode-swap',
+  test.each(['success', 'default-local', 'join-timeout', 'missing-terminal', 'lost-response', 'bad-freeze', 'ordinary-first', 'inode-swap',
     'unbound-open', 'pre-open-exchange', 'swap-at-acquire', 'open-lease-loss', 'prior-at-open', 'prior-start', 'prior-set', 'prior-handoff', 'clearance-mismatch',
     'warm-prior', 'warm-admit', 'warm-withdraw', 'root-ancestor', 'private-descendant', 'receipt-outage', 'warm-receipt-outage',
     'lease-outage', 'post-readback-outage', 'receipt-handoff-exchanged', 'prior-other-operation', 'revoked-receipt', 'tamper-handoff', 'sign-timeout', 'lost-close', 'file-after-claim', 'close-failed', 'tamper-after-close', 'SIGINT', 'SIGTERM'] as const)('runs the signed installed maintenance cut for %s', async (mode) => {
@@ -1320,7 +1320,7 @@ const withdrawal = new AbortController();
 let generationStops = 0, unavailable = false, revokedReceipt = false, leaseProbe;
 const startupPermits = new Map();
 const maintenance = {
-  plan, signer, storage,
+  plan: { ...plan, ...(mode === 'default-local' && { protection: undefined }) }, signer, storage,
   generation: {
     withdrawal: withdrawal.signal,
     cleared(binding, role) {
@@ -1634,6 +1634,8 @@ async function scenario() {
       assert.equal(result.manifestHash, hash(canonical(envelope.manifest)));
       assert.equal(terminal.payload.outcome.manifestHash, result.manifestHash);
       assert.deepEqual(envelope.manifest.domains, [domain]);
+      assert.equal(envelope.manifest.protection.status, 'local_only');
+      assert(!((await readdir(join(setRoot, 'owned'))).includes('off-host-receipt.json')));
       const handoff = envelope.manifest.artifacts.find((artifact) => artifact.kind === 'handoff');
       assert.equal(handoff.hash, hash(await readFile(join(setRoot, 'owned', handoff.path))));
       function query(path, sql) {

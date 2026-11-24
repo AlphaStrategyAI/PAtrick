@@ -27,7 +27,7 @@ export type RecoveryBackupReadbackTarget = {
   scope: RecoveryScope;
   authority: RecoveryVerifier;
   readDatabase?: (db: RecoveryDatabaseQuery, role: 'service' | 'hub') => RecoveryDatabaseState;
-  protection: { kind: 'local_only' } | { kind: 'off_host'; verify(set: RecoverySet): Promise<boolean> };
+  protection?: { kind: 'local_only' } | { kind: 'off_host'; verify(set: RecoverySet): Promise<boolean> };
 };
 
 async function assertDirectoryAncestry(absolute: string, ancestor: string) {
@@ -187,15 +187,16 @@ export function createRecoveryBackupReader(options: {
     if (!targetAuthority?.keyId || typeof targetAuthority.verify !== 'function'
       || !journalAuthority?.keyId || typeof journalAuthority.verify !== 'function') throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
     const protection = registered!.protection;
-    if (protection?.kind !== 'local_only' && (protection?.kind !== 'off_host' || typeof protection.verify !== 'function')) {
+    const offHost = protection?.kind === 'off_host';
+    if (protection !== undefined && protection?.kind !== 'local_only' && (!offHost || typeof protection.verify !== 'function')) {
       throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
     }
     return {
       root: registered!.root, scope: structuredClone(registered!.scope), identity: checkedIdentity(registered!.identity),
-      journalRoot: structuredClone(options.root), readDatabase: registered!.readDatabase, offHost: protection.kind === 'off_host',
+      journalRoot: structuredClone(options.root), readDatabase: registered!.readDatabase, offHost,
       journalAuthority, journalKeyId: journalAuthority.keyId, verifyJournal: journalAuthority.verify,
       targetAuthority, authority: { keyId: targetAuthority.keyId, verify: targetAuthority.verify },
-      protection, verifyProtection: protection.kind === 'off_host' ? protection.verify : undefined,
+      protection, verifyProtection: offHost ? protection.verify : undefined,
     };
   }
 

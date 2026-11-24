@@ -815,7 +815,7 @@ test('installed doctor verifies a signed backup when only its cold reader remain
   const journal = backupReadback.root.path;
   const before = readdirSync(journal).sort().map((file) => [file, digest(readFileSync(join(journal, file)))]);
   const result = await createRuntimeCli(provisioning).run(['doctor']);
-  expect(result.checks?.recovery_backup).toMatchObject({ status: 'ready', evidence: { localSet: 'completed', offHostProtection: 'unverified' } });
+  expect(result.checks?.recovery_backup).toMatchObject({ status: 'ready', evidence: { localSet: 'completed', offHostProtection: 'not_configured' } });
   expect(result.checks?.recovery_drill).toMatchObject({ status: 'unavailable', evidence: { code: 'SIGNED_DRILL_READBACK_REQUIRED' } });
   expect(result.checks?.recovery).toMatchObject({ status: 'unavailable' });
   expect(readdirSync(journal).sort().map((file) => [file, digest(readFileSync(join(journal, file)))])).toEqual(before);

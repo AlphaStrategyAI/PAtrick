@@ -150,10 +150,11 @@ export async function inspectLocalHost(registeredHost) {
   try { binding.validate(); } catch { mismatch(checks, Object.keys(checks).filter((name) => name !== 'node_runtime')); }
   return checks;
 }
-function backupReadiness(completed) {
+function backupReadiness(completed, offHostConfigured) {
   return check(completed ? 'ready' : 'unknown', 'core',
-    { localSet: completed ? 'completed' : 'unconfirmed', offHostProtection: 'unverified' },
-    'Verify retained off-host copies and recovery credential independence.');
+    { localSet: completed ? 'completed' : 'unconfirmed', offHostProtection: offHostConfigured ? 'unverified' : 'not_configured' },
+    offHostConfigured ? 'Verify retained off-host copies and recovery credential independence.'
+      : 'Retain a verified local RecoverySet and its signed operation record.');
 }
 
 function bindColdData(read) {
@@ -275,10 +276,11 @@ export async function doctor(host, vaultId) {
         const drill = await operations.read({ operationId: readback.drillOperationId, targetId: readback.targetId, mode: 'drill', manifestHash: readback.manifestHash });
         validateRecovery();
         return { backup: backup.status === 'completed' && backup.outcome.manifestHash === readback.manifestHash,
+          offHostConfigured: Boolean(target.backup?.options.offHost),
           drill: drill.status === 'completed' && drill.outcome.manifestHash === readback.manifestHash && drill.outcome.receipt?.external_writes === 0 };
       })));
       validateRecovery();
-      checks.recovery_backup = backupReadiness(reports.every((report) => report.backup));
+      checks.recovery_backup = backupReadiness(reports.every((report) => report.backup), reports.some((report) => report.offHostConfigured));
       checks.recovery_drill = check(reports.every((report) => report.drill) ? 'ready' : 'unknown', 'core',
         { isolatedDrill: reports.every((report) => report.drill) ? 'completed' : 'unconfirmed', writerActivation: 'unavailable' }, 'Retain the signed isolated drill receipt and separately provision activation authorities.');
     } catch (error) {
@@ -309,7 +311,8 @@ export async function doctor(host, vaultId) {
         return backup.status === 'completed' && backup.outcome.manifestHash === manifestHash;
       })));
       validateCold();
-      checks.recovery_backup = backupReadiness(verified.every(Boolean));
+      checks.recovery_backup = backupReadiness(verified.every(Boolean),
+        coldReadbacks.some(({ targetId }) => cold.targets[targetId].protection?.kind === 'off_host'));
     } catch (error) {
       if (error?.message === 'HOST_IDENTITY_MISMATCH') mismatch(checks, ['recovery_backup']);
       else checks.recovery_backup = check('blocked', 'core', { code: 'SIGNED_RECOVERY_READBACK_FAILED' },

@@ -75,19 +75,20 @@ async function fixture() {
 }
 const request = { operationId: 'backup', targetId: 'target', mode: 'backup' as const };
 
-test('verification-only backup readback survives the loss of the live sources', async () => {
+test.each([undefined, { kind: 'local_only' } as const])('verification-only backup readback survives the loss of the live sources with protection %j', async (protection) => {
   const f = await fixture();
-  expect(await f.readback().read(request)).toEqual({ status: 'absent' });
+  const reader = f.readback({ protection });
+  expect(await reader.read(request)).toEqual({ status: 'absent' });
   await f.create().reserve(request);
-  expect(await f.readback().read(request)).toEqual({ status: 'reserved' });
+  expect(await reader.read(request)).toEqual({ status: 'reserved' });
   const completed = await f.create().run(request);
   expect(completed.status).toBe('completed');
   f.closeSources();
   renameSync(join(f.root, 'service.sqlite'), join(f.root, 'service-retired.sqlite'));
   renameSync(join(f.root, 'hub.sqlite'), join(f.root, 'hub-retired.sqlite'));
-  const reader = f.readback();
   expect(Object.keys(reader)).toEqual(['read']);
   expect(await reader.read(request)).toEqual(completed);
+  expect(existsSync(join(f.root, 'sets/set/off-host-receipt.json'))).toBe(false);
   expect(f.captures()).toBe(1);
 });
 
@@ -498,6 +499,7 @@ test('verification-only readback requires independent proof for an off-host bind
   const completed = await f.create().run(request);
   expect(completed.status).toBe('completed');
   f.closeSources();
+  await expect(f.readback({ protection: undefined }).read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
   await expect(f.readback().read(request)).rejects.toThrow('RECOVERY_OPERATION_BINDING_MISMATCH');
   const refusing = f.readback({ protection: { kind: 'off_host', async verify() { return false; } } });
   await expect(refusing.read(request)).rejects.toThrow('RECOVERY_OFF_HOST_UNCONFIRMED');
