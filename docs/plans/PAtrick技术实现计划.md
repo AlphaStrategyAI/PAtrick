@@ -724,7 +724,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 |---|---|---|
 | T21 已登记设备的双启动顺序与企业 DNS | 2026-11-21 本机实测不能并用：单独 OpenVPN 时内网通过，单独 Shadowrocket 时外网代理通过，两种同时启动都失败。替代路径定为 `controlled_rotation`。证据是 `docs/operations/evidence/t21-registered-device-2026-11-21.json` | 本次准入通过。`release-evidence/impl-2026-11-19` 里的 T21 行仍是采集当时的 blocked |
 | T22 记录有序交接实测 RPO/RTO | 缺少独立见证及真实写者隔离证据。本地备份可用于此演练 | `T22/recovery-set-and-restore` 的 passed 记录来自本地隔离测试 |
-| T23 在目标机下载并安装候选包 | Node 26 双架构托管候选包已构建并独立核对（`docs/operations/evidence/darwin-candidates-2026-11-20.json`），安装仍需登记的发布密钥与已安装主机 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
+| T23 在目标机下载并安装候选包 | 2026-11-24 已下载并独立核对 `c37654e` 的双架构候选（`docs/operations/evidence/darwin-candidates-2026-11-24.json`）。安装验收仍需可信签名流程和获准的目标 Mac | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 没有生产服务身份下的安装 | `T27/production-service-identity-round-trip` blocked |
 | T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空；演练仓库和三条真实工作路线仍未接入 | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点 | 没有可分母的试点观察 | `T26/observed-pilot-results` pending |

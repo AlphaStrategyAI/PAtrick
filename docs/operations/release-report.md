@@ -67,3 +67,7 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 原生扩展摘要：arm64 `cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d`，x64 `52ee7e68839aef1cb09a5acb1bd3d05e28b7259e8f0c18d9a760500efbf09211`。这是交给 T25 验收的未签名构建材料；签名、发布资产、目标主机的空机安装与升级仍需实测。
 
 上述核对由 `node scripts/verify-hosted-candidates.mjs` 重新执行：脚本下载已登记运行的产物，按各自随附的摘要核对归档、清单、载荷数量与源码候选，并独立解包原生扩展读取 Mach-O 架构，任何一项不符即以非零状态拒绝。登记回执保存在 [darwin-candidates-2026-11-20.json](evidence/darwin-candidates-2026-11-20.json)，作为后续签名、T25 验收与 T26 发布的候选输入。
+
+## 2026-11-24 双架构候选复核
+
+包含本地备份默认配置的提交 `c37654e46e3613b3ee1e4526ed24da04ed93d5b5` 通过两个 Darwin 构建任务。`node scripts/verify-hosted-candidates.mjs 45397001813` 下载并核对两个未签名源码候选和部署归档。每套归档包含 458 个载荷文件，原生扩展的 Mach-O 架构分别为 `arm64` 和 `x86_64`。源码候选状态为 `installable: false`。目标机签名信任、安装、重启与升级仍待验收。[独立读回回执](evidence/darwin-candidates-2026-11-24.json)
