@@ -319,6 +319,65 @@ test('authority enforces enrolled peers, read-only roles, writer fencing and exa
   } finally { await close(server); store.close(); }
 });
 
+test('offline import seeds an unbound log only from a complete journal matching the authoritative head', () => {
+  const script = fileURLToPath(new URL('../../scripts/recovery-witness.mjs', import.meta.url));
+  const witnessPath = join(root, 'import-witness.sqlite');
+  const logPath = join(root, 'import-log.sqlite');
+  const snapshot = join(root, 'import-service.sqlite');
+  const first = entry(1, emptyHash);
+  const second = entry(2, first.hash);
+  const store = openRecoveryWitnessStore(witnessPath, { create: true });
+  const log = openRecoveryWithdrawalStore(logPath, { create: true });
+  try {
+    store.initialize(initial);
+    for (const item of [first, second]) {
+      expect(store.compareAndSwap('personal', store.read('personal')!.revision, {
+        ...initial, withdrawal: { seq: item.seq, hash: item.hash },
+      }, 'primary')).toBe('applied');
+    }
+  } finally { log.close(); store.close(); }
+
+  function addToSnapshot(path: string, ...items: WithdrawalEntry[]) {
+    const service = openDatabase(path);
+    chmodSync(path, 0o600);
+    try {
+      const insert = service.prepare('INSERT INTO recovery_withdrawal_log VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const item of items) insert.run(
+        item.domain, item.seq, item.writerEpoch, item.previousHash, item.hash, JSON.stringify(item.event), 'protected',
+      );
+    } finally { service.close(); }
+  }
+  const run = (source = snapshot) => spawnSync(process.execPath, [script, 'import-log', witnessPath, logPath, 'personal', source],
+    { encoding: 'utf8', timeout: 5000 });
+  addToSnapshot(snapshot, first);
+  const incomplete = run();
+  expect(incomplete.status).toBe(1);
+  expect(JSON.parse(incomplete.stderr)).toEqual({ code: 'RECOVERY_WITHDRAWAL_IMPORT_CHAIN_INVALID' });
+  const alternate = join(root, 'import-alternate.sqlite');
+  addToSnapshot(alternate, first, entry(2, first.hash, initial.writerEpoch, 'alternate'));
+  const diverged = run(alternate);
+  expect(diverged.status).toBe(1);
+  expect(JSON.parse(diverged.stderr)).toEqual({ code: 'RECOVERY_WITHDRAWAL_IMPORT_CHAIN_INVALID' });
+  const untouched = openRecoveryWithdrawalStore(logPath);
+  try { expect(untouched.read('personal', first.seq, first.hash)).toBeUndefined(); } finally { untouched.close(); }
+  addToSnapshot(snapshot, second);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const imported = run();
+    expect(imported.status, imported.stderr).toBe(0);
+    expect(JSON.parse(imported.stdout)).toEqual({ status: 'imported', domain: 'personal', seq: second.seq, hash: second.hash });
+  }
+  const updated = openRecoveryWitnessStore(witnessPath);
+  const seeded = openRecoveryWithdrawalStore(logPath);
+  try {
+    updated.configureWithdrawals(seeded, ['personal']);
+    expect(seeded.read('personal', first.seq, first.hash)).toEqual(first);
+    expect(seeded.read('personal', second.seq, second.hash)).toEqual(second);
+    const enrolled = run();
+    expect(enrolled.status).toBe(1);
+    expect(JSON.parse(enrolled.stderr)).toEqual({ code: 'RECOVERY_WITNESS_WITHDRAWAL_IMPORT_ALREADY_ENROLLED' });
+  } finally { seeded.close(); updated.close(); }
+}, 15_000);
+
 test('standalone witness opens only initialized state and serves enrolled clients from a separate process', async () => {
   const script = fileURLToPath(new URL('../../scripts/recovery-witness.mjs', import.meta.url));
   const store = join(root, 'standalone.sqlite');

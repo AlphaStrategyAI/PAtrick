@@ -133,6 +133,18 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
     }
     return Object.freeze({
       read,
+      importWithdrawalHistory(domain, log, historyThrough) {
+        return immediate(() => {
+          const enrollment = logBinding.get();
+          check(enrollment?.physical_file == null, 'WITHDRAWAL_IMPORT_ALREADY_ENROLLED');
+          check(!enrollment || enrollment.identity === log.identity, 'WITHDRAWAL_STORE_MISMATCH');
+          const record = read(domain);
+          check(record, 'DOMAIN_NOT_INITIALIZED');
+          const head = record.withdrawal;
+          log.importHistory(domain, head, historyThrough(head.seq));
+          return head;
+        });
+      },
       configureWithdrawals(log, domains) {
         immediate(() => {
           const enrolled = logBinding.get();

@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { isAbsolute, resolve } from 'node:path';
+import { openAuthorityStore } from '../packages/host/src/recovery/authority-store.mjs';
 import { createRecoveryWitnessServer, openRecoveryWitnessStore } from '../packages/host/src/recovery/https-witness.mjs';
 import { openRecoveryWithdrawalStore } from '../packages/host/src/recovery/withdrawal-store.mjs';
 
@@ -73,9 +74,37 @@ async function serve(path) {
   }
 }
 
+function importWithdrawals(witnessPath, logPath, domain, snapshotPath) {
+  const [witness, log, source] = [witnessPath, logPath, snapshotPath].map(path => resolve(path));
+  if (new Set([witness, log, source]).size !== 3) throw new Error('RECOVERY_WITHDRAWAL_IMPORT_PATHS_INVALID');
+  const store = openRecoveryWitnessStore(witness);
+  let withdrawalStore;
+  let snapshot;
+  try {
+    withdrawalStore = openRecoveryWithdrawalStore(log);
+    snapshot = openAuthorityStore(source, { readOnly: true, check(condition, code) {
+      if (!condition) throw new Error('RECOVERY_WITHDRAWAL_IMPORT_SOURCE_' + code);
+    } });
+    const readEntries = snapshot.prepare(`SELECT sequence, writer_epoch, previous_hash, entry_hash, event_json
+      FROM recovery_withdrawal_log WHERE data_domain = ? AND sequence <= ? ORDER BY sequence`);
+    const head = store.importWithdrawalHistory(domain, withdrawalStore, function* (sequence) {
+      for (const row of readEntries.iterate(domain, sequence)) {
+        yield { domain, seq: row.sequence, writerEpoch: row.writer_epoch, previousHash: row.previous_hash,
+          hash: row.entry_hash, event: JSON.parse(row.event_json) };
+      }
+    });
+    process.stdout.write(JSON.stringify({ status: 'imported', domain, ...head }) + '\n');
+  } finally {
+    try { snapshot?.close(); } finally {
+      try { withdrawalStore?.close(); } finally { store.close(); }
+    }
+  }
+}
+
 async function main([action, ...args]) {
   process.umask(0o077);
   if (action === 'serve' && args.length === 1) return serve(args[0]);
+  if (action === 'import-log' && args.length === 4) return importWithdrawals(...args);
   if (action === 'initialize-log' && args.length === 1) {
     openRecoveryWithdrawalStore(resolve(args[0]), { create: true }).close();
     process.stdout.write(JSON.stringify({ status: 'initialized' }) + '\n');

@@ -1,5 +1,5 @@
 import type { Server } from 'node:https';
-import type { WithdrawalEntry } from './types.js';
+import type { WithdrawalEntry, WithdrawalHead } from './types.js';
 import type { RecoveryWitnessPort, RecoveryWitnessRecord } from './witness.js';
 import type { RecoveryWithdrawalLogPort } from './withdrawals.js';
 import type { RecoveryWithdrawalStore } from './withdrawal-store.mjs';
@@ -12,6 +12,8 @@ type AuthorityIdentity = TlsIdentity & { origin: string; authorityId: string };
 
 export type RecoveryWitnessStore = Readonly<{
   read(domain: string): RecoveryWitnessRecord | undefined;
+  importWithdrawalHistory(domain: string, log: RecoveryWithdrawalStore,
+    historyThrough: (seq: number) => Iterable<WithdrawalEntry>): WithdrawalHead;
   configureWithdrawals(log: RecoveryWithdrawalStore | undefined, domains: Iterable<string>): void;
   initialize(record: NextRecord): RecoveryWitnessRecord;
   compareAndSwap(domain: string, revision: string, next: NextRecord, writerId: string, log?: RecoveryWithdrawalStore): WriteOutcome;

@@ -68,16 +68,35 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
       check(encodeWithdrawal(entry) === row.entry_json && entry.domain === domain && entry.seq === seq && entry.hash === hash, 'STORE_INVALID');
       return entry;
     }
+    function append(entry) {
+      const content = encodeWithdrawal(entry);
+      if (!content) return false;
+      insert.run(entry.domain, entry.seq, entry.hash, entry.writerEpoch, entry.event.eventId, content);
+      const persisted = select.get(entry.domain, entry.seq, entry.hash);
+      return persisted?.entry_json === content;
+    }
     return Object.freeze({
       identity,
       fileIdentity,
       read,
-      append(entry) {
-        const content = encodeWithdrawal(entry);
-        if (!content) return false;
-        insert.run(entry.domain, entry.seq, entry.hash, entry.writerEpoch, entry.event.eventId, content);
-        const persisted = select.get(entry.domain, entry.seq, entry.hash);
-        return persisted?.entry_json === content;
+      append,
+      importHistory(domain, head, entries) {
+        database.exec('BEGIN IMMEDIATE');
+        try {
+          let sequence = 0;
+          let hash = emptyWithdrawalHash;
+          for (const entry of entries) {
+            check(entry?.domain === domain && entry.seq === sequence + 1 && entry.seq <= head.seq &&
+              entry.previousHash === hash && append(entry), 'IMPORT_CHAIN_INVALID');
+            sequence = entry.seq;
+            hash = entry.hash;
+          }
+          check(sequence === head.seq && hash === head.hash, 'IMPORT_CHAIN_INVALID');
+          database.exec('COMMIT');
+        } catch (error) {
+          database.exec('ROLLBACK');
+          throw error;
+        }
       },
       pendingHash(domain, seq, writerEpoch) {
         return pending.get(domain, seq, writerEpoch)?.entry_hash;
