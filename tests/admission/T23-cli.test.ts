@@ -808,6 +808,9 @@ test('doctor checks enrolled off-host protection even when live recovery is avai
   } } });
   const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
   expect(completed.status).toBe('completed');
+  const recoveryReadbacks = [{ targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! }];
+  expect((await createPatrickCli({ ...f.host, recoveryReadbacks }).run(['doctor'])).checks?.recovery_backup)
+    .toMatchObject({ status: 'ready', evidence: { localSet: 'completed', offHostProtection: 'unverified' } });
   const { backupReadback } = verificationOnlyHost(f);
   let confirmed = false;
   let verifications = 0;
@@ -817,12 +820,13 @@ test('doctor checks enrolled off-host protection even when live recovery is avai
     backupReadback: { ...backupReadback, targets: { target: { ...backupReadback.targets.target,
       protection: { kind: 'off_host' as const, async verify() { verifications++; return confirmed; } },
     } } },
-    recoveryReadbacks: [{ targetId: 'target', backupOperationId: 'backup', drillOperationId: 'drill', manifestHash: completed.manifestHash! }],
+    recoveryReadbacks,
   };
   const cli = createPatrickCli(host);
   expect((await cli.run(['doctor'])).checks?.recovery_backup).toMatchObject({ status: 'blocked' });
   confirmed = true;
-  expect((await cli.run(['doctor'])).checks?.recovery_backup).toMatchObject({ status: 'ready' });
+  expect((await cli.run(['doctor'])).checks?.recovery_backup)
+    .toMatchObject({ status: 'ready', evidence: { localSet: 'completed', offHostProtection: 'verified' } });
   expect(verifications).toBe(2);
   expect(f.captures()).toBe(1);
 });

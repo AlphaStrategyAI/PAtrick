@@ -150,10 +150,10 @@ export async function inspectLocalHost(registeredHost) {
   try { binding.validate(); } catch { mismatch(checks, Object.keys(checks).filter((name) => name !== 'node_runtime')); }
   return checks;
 }
-function backupReadiness(completed, offHostConfigured) {
+function backupReadiness(completed, offHostProtection) {
   return check(completed ? 'ready' : 'unknown', 'core',
-    { localSet: completed ? 'completed' : 'unconfirmed', offHostProtection: offHostConfigured ? 'unverified' : 'not_configured' },
-    offHostConfigured ? 'Verify retained off-host copies and recovery credential independence.'
+    { localSet: completed ? 'completed' : 'unconfirmed', offHostProtection },
+    offHostProtection === 'unverified' ? 'Verify retained off-host copies and recovery credential independence.'
       : 'Retain a verified local RecoverySet and its signed operation record.');
 }
 
@@ -265,6 +265,7 @@ export async function doctor(host, vaultId) {
   }
   checks.recovery_backup = check('unavailable', 'core', { code: 'SIGNED_BACKUP_READBACK_REQUIRED' }, 'Register a completed signed backup operation ID for readback.');
   checks.recovery_drill = check('unavailable', 'core', { code: 'SIGNED_DRILL_READBACK_REQUIRED' }, 'Register a completed signed isolated drill operation ID for readback.');
+  let liveOffHostTargets = [];
   if (runtime?.createRecoveryOperations && recovery && readbacks?.length > 0 && readbacks.length <= 16) {
     try {
       validateRecovery();
@@ -277,12 +278,14 @@ export async function doctor(host, vaultId) {
         validateRecovery();
         const drill = await operations.read({ operationId: readback.drillOperationId, targetId: readback.targetId, mode: 'drill', manifestHash: readback.manifestHash });
         validateRecovery();
-        return { backup: backup.status === 'completed' && backup.outcome.manifestHash === readback.manifestHash,
+        return { targetId: readback.targetId, backup: backup.status === 'completed' && backup.outcome.manifestHash === readback.manifestHash,
           offHostConfigured: Boolean(target.backup?.options.offHost),
           drill: drill.status === 'completed' && drill.outcome.manifestHash === readback.manifestHash && drill.outcome.receipt?.external_writes === 0 };
       })));
       validateRecovery();
-      checks.recovery_backup = backupReadiness(reports.every((report) => report.backup), reports.some((report) => report.offHostConfigured));
+      liveOffHostTargets = reports.filter((report) => report.offHostConfigured).map((report) => report.targetId);
+      checks.recovery_backup = backupReadiness(reports.every((report) => report.backup),
+        liveOffHostTargets.length > 0 ? 'unverified' : 'not_configured');
       checks.recovery_drill = check(reports.every((report) => report.drill) ? 'ready' : 'unknown', 'core',
         { isolatedDrill: reports.every((report) => report.drill) ? 'completed' : 'unconfirmed', writerActivation: 'unavailable' }, 'Retain the signed isolated drill receipt and separately provision activation authorities.');
     } catch (error) {
@@ -310,14 +313,19 @@ export async function doctor(host, vaultId) {
         validateCold();
         const backup = await reader.read({ operationId: backupOperationId, targetId, mode: 'backup' });
         validateCold();
-        return backup.status === 'completed' && backup.outcome.manifestHash === manifestHash;
+        return { targetId, completed: backup.status === 'completed' && backup.outcome.manifestHash === manifestHash,
+          offHostConfigured: cold.targets[targetId].protection?.kind === 'off_host' };
       })));
       validateCold();
       const liveBackup = checks.recovery_backup;
       if (liveBackup.status !== 'blocked') {
-        const offHostConfigured = liveBackup.evidence.offHostProtection === 'unverified'
-          || coldReadbacks.some(({ targetId }) => cold.targets[targetId].protection?.kind === 'off_host');
-        checks.recovery_backup = backupReadiness(verified.every(Boolean) && (!recovery || liveBackup.status === 'ready'), offHostConfigured);
+        const coldOffHost = verified.filter((report) => report.offHostConfigured);
+        const offHostConfigured = liveOffHostTargets.length > 0 || coldOffHost.length > 0;
+        const offHostVerified = coldOffHost.every((report) => report.completed)
+          && liveOffHostTargets.every((targetId) => coldOffHost.some((report) => report.targetId === targetId));
+        const offHostProtection = offHostConfigured ? (offHostVerified ? 'verified' : 'unverified') : 'not_configured';
+        checks.recovery_backup = backupReadiness(
+          verified.every((report) => report.completed) && (!recovery || liveBackup.status === 'ready'), offHostProtection);
       }
     } catch (error) {
       if (error?.message === 'HOST_IDENTITY_MISMATCH') mismatch(checks, ['recovery_backup']);
