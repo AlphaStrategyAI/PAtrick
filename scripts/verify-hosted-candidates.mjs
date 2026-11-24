@@ -97,11 +97,11 @@ function verifyNative(root, architecture, inspect) {
   return { sha256: digest, description };
 }
 
-function verifyController(materials, receipt, listed, architecture, inspect, allowLegacy) {
+function verifyController(materials, receipt, listed, architecture, inspect, requireController) {
   const path = join(materials, controllerName);
   const info = lstatSync(path, { throwIfNoEntry: false });
   const checksums = listed.filter(entry => entry.path === controllerName);
-  if (allowLegacy && !info && !Object.hasOwn(receipt, 'controller') && checksums.length === 0) return undefined;
+  if (!requireController && !info && !Object.hasOwn(receipt, 'controller') && checksums.length === 0) return undefined;
   if (!info) fail('CANDIDATE_CONTROLLER_MISSING');
   if (!info.isFile() || info.size === 0 || info.size > RELEASE_LIMITS.artifactBytes) fail('CANDIDATE_CONTROLLER_INVALID');
   const digest = sha256(readFileSync(path));
@@ -147,7 +147,7 @@ export function verifyCandidateTree(tree, options = {}) {
           receipt.native?.observedArchitecture !== architecture) fail('CANDIDATE_NATIVE_TARGET_MISMATCH');
       if (receipt.native?.observedNode !== expectedNode.node || receipt.native?.observedModules !== expectedNode.modules) fail('CANDIDATE_NATIVE_RUNTIME_MISMATCH');
       if (receipt.archive?.sha256 !== archiveSha256) fail('CANDIDATE_RECEIPT_ARCHIVE_MISMATCH');
-      const controller = verifyController(materials, receipt, listed, architecture, inspect, options.allowLegacy);
+      const controller = verifyController(materials, receipt, listed, architecture, inspect, options.requireController);
       const payloadRoot = join(workspace, architecture);
       mkdirSync(payloadRoot, { recursive: true });
       run('/usr/bin/tar', ['-xpf', archive, '--no-same-owner', '-C', payloadRoot], { failure: 'CANDIDATE_ARCHIVE_INVALID' });
@@ -228,12 +228,15 @@ function runSummary(runId) {
 
 function main() {
   const args = process.argv.slice(2);
-  const runId = process.env.PATRICK_DARWIN_RELEASE_RUN?.trim() || args.find(arg => arg !== '--legacy');
+  const runId = process.env.PATRICK_DARWIN_RELEASE_RUN?.trim() || args.find(arg => arg !== '--require-controller');
   if (!runId) fail('CANDIDATE_RUN_UNSPECIFIED');
   const view = runSummary(runId);
   const tree = downloadRun(runId);
   try {
-    const entries = verifyCandidateTree(tree, { expectedCommit: view.headSha, allowLegacy: args.includes('--legacy') });
+    const entries = verifyCandidateTree(tree, {
+      expectedCommit: view.headSha,
+      requireController: args.includes('--require-controller'),
+    });
     const receipt = {
       format: 'patrick-hosted-candidates-v1',
       run: String(runId),

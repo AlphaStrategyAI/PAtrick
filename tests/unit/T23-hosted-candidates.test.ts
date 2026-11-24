@@ -146,10 +146,10 @@ it.each(['Mach-O 64-bit executable x86_64', 'Mach-O 64-bit bundle arm64'])(
   },
 );
 
-it('supports previous hosted runs only when legacy verification is explicitly requested', () => {
+it('preserves previous hosted receipts unless controller delivery is required', () => {
   const tree = buildTree(workspace(), { controller: 'legacy' });
-  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow('CANDIDATE_CONTROLLER_MISSING');
-  expect(verifyCandidateTree(tree, { inspectNative: inspect, allowLegacy: true }).arm64.controller).toBeUndefined();
+  expect(verifyCandidateTree(tree, { inspectNative: inspect }).arm64.controller).toBeUndefined();
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect, requireController: true })).toThrow('CANDIDATE_CONTROLLER_MISSING');
 });
 
 it.each(['bytes', 'mode'] as const)('rejects changed runtime %s even when the archive digest matches its receipt', changePayload => {

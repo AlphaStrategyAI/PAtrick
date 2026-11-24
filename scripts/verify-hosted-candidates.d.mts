@@ -21,7 +21,7 @@ export type VerifyCandidateTreeOptions = Readonly<{
   workspace?: string;
   expectedCommit?: string;
   inspectNative?: (path: string, architecture: string) => string;
-  allowLegacy?: boolean;
+  requireController?: boolean;
 }>;
 
 export function verifyCandidateTree(
