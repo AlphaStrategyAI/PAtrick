@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { autoloopCardIndexSql, readPinnedAutoloopSchema } from './autoloop-schema.js';
 import { assertName, assertRelative, canonical, containedPath, digest, durableJson, durableWrite, fileHash, publishDirectory, walkFiles } from './files.js';
 import { verifyWithdrawalChain } from './witness.js';
 import { assertVaultRoot, captureVaults, readVaultFile, verifyVaultRegistrations, withVaultRoot } from './vaults.js';
@@ -14,8 +15,32 @@ import type {
 
 export type RecoveryBackupOptions = {
   root: string; databases: RecoveryDatabases; authority: RecoveryManifestAuthority;
+  nativeHubBinding?: Readonly<{ database: SqliteDatabase; domains: readonly string[] }>;
   freeze?: RecoveryFreezePort; readDatabase?: RecoveryDatabaseReader; offHost?: RecoveryOffHostPort; now?: () => Date;
 };
+
+function readAutoloopHub(db: RecoveryDatabaseQuery): RecoveryDatabaseState {
+  readPinnedAutoloopSchema(db);
+  const latest = db.prepare('SELECT seq, fact FROM main.facts ORDER BY seq DESC LIMIT 1').get() as { seq: number; fact: string } | undefined;
+  const metadata = db.prepare('SELECT id, seq FROM main.projection_meta ORDER BY id LIMIT 2').all() as { id: number; seq: number }[];
+  const hubSeq = latest?.seq ?? 0;
+  if (metadata.length > 1 || (metadata.length === 0 && latest) ||
+      (metadata.length === 1 && (metadata[0].id !== 1 || metadata[0].seq !== hubSeq)) ||
+      (latest && (!Number.isSafeInteger(hubSeq) || hubSeq < 1))) {
+    throw new Error('RECOVERY_HUB_WATERMARK_INVALID');
+  }
+  if (latest) {
+    let fact: { version?: unknown; seq?: unknown } | null;
+    try { fact = JSON.parse(latest.fact); }
+    catch { throw new Error('RECOVERY_HUB_WATERMARK_INVALID'); }
+    if (fact?.version !== 1 || fact.seq !== hubSeq) throw new Error('RECOVERY_HUB_WATERMARK_INVALID');
+  }
+  return { hubSeq, domainSeq: 0, schemaHistory: [] };
+}
+
+export function readPinnedAutoloopRecoveryDatabase(db: RecoveryDatabaseQuery, role: 'service' | 'hub'): RecoveryDatabaseState {
+  return role === 'hub' ? readAutoloopHub(db) : readRecoveryDatabase(db);
+}
 
 export function readRecoveryDatabase(db: RecoveryDatabaseQuery): RecoveryDatabaseState {
   const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='hub_snapshots'").get();
@@ -24,6 +49,19 @@ export function readRecoveryDatabase(db: RecoveryDatabaseQuery): RecoveryDatabas
   const domain = db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM domain_events').get() as { seq: number };
   const history = db.prepare('SELECT file,sha256 FROM schema_migrations ORDER BY position').all() as RecoveryDatabaseState['schemaHistory'];
   return { hubSeq: hub.seq, domainSeq: domain.seq, schemaHistory: history };
+}
+
+function finishAutoloopHubCopy(path: string): void {
+  const db = new Database(path, { fileMustExist: true });
+  try {
+    readAutoloopHub(db);
+    const index = db.prepare("SELECT type, sql FROM sqlite_schema WHERE name='projection_card_hash'").get() as
+      { type: string; sql: string } | undefined;
+    if (!index) return;
+    if (index.type !== 'index' || index.sql !== autoloopCardIndexSql) throw new Error('RECOVERY_HUB_READER_REQUIRED');
+    db.exec('DROP INDEX projection_card_hash');
+    if (db.pragma('journal_mode = DELETE', { simple: true }) !== 'delete') throw new Error('RECOVERY_DATABASE_INTEGRITY_FAILED');
+  } finally { db.close(); }
 }
 
 function assertCut(lease: RecoveryFreezeLease): void {
@@ -54,6 +92,11 @@ function markUncertain(db: SqliteDatabase, now: string): void {
 export function createRecoveryBackup(options: RecoveryBackupOptions) {
   const now = options.now ?? (() => new Date());
   const readDatabase = options.readDatabase ?? readRecoveryDatabase;
+  const databases = { ...options.databases };
+  const nativeHub = readDatabase === readPinnedAutoloopRecoveryDatabase;
+  const nativeHubBinding = options.nativeHubBinding && {
+    database: options.nativeHubBinding.database, domains: [...options.nativeHubBinding.domains],
+  };
   return {
     async captureRecoverySet(requestedScope: RecoveryScope): Promise<RecoverySet> {
       const scope = structuredClone(requestedScope);
@@ -61,6 +104,8 @@ export function createRecoveryBackup(options: RecoveryBackupOptions) {
       if (!scope.domains.length || new Set(scope.domains.map((domain) => domain.domain)).size !== scope.domains.length
         || !Object.keys(scope.versionLocks).length) throw new Error('RECOVERY_SCOPE_INVALID');
       for (const domain of scope.domains) assertName(domain.domain);
+      const domains = scope.domains.map((domain) => domain.domain);
+      assertRecoveryBackupSource({ databases, readDatabase, nativeHubBinding }, domains);
       if (!options.freeze) throw new Error('RECOVERY_FREEZE_REQUIRED');
       await mkdir(options.root, { recursive: true, mode: 0o700 });
       const directory = await containedPath(options.root, scope.setId);
@@ -69,21 +114,23 @@ export function createRecoveryBackup(options: RecoveryBackupOptions) {
       }
       const partial = await containedPath(options.root, `.pending-${scope.setId}-${randomUUID()}`);
       await mkdir(join(partial, 'databases'), { recursive: true, mode: 0o700 });
-      const lease = await options.freeze.acquire(scope.domains.map((domain) => domain.domain));
+      const lease = await options.freeze.acquire(domains);
       let set: RecoverySet;
       try {
         assertCut(lease);
-        assertDatabaseDomains(options.databases.service, scope.domains.map((domain) => domain.domain));
-        assertDatabaseDomains(options.databases.hub, scope.domains.map((domain) => domain.domain));
-        markUncertain(options.databases.service, now().toISOString());
-        const before = inspectPair(options.databases, readDatabase);
-        const vaultInventory = captureVaults(options.databases.service, scope);
+        assertDatabaseDomains(databases.service, domains);
+        if (!nativeHub) assertDatabaseDomains(databases.hub, domains);
+        const before = inspectPair(databases, readDatabase);
+        markUncertain(databases.service, now().toISOString());
+        const vaultInventory = captureVaults(databases.service, scope);
         const assertVaultRoots = () => { for (const binding of vaultInventory.roots.values()) assertVaultRoot(binding); };
-        await options.databases.service.backup(join(partial, 'databases/service.sqlite'));
+        await databases.service.backup(join(partial, 'databases/service.sqlite'));
         assertVaultRoots();
-        await options.databases.hub.backup(join(partial, 'databases/hub.sqlite'));
+        const hubCopy = join(partial, 'databases/hub.sqlite');
+        await databases.hub.backup(hubCopy);
         assertVaultRoots();
-        const after = inspectPair(options.databases, readDatabase);
+        if (nativeHub) finishAutoloopHubCopy(hubCopy);
+        const after = inspectPair(databases, readDatabase);
         if (canonical(before) !== canonical(after)) throw new Error('RECOVERY_DATABASE_CHANGED_DURING_CAPTURE');
         const artifacts: RecoveryArtifact[] = [];
         for (const role of ['service', 'hub'] as const) {
@@ -111,7 +158,7 @@ export function createRecoveryBackup(options: RecoveryBackupOptions) {
           }
           assertVaultRoots();
         }
-        const gaps = [...vaultInventory.gaps, ...await inventoryGaps(options.databases.service, scope, artifacts)];
+        const gaps = [...vaultInventory.gaps, ...await inventoryGaps(databases.service, scope, artifacts)];
         assertVaultRoots();
         const manifest: RecoveryManifest = {
           schemaVersion: '1.0', setId: scope.setId, createdAt: now().toISOString(), cutId: lease.cutId,
@@ -147,6 +194,19 @@ export function createRecoveryBackup(options: RecoveryBackupOptions) {
       return set;
     },
   };
+}
+
+export function assertRecoveryBackupSource(
+  { databases, readDatabase, nativeHubBinding }: Pick<RecoveryBackupOptions, 'readDatabase' | 'nativeHubBinding'>
+    & { databases: Pick<RecoveryDatabases, 'hub'> },
+  domains: readonly string[],
+): void {
+  if (readDatabase !== readPinnedAutoloopRecoveryDatabase) return;
+  if (nativeHubBinding?.database !== databases.hub ||
+    canonical([...nativeHubBinding.domains].sort()) !== canonical([...domains].sort())) {
+    throw new Error('RECOVERY_DATABASE_DOMAIN_SCOPE_MISMATCH');
+  }
+  readPinnedAutoloopSchema(databases.hub);
 }
 
 async function inventoryGaps(db: SqliteDatabase, scope: RecoveryScope, artifacts: RecoveryArtifact[]): Promise<string[]> {

@@ -23,7 +23,7 @@ import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority 
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
-import { assertDatabaseIntegrity, verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
+import { assertDatabaseIntegrity, assertRecoveryBackupSource, verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
 import { assertName, canonical, containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
 import type { RecoveryDatabaseReader, RecoveryFreezePort, RecoveryManifestAuthority, RecoveryOffHostPort, RecoveryScope } from '../../packages/host/src/recovery/types.js';
 import { createNetworkInspector } from '../../packages/host/src/network/probes.js';
@@ -213,13 +213,14 @@ function liveDatabaseFile(database: SqliteDatabase): DatabaseFile {
 function createRecoveryTargetBinding(
   identity: HostIdentity, databasePath: string, answerPath: string, input?: OperationalRecoveryHubBinding,
 ) {
-  let operational: Readonly<{ database: SqliteDatabase; readDatabase: RecoveryDatabaseReader; file: DatabaseFile }> | undefined;
+  let operational: Readonly<{ database: SqliteDatabase; readDatabase: RecoveryDatabaseReader; file: DatabaseFile;
+    domains: readonly string[] }> | undefined;
   if (input) {
     if (!sameIdentity(identity, input.identity)) throw new Error('HOST_IDENTITY_MISMATCH');
     if (typeof input.readDatabase !== 'function') throw new Error('OPERATIONAL_RECOVERY_HUB_REQUIRED');
     const file = liveDatabaseFile(input.database);
     if (file.physical !== input.physicalPath) throw new Error('OPERATIONAL_RECOVERY_STORAGE_MISMATCH');
-    operational = { database: input.database, readDatabase: input.readDatabase, file };
+    operational = { database: input.database, readDatabase: input.readDatabase, file, domains: Object.freeze([...input.identity.domains]) };
     assertHubFile(operational);
   }
 
@@ -303,6 +304,7 @@ function createRecoveryTargetBinding(
       const boundOptions = Object.freeze({
         ...options,
         databases: Object.freeze({ service, hub }),
+        nativeHubBinding: Object.freeze({ database: bound.database, domains: bound.domains }),
         ...(guardedFreeze ? { freeze: guardedFreeze } : {}),
       });
       return [name, Object.freeze({
@@ -512,6 +514,7 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
   const verifyProtection = input.verifyProtection?.bind(input);
   requireCut(!offHost || verifyProtection);
   const { readDatabase } = hub;
+  const nativeHubBinding = Object.freeze({ database: hub.database, domains: Object.freeze([...hub.identity.domains]) });
   for (const name of [operationId, cutId, targetId, setId]) { requireCut(typeof name === 'string'); assertName(name); }
   requireCut(validToken(plan.installationId) && validToken(plan.generationId) && validToken(keyId));
   requireCut(plan.protection === (offHost ? 'off_host_required' : 'local_only'));
@@ -692,6 +695,8 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
       assertClearance('worker');
       requireCut(attached.service && attached.worker && answers);
       checkFiles();
+      assertRecoveryBackupSource({ databases: { hub: operational.db }, readDatabase, nativeHubBinding },
+        scope.domains.map(({ domain }) => domain));
       const service = attached.service, worker = attached.worker;
       requireCut(worker.db.open && worker.db !== service.db && canonical(worker.file) === canonical(service.file));
       for (const participant of [service, worker]) for (const writer of plan.writers) {
@@ -798,7 +803,7 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
         } };
         operations = createRecoveryOperations({ root: journalRoot, authority: signer, targets: {
           [targetId]: { identity, backup: { scope: backupScope, options: { root: setRoot, authority: signer,
-            databases: { service: attached.service!.db, hub: operational.db }, readDatabase, freeze, offHost } } },
+            databases: { service: attached.service!.db, hub: operational.db }, nativeHubBinding, readDatabase, freeze, offHost } } },
         } });
         requireCut((await operations.read(request)).status === 'absent');
         current();

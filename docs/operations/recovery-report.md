@@ -46,6 +46,8 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。见证先持久化待确认项的序号及摘要，再追加日志。水位 CAS 核对日志条目并在同一事务内清除待确认项。追加中断后，重启仍保留该项并拒绝封存。由当前写者重放同一条目并推进水位后，才可重新申请封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
 
+登记控制器可为锁定版本的 Autoloop Hub 显式选择 `readPinnedAutoloopRecoveryDatabase`。原生库按整库备份，冻结前核对备份范围与该库连接登记的资料域。备份和恢复校验用户表、索引、视图以及最后一条 `facts` 记录与投影水位。备份暂存副本移除依赖主密钥的派生卡片索引，再执行 SQLite 完整性校验和签名。恢复将原生库写入独立的 `databases/hub/hub.db`。有序交接在只读对账阶段初始化锁定版 Hub，保持入口和调度暂停。重建索引并核实 Hub 与服务库水位相符后才允许领取写者资格。激活一致性摘要覆盖库结构、完整事实日志和四张投影表。
+
 撤回日志按条数和字节数分页。超过普通一页容量的条目单独读回，保留原理由及哈希。使用长条目历史的部署需同步升级见证、写者和恢复端。
 
 已有水位且尚未绑定日志时，可先初始化日志库，再执行 `node scripts/recovery-witness.mjs import-log WITNESS_STORE LOG_STORE DOMAIN SERVICE_SNAPSHOT`。`SERVICE_SNAPSHOT` 使用受保护的 RecoverySet 中的 `databases/service.sqlite`，放在见证服务账户的私有目录。命令只读快照，把该资料域的连续哈希链核对到见证水位后提交日志，可重复执行。见证绑定日志后拒绝导入。超出见证水位的撤回由当前写者按正常流程重试并对账。

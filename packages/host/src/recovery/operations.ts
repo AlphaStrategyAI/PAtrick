@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, lstat, open, readFile, realpath, unlink } from 'node:fs/promises';
 import { dirname, join, parse, resolve, sep } from 'node:path';
-import { createRecoveryBackup, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
+import { assertRecoveryBackupSource, createRecoveryBackup, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
 import { createRecoveryRestorer, type RecoveryRestoreOptions } from './restore.js';
 import { assertName, canonical, containedPath, durableJson, syncDirectory } from './files.js';
 import type { RecoveryDatabaseQuery, RecoveryDatabaseState, RecoveryManifestAuthority, RecoveryRestoreReceipt, RecoveryScope, RecoverySet } from './types.js';
@@ -329,6 +329,10 @@ export function createRecoveryOperations(options: {
       const prior = await status(binding);
       if (prior.status === 'absent') throw new Error('RECOVERY_OPERATION_RESERVATION_REQUIRED');
       if (prior.status !== 'reserved') return prior;
+      if (command.mode === 'backup') {
+        const backup = target.backup!;
+        assertRecoveryBackupSource(backup.options, backup.scope.domains.map(({ domain }) => domain));
+      }
       if (!await publish(binding, 'claim')) return status(binding);
       // Revalidate physical roots and source identity after the awaited durable claim.
       if (canonical((await bind(command)).binding) !== canonical(binding)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');

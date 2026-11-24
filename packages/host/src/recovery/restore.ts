@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, open, readFile, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import Database from 'better-sqlite3';
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import { verifyRecoverySet } from './backup.js';
+import { readPinnedAutoloopRecoveryDatabase, verifyRecoverySet } from './backup.js';
+import { autoloopCardIndexSql, readPinnedAutoloopSchema } from './autoloop-schema.js';
 import { assertName, canonical, containedPath, digest, durableCopy, durableJson, durableWrite, fileHash, walkFiles } from './files.js';
 import { localRecoveryCut, tableInventory, type RecoveryLocalCut } from './cut.js';
 import { verifyWithdrawalChain, type RecoveryHandoffCertificate, type RecoveryWitness, type RecoveryWitnessRecord } from './witness.js';
@@ -99,6 +100,9 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       outside(await realpath(options.recoveryRoot), actualIsolation);
       for (const survivor of survivors) outside(await realpath(survivor.root), actualIsolation);
       const directory = await mkdtemp(join(actualIsolation, `${setId}-`));
+      const nativeHub = options.readDatabase === readPinnedAutoloopRecoveryDatabase;
+      const manifestHubPath = 'databases/hub.sqlite';
+      const restoredHubPath = nativeHub ? 'databases/hub/hub.db' : manifestHubPath;
       const receipt: RecoveryRestoreReceipt = {
         receiptId: randomUUID(), setId, manifestHash: set.manifestHash, mode, directory, startedAt, finishedAt: startedAt, elapsedMs: 0,
         rpoMs: null, rtoMs: null, orderlyHandoff: false, external_writes: 0,
@@ -107,7 +111,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       await stage(receipt, 'manifest_and_database_validation', now, async () => []);
       for (const vault of set.manifest.vaults) await mkdir(restoredVaultRoot(directory, vault), { recursive: true, mode: 0o700 });
       for (const artifact of set.manifest.artifacts) {
-        const restoredPath = await containedPath(directory, artifact.path);
+        const restoredPath = await containedPath(directory, artifact.path === manifestHubPath ? restoredHubPath : artifact.path);
         await durableCopy(await containedPath(sourceDirectory, artifact.path), restoredPath);
         const copied = await fileHash(restoredPath);
         if (copied.hash !== artifact.hash || copied.bytes !== artifact.bytes) throw new Error('RECOVERY_ARTIFACT_HASH_MISMATCH');
@@ -123,7 +127,7 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
       }
       if (survivors.some((survivor) => !set.manifest.domains.some((domain) => domain.domain === survivor.domain))) throw new Error('RECOVERY_RESOURCE_DOMAIN_MISMATCH');
       const service = new Database(join(directory, 'databases/service.sqlite'), { timeout: 2000 });
-      const hub = new Database(join(directory, 'databases/hub.sqlite'), { timeout: 2000 });
+      const hub = new Database(join(directory, restoredHubPath), { timeout: 2000, fileMustExist: true });
       service.pragma('foreign_keys=ON');
       service.pragma('journal_mode=WAL');
       hub.pragma('foreign_keys=ON');
@@ -183,7 +187,8 @@ export function createRecoveryRestorer(options: RecoveryRestoreOptions) {
             return [];
           });
           await stage(receipt, `read_only_reconciliation:${domain.domain}`, now, async () => {
-            const replay = await reconcileDomainCut({ service, hub, domain: domain.domain, directory, externalAccess: 'read_only' }, options.replay);
+            const replay = await reconcileDomainCut({ service, hub, domain: domain.domain, directory, externalAccess: 'read_only' },
+              options.replay, nativeHub && mode === 'activate');
             const unresolved = replay.reasons;
             replayCut = replay.cut;
             expectedGate = canonical(service.prepare('SELECT * FROM recovery_domain_gates WHERE data_domain=?').get(domain.domain));
@@ -455,7 +460,8 @@ export async function reconcileRecoveredDomain(context: RecoveryReplayContext, p
   return (await reconcileDomainCut(context, ports)).reasons;
 }
 
-async function reconcileDomainCut(context: RecoveryReplayContext, ports?: RecoveryReplayPorts): Promise<{ reasons: string[]; cut?: RecoveryLocalCut }> {
+async function reconcileDomainCut(context: RecoveryReplayContext, ports?: RecoveryReplayPorts, requireStartedHub = false):
+  Promise<{ reasons: string[]; cut?: RecoveryLocalCut }> {
   if (!ports || ports.externalAccess !== 'read_only') return { reasons: ['read_only_replay_ports_unavailable'] };
   const reasons: string[] = [];
   async function confirmed(name: string, run: (() => Promise<RecoveryReadback>) | undefined) {
@@ -499,7 +505,20 @@ async function reconcileDomainCut(context: RecoveryReplayContext, ports?: Recove
     const rows = [...inventory.values()].sort((left, right) => canonical(left).localeCompare(canonical(right)));
     if (canonical(tableInventory(context.service, table, context.domain)) !== canonical(rows)) reasons.push(`reconciliation_inventory_changed:${table}`);
   }
-  return { reasons, cut: reasons.length ? undefined : localRecoveryCut(context, context.domain) };
+  if (reasons.length) return { reasons };
+  const cut = localRecoveryCut(context, context.domain);
+  if (requireStartedHub) {
+    if (!readPinnedAutoloopSchema(context.hub).some(({ sql }) => sql === autoloopCardIndexSql)) {
+      return { reasons: ['autoloop_hub_startup_unconfirmed'] };
+    }
+    const service = readPinnedAutoloopRecoveryDatabase(context.service, 'service');
+    const hub = readPinnedAutoloopRecoveryDatabase(context.hub, 'hub');
+    if (service.hubSeq !== hub.hubSeq || context.service.pragma('data_version', { simple: true }) !== cut.serviceVersion ||
+      context.hub.pragma('data_version', { simple: true }) !== cut.hubVersion) {
+      return { reasons: ['autoloop_hub_watermark_mismatch'] };
+    }
+  }
+  return { reasons, cut };
 }
 
 function applyWithdrawals(db: SqliteDatabase, domain: string, entries: WithdrawalEntry[]): boolean {

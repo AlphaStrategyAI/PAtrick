@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { expect, test, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { openDatabase } from '@patrick/storage';
+import { localRecoveryCut } from '../../packages/host/src/recovery/cut.js';
+import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 
 const stamp = '2026-11-17T06:00:00.000Z';
 const hash = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -97,6 +99,202 @@ function fixture() {
 type BackupModule = typeof import('../../packages/host/src/recovery/backup.js');
 type RestoreModule = typeof import('../../packages/host/src/recovery/restore.js');
 type WitnessModule = typeof import('../../packages/host/src/recovery/witness.js');
+
+function nativeHub(root: string) {
+  const hub = new Database(join(root, 'hub.db'));
+  hub.exec(`CREATE TABLE facts(seq INTEGER PRIMARY KEY, fact TEXT NOT NULL);
+      CREATE TABLE projections(collection TEXT,key TEXT,data TEXT NOT NULL,PRIMARY KEY(collection,key));
+      CREATE TABLE projection_meta(id INTEGER PRIMARY KEY,seq INTEGER NOT NULL,next TEXT NOT NULL,format TEXT NOT NULL);
+      CREATE TABLE projection_refs(collection TEXT,key TEXT,seq INTEGER,PRIMARY KEY(collection,key,seq));
+      CREATE TABLE projection_pending(key TEXT PRIMARY KEY,card_id INTEGER,channel TEXT);`);
+  return hub;
+}
+
+test('rejects a pinned Hub without matching whole-database domain enrollment before freezing', async () => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const { readPinnedAutoloopRecoveryDatabase: readDatabase, createRecoveryBackup } = await feature<BackupModule>('backup');
+    const root = join(fx.root, 'sets');
+    const options = { root, databases: { service: fx.service, hub }, readDatabase, freeze: fx.freeze, authority };
+    for (const nativeHubBinding of [undefined, { database: hub, domains: ['personal', 'company'] },
+      { database: fx.hub, domains: ['personal'] }]) {
+      const backup = createRecoveryBackup({ ...options, ...{ nativeHubBinding } });
+      await expect(backup.captureRecoverySet(fx.scope)).rejects.toThrow('RECOVERY_DATABASE_DOMAIN_SCOPE_MISMATCH');
+    }
+    expect(fx.frozen).toEqual([]);
+    expect(existsSync(root)).toBe(false);
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
+
+test.each([
+  'CREATE TABLE outside_scope(payload TEXT)',
+  'CREATE TRIGGER unexpected AFTER INSERT ON facts BEGIN DELETE FROM projections; END',
+  'CREATE VIEW cards AS SELECT fact FROM facts',
+  'CREATE INDEX projection_cards_0 ON projections(data)',
+])('rejects unrecognized pinned Hub schema objects: %s', async (sql) => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const { readPinnedAutoloopRecoveryDatabase: readDatabase } = await feature<BackupModule>('backup');
+    hub.exec(sql);
+    expect(() => readDatabase(hub, 'hub')).toThrow('RECOVERY_HUB_READER_REQUIRED');
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
+
+test('rejects invalid pinned Hub schema before publishing a backup claim', async () => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const { readPinnedAutoloopRecoveryDatabase: readDatabase } = await feature<BackupModule>('backup');
+    const root = join(fx.root, 'sets');
+    const journal = join(fx.root, 'operations');
+    mkdirSync(root);
+    mkdirSync(journal);
+    const operations = createRecoveryOperations({ root: journal, authority, targets: {
+      native: { identity: { accountId: 'owner', scopeId: 'scope', domains: ['personal'], deviceId: 'device', configRevision: '1' },
+        backup: { scope: fx.scope, options: { root, databases: { service: fx.service, hub },
+          nativeHubBinding: { database: hub, domains: ['personal'] }, readDatabase, freeze: fx.freeze, authority } } },
+    } });
+    const request = { operationId: 'backup', targetId: 'native', mode: 'backup' as const };
+    expect(await operations.reserve(request)).toEqual({ status: 'reserved' });
+    hub.exec('CREATE TABLE outside_scope(payload TEXT)');
+    await expect(operations.run(request)).rejects.toThrow('RECOVERY_HUB_READER_REQUIRED');
+    expect(await operations.read(request)).toEqual({ status: 'reserved' });
+    expect(fx.frozen).toEqual([]);
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
+
+test('detects projection-only changes made through the same pinned Hub connection', () => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const databases = { service: fx.service, hub };
+    for (const change of [
+      "INSERT INTO projections VALUES ('cards','1','{}')",
+      "INSERT INTO projection_meta VALUES (1,0,'{}','fixture-format')",
+      "INSERT INTO projection_refs VALUES ('cards','1',1)",
+      "INSERT INTO projection_pending VALUES ('card',1,'fixture')",
+      'CREATE INDEX pending_channel ON projection_pending(channel,card_id)',
+    ]) {
+      const before = localRecoveryCut(databases, 'personal');
+      hub.exec(change);
+      const after = localRecoveryCut(databases, 'personal');
+      expect(after.hubVersion).toBe(before.hubVersion);
+      expect(after.inventory).not.toBe(before.inventory);
+    }
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
+
+test('captures and verifies the pinned Autoloop fact watermark through both recovery readers', async () => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const { readPinnedAutoloopRecoveryDatabase: readDatabase, createRecoveryBackup,
+      verifyRecoverySet, verifyImmutableRecoverySet } = await feature<BackupModule>('backup');
+    expect(readDatabase(hub, 'hub').hubSeq).toBe(0);
+    const insert = hub.prepare('INSERT INTO facts VALUES (?,?)');
+    for (let seq = 1; seq <= 9; seq++) insert.run(seq, JSON.stringify({ version: 1, seq, at: 0, type: 'rules', changes: [] }));
+    hub.prepare('INSERT INTO projection_meta VALUES (1,8,?,?)').run('{}', 'fixture-format');
+    expect(() => readDatabase(hub, 'hub')).toThrow('RECOVERY_HUB_WATERMARK_INVALID');
+    hub.exec('UPDATE projection_meta SET seq=9');
+    hub.function('card_hash', { deterministic: true }, (id, at) => hash(JSON.stringify([id, at])));
+    hub.exec(`CREATE INDEX projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'`);
+    hub.prepare("INSERT INTO projections VALUES ('cards','1',?)").run('{"id":1,"created_at":0}');
+    const options = { root: join(fx.root, 'sets'), databases: { service: fx.service, hub },
+      nativeHubBinding: { database: hub, domains: ['personal'] } };
+    const backup = createRecoveryBackup({ ...options,
+      readDatabase, freeze: fx.freeze, authority, now: () => new Date(stamp) });
+    const captured = await backup.captureRecoverySet(fx.scope);
+    expect(captured.manifest.databases.hub).toMatchObject({ hubSeq: 9, domainSeq: 0, schemaHistory: [] });
+    expect((await verifyRecoverySet(captured.directory, authority, versionLocks, readDatabase)).manifestHash).toBe(captured.manifestHash);
+    expect((await verifyImmutableRecoverySet(captured.directory, authority, versionLocks, readDatabase)).manifestHash).toBe(captured.manifestHash);
+    const keyIndex = "SELECT sql FROM sqlite_schema WHERE name='projection_card_hash'";
+    const copy = new Database(join(captured.directory, 'databases/hub.sqlite'), { readonly: true });
+    try {
+      expect(copy.prepare(keyIndex).get()).toBeUndefined();
+      expect(copy.prepare('SELECT * FROM facts ORDER BY seq').all()).toEqual(hub.prepare('SELECT * FROM facts ORDER BY seq').all());
+      expect(copy.prepare('SELECT * FROM projections').all()).toEqual(hub.prepare('SELECT * FROM projections').all());
+    } finally { copy.close(); }
+    expect(hub.prepare(keyIndex).get()).toBeDefined();
+    expect(() => readDatabase(hub, 'service')).toThrow('RECOVERY_HUB_READER_REQUIRED');
+    const originalCut = localRecoveryCut({ service: fx.service, hub }, 'personal');
+    hub.prepare('UPDATE facts SET fact=? WHERE seq=1').run('{"version":1,"seq":1,"at":1,"type":"rules","changes":[]}');
+    const changedCut = localRecoveryCut({ service: fx.service, hub }, 'personal');
+    expect(changedCut.hubVersion).toBe(originalCut.hubVersion);
+    expect(changedCut.inventory).not.toBe(originalCut.inventory);
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
+
+test.each(['ready', 'uninitialized', 'ahead of service'] as const)(
+  'pinned Hub activation requires an initialized and aligned Hub before writer claim (%s)', async (startup) => {
+  const fx = fixture();
+  const hub = nativeHub(fx.root);
+  try {
+    const { readPinnedAutoloopRecoveryDatabase: readDatabase, createRecoveryBackup } = await feature<BackupModule>('backup');
+    const { createRecoveryRestorer } = await feature<RestoreModule>('restore');
+    const { createRecoveryWitness } = await feature<WitnessModule>('witness');
+    const recoveryRoot = join(fx.root, 'sets');
+    fx.service.exec('UPDATE hub_snapshots SET hub_seq=0');
+    await createRecoveryBackup({ root: recoveryRoot, databases: { service: fx.service, hub },
+      nativeHubBinding: { database: hub, domains: ['personal'] }, readDatabase, freeze: fx.freeze, authority })
+      .captureRecoverySet(fx.scope);
+    const witness = witnessFixture();
+    const enableDomain = vi.fn(async () => ({ epochInstalled: true, credentialsScoped: true, runtimeGateVerified: true }));
+    const receipt = await createRecoveryRestorer({
+      recoveryRoot, isolationRoot: join(fx.root, 'drills'), authority, versionLocks, readDatabase,
+      witness: createRecoveryWitness({ port: witness.port, writerId: 'candidate', verifySealedProof: async () => true }),
+      fence: { async verify() { return { stopped: true, credentialsRevoked: true, proof: 'fence-fixture' }; } },
+      withdrawalLog: { independence: 'independent_authority', async readComplete() { return [initialEntry]; } },
+      replay: {
+        externalAccess: 'read_only',
+        async reconcileHub(context) {
+          expect(context.hub.name).toBe(join(context.directory, 'databases/hub/hub.db'));
+          expect(witness.read().state).toBe('sealed');
+          if (startup !== 'uninitialized') {
+            const hubRuntime = new Database(context.hub.name, { fileMustExist: true });
+            try {
+              hubRuntime.function('card_hash', { deterministic: true }, (id, at) => hash(JSON.stringify([id, at])));
+              hubRuntime.exec(`CREATE INDEX projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'`);
+              if (startup === 'ahead of service') {
+                hubRuntime.prepare('INSERT INTO facts VALUES (?,?)').run(1, '{"version":1,"seq":1,"at":0,"type":"rules","changes":[]}');
+                hubRuntime.prepare('INSERT INTO projection_meta VALUES (1,1,?,?)').run('{}', 'fixture-format');
+              }
+            } finally { hubRuntime.close(); }
+          }
+          return { confirmed: true };
+        },
+        async recoverPendingIngest() { return { confirmed: true }; },
+        async reconcileConsultation() { return { confirmed: true }; },
+        async rebuildProjections() { return { confirmed: true }; },
+      },
+      activation: { enableDomain },
+    }).restoreRecoverySet(fx.scope.setId, 'activate');
+    expect(enableDomain).toHaveBeenCalledTimes(startup === 'ready' ? 1 : 0);
+    expect(receipt.data_domains.personal.status).toBe(startup === 'ready' ? 'open' : 'blocked');
+    expect(witness.read().state).toBe(startup === 'ready' ? 'open' : 'sealed');
+    if (startup === 'uninitialized') expect(receipt.data_domains.personal.reasons).toContain('autoloop_hub_startup_unconfirmed');
+    if (startup === 'ahead of service') expect(receipt.data_domains.personal.reasons).toContain('autoloop_hub_watermark_mismatch');
+  } finally {
+    hub.close();
+    fx.close();
+  }
+});
 
 test('native backup freezes two real WAL databases and preserves unfinished consultation and withdrawal facts', async () => {
   const fx = fixture();
