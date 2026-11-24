@@ -9,18 +9,37 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const clang = '/Library/Developer/CommandLineTools/usr/bin/clang++';
 const clangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
 const nodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
-const entry = fileURLToPath(new URL('../../deploy/host-controller/service-bootstrap.ts', import.meta.url));
+const project = fileURLToPath(new URL('../..', import.meta.url));
 
 async function digest(path: string) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+function buildPreflight(projectRoot: string, artifact: string): string {
+  const run = (executable: string, args: string[]) => {
+    const result = spawnSync(executable, args, {
+      cwd: projectRoot, env: { PATH: '/usr/bin:/bin', TMPDIR: '/private/tmp' }, timeout: 45_000, encoding: 'utf8',
+    });
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+    return result.stdout;
+  };
+  const commit = run('/usr/bin/git', ['--no-replace-objects', 'rev-parse', 'HEAD']).trim();
+  const script = join(projectRoot, 'scripts/build-runtime.mjs');
+  const sources = ['--profile', 'deployment-complete', '--source-root', projectRoot, '--source-commit', commit];
+  const snapshot = JSON.parse(run(process.execPath, [script, 'snapshot', ...sources]));
+  run(process.execPath, [script, 'build', ...sources, '--output-root', artifact,
+    ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
+  run(process.execPath, [script, 'verify', '--profile', 'deployment-complete', '--artifact-root', artifact]);
+  return join(artifact, servicePreflight.path);
 }
 
 // Opt in with the verified Darwin arm64 Node 26.13.0 and matching Apple CLT.
@@ -48,6 +67,8 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     await mkdir(cwd, { mode: 0o700 });
     await mkdir(join(cwd, 'home'), { mode: 0o700 });
     await copyFile(process.execPath, node);
+    const entry = buildPreflight(await realpath(project), join(root, 'materials'));
+    expect(await digest(entry)).toBe(servicePreflight.sha256);
     await copyFile(entry, bootstrap);
     await chmod(node, 0o500);
     await chmod(bootstrap, 0o400);
