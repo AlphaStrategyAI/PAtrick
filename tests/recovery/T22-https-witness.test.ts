@@ -8,8 +8,13 @@ import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { createRecoveryWitness, type RecoveryWitnessRecord } from '../../packages/host/src/recovery/witness.js';
-import { createHttpsRecoveryWitnessPort, createRecoveryWitnessServer, openRecoveryWitnessStore } from '../../packages/host/src/recovery/https-witness.mjs';
+import { openDatabase } from '@patrick/storage';
+import { createRecoveryWitness, withdrawalEntryHash, type RecoveryWitnessRecord } from '../../packages/host/src/recovery/witness.js';
+import { createRecoveryWithdrawalJournal } from '../../packages/host/src/recovery/withdrawals.js';
+import { createHttpsRecoveryWithdrawalLogPort, createHttpsRecoveryWitnessPort, createRecoveryWitnessServer,
+  openRecoveryWitnessStore } from '../../packages/host/src/recovery/https-witness.mjs';
+import { openRecoveryWithdrawalStore } from '../../packages/host/src/recovery/withdrawal-store.mjs';
+import type { WithdrawalEntry } from '../../packages/host/src/recovery/types.js';
 
 const emptyHash = createHash('sha256').update('').digest('hex');
 const withdrawal = { seq: 0, hash: emptyHash };
@@ -55,16 +60,88 @@ async function close(server: Server) {
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 }
 
-function start(store: ReturnType<typeof openRecoveryWitnessStore>) {
+function start(store: ReturnType<typeof openRecoveryWitnessStore>, withdrawalStore?: ReturnType<typeof openRecoveryWithdrawalStore>) {
   const clients = ['primary', 'candidate-a', 'candidate-b', 'read-only'].map(name => ({
     fingerprint: credentials.get(name)!.fingerprint, domains: ['personal'], ...(name === 'read-only' ? {} : { writerId: name }),
+    ...(withdrawalStore && name !== 'candidate-b' ? { withdrawals: true as const } : {}),
   }));
-  return createRecoveryWitnessServer({ ...serverTls, ca, authorityId: 'independent-fixture', clients, store });
+  return createRecoveryWitnessServer({ ...serverTls, ca, authorityId: 'independent-fixture', clients, store, withdrawalStore });
 }
 
 function connect(origin: string, name: string, tlsCa = ca) {
   return createHttpsRecoveryWitnessPort({ origin, authorityId: 'independent-fixture', ...credentials.get(name)!, ca: tlsCa });
 }
+
+function logPort(origin: string, name: string) {
+  return createHttpsRecoveryWithdrawalLogPort({ origin, authorityId: 'independent-fixture', ...credentials.get(name)!, ca });
+}
+
+function entry(seq: number, previousHash: string, writerEpoch: string = initial.writerEpoch, eventId = `withdrawal-${seq}`): WithdrawalEntry {
+  const payload = {
+    domain: initial.domain, seq, writerEpoch, previousHash,
+    event: { eventId, targetKind: 'knowledge', targetId: 'note-fixed', epoch: seq, targetVersion: 1,
+      reason: '本人撤回', createdAt: '2026-11-25T00:00:00.000Z' },
+  };
+  return { ...payload, hash: withdrawalEntryHash(payload) };
+}
+
+test('withdrawal readback persists across restart and gates witness updates and recovery across writer epochs', async () => {
+  const witnessPath = join(root, 'withdrawal-witness.sqlite');
+  const logPath = join(root, 'withdrawals.sqlite');
+  const store = openRecoveryWitnessStore(witnessPath, { create: true });
+  const log = openRecoveryWithdrawalStore(logPath, { create: true });
+  store.initialize(initial);
+  const server = start(store, log);
+  const origin = await listen(server);
+  const primary = createRecoveryWitness({ writerId: 'primary', port: connect(origin, 'primary'), verifySealedProof: async () => true });
+  const head = entry(1, emptyHash);
+  const next = entry(2, head.hash);
+  try {
+    expect(await primary.advanceWithdrawalHead(initial.domain, initial.writerEpoch, head)).toBe(false);
+    await expect(logPort(origin, 'read-only').appendAndReadBack(head)).rejects.toThrow();
+    await expect(logPort(origin, 'candidate-a').appendAndReadBack(head)).rejects.toThrow();
+    await expect(logPort(origin, 'primary').appendAndReadBack({ ...head, event: { ...head.event, reason: 'altered' } })).rejects.toThrow();
+    expect(await logPort(origin, 'primary').appendAndReadBack(head)).toEqual({
+      domain: initial.domain, seq: head.seq, hash: head.hash, verified: true,
+    });
+    await expect(logPort(origin, 'primary').appendAndReadBack(entry(1, emptyHash, initial.writerEpoch, 'competing'))).rejects.toThrow();
+    await expect(logPort(origin, 'candidate-b').readComplete(initial.domain, { ...initial, revision: 'fixture',
+      withdrawal: { seq: head.seq, hash: head.hash } })).rejects.toThrow();
+    expect(await primary.advanceWithdrawalHead(initial.domain, initial.writerEpoch, head)).toBe(true);
+    expect(await logPort(origin, 'primary').appendAndReadBack(head)).toMatchObject({ verified: true });
+    await expect(logPort(origin, 'primary').appendAndReadBack(entry(2, head.hash, initial.writerEpoch, head.event.eventId)))
+      .rejects.toThrow();
+    expect(await logPort(origin, 'primary').appendAndReadBack(next)).toMatchObject({ verified: true });
+    const current = (await primary.current(initial.domain))!;
+    expect(await primary.sealRecoveryWriter(initial.domain, current.revision, certificate, current.withdrawal)).toBe(false);
+  } finally { await close(server); store.close(); log.close(); }
+
+  const reopened = openRecoveryWitnessStore(witnessPath);
+  const reopenedLog = openRecoveryWithdrawalStore(logPath);
+  const restarted = start(reopened, reopenedLog);
+  const fresh = await listen(restarted);
+  try {
+    const recovered = createRecoveryWitness({ writerId: 'primary', port: connect(fresh, 'primary'), verifySealedProof: async () => true });
+    const before = (await recovered.current(initial.domain))!;
+    expect(await logPort(fresh, 'read-only').readComplete(initial.domain, before)).toEqual([head]);
+    await expect(logPort(fresh, 'read-only').readComplete(initial.domain, {
+      ...before, withdrawal: { seq: next.seq, hash: 'f'.repeat(64) },
+    })).rejects.toThrow();
+    expect(await recovered.advanceWithdrawalHead(initial.domain, initial.writerEpoch, next)).toBe(true);
+    const beforeSeal = (await recovered.current(initial.domain))!;
+    expect(await recovered.sealRecoveryWriter(initial.domain, beforeSeal.revision, certificate, beforeSeal.withdrawal)).toBe(true);
+    const sealed = (await recovered.current(initial.domain))!;
+    const candidate = createRecoveryWitness({ writerId: 'candidate-a', port: connect(fresh, 'candidate-a'), verifySealedProof: async () => true });
+    expect(await candidate.claimRecoveryWriter(initial.domain, sealed.revision, 'fixture-claim')).toBe('acquired');
+    const current = (await candidate.current(initial.domain))!;
+    await expect(logPort(fresh, 'primary').appendAndReadBack(entry(3, next.hash))).rejects.toThrow();
+    const afterHandoff = entry(3, next.hash, current.writerEpoch);
+    expect(await logPort(fresh, 'candidate-a').appendAndReadBack(afterHandoff)).toMatchObject({ verified: true });
+    expect(await candidate.advanceWithdrawalHead(initial.domain, current.writerEpoch, afterHandoff)).toBe(true);
+    expect(await logPort(fresh, 'read-only').readComplete(initial.domain, (await candidate.current(initial.domain))!))
+      .toEqual([head, next, afterHandoff]);
+  } finally { await close(restarted); reopened.close(); reopenedLog.close(); }
+}, 15_000);
 
 test('mTLS witness chooses one recovery writer, survives authority restart and resolves a lost response', async () => {
   const path = join(root, 'handoff.sqlite');
@@ -139,6 +216,7 @@ test('authority enforces enrolled peers, read-only roles, writer fencing and exa
 test('standalone witness opens only initialized state and serves enrolled clients from a separate process', async () => {
   const script = fileURLToPath(new URL('../../scripts/recovery-witness.mjs', import.meta.url));
   const store = join(root, 'standalone.sqlite');
+  const withdrawalStore = join(root, 'standalone-withdrawals.sqlite');
   const config = join(root, 'serve.json');
   const registration = {
     store, authorityId: 'independent-fixture', host: '127.0.0.1', port: 0,
@@ -163,7 +241,10 @@ test('standalone witness opens only initialized state and serves enrolled client
   const wrongDomain = { ...registration, clients: [{ ...registration.clients[0], domains: ['company'] }] };
   writeFileSync(config, JSON.stringify(wrongDomain));
   expect(JSON.parse(run(['serve', config]).stderr)).toEqual({ code: 'RECOVERY_WITNESS_DOMAIN_NOT_INITIALIZED' });
-  writeFileSync(config, JSON.stringify(registration));
+  const enrolled = { ...registration, withdrawalStore, clients: [{ ...registration.clients[0], withdrawals: true }] };
+  writeFileSync(config, JSON.stringify(enrolled));
+  expect(JSON.parse(run(['serve', config]).stderr)).toEqual({ code: 'RECOVERY_WITHDRAWAL_STORE_MISSING' });
+  expect(run(['initialize-log', withdrawalStore]).status).toBe(0);
   const child = spawn(process.execPath, [script, 'serve', config], { stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
   try {
@@ -171,18 +252,43 @@ test('standalone witness opens only initialized state and serves enrolled client
       once(child.stdout, 'data', { signal: AbortSignal.timeout(5000) }).then(([bytes]) => JSON.parse(bytes.toString())),
       exited.then(() => { throw new Error('FIXTURE_AUTHORITY_EXITED'); }),
     ]);
-    const port = connect(`https://127.0.0.1:${first.port}`, 'primary');
+    const origin = `https://127.0.0.1:${first.port}`;
+    const port = connect(origin, 'primary');
+    const log = logPort(origin, 'primary');
     expect(await port.readAuthoritative('personal')).toEqual({ ...initial, revision });
     const witness = createRecoveryWitness({ writerId: 'primary', port, verifySealedProof: async () => true });
-    expect(await witness.sealRecoveryWriter('personal', revision, certificate, withdrawal)).toBe(true);
+    const local = openDatabase(join(root, 'standalone-service.sqlite'));
+    const entries: WithdrawalEntry[] = [];
+    try {
+      const insert = local.prepare('INSERT INTO withdrawal_events VALUES (?,?,?,?,?,?,?,?)');
+      let previousHash = emptyHash;
+      for (let seq = 1; seq <= 18; seq++) {
+        const value = entry(seq, previousHash);
+        const { event } = value;
+        insert.run(event.eventId, value.domain, event.targetKind, event.targetId, event.targetVersion, event.epoch, event.reason, event.createdAt);
+        entries.push(value);
+        previousHash = value.hash;
+      }
+      const journal = createRecoveryWithdrawalJournal({ database: local, witness, log });
+      expect(await journal.protectPending(initial.domain, initial.writerEpoch)).toBe('protected');
+      expect(local.prepare('SELECT COUNT(*) AS count FROM recovery_withdrawal_pending').get()).toEqual({ count: 0 });
+    } finally { local.close(); }
+    const current = (await witness.current(initial.domain))!;
+    expect(current.withdrawal).toEqual({ seq: 18, hash: entries.at(-1)!.hash });
+    expect(await witness.sealRecoveryWriter(initial.domain, current.revision, certificate, current.withdrawal)).toBe(true);
+    expect(await log.readComplete(initial.domain, (await witness.current(initial.domain))!)).toEqual(entries);
     child.kill('SIGTERM');
     expect(await exited).toEqual([0, null]);
     const reopened = openRecoveryWitnessStore(store);
     try {
-      expect(reopened.read('personal')).toMatchObject({ certificate, state: 'sealed' });
+      expect(reopened.read('personal')).toMatchObject({ certificate, state: 'sealed', withdrawal: current.withdrawal });
       expect(() => reopened.initialize({ ...initial, domain: 'company' })).toThrow('RECOVERY_WITNESS_INITIALIZATION_DISABLED');
     }
     finally { reopened.close(); }
+    const missingHead = join(root, 'standalone-empty-log.sqlite');
+    expect(run(['initialize-log', missingHead]).status).toBe(0);
+    writeFileSync(config, JSON.stringify({ ...enrolled, withdrawalStore: missingHead }));
+    expect(JSON.parse(run(['serve', config]).stderr)).toEqual({ code: 'RECOVERY_WITHDRAWAL_HEAD_MISSING' });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await exited;

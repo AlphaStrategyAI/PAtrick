@@ -4,6 +4,7 @@ import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } fro
 import { isIP } from 'node:net';
 import { isAbsolute, resolve } from 'node:path';
 import { createRecoveryWitnessServer, openRecoveryWitnessStore } from '../packages/host/src/recovery/https-witness.mjs';
+import { openRecoveryWithdrawalStore } from '../packages/host/src/recovery/withdrawal-store.mjs';
 
 const configFields = ['store', 'authorityId', 'host', 'port', 'caPath', 'certPath', 'keyPath', 'clients'];
 const maximumFileSize = 128 * 1024;
@@ -32,22 +33,31 @@ function readOwnedFile(path, privateFile) {
 
 function loadConfiguration(path) {
   const config = JSON.parse(readOwnedFile(resolve(path), true).toString('utf8'));
-  if (!config || Object.keys(config).length !== configFields.length || !configFields.every(field => Object.hasOwn(config, field))
+  const fields = Object.hasOwn(config ?? {}, 'withdrawalStore') ? [...configFields, 'withdrawalStore'] : configFields;
+  if (!config || Object.keys(config).length !== fields.length || !fields.every(field => Object.hasOwn(config, field))
     || typeof config.host !== 'string' || !isIP(config.host) || !Number.isInteger(config.port) || config.port < 0
-    || config.port > 65535 || !Array.isArray(config.clients)) throw new Error('RECOVERY_WITNESS_CONFIG_INVALID');
+    || config.port > 65535 || !Array.isArray(config.clients) || config.store === config.withdrawalStore) {
+    throw new Error('RECOVERY_WITNESS_CONFIG_INVALID');
+  }
   return config;
 }
 
 async function serve(path) {
   const config = loadConfiguration(path);
   const store = openRecoveryWitnessStore(config.store);
+  let withdrawalStore;
   try {
+    if (Object.hasOwn(config, 'withdrawalStore')) withdrawalStore = openRecoveryWithdrawalStore(config.withdrawalStore);
     const server = createRecoveryWitnessServer({
-      authorityId: config.authorityId, clients: config.clients, store,
+      authorityId: config.authorityId, clients: config.clients, store, withdrawalStore,
       ca: readOwnedFile(config.caPath, false), cert: readOwnedFile(config.certPath, false), key: readOwnedFile(config.keyPath, true),
     });
-    for (const client of config.clients) {
-      if (client.domains.some(domain => !store.read(domain))) throw new Error('RECOVERY_WITNESS_DOMAIN_NOT_INITIALIZED');
+    const domains = new Set(config.clients.flatMap(client => client.domains));
+    for (const domain of domains) {
+      const record = store.read(domain);
+      if (!record) throw new Error('RECOVERY_WITNESS_DOMAIN_NOT_INITIALIZED');
+      const { seq, hash } = record.withdrawal;
+      if (withdrawalStore && seq > 0 && !withdrawalStore.read(domain, seq, hash)) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
     }
     server.listen(config.port, config.host);
     await once(server, 'listening');
@@ -65,12 +75,19 @@ async function serve(path) {
       process.off('SIGINT', close);
       close();
     }
-  } finally { store.close(); }
+  } finally {
+    try { withdrawalStore?.close(); } finally { store.close(); }
+  }
 }
 
 async function main([action, ...args]) {
   process.umask(0o077);
   if (action === 'serve' && args.length === 1) return serve(args[0]);
+  if (action === 'initialize-log' && args.length === 1) {
+    openRecoveryWithdrawalStore(resolve(args[0]), { create: true }).close();
+    process.stdout.write(JSON.stringify({ status: 'initialized' }) + '\n');
+    return;
+  }
   if (action === 'initialize' && args.length === 4) {
     const [path, domain, writerId, writerEpoch] = args;
     const store = openRecoveryWitnessStore(resolve(path), { create: true });
@@ -90,7 +107,7 @@ async function main([action, ...args]) {
 try {
   await main(process.argv.slice(2));
 } catch (error) {
-  const code = /^RECOVERY_WITNESS_[A-Z_]+$/.test(error?.message) ? error.message : 'RECOVERY_WITNESS_OPERATION_FAILED';
+  const code = /^RECOVERY_(?:WITNESS|WITHDRAWAL)_[A-Z_]+$/.test(error?.message) ? error.message : 'RECOVERY_WITNESS_OPERATION_FAILED';
   process.stderr.write(JSON.stringify({ code }) + '\n');
   process.exitCode = 1;
 }

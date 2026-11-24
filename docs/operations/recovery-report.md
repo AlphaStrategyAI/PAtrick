@@ -40,6 +40,14 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 2026-11-25 的本机验证覆盖双向 TLS、域和写者权限、双候选竞争、CAS 后响应丢失、独立进程重启读回，以及缺失状态、未登记域、不安全文件权限和 SQLite 辅助文件符号链接的拒绝路径。`npm run test:recovery` 通过 385 项，`npm run lint` 和 `npm run typecheck` 通过。
 
+### 登记独立撤回日志
+
+有序交接时，在见证主机执行 `node scripts/recovery-witness.mjs initialize-log LOG_STORE`，并在 `CONFIG` 的 `withdrawalStore` 字段登记该 SQLite 文件的绝对物理路径。见证控制记录和撤回事件分别写入各自的数据库。日志文件使用同一套服务账户、物理目录和文件权限检查。已有撤回水位的部署启用日志前须保留对应的完整历史。启动时发现登记的日志缺失或无法读回见证水位，服务会退出。
+
+为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。水位 CAS 先核对持久化事件的序号、摘要及前一条哈希。当前 epoch 尚有已追加待确认的事件时，见证拒绝封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
+
+本机恢复套件通过 386 项。双向 TLS 演练覆盖独立子进程内的持久化、18 条撤回的分批读回、见证封存、跨 epoch 接续和日志缺失时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
+
 ## 可选加密离机备份端口
 
 `createResticRecoveryBackup` 提供真实的无 shell 子进程与流式输出适配器。只接受明确授权并已确认离机性质的登记远程目标，核对精确 restic 版本、资料域和独立恢复凭据引用。密钥通过凭据端口注入进程环境，不进入 manifest/回执或命令参数。

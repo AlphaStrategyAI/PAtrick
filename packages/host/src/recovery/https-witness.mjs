@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, lstatSync, openSync, realpathSync } from 'node:fs';
 import { createServer, request } from 'node:https';
-import { dirname, isAbsolute, resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
+import { openAuthorityStore } from './authority-store.mjs';
+import { emptyWithdrawalHash, encodeWithdrawal, validWithdrawalHead, withdrawalEntryLimit, withdrawalPageSize } from './withdrawal-store.mjs';
 
 const maxBody = 16 * 1024;
 const emptyHash = createHash('sha256').update('').digest('hex');
@@ -69,27 +68,10 @@ function permits(current, next, writerId) {
 }
 
 export function openRecoveryWitnessStore(path, { create = false } = {}) {
-  check(typeof path === 'string' && isAbsolute(path) && resolve(path) === path, 'STORE_INVALID');
-  const parent = dirname(path);
-  const owner = process.geteuid?.();
-  const directory = lstatSync(parent);
-  check(realpathSync(parent) === parent && directory.isDirectory() && directory.uid === owner && (directory.mode & 0o077) === 0, 'STORE_INVALID');
-  const existing = lstatSync(path, { throwIfNoEntry: false });
-  if (!existing) {
-    check(create, 'STORE_MISSING');
-    closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600));
-  }
-  for (const suffix of ['', '-wal', '-shm', '-journal']) {
-    const identity = lstatSync(path + suffix, { throwIfNoEntry: false });
-    if (!identity && suffix) continue;
-    check(identity?.isFile() && identity.uid === owner && identity.nlink === 1 && (identity.mode & 0o077) === 0, 'STORE_INVALID');
-  }
-  const database = new DatabaseSync(path);
+  const database = openAuthorityStore(path, { create, check,
+    schema: 'CREATE TABLE witness_domains (domain TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL) STRICT',
+  });
   try {
-    database.exec('PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;');
-    if (!existing) {
-      database.exec('PRAGMA journal_mode=WAL; CREATE TABLE witness_domains (domain TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL) STRICT');
-    }
     const select = database.prepare('SELECT revision, record FROM witness_domains WHERE domain = ?');
     const insert = database.prepare('INSERT INTO witness_domains (domain, revision, record) VALUES (?, ?, ?)');
     const compare = database.prepare('UPDATE witness_domains SET record = ?, revision = ? WHERE domain = ? AND revision = ?');
@@ -99,6 +81,17 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
       const record = { ...JSON.parse(row.record), revision: row.revision };
       check(validRecord(record, true) && record.domain === domain, 'STORE_INVALID');
       return record;
+    }
+    function withCurrent(domain, use) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const result = use(read(domain));
+        database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
     }
     return Object.freeze({
       read,
@@ -110,13 +103,26 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
         insert.run(record.domain, revision, JSON.stringify(record));
         return { ...structuredClone(record), revision };
       },
-      compareAndSwap(domain, revision, next, writerId) {
+      compareAndSwap(domain, revision, next, writerId, withdrawalStore) {
         if (!validRecord(next) || next.domain !== domain || !matches(token, revision)) return 'invalid';
-        const current = read(domain);
-        if (!current || !writerId) return 'denied';
-        if (current.revision !== revision) return 'conflict';
-        if (!permits(current, next, writerId)) return 'denied';
-        return compare.run(JSON.stringify(next), randomUUID(), domain, revision).changes === 1 ? 'applied' : 'conflict';
+        return withCurrent(domain, current => {
+          if (!current || !writerId) return 'denied';
+          if (current.revision !== revision) return 'conflict';
+          if (!permits(current, next, writerId) || !withdrawalAllows(current, next, withdrawalStore)) return 'denied';
+          return compare.run(JSON.stringify(next), randomUUID(), domain, revision).changes === 1 ? 'applied' : 'conflict';
+        });
+      },
+      appendWithdrawal(entry, writerId, log) {
+        if (!encodeWithdrawal(entry)) return 'invalid';
+        const { domain, seq, hash, writerEpoch, previousHash } = entry;
+        return withCurrent(domain, current => {
+          if (current?.state !== 'open' || current.writerId !== writerId || current.writerEpoch !== writerEpoch) return 'denied';
+          if (seq === current.withdrawal.seq && hash === current.withdrawal.hash) {
+            return log.read(domain, seq, hash) ? 'applied' : 'conflict';
+          }
+          if (seq !== current.withdrawal.seq + 1 || previousHash !== current.withdrawal.hash) return 'conflict';
+          return log.append(entry) ? 'applied' : 'conflict';
+        });
       },
       close() { database.close(); },
     });
@@ -126,12 +132,20 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
   }
 }
 
-async function readBody(stream) {
+function withdrawalAllows(current, next, log) {
+  if (!log || current.state !== 'open') return true;
+  const nextSeq = current.withdrawal.seq + 1;
+  if (next.state === 'sealed') return !log.hasPending(current.domain, nextSeq, current.writerEpoch);
+  const entry = log.read(next.domain, nextSeq, next.withdrawal.hash);
+  return entry?.writerEpoch === current.writerEpoch && entry.previousHash === current.withdrawal.hash;
+}
+
+async function readBody(stream, limit = maxBody) {
   const chunks = [];
   let bytes = 0;
   for await (const chunk of stream) {
     bytes += chunk.length;
-    check(bytes <= maxBody, 'BODY_LIMIT');
+    check(bytes <= limit, 'BODY_LIMIT');
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
@@ -142,15 +156,44 @@ function tlsMaterial(value) {
   return Buffer.from(value);
 }
 
-export function createRecoveryWitnessServer({ ca, key, cert, authorityId, clients, store }) {
+async function handleWithdrawal(incoming, outgoing, path, peer, store, log) {
+  const [, domain, rawSeq, hash] = path;
+  const seq = Number(rawSeq);
+  const finish = status => outgoing.writeHead(status).end();
+  if (!log || !peer.withdrawals || !peer.domains.has(domain)) return finish(403);
+  if (!validWithdrawalHead(domain, seq, hash) || seq === 0) return finish(400);
+  if (incoming.method === 'GET') {
+    const entries = [];
+    let nextHash = hash;
+    for (let cursor = seq; cursor > 0 && entries.length < withdrawalPageSize; cursor--) {
+      const entry = log.read(domain, cursor, nextHash);
+      if (!entry) return finish(404);
+      entries.push(entry);
+      nextHash = entry.previousHash;
+    }
+    outgoing.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(entries));
+    return;
+  }
+  if (incoming.method !== 'PUT') return finish(405);
+  if (!peer.writerId) return finish(403);
+  if (incoming.headers['content-type'] !== 'application/json') return finish(415);
+  let entry;
+  try { entry = await readBody(incoming, withdrawalEntryLimit); } catch { return finish(400); }
+  if (!entry || entry.domain !== domain || entry.seq !== seq || entry.hash !== hash) return finish(400);
+  const outcome = store.appendWithdrawal(entry, peer.writerId, log);
+  return finish({ applied: 204, conflict: 409, denied: 403, invalid: 400 }[outcome]);
+}
+
+export function createRecoveryWitnessServer({ ca, key, cert, authorityId, clients, store, withdrawalStore }) {
   check(matches(token, authorityId) && Array.isArray(clients) && clients.length > 0 && clients.length <= 64, 'ENROLLMENT_INVALID');
   const peers = new Map();
   for (const client of clients) {
     const fingerprint = typeof client?.fingerprint === 'string' && client.fingerprint.toUpperCase();
     check(matches(fingerprintPattern, fingerprint) && !peers.has(fingerprint) && Array.isArray(client.domains)
       && client.domains.length > 0 && client.domains.length <= 64 && client.domains.every(domain => matches(domainId, domain))
-      && (client.writerId === undefined || matches(token, client.writerId)), 'ENROLLMENT_INVALID');
-    peers.set(fingerprint, { domains: new Set(client.domains), writerId: client.writerId });
+      && (client.writerId === undefined || matches(token, client.writerId))
+      && (client.withdrawals === undefined || (withdrawalStore && client.withdrawals === true)), 'ENROLLMENT_INVALID');
+    peers.set(fingerprint, { domains: new Set(client.domains), writerId: client.writerId, withdrawals: client.withdrawals });
   }
   const server = createServer({ ca: tlsMaterial(ca), key: tlsMaterial(key), cert: tlsMaterial(cert), minVersion: 'TLSv1.2',
     requestCert: true, rejectUnauthorized: true, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 });
@@ -162,7 +205,10 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
     const handle = async () => {
       const domain = /^\/v1\/domains\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})$/.exec(incoming.url ?? '')?.[1];
       const peer = incoming.socket.authorized && peers.get(incoming.socket.getPeerCertificate().fingerprint256);
-      if (!domain || !peer || !peer.domains.has(domain)) return finish(403);
+      if (!peer) return finish(403);
+      const withdrawalPath = /^\/v1\/withdrawals\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})\/([1-9][0-9]{0,15})\/([a-f0-9]{64})$/.exec(incoming.url ?? '');
+      if (withdrawalPath) return handleWithdrawal(incoming, outgoing, withdrawalPath, peer, store, withdrawalStore);
+      if (!domain || !peer.domains.has(domain)) return finish(403);
       if (incoming.method === 'GET') {
         const record = store.read(domain);
         if (!record) return finish(404);
@@ -175,7 +221,7 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
       let body;
       try { body = await readBody(incoming); } catch { return finish(400); }
       if (!exact(body, ['expectedRevision', 'next'])) return finish(400);
-      const outcome = store.compareAndSwap(domain, body.expectedRevision, body.next, peer.writerId);
+      const outcome = store.compareAndSwap(domain, body.expectedRevision, body.next, peer.writerId, withdrawalStore);
       return finish({ applied: 204, conflict: 409, denied: 403, invalid: 400 }[outcome]);
     };
     void handle().catch(() => { if (!outgoing.headersSent && !outgoing.destroyed) finish(503); });
@@ -183,39 +229,102 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
   return server;
 }
 
-export function createHttpsRecoveryWitnessPort({ origin, authorityId, ca, key, cert }) {
+function connectAuthority({ origin, authorityId, ca, key, cert }) {
   const url = new URL(origin);
   check(url.protocol === 'https:' && origin === url.origin && matches(token, authorityId), 'ENROLLMENT_INVALID');
   const tls = { ca: tlsMaterial(ca), key: tlsMaterial(key), cert: tlsMaterial(cert), minVersion: 'TLSv1.2', rejectUnauthorized: true };
+  return (path, method, payload, read, deadline) => {
+    const target = new URL(path, url);
+    return new Promise((resolveRequest, rejectRequest) => {
+      const timeout = AbortSignal.timeout(5000);
+      const signal = deadline ? AbortSignal.any([timeout, deadline]) : timeout;
+      const outgoing = request(target, { ...tls, agent: false, method, signal, headers: payload && {
+        'content-type': 'application/json', 'content-length': payload.length,
+      } }, incoming => {
+        const decode = async () => {
+          check(incoming.headers['x-patrick-witness'] === authorityId, 'REMOTE_REJECTED');
+          return read(incoming);
+        };
+        void decode().then(resolveRequest, rejectRequest).finally(() => incoming.destroy());
+      });
+      outgoing.once('error', rejectRequest);
+      outgoing.end(payload);
+    });
+  };
+}
+
+export function createHttpsRecoveryWitnessPort(options) {
+  const connect = connectAuthority(options);
   function call(domain, method, body) {
     check(matches(domainId, domain), 'DOMAIN_INVALID');
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     check(payload === undefined || payload.length <= maxBody, 'BODY_LIMIT');
-    const target = new URL('/v1/domains/' + domain, url);
-    return new Promise((resolveRequest, rejectRequest) => {
-      const signal = AbortSignal.timeout(5000);
-      const outgoing = request(target, { ...tls, agent: false, method, signal, headers: payload && {
-        'content-type': 'application/json', 'content-length': payload.length,
-      } }, incoming => {
-        const read = async () => {
-          check(incoming.headers['x-patrick-witness'] === authorityId, 'REMOTE_REJECTED');
-          if (method === 'PUT' && [204, 409].includes(incoming.statusCode)) return incoming.statusCode === 204;
-          check(method === 'GET' && incoming.statusCode === 200 && incoming.headers['content-type'] === 'application/json', 'REMOTE_REJECTED');
-          const record = await readBody(incoming);
-          check(validRecord(record, true) && record.domain === domain, 'REMOTE_REJECTED');
-          return record;
-        };
-        void read().then(resolveRequest, rejectRequest).finally(() => incoming.destroy());
-      });
-      outgoing.once('error', rejectRequest);
-      outgoing.end(payload);
+    return connect('/v1/domains/' + domain, method, payload, async incoming => {
+      if (method === 'PUT' && [204, 409].includes(incoming.statusCode)) return incoming.statusCode === 204;
+      check(method === 'GET' && incoming.statusCode === 200 && incoming.headers['content-type'] === 'application/json', 'REMOTE_REJECTED');
+      const record = await readBody(incoming);
+      check(validRecord(record, true) && record.domain === domain, 'REMOTE_REJECTED');
+      return record;
     });
   }
   return Object.freeze({
     independence: 'independent_authority',
     consistency: 'linearizable',
-    authorityId,
+    authorityId: options.authorityId,
     readAuthoritative(domain) { return call(domain, 'GET'); },
     compareAndSwap(domain, expectedRevision, next) { return call(domain, 'PUT', { expectedRevision, next }); },
+  });
+}
+
+export function createHttpsRecoveryWithdrawalLogPort(options) {
+  const connect = connectAuthority(options);
+  const path = (domain, seq, hash) => `/v1/withdrawals/${domain}/${seq}/${hash}`;
+  function page(domain, seq, hash, deadline) {
+    return connect(path(domain, seq, hash), 'GET', undefined, async incoming => {
+      check(incoming.statusCode === 200 && incoming.headers['content-type'] === 'application/json', 'REMOTE_REJECTED');
+      const entries = await readBody(incoming, withdrawalPageSize * (withdrawalEntryLimit + 1) + 2);
+      check(Array.isArray(entries) && entries.length === Math.min(seq, withdrawalPageSize), 'WITHDRAWAL_CHAIN_INVALID');
+      let expectedHash = hash;
+      let expectedSeq = seq;
+      for (const entry of entries) {
+        check(encodeWithdrawal(entry) && entry.domain === domain && entry.seq === expectedSeq && entry.hash === expectedHash, 'WITHDRAWAL_CHAIN_INVALID');
+        expectedHash = entry.previousHash;
+        expectedSeq--;
+      }
+      return entries;
+    }, deadline);
+  }
+  return Object.freeze({
+    independence: 'independent_authority',
+    async appendAndReadBack(entry) {
+      const content = encodeWithdrawal(entry);
+      check(content, 'WITHDRAWAL_ENTRY_INVALID');
+      const { domain, seq, hash } = entry;
+      const status = await connect(path(domain, seq, hash), 'PUT', Buffer.from(content), incoming => incoming.statusCode)
+        .catch(() => undefined);
+      check(status === 204 || status === undefined, 'REMOTE_REJECTED');
+      const observed = await page(domain, seq, hash);
+      check(encodeWithdrawal(observed[0]) === content, 'WITHDRAWAL_ENTRY_UNCONFIRMED');
+      return { domain, seq, hash, verified: true };
+    },
+    async readComplete(domain, record) {
+      let { seq, hash } = record.withdrawal;
+      check(record.domain === domain && validWithdrawalHead(domain, seq, hash), 'WITHDRAWAL_CHAIN_INVALID');
+      const deadline = AbortSignal.timeout(60_000);
+      const entries = [];
+      const eventIds = new Set();
+      while (seq > 0) {
+        const batch = await page(domain, seq, hash, deadline);
+        for (const entry of batch) {
+          check(!eventIds.has(entry.event.eventId), 'WITHDRAWAL_CHAIN_INVALID');
+          eventIds.add(entry.event.eventId);
+          entries.push(entry);
+        }
+        seq -= batch.length;
+        hash = batch.at(-1).previousHash;
+      }
+      check(hash === emptyWithdrawalHash, 'WITHDRAWAL_CHAIN_INVALID');
+      return entries.reverse();
+    },
   });
 }
