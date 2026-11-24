@@ -119,7 +119,7 @@ export async function t15Fixture(options: { paidConsultation?: boolean } = {}) {
     server.listen(43155, '127.0.0.1', resolve);
   });
 
-  return { db, requests, question, paid,
+  return { db, requests, question, paid, bootstrapTicket: bootstrap.ticket,
     async readFrozenQuestion(scope: 'same-domain' | 'different-domain') {
       const credentials = createCredentialStore(credentialDirectory, now);
       const callerId = 'question-reader-' + scope;

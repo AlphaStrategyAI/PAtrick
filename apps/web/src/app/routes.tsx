@@ -24,6 +24,7 @@ import { DelegationsPage } from '../features/delegation/DelegationsPage.js';
 import { useLocale } from '../i18n/LocaleProvider.js';
 import type { MessageKey } from '../i18n/locale.js';
 import { AppShell, LanguageSelect } from './AppShell.js';
+import { PasskeySignIn } from './PasskeySignIn.js';
 import type { ShellHealthContext } from './AppShell.js';
 import { demoWork, isDemo } from './demo.js';
 import { navigation, settingsNavigation, workDetailPath } from './navigation.js';
@@ -46,7 +47,7 @@ function Authenticated({ children }: { children: ReactNode }) {
   if (verifying) return <p role="status">{t('session.checking')}</p>;
   return accessError && accessError.code !== 'UNAUTHENTICATED'
     ? <LocalizedError code={accessError.code} onRetry={recheck} />
-    : <section className="card"><p>{t('session.required')}</p><button type="button" onClick={recheck}>{t('button.retry')}</button></section>;
+    : <PasskeySignIn />;
 }
 
 function UnconnectedPage({ item, empty }: { item: NavigationItem; empty?: MessageKey }) {

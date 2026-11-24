@@ -118,13 +118,14 @@ export class ApiClient {
     return response;
   }
 
-  private async call(route: RouteDefinition, target: string, options?: RequestOptions, body?: unknown): Promise<unknown> {
+  private async call(route: RouteDefinition, target: string, options?: RequestOptions, body?: unknown,
+    headers?: Record<string, string>): Promise<unknown> {
     if (authRequired(route) && !this.scope) throw new ClientError('UNAUTHENTICATED', 401);
     const signal = this.accessSignal(options);
     signal.throwIfAborted();
     const response = await this.send(target, {
       method: route.method, signal,
-      headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const payload = await response.json().catch(() => undefined);
@@ -132,6 +133,32 @@ export class ApiClient {
     const result = route.response.safeParse(payload);
     if (!result.success) throw new ClientError('INVALID_RESPONSE', response.status);
     return result.data;
+  }
+
+  async signInWithPasskey(ticket?: string, options?: RequestOptions): Promise<void> {
+    const passkey = globalThis.PublicKeyCredential;
+    if (!globalThis.isSecureContext || !passkey || !navigator.credentials ||
+        typeof passkey.prototype.toJSON !== 'function' ||
+        (ticket === undefined
+          ? typeof passkey.parseRequestOptionsFromJSON !== 'function'
+          : typeof passkey.parseCreationOptionsFromJSON !== 'function')) {
+      throw new ClientError('PASSKEY_UNAVAILABLE');
+    }
+    const signal = this.accessSignal(options);
+    const route = operation('createAuthChallenge', 'write');
+    const { challenge, challenge_id } = await this.call(route, path(route, {}), { signal },
+      { rp_id: globalThis.location.hostname }, ticket === undefined ? undefined : { 'x-patrick-bootstrap': ticket }) as {
+      challenge: unknown; challenge_id: string;
+    };
+    const credential = ticket === undefined
+      ? await navigator.credentials.get({
+        publicKey: passkey.parseRequestOptionsFromJSON(challenge as PublicKeyCredentialRequestOptionsJSON), signal,
+      })
+      : await navigator.credentials.create({
+        publicKey: passkey.parseCreationOptionsFromJSON(challenge as PublicKeyCredentialCreationOptionsJSON), signal,
+      });
+    if (!(credential instanceof passkey)) throw new ClientError('UNAUTHENTICATED');
+    await this.write('verifyAuth', {}, { challenge_id, credential: credential.toJSON() }, { signal });
   }
 
   async read(name: string, parameters: QueryValues = {}, options?: RequestOptions): Promise<Snapshot<unknown>> {

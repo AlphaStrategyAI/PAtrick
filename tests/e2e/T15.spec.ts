@@ -1,6 +1,34 @@
 import { expect, test } from '@playwright/test';
 import { t15Fixture } from './T15-fixture.js';
 
+test('owner registers a passkey from the signed-out screen and signs in again', async ({ page, context }) => {
+  const fixture = await t15Fixture();
+  try {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('WebAuthn.enable');
+    await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+      protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true,
+      isUserVerified: true, automaticPresenceSimulation: true,
+    } });
+    await page.goto('/decisions');
+    await page.getByRole('button', { name: '首次登记通行密钥' }).click();
+    await page.getByLabel('一次性登记口令').fill('invalid-bootstrap-ticket');
+    await page.getByRole('button', { name: '登记并登录' }).click();
+    await expect(page.getByRole('alert')).toHaveText('登记未完成。请检查一次性口令后重试。');
+    await expect(page.getByLabel('一次性登记口令')).toHaveValue('');
+    await page.getByLabel('一次性登记口令').fill(fixture.bootstrapTicket);
+    await page.getByRole('button', { name: '登记并登录' }).click();
+    await expect(page.getByTestId('decision-Q-017')).toBeVisible();
+    expect(fixture.db.prepare('SELECT account_id FROM passkey_credentials').all()).toEqual([{ account_id: 'owner' }]);
+    await context.clearCookies();
+    await page.reload();
+    await page.getByRole('button', { name: '使用通行密钥登录' }).click();
+    await expect(page.getByTestId('decision-Q-017')).toBeVisible();
+    expect(fixture.requests.filter(({ method, path, status }) =>
+      method === 'POST' && path === '/api/v1/auth/verify' && status === 200)).toHaveLength(2);
+  } finally { await fixture.close(); }
+});
+
 test('same-work: consultation stays separate and the explicit decision reads its verified receipt', async ({ page }) => {
   const fixture = await t15Fixture();
   try {
