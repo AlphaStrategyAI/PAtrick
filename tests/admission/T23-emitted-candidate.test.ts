@@ -1,5 +1,6 @@
 import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
@@ -772,9 +773,10 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
   const rules = canonicalize(rulesInput);
   const rulesPath = join(controlRoot, 'rules.json');
   await writeFile(rulesPath, rules, { mode: 0o444 });
-  const generationLock = createInstalledRootOwner({
+  const generationLockRegistration = {
     root: instanceRoot, rootNode: enrollment.rootNode, lockNode: await prepareOwnerLock(instanceRoot, pin),
-  });
+  };
+  const generationLock = createInstalledRootOwner(generationLockRegistration);
   let failAfterVerification: (() => Promise<void>) | undefined;
   const selectionOwner: ExclusiveRuntimeStaging = { withExclusiveReadRoot(read) {
     return leased(generationLock, async lease => {
@@ -857,9 +859,38 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     await expect(start()).rejects.toThrow('HUB_PROCESS_MASTER_KEY_INVALID');
     await expect(lstat(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { await rename(savedKey, keyPath); }
-  const orphanedFence = new DatabaseSync(writerPath, { timeout: 0 });
+  const controller = spawn(process.execPath, ['--input-type=module', '--eval', `
+    import { pathToFileURL } from 'node:url';
+    const [entry, lockModule, enrollment, lockRegistration, registration] = JSON.parse(process.argv[1]);
+    const { startSelectedHubRole } = await import(pathToFileURL(entry).href);
+    const { createInstalledRootOwner, leased } = await import(pathToFileURL(lockModule).href);
+    const lock = createInstalledRootOwner(lockRegistration);
+    const owner = { withExclusiveReadRoot(read) { return leased(lock, lease => read(lease.root)); } };
+    try {
+      const started = await startSelectedHubRole(enrollment, owner, registration);
+      process.send({ pid: started.runtime.read().pid });
+    } catch (error) {
+      process.send({ error: String(error?.message) }, () => process.disconnect());
+    }
+  `, '--', JSON.stringify([
+    join(instanceRoot, 'releases', expected.packageSha256, 'runtime', 'composition.mjs'),
+    join(root, 'deploy', 'lib', 'emitted-release.mjs'),
+    selected, generationLockRegistration, registration,
+  ])], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  const controllerClosed = new Promise<void>(resolve => controller.once('close', () => resolve()));
+  let pausedHub: number | undefined;
   try {
-    orphanedFence.exec('BEGIN IMMEDIATE');
+    const [reported] = await Promise.race([
+      once(controller, 'message', { signal: AbortSignal.timeout(45_000) }),
+      controllerClosed.then(() => { throw new Error('fixture Hub controller exited before reporting'); }),
+    ]);
+    const reportedPid = reported.pid;
+    expect(Number.isSafeInteger(reportedPid) && reportedPid > 0, reported.error).toBe(true);
+    expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+    process.kill(reportedPid, 'SIGSTOP');
+    pausedHub = reportedPid;
+    expect(controller.kill('SIGKILL')).toBe(true);
+    await controllerClosed;
     await expect(store.select(nextEnvelope)).rejects.toThrow('INSTALLED_HUB_WRITER_BUSY');
     const movedControlRoot = controlRoot + '-moved';
     await rename(controlRoot, movedControlRoot);
@@ -868,7 +899,15 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
       const legacyEnvelope = canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), key.privateKey).toString('base64') });
       await expect(previousEnrollment.select(legacyEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
     } finally { await rename(movedControlRoot, controlRoot); }
-  } finally { orphanedFence.close(); }
+  } finally {
+    controller.kill('SIGKILL');
+    if (pausedHub !== undefined) process.kill(pausedHub, 'SIGCONT');
+    await controllerClosed;
+  }
+  await vi.waitFor(() => {
+    const writer = new DatabaseSync(writerPath, { timeout: 0 });
+    try { writer.exec('BEGIN IMMEDIATE'); } finally { writer.close(); }
+  }, { timeout: 5000 });
   await expect(store.select(nextEnvelope)).resolves.toMatchObject({ current: { order: next } });
   const restarted = await start();
   onTestFinished(async () => { restarted.runtime.stop(); await restarted.runtime.drain(); });
