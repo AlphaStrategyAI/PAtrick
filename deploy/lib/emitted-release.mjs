@@ -2,6 +2,7 @@ import { createPublicKey, randomUUID, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, renameSync } from 'node:fs';
 import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
 
 import { checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile, nativeProfile, completeProfile, servicePreflight,
@@ -21,6 +22,7 @@ const verified = new WeakMap();
 const staged = new WeakMap();
 const activeLeases = new WeakMap();
 const derivedPorts = new WeakMap();
+const installedOwners = new WeakMap();
 const leaseCallbacks = new WeakMap();
 const unresolvedWrites = new WeakMap();
 const own = Object.hasOwn;
@@ -345,6 +347,72 @@ export function inside(root, path) {
   return path;
 }
 
+export function createInstalledRootOwner(registration) {
+  shape(registration, 'root rootNode lockNode', 'installed root owner');
+  const { root } = registration;
+  const pin = (value) => {
+    shape(value, 'device inode birthtimeNs', 'installed node');
+    check(Object.values(value).every(part => typeof part === 'string' && /^\d{1,32}$/.test(part)), 'INSTALLED_ROOT_OWNER_INVALID');
+    return Object.freeze({ ...value });
+  };
+  const rootNode = pin(registration.rootNode);
+  const lockNode = pin(registration.lockNode);
+  check(root !== sep && realpathSync.native(root) === root, 'INSTALLED_ROOT_OWNER_INVALID');
+  const directory = root + '.owner';
+  const lockPath = join(directory, 'lease.sqlite');
+  const rootTree = ancestry(root, root);
+  const lockTree = ancestry(directory, directory);
+  const uid = BigInt(process.geteuid());
+  const matches = (info, expected) => String(info.dev) === expected.device && String(info.ino) === expected.inode &&
+    String(info.birthtimeNs) === expected.birthtimeNs;
+  function validate() {
+    try {
+      recheck(rootTree);
+      recheck(lockTree);
+      const info = stat(lockPath);
+      check(matches(stat(root), rootNode) && (stat(directory).mode & 0o7777n) === 0o700n &&
+        matches(info, lockNode) && info.isFile() && info.nlink === 1n && info.uid === uid &&
+        (info.mode & 0o7777n) === 0o600n, 'invalid owner nodes');
+    } catch (error) {
+      throw new Error('INSTALLED_ROOT_OWNER_INVALID', { cause: error });
+    }
+  }
+  validate();
+  let current;
+  const owner = Object.freeze({
+    async withExclusiveReadRoot(read) {
+      check(this === owner && leaseCallbacks.get(read) === owner, 'original installed lease callback required');
+      validate();
+      check(!current, 'INSTALLED_ROOT_OWNER_BUSY');
+      const database = new DatabaseSync(lockPath, { timeout: 0 });
+      try {
+        validate();
+        try { database.exec('BEGIN IMMEDIATE'); }
+        catch (error) {
+          if ([5, 6].includes(error?.errcode & 0xff)) throw new Error('INSTALLED_ROOT_OWNER_BUSY', { cause: error });
+          throw error;
+        }
+        check(database.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
+          database.prepare('PRAGMA user_version').get()?.user_version === 1, 'INSTALLED_ROOT_OWNER_INVALID');
+        current = database;
+        guard();
+        const result = await read(root);
+        guard();
+        return result;
+      } finally {
+        if (current === database) current = undefined;
+        database.close();
+      }
+    },
+  });
+  function guard() {
+    check(current?.isTransaction, 'INSTALLED_ROOT_OWNER_INVALID');
+    validate();
+  }
+  installedOwners.set(owner, guard);
+  return owner;
+}
+
 /** A view can only narrow a currently held genuine lease. Every consumer must
  * pass this exact object so leased() can propagate the parent guard. */
 export function deriveRuntimeStaging(parentLease, root, publication) {
@@ -464,7 +532,7 @@ export async function leased(port, work, joinWork = false, validate) {
         state.scope ??= state;
         const guard = () => {
           check(!state.invalid, 'lease invalid');
-          try { valid(); check(state.open, 'lease callback ended'); recheck(tree); }
+          try { valid(); check(state.open, 'lease callback ended'); installedOwners.get(port)?.(); recheck(tree); }
           catch (error) { state.invalid = true; throw error; }
         };
         state.guard = guard;

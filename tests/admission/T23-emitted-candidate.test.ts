@@ -11,15 +11,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
-import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
+import { createInstalledRootOwner, leased, publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
 import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
-import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
-import { createGenerationStore, type GenerationEnrollment, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
+import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async importOriginal => {
@@ -593,6 +593,16 @@ async function promotionHost(label: string) {
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
 
+async function prepareOwnerLock(root: string, pin: (path: string) => Promise<GenerationNode>) {
+  const directory = root + '.owner';
+  const lockPath = join(directory, 'lease.sqlite');
+  await mkdir(directory, { mode: 0o700 });
+  await writeFile(lockPath, '', { mode: 0o600, flag: 'wx' });
+  const database = new DatabaseSync(lockPath);
+  try { database.exec('PRAGMA user_version = 1'); } finally { database.close(); }
+  return pin(lockPath);
+}
+
 test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
   const instanceRoot = join(dir, 'first-install-cli');
   await mkdir(instanceRoot, { mode: 0o700 });
@@ -655,6 +665,13 @@ test('first-install CLI publishes only the approved release and reads back the s
       return run;
     } },
   };
+  const ownerLockNode = await prepareOwnerLock(instanceRoot, pin);
+  const pinnedEnrollment = { ...enrollment, owner: undefined, ownerLockNode };
+  const installedOwner = createInstalledRootOwner({ root: instanceRoot, rootNode: enrollment.rootNode, lockNode: ownerLockNode });
+  await leased(installedOwner, async () => {
+    await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_LEASE' });
+  });
+  await expect(previewFirstInstall(() => pinnedEnrollment, 'release')).resolves.toMatchObject({ status: 'preview' });
   const approvals = generateKeyPairSync('ed25519');
   const journal = generateKeyPairSync('ed25519');
   const pem = (key: typeof approvals.publicKey) => key.export({ type: 'spki', format: 'pem' }) as string;
@@ -1184,6 +1201,9 @@ test('starts installed roles from the confirmed generation and fails closed when
     publicKey: signer.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
     releases: [{ expected, policy }], generations: [generation, successor],
   };
+  const ownerLockNode = await prepareOwnerLock(instance, pin);
+  const pinnedEnrollment = { ...enrollment, ownerLockNode };
+  const installedOwner = createInstalledRootOwner({ root: instance, rootNode: enrollment.rootNode, lockNode: ownerLockNode });
   let loseAcknowledgement = false;
   let interruptSelection = false;
   let interruptRoleStartup: { when: Promise<void>; reason: string } | undefined;
@@ -1200,14 +1220,16 @@ test('starts installed roles from the confirmed generation and fails closed when
       });
     },
   };
-  const store = createGenerationStore(enrollment, owner, {
-    async signRecord(payload) {
+  const signing = {
+    async signRecord(payload: Uint8Array) {
       if (interruptSelection && JSON.parse(Buffer.from(payload).toString()).format === 'patrick-installed-owner-flush-v1') {
         throw new Error('fixture selection confirmation interrupted');
       }
       return sign(null, payload, signer.privateKey).toString('base64');
     },
-  });
+  };
+  const store = createGenerationStore(enrollment, owner, signing);
+  const installedStore = createGenerationStore(pinnedEnrollment, undefined, signing);
   const origin = 'http://localhost';
   const attached: Array<Parameters<NonNullable<RuntimeProvisioningInput['service']['recoveryRuntime']>['attach']>[0]['database']> = [];
   const provisioning: RuntimeProvisioningInput = {
@@ -1221,20 +1243,29 @@ test('starts installed roles from the confirmed generation and fails closed when
     },
   };
   let provisions = 0;
-  const launch = (input = provisioning) => startSelectedRuntimeRole(enrollment, owner, 'service', context => {
-    provisions++;
-    expect(context).toMatchObject({ generationId: 'first', packageSha256: generation.packageSha256, dataRoot,
-      databasePath: servicePath, localAnswersPath: answersPath, operationalHubPath: join(dataRoot, 'hub/hub.db') });
-    return input;
-  });
+  const launch = (input = provisioning, pinned = false) => startSelectedRuntimeRole(
+    pinned ? pinnedEnrollment : enrollment, pinned ? undefined : owner, 'service', context => {
+      provisions++;
+      expect(context).toMatchObject({ generationId: 'first', packageSha256: generation.packageSha256, dataRoot,
+        databasePath: servicePath, localAnswersPath: answersPath, operationalHubPath: join(dataRoot, 'hub/hub.db') });
+      return input;
+    });
   await expect(launch()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
   expect(provisions).toBe(0);
-  const order = store.order('select-first', null, generation.id);
-  await store.select(canonicalize({ order, signature: sign(null, bytes(order), signer.privateKey).toString('base64') }));
-  await expect(launch({ ...provisioning, service: { ...provisioning.service, databasePath: join(dataRoot, 'hub/hub.db') } }))
+  const order = installedStore.order('select-first', null, generation.id);
+  const selection = canonicalize({ order, signature: sign(null, bytes(order), signer.privateKey).toString('base64') });
+  await leased(installedOwner, async () => {
+    await expect(installedStore.select(selection)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+    await expect(launch(provisioning, true)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+    expect(provisions).toBe(0);
+  });
+  await installedStore.select(selection);
+  await expect(launch()).rejects.toThrow('GENERATION_BINDING_INVALID');
+  expect(provisions).toBe(0);
+  await expect(launch({ ...provisioning, service: { ...provisioning.service, databasePath: join(dataRoot, 'hub/hub.db') } }, true))
     .rejects.toThrow('INSTALLED_ROLE_PROVISIONING_MISMATCH');
   expect(attached).toHaveLength(0);
-  const started = await launch();
+  const started = await launch(provisioning, true);
   try {
     expect(started.role).toBe('service');
     if (started.role !== 'service') throw new Error('fixture service missing');
@@ -1242,6 +1273,12 @@ test('starts installed roles from the confirmed generation and fails closed when
     expect(await readdir(dataRoot)).not.toContain('service.sqlite.hub');
   } finally { await started.runtime.drain(); }
   expect(attached.map(database => database.open)).toEqual([false]);
+  const retained = join(dir, 'pinned-role-selection');
+  await mkdir(retained, { mode: 0o700 });
+  await rename(join(instance, 'current'), join(retained, 'current'));
+  for (const record of await readdir(history)) await rename(join(history, record), join(retained, record));
+  const legacyOrder = store.order('select-legacy', null, generation.id);
+  await store.select(canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), signer.privateKey).toString('base64') }));
   loseAcknowledgement = true;
   await expect(launch()).rejects.toThrow('fixture owner acknowledgement lost');
   expect(attached.map(database => database.open)).toEqual([false, false]);

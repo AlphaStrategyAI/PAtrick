@@ -14,7 +14,7 @@ import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, leg
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
-  deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
+  createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
   type AdmittedDeployment, type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
 } from '../lib/emitted-release.mjs';
 import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
@@ -33,7 +33,8 @@ type Stage = 'REGISTRATION' | 'HOST' | 'LAYOUT' | 'PACKAGE' | 'CAPACITY' | 'DEPL
  * digest, RP and deployment configuration before the endpoint exists. */
 export type InstallPreviewEnrollment = {
   installationId: string; releaseId: string; identity: HostIdentity; hostname: string; uid: number;
-  root: string; rootNode: GenerationNode; stores: Record<Store, GenerationNode>; owner: ExclusiveRuntimeStaging;
+  root: string; rootNode: GenerationNode; stores: Record<Store, GenerationNode>;
+  owner?: ExclusiveRuntimeStaging; ownerLockNode?: GenerationNode;
   node: { path: string; sha256: string }; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
   targetSchema: number; reserveBytes: Record<Budget, number>;
   firstGenerationId?: string;
@@ -247,9 +248,14 @@ export function bindInstallPreviewEnrollment(current: Registry) {
   const data = dataFields(original, ['installationId', 'releaseId', 'identity', 'hostname', 'uid', 'root', 'rootNode',
     'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
   const firstGenerationId = field(original, 'firstGenerationId', true);
-  const owner = field(original, 'owner');
-  trackPrototype(owner);
-  requireFact(typeof field(owner, 'withExclusiveReadRoot') === 'function');
+  const ownerLockNode = copy(field(original, 'ownerLockNode', true)) as GenerationNode | undefined;
+  const suppliedOwner = field(original, 'owner', true) as ExclusiveRuntimeStaging | undefined;
+  requireFact((suppliedOwner === undefined) !== (ownerLockNode === undefined));
+  if (suppliedOwner !== undefined) {
+    trackPrototype(suppliedOwner);
+    requireFact(typeof field(suppliedOwner, 'withExclusiveReadRoot') === 'function');
+  }
+  const owner = suppliedOwner ?? createInstalledRootOwner({ root: data.root, rootNode: data.rootNode, lockNode: ownerLockNode! });
   const session = field(original, 'session', true);
   let credential: InstallPreviewEnrollment['session'];
   if (session !== undefined) {
@@ -259,7 +265,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     requireFact(typeof readBearer === 'function');
     credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
   }
-  const value: InstallPreviewEnrollment = { ...data, firstGenerationId, session: credential, owner };
+  const value = { ...data, firstGenerationId, session: credential, owner, ownerLockNode };
   function validate() {
     requireFact(current() === original);
     for (const check of checks) check();
@@ -364,6 +370,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     policy: e.policy, expected: e.expected, manifestSha256: receipt.manifestSha256, targetSchema: e.targetSchema,
     reserveBytes: e.reserveBytes, volumes, deployment: e.deployment, renderedSha256: digest(rendered), descriptors,
     required: bootstrapRequirements, tls: e.tls,
+    ...(e.ownerLockNode === undefined ? {} : { ownerLockNode: e.ownerLockNode }),
     ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId, autoloopKernelSha256 }) });
   const confirm = () => {
     reportStage('LAYOUT');

@@ -66,7 +66,7 @@ async function snapshot(path: string): Promise<unknown> {
 describe.skipIf(!fixturePath)('independently registered signed Darwin installation', () => {
   let temporary: string;
   let otherCa: string;
-  let e: InstallPreviewEnrollment;
+  let e: InstallPreviewEnrollment & Required<Pick<InstallPreviewEnrollment, 'owner'>>;
   let archive: string;
   let selected: InstallPreviewEnrollment;
   const trace: string[] = [];

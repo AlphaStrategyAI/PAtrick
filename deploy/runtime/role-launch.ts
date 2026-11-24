@@ -40,7 +40,7 @@ function hasCleanup(error: unknown): error is StartupCleanup {
 
 export async function startSelectedRuntimeRole(
   enrollment: GenerationEnrollment,
-  owner: ExclusiveRuntimeStaging,
+  owner: ExclusiveRuntimeStaging | undefined,
   role: SelectedRuntimePaths['role'],
   provision: (paths: SelectedRuntimePaths) => RuntimeProvisioningInput | Promise<RuntimeProvisioningInput>,
 ): Promise<StartedRole> {

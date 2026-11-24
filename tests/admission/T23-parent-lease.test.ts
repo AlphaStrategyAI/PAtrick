@@ -1,13 +1,16 @@
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, test } from 'vitest';
 import * as emitted from '../../deploy/lib/emitted-release.mjs';
 import type { ExclusiveRuntimeStaging } from '../../deploy/lib/emitted-release.mjs';
 
 type Lease = { root: string; guard(): void };
 type Runtime = { leased<T>(owner: ExclusiveRuntimeStaging, work: (lease: Lease) => Promise<T>, join?: boolean, validate?: () => void): Promise<T>;
+  createInstalledRootOwner(registration: ReturnType<typeof installedOwnerFixture>['registration']): ExclusiveRuntimeStaging;
   deriveRuntimeStaging?: (parent: Lease, root: string, publication?: { stagingRoot: string; releasesRoot: string }) => ExclusiveRuntimeStaging };
 const runtime = emitted as unknown as Runtime;
 const cleanups: string[] = [];
@@ -25,6 +28,63 @@ function fixture() {
   mkdirSync(child, { mode: 0o700 }); mkdirSync(sibling, { mode: 0o700 });
   return { root, child, sibling };
 }
+function installedOwnerFixture() {
+  const { child } = fixture();
+  const directory = child + '.owner';
+  mkdirSync(directory, { mode: 0o700 });
+  const lockPath = join(directory, 'lease.sqlite');
+  writeFileSync(lockPath, '', { mode: 0o600, flag: 'wx' });
+  const database = new DatabaseSync(lockPath);
+  try { database.exec('PRAGMA user_version = 1'); } finally { database.close(); }
+  const pin = (path: string) => {
+    const { dev, ino, birthtimeNs } = lstatSync(path, { bigint: true });
+    return { device: String(dev), inode: String(ino), birthtimeNs: String(birthtimeNs) };
+  };
+  return { lockPath, registration: { root: child, rootNode: pin(child), lockNode: pin(lockPath) } };
+}
+
+test('installed operations share the registered lock across a process crash', async () => {
+  const { registration } = installedOwnerFixture();
+  const owner = runtime.createInstalledRootOwner(registration);
+  const script = `
+    const { createInstalledRootOwner, leased } = await import(${JSON.stringify(new URL('../../deploy/lib/emitted-release.mjs', import.meta.url).href)});
+    const owner = createInstalledRootOwner(JSON.parse(process.argv[1]));
+    await leased(owner, async () => {
+      process.send('locked');
+      await new Promise(() => process.on('message', () => {}));
+    });
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(registration)],
+    { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const exited = once(child, 'exit');
+  try {
+    const [locked] = await Promise.race([once(child, 'message', { signal: AbortSignal.timeout(5000) }), exited]);
+    expect(locked).toBe('locked');
+    let calls = 0;
+    const run = () => runtime.leased(owner, async () => ++calls);
+    await expect(run()).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+    expect(calls).toBe(0);
+    child.kill('SIGKILL');
+    await expect(exited).resolves.toEqual([null, 'SIGKILL']);
+    await expect(run()).resolves.toBe(1);
+  } finally {
+    child.kill();
+    await exited;
+  }
+});
+
+test('a changed lock invalidates an active guard and rejects subsequent operations', async () => {
+  const { registration, lockPath } = installedOwnerFixture();
+  const owner = runtime.createInstalledRootOwner(registration);
+  await expect(runtime.leased(owner, async lease => {
+    lease.guard();
+    renameSync(lockPath, lockPath + '.retained');
+    copyFileSync(lockPath + '.retained', lockPath);
+    expect(() => lease.guard()).toThrow('INSTALLED_ROOT_OWNER_INVALID');
+  })).rejects.toThrow();
+  await expect(runtime.leased(owner, async () => expect.unreachable())).rejects.toThrow('INSTALLED_ROOT_OWNER_INVALID');
+});
+
 function borrow(parent: Lease, root: string, publication?: { stagingRoot: string; releasesRoot: string }) {
   if (runtime.deriveRuntimeStaging) return runtime.deriveRuntimeStaging(parent, root, publication);
   // The original implementation has no derived capability. This is the independently

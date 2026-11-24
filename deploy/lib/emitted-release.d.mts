@@ -38,6 +38,10 @@ export interface ExclusiveRuntimeStaging {
   readonly publication?: Readonly<{ stagingRoot: string; releasesRoot: string }>;
   withExclusiveReadRoot<T>(read: (physicalRoot: string) => Promise<T>): Promise<T>;
 }
+type InstalledOwnerNode = Readonly<{ device: string; inode: string; birthtimeNs: string }>;
+export function createInstalledRootOwner(registration: Readonly<{
+  root: string; rootNode: InstalledOwnerNode; lockNode: InstalledOwnerNode;
+}>): ExclusiveRuntimeStaging;
 declare const runtimeLease: unique symbol;
 /** The live value is issued only to a `leased` callback and expires with it. */
 export type RuntimeLease = Readonly<{ root: string; guard(): void; readonly [runtimeLease]: true }>;

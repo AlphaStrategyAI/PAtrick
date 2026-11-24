@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSy
   realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
+import { createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { isLifecycleRecordName } from './lifecycle-journal.js';
@@ -35,6 +35,7 @@ export type InstalledGeneration = {
 export type GenerationEnrollment = {
   installationId: string; hostId: string; identity: HostIdentity; target: DarwinTarget;
   root: string; rootNode: GenerationNode; stores: Record<Store, GenerationNode>;
+  ownerLockNode?: GenerationNode;
   publicKey: string;
   releases: { expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy }[];
   generations: InstalledGeneration[];
@@ -125,9 +126,11 @@ export function canRestoreOldRelease(input: {
  * The controller signs an exact order only after its command claim and applicable
  * migration, snapshot, role stop and witness checks. This storage API does no admission.
  */
-function generationStorage(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging, signer?: GenerationRecordSigner) {
+function generationStorage(registration: GenerationEnrollment, suppliedOwner?: ExclusiveRuntimeStaging, signer?: GenerationRecordSigner) {
   const binding = bindRegistration(() => registration);
   const e = binding.value;
+  requireValue((suppliedOwner === undefined) !== (e.ownerLockNode === undefined));
+  const owner = suppliedOwner ?? createInstalledRootOwner({ root: e.root, rootNode: e.rootNode, lockNode: e.ownerLockNode! });
   const ownerMethod = captureMethod(owner, 'withExclusiveReadRoot');
   const signerMethod = signer === undefined ? undefined : captureMethod(signer, 'signRecord');
   const registeredSign = signerMethod?.value;
@@ -145,6 +148,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
   requireValue(canonicalize(identity) === canonicalize(e.identity) && e.target.os === 'darwin' && ['arm64', 'x64'].includes(e.target.arch));
   const installationSha256 = digest({ format, installationId: e.installationId, hostId: e.hostId, identity,
     target: e.target, root: e.root, rootNode: e.rootNode, stores: e.stores,
+    ...(e.ownerLockNode === undefined ? {} : { ownerLockNode: e.ownerLockNode }),
     publicKeySha256: sha256(key.export({ format: 'der', type: 'spki' })) });
   const releases = new Map(e.releases.map(release => [release.expected.packageSha256, release]));
   const generations = new Map(e.generations.map(g => [g.id, g]));
@@ -476,18 +480,18 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
   return Object.freeze({ order, observe, select, useConfirmed });
 }
 
-export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging, signer: GenerationRecordSigner) {
+export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {
   requireValue(signer && (typeof signer === 'object' || typeof signer === 'function'));
   return generationStorage(registration, owner, signer);
 }
 
 /** Public-only restart surface. The controller provisions read-only filesystem access for this process. */
-export function createGenerationReader(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging) {
+export function createGenerationReader(registration: GenerationEnrollment, owner?: ExclusiveRuntimeStaging) {
   const { observe } = generationStorage(registration, owner);
   return Object.freeze({ observe });
 }
 
-export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging,
+export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
   use: UseConfirmation<T>): Promise<T> {
   return generationStorage(registration, owner).useConfirmed(use);
 }
