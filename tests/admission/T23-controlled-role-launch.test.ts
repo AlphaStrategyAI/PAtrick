@@ -161,13 +161,13 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     expect([result.error, result.signal, result.status]).toEqual([undefined, null, 78]);
   });
 
-  async function enrolledRole(role: string) {
+  async function enrolledRole(role: string, uid = process.getuid!(), gid = process.getgid!()) {
     const directory = join(registryRoot, role);
     const account = join(directory, 'account');
     const entry = join(directory, 'entry.mjs');
     const sentinel = await stat(join(root, 'descriptor-sentinel'), { bigint: true });
     await mkdir(directory, { recursive: true, mode: 0o755 });
-    await writeFile(account, `${process.getuid!()}:${process.getgid!()}\n`, { mode: 0o444, flag: 'wx' });
+    await writeFile(account, `${uid}:${gid}\n`, { mode: 0o444, flag: 'wx' });
     await writeFile(entry, [
       'import { fstatSync } from "node:fs";',
       'let inherited = false;',
@@ -194,20 +194,33 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     } finally { closeSync(descriptor); }
   }
 
-  test('the native registry dispatches only admitted role entries for the enrolled account', async ({ onTestFinished }) => {
+  test('the native registry dispatches only admitted role entries for the enrolled account', async () => {
     for (const role of ['service', 'hub', 'worker']) {
       expect(runRegisteredRole(role).status).toBe(78);
       const { directory } = await enrolledRole(role);
-      onTestFinished(() => rm(directory, { recursive: true, force: true }));
-      const result = runRegisteredRole(role);
-      expect(result.status, result.error?.message ?? result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
-        role, cwd: directory, uid: process.getuid!(), gid: process.getgid!(), argv: [], umask: 0o077,
-        inherited: false, options: null, caller: null,
-      });
+      try {
+        const result = runRegisteredRole(role);
+        expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual({
+          role, cwd: directory, uid: process.getuid!(), gid: process.getgid!(), argv: [], umask: 0o077,
+          inherited: false, options: null, caller: null,
+        });
+      } finally { await rm(directory, { recursive: true, force: true }); }
     }
     expect(runRegisteredRole('editor').status).toBe(64);
     expect(runRegisteredRole('../service').status).toBe(64);
+  });
+
+  test('the native registry rejects roles that share a UID even with different GIDs', async ({ onTestFinished }) => {
+    const service = await enrolledRole('service');
+    onTestFinished(() => rm(service.directory, { recursive: true, force: true }));
+    const hub = await enrolledRole('hub', process.getuid!(), process.getgid!() + 1);
+    onTestFinished(() => rm(hub.directory, { recursive: true, force: true }));
+    const refused = runRegisteredRole('service');
+    expect([refused.status, refused.stdout]).toEqual([78, '']);
+    await unlink(hub.account);
+    await writeFile(hub.account, `${process.getuid!() + 1}:${process.getgid!() + 1}\n`, { mode: 0o444, flag: 'wx' });
+    expect(runRegisteredRole('service').status).toBe(0);
   });
 
   test('the native registry refuses mutable entries, links and a mismatched account', async () => {

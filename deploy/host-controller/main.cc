@@ -158,6 +158,7 @@ int open_protected(int parent, const char* name, bool directory) {
       (metadata.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID | S_ISVTX)) == 0 && no_extended_acl(fd) &&
       (directory ? S_ISDIR(metadata.st_mode) : S_ISREG(metadata.st_mode) && metadata.st_nlink == 1)) return fd;
   close(fd);
+  errno = EPERM;
   return -1;
 }
 
@@ -176,7 +177,12 @@ int open_registry() {
 #endif
 }
 
-bool admits_account(int directory) {
+struct Account {
+  uid_t uid;
+  gid_t gid;
+};
+
+bool read_account(int directory, Account& account) {
   const int fd = open_protected(directory, "account", false);
   if (fd < 0) return false;
   char text[48];
@@ -186,13 +192,31 @@ bool admits_account(int directory) {
   const bool closed = close(fd) == 0;
   if (!closed || !complete || length < 4 || length >= static_cast<ssize_t>(sizeof(text)) || text[length - 1] != '\n') return false;
   const char* end = text + length - 1;
-  uid_t uid;
-  gid_t gid;
-  const auto user = std::from_chars(text, end, uid);
+  const auto user = std::from_chars(text, end, account.uid);
   if (user.ec != std::errc{} || user.ptr == end || *user.ptr != ':') return false;
-  const auto group = std::from_chars(user.ptr + 1, end, gid);
-  return group.ec == std::errc{} && group.ptr == end && uid != 0 &&
-         uid == getuid() && uid == geteuid() && gid == getgid() && gid == getegid();
+  const auto group = std::from_chars(user.ptr + 1, end, account.gid);
+  return group.ec == std::errc{} && group.ptr == end && account.uid != 0;
+}
+
+bool distinct_role_accounts(int registry, const char* active_role, uid_t active_uid) {
+  uid_t observed[3] = {active_uid};
+  size_t count = 1;
+  for (const char* role : {"service", "hub", "worker"}) {
+    if (strcmp(role, active_role) == 0) continue;
+    const int directory = open_protected(registry, role, true);
+    if (directory < 0) {
+      if (errno == ENOENT) continue;
+      return false;
+    }
+    Account account {};
+    const bool admitted = read_account(directory, account);
+    if (close(directory) != 0 || !admitted) return false;
+    for (size_t index = 0; index < count; ++index) {
+      if (observed[index] == account.uid) return false;
+    }
+    observed[count++] = account.uid;
+  }
+  return true;
 }
 
 bool has_protected_file(int directory, const char* name) {
@@ -204,12 +228,15 @@ int launch_registered_role(const char* role) {
   const int registry = open_registry();
   if (registry < 0) return EX_CONFIG;
   const int directory = open_protected(registry, role, true);
-  const bool usable_node = has_protected_file(registry, "node");
+  Account account {};
+  const bool admitted = directory >= 0 && has_protected_file(registry, "node") &&
+                        read_account(directory, account) &&
+                        account.uid == getuid() && account.uid == geteuid() &&
+                        account.gid == getgid() && account.gid == getegid() &&
+                        distinct_role_accounts(registry, role, account.uid) && has_protected_file(directory, "entry.mjs");
   close(registry);
-  if (directory < 0) return EX_CONFIG;
-  const bool admitted = usable_node && admits_account(directory) && has_protected_file(directory, "entry.mjs");
   if (!admitted) {
-    close(directory);
+    if (directory >= 0) close(directory);
     return EX_CONFIG;
   }
   const bool entered = fchdir(directory) == 0;

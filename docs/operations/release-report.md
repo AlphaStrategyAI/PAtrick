@@ -184,7 +184,7 @@ Darwin 候选构建通过 `--autoloop-root` 将固定提交 `45aecbf578289cda72d
 
 ## 原生角色入口
 
-Darwin 控制器的 `run-role service`、`run-role hub` 和 `run-role worker` 共用 `/Library/Application Support/PAtrick/controller-v1` 宿主登记。该目录中的 `node` 为登记的 Node 可执行文件。每个角色目录含 `account` 和 `entry.mjs`。`account` 的一行内容为数字 `UID:GID`，末尾带换行。`entry.mjs` 由宿主提供，负责注入已登记的运行时能力和发布验签材料。
+Darwin 控制器的 `run-role service`、`run-role hub` 和 `run-role worker` 共用 `/Library/Application Support/PAtrick/controller-v1` 宿主登记。该目录中的 `node` 为登记的 Node 可执行文件。每个角色目录含 `account` 和 `entry.mjs`。`account` 的一行内容为数字 `UID:GID`，末尾带换行。控制器读取已登记角色的 `account`，发现 UID 重复即拒绝启动。`entry.mjs` 由宿主提供，负责注入已登记的运行时能力和发布验签材料。
 
 控制器逐级检查登记目录的 root 属主、权限及扩展 ACL，核对调用进程的真实与有效 UID/GID。通过后以角色登记目录为工作目录执行对应入口，并清理继承的环境和额外文件描述符。角色入口可从自己的登记设置工作目录和专用 `HOME`。
 
