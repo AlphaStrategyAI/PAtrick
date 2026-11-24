@@ -52,13 +52,6 @@ async function serve(path) {
       authorityId: config.authorityId, clients: config.clients, store, withdrawalStore,
       ca: readOwnedFile(config.caPath, false), cert: readOwnedFile(config.certPath, false), key: readOwnedFile(config.keyPath, true),
     });
-    const domains = new Set(config.clients.flatMap(client => client.domains));
-    for (const domain of domains) {
-      const record = store.read(domain);
-      if (!record) throw new Error('RECOVERY_WITNESS_DOMAIN_NOT_INITIALIZED');
-      const { seq, hash } = record.withdrawal;
-      if (withdrawalStore && seq > 0 && !withdrawalStore.read(domain, seq, hash)) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
-    }
     server.listen(config.port, config.host);
     await once(server, 'listening');
     const close = () => {

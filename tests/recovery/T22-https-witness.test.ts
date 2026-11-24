@@ -288,7 +288,13 @@ test('standalone witness opens only initialized state and serves enrolled client
     const missingHead = join(root, 'standalone-empty-log.sqlite');
     expect(run(['initialize-log', missingHead]).status).toBe(0);
     writeFileSync(config, JSON.stringify({ ...enrolled, withdrawalStore: missingHead }));
-    expect(JSON.parse(run(['serve', config]).stderr)).toEqual({ code: 'RECOVERY_WITHDRAWAL_HEAD_MISSING' });
+    const wrongStore = run(['serve', config]);
+    expect(wrongStore.status).toBe(1);
+    expect(JSON.parse(wrongStore.stderr)).toEqual({ code: 'RECOVERY_WITNESS_WITHDRAWAL_STORE_MISMATCH' });
+    writeFileSync(config, JSON.stringify(registration));
+    const missingStore = run(['serve', config]);
+    expect(missingStore.status).toBe(1);
+    expect(JSON.parse(missingStore.stderr)).toEqual({ code: 'RECOVERY_WITNESS_WITHDRAWAL_STORE_MISMATCH' });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await exited;

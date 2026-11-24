@@ -75,6 +75,9 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
     const select = database.prepare('SELECT revision, record FROM witness_domains WHERE domain = ?');
     const insert = database.prepare('INSERT INTO witness_domains (domain, revision, record) VALUES (?, ?, ?)');
     const compare = database.prepare('UPDATE witness_domains SET record = ?, revision = ? WHERE domain = ? AND revision = ?');
+    database.exec('CREATE TABLE IF NOT EXISTS witness_withdrawal_authority (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL) STRICT');
+    const logIdentity = database.prepare('SELECT identity FROM witness_withdrawal_authority WHERE singleton = 1');
+    const bindLog = database.prepare('INSERT INTO witness_withdrawal_authority VALUES (1, ?)');
     function read(domain) {
       const row = select.get(domain);
       if (!row) return undefined;
@@ -82,10 +85,10 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
       check(validRecord(record, true) && record.domain === domain, 'STORE_INVALID');
       return record;
     }
-    function withCurrent(domain, use) {
+    function immediate(use) {
       database.exec('BEGIN IMMEDIATE');
       try {
-        const result = use(read(domain));
+        const result = use();
         database.exec('COMMIT');
         return result;
       } catch (error) {
@@ -93,8 +96,27 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
         throw error;
       }
     }
+    function logMatches(log) {
+      return logIdentity.get()?.identity === log?.identity;
+    }
     return Object.freeze({
       read,
+      configureWithdrawals(log, domains) {
+        immediate(() => {
+          const enrolled = logIdentity.get()?.identity;
+          if (enrolled !== undefined) check(logMatches(log), 'WITHDRAWAL_STORE_MISMATCH');
+          for (const domain of domains) {
+            const record = read(domain);
+            check(record, 'DOMAIN_NOT_INITIALIZED');
+            const { seq, hash } = record.withdrawal;
+            if (log && seq > 0 && !log.read(domain, seq, hash)) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
+          }
+          if (log && enrolled === undefined) {
+            check(matches(token, log.identity), 'WITHDRAWAL_STORE_MISMATCH');
+            bindLog.run(log.identity);
+          }
+        });
+      },
       initialize(record) {
         check(create, 'INITIALIZATION_DISABLED');
         check(validRecord(record) && record.state === 'open' && record.certificate === null && record.activationId === null
@@ -105,7 +127,9 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
       },
       compareAndSwap(domain, revision, next, writerId, withdrawalStore) {
         if (!validRecord(next) || next.domain !== domain || !matches(token, revision)) return 'invalid';
-        return withCurrent(domain, current => {
+        return immediate(() => {
+          if (!logMatches(withdrawalStore)) return 'denied';
+          const current = read(domain);
           if (!current || !writerId) return 'denied';
           if (current.revision !== revision) return 'conflict';
           if (!permits(current, next, writerId) || !withdrawalAllows(current, next, withdrawalStore)) return 'denied';
@@ -115,7 +139,9 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
       appendWithdrawal(entry, writerId, log) {
         if (!encodeWithdrawal(entry)) return 'invalid';
         const { domain, seq, hash, writerEpoch, previousHash } = entry;
-        return withCurrent(domain, current => {
+        return immediate(() => {
+          if (!logMatches(log)) return 'denied';
+          const current = read(domain);
           if (current?.state !== 'open' || current.writerId !== writerId || current.writerEpoch !== writerEpoch) return 'denied';
           if (seq === current.withdrawal.seq && hash === current.withdrawal.hash) {
             return log.read(domain, seq, hash) ? 'applied' : 'conflict';
@@ -197,6 +223,7 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
   }
   const server = createServer({ ca: tlsMaterial(ca), key: tlsMaterial(key), cert: tlsMaterial(cert), minVersion: 'TLSv1.2',
     requestCert: true, rejectUnauthorized: true, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 });
+  store.configureWithdrawals(withdrawalStore, new Set(clients.flatMap(client => client.domains)));
   server.setTimeout(5000, socket => socket.destroy());
   server.on('request', (incoming, outgoing) => {
     outgoing.setHeader('cache-control', 'no-store');

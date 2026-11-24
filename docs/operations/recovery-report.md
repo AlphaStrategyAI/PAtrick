@@ -42,11 +42,11 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 ### 登记独立撤回日志
 
-有序交接时，在见证主机执行 `node scripts/recovery-witness.mjs initialize-log LOG_STORE`，并在 `CONFIG` 的 `withdrawalStore` 字段登记该 SQLite 文件的绝对物理路径。见证控制记录和撤回事件分别写入各自的数据库。日志文件使用同一套服务账户、物理目录和文件权限检查。已有撤回水位的部署启用日志前须保留对应的完整历史。启动时发现登记的日志缺失或无法读回见证水位，服务会退出。
+有序交接时，在见证主机执行 `node scripts/recovery-witness.mjs initialize-log LOG_STORE`，并在 `CONFIG` 的 `withdrawalStore` 字段登记该 SQLite 文件的绝对物理路径。见证控制记录和撤回事件分别写入各自的数据库。日志文件使用同一套服务账户、物理目录和文件权限检查。已有撤回水位的部署启用日志前须保留对应的完整历史。首次启动会在见证库登记日志身份。此后遗漏日志配置、日志文件缺失、身份不符或无法读回见证水位都会阻止启动。
 
 为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。水位 CAS 先核对持久化事件的序号、摘要及前一条哈希。当前 epoch 尚有已追加待确认的事件时，见证拒绝封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
 
-本机恢复套件通过 386 项。双向 TLS 演练覆盖独立子进程内的持久化、18 条撤回的分批读回、见证封存、跨 epoch 接续和日志缺失时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
+本机恢复套件通过 386 项。双向 TLS 演练覆盖独立子进程内的持久化、18 条撤回的分批读回、见证封存、跨 epoch 接续，以及日志缺失或更换时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
 
 ## 可选加密离机备份端口
 

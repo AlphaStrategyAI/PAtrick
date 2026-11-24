@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { openAuthorityStore } from './authority-store.mjs';
 import { canonical, digest } from './files.ts';
 
@@ -52,6 +53,12 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
     const select = database.prepare('SELECT entry_json FROM withdrawal_entries WHERE domain = ? AND sequence = ? AND entry_hash = ?');
     const pending = database.prepare('SELECT 1 FROM withdrawal_entries WHERE domain = ? AND sequence = ? AND writer_epoch = ?');
     const insert = database.prepare('INSERT INTO withdrawal_entries VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING');
+    if (create) {
+      database.exec('CREATE TABLE IF NOT EXISTS withdrawal_store_identity (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL) STRICT');
+      database.prepare('INSERT INTO withdrawal_store_identity VALUES (1, ?) ON CONFLICT DO NOTHING').run(randomUUID());
+    }
+    const identity = database.prepare('SELECT identity FROM withdrawal_store_identity WHERE singleton = 1').get()?.identity;
+    check(matches(writerEpochPattern, identity), 'STORE_INVALID');
     function read(domain, seq, hash) {
       const row = select.get(domain, seq, hash);
       if (!row) return undefined;
@@ -60,6 +67,7 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
       return entry;
     }
     return Object.freeze({
+      identity,
       read,
       append(entry) {
         const content = encodeWithdrawal(entry);

@@ -12,6 +12,7 @@ type AuthorityIdentity = TlsIdentity & { origin: string; authorityId: string };
 
 export type RecoveryWitnessStore = Readonly<{
   read(domain: string): RecoveryWitnessRecord | undefined;
+  configureWithdrawals(log: RecoveryWithdrawalStore | undefined, domains: Iterable<string>): void;
   initialize(record: NextRecord): RecoveryWitnessRecord;
   compareAndSwap(domain: string, revision: string, next: NextRecord, writerId: string, log?: RecoveryWithdrawalStore): WriteOutcome;
   appendWithdrawal(entry: WithdrawalEntry, writerId: string, log: RecoveryWithdrawalStore): WriteOutcome;
