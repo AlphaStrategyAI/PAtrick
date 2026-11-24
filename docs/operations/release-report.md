@@ -27,6 +27,16 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 源码候选首次增加签名后，envelope 摘要会改变。T25 验收与 T26 发布必须锁定最终已签名 envelope 的精确摘要，并发布同一字节；不能用未签名候选的摘要代替，也不能验收后重建。
 
+### 复验已签名的 Darwin 资产
+
+将 T25 接受的 `deployment-complete` 包的 `expected` 和 `policy` 分别保存到可信目录下的 `trusted-pins.json`。文件顶层含 `arm64` 和 `x64`，每个架构对应一组 `expected` 和 `policy`。两组预期绑定同一提交的源码身份、版本和 schema 范围。`expected` 包含最终签名 envelope 的 `packageSha256`，`policy` 包含可信 Ed25519 公钥、执行报告和必验记录的 SHA-256。
+
+```sh
+node scripts/verify-signed-darwin-assets.mjs "$trusted_pins" "$arm64_envelope" "$x64_envelope"
+```
+
+发布前对待上传包运行一次，发布后对重新下载的两份资产使用同一份验收文件复验。输入文件须位于物理路径下。两份包都通过后才输出提交、版本和每个架构的包、清单、材料、库存与原生模块摘要。任一包或信任材料不匹配时退出非零。发布决策还需核对 T26 的完整试点及任务证据。
+
 ## 双架构构建与产物读回
 
 `.github/workflows/release-darwin.yml` 使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 26.13.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。

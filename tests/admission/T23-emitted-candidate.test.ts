@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
-import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
+import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -2070,87 +2070,99 @@ for (const operation of ['pack','stage'] as const) {
 
 // Portable format/authority fixture. None of the material or scenario labels
 // here represent execution. Only the native suite above measures target behavior.
+async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?: 'deployment-complete') {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const port: ExclusiveRuntimeStaging = {withExclusiveReadRoot: work => work(dir)};
+  const tree = join(dir,'tree');
+  const files: Array<{path:string;role:string;mode:string;bytes:number;sha256:string}> = [];
+  async function put(path:string, role:string, data:Buffer, mode=0o644) {
+    await mkdir(dirname(join(tree,path)),{recursive:true,mode:0o700});
+    await writeFile(join(tree,path),data,{mode});
+    files.push({path,role,mode:'100'+mode.toString(8),bytes:data.length,sha256:sha256(data)});
+  }
+  const fixtureCode = Buffer.from('throw Error("offline fixture was executed");');
+  const sourceLock = JSON.parse(await readFile(join(root,'package-lock.json'),'utf8'));
+  const packages = ['better-sqlite3','bindings','file-uri-to-path'].map(name=>({name,version:sourceLock.packages['node_modules/'+name].version as string}));
+  for (const [index,{name,version}] of packages.entries()) {
+    const prefix = 'node_modules/'+name+'/';
+    await put(prefix+'package.json','runtime-package-metadata',bytes({name,version,main:['lib/index.js','./bindings.js','index.js'][index],
+      dependencies:sourceLock.packages['node_modules/'+name].dependencies ?? {}}));
+    await put(prefix+(name==='bindings'?'LICENSE.md':'LICENSE'),'runtime-package-license',Buffer.from('fixture only'));
+  }
+  const sqliteFiles = ['database','index','sqlite-error','util',...['aggregate','backup','function','inspect','pragma','serialize','table','transaction','wrappers'].map(name=>'methods/'+name)];
+  for (const name of [...sqliteFiles.map(name=>'better-sqlite3/lib/'+name+'.js'),'bindings/bindings.js','file-uri-to-path/index.js']) {
+    await put('node_modules/'+name,'runtime-package-code',fixtureCode);
+  }
+  for (const path of entries) await put(path,'runtime-entry',Buffer.from('import { fake } from "./chunk-TEST.mjs";'));
+  await put('runtime/chunk-TEST.mjs','runtime-shared-chunk',fixtureCode);
+  const sql = Buffer.from('select 1;');
+  await put('migrations/0001_fixture.sql','storage-migration',sql);
+  await put('migrations/manifest.json','storage-migration-manifest',bytes([{file:'0001_fixture.sql',sha256:sha256(sql)}]));
+  await put('web/index.html','web-entry',Buffer.from('<script src="/assets/test.js"></script><link href="/assets/test.css">'));
+  await put('web/assets/test.js','web-asset',fixtureCode);
+  await put('web/assets/test.css','web-asset',Buffer.from('body{}'));
+  if (profile) {
+    for (const path of Object.values(deploymentPaths)) {
+      await put(path, deploymentRole(path)!, await readFile(join(root, path)));
+    }
+  }
+  const binary = Buffer.alloc(32);
+  binary.writeUInt32LE(0xfeedfacf);
+  binary.writeUInt32LE(arch === 'arm64' ? 0x0100000c : 0x01000007,4);
+  const nativePath = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
+  await put(nativePath,'native-addon',binary,0o755);
+  const lock = bytes(sourceLock), lockPath = join(dir,'lock.json');
+  await writeFile(lockPath,lock);
+  const source = {kind:profile ? 'commit' as const : 'pinned-snapshot' as const, commit:'1'.repeat(40),snapshotSha256:sha256(fixtureCode),lockSha256:sha256(lock)};
+  const observed = {platform:'darwin',arch,node:'v1.0.0',modules:'1',npm:'1.0.0'};
+  const tools = {esbuild:'0.28.2',vite:'7.3.8'};
+  const native = {path:nativePath,sha256:sha256(binary),bytes:binary.length,format:'mach-o',architecture:arch,observedArchitecture:arch,
+    observedNode:observed.node,observedModules:observed.modules,observedLoad:true,sqlite:'1.0.0'};
+  files.sort((left,right)=>left.path<right.path?-1:left.path>right.path?1:0);
+  const inventory = bytes({schemaVersion:profile ? 2 : 1,...(profile && { profile }),materialKind:'emitted-runtime-materials',source,tools,observed,packages,native,files});
+  await mkdir(join(tree,'metadata'));
+  await writeFile(join(tree,'metadata/runtime-materials.json'),inventory);
+  const measure = {path:'/synthetic/tool',sha256:sha256(fixtureCode),bytes:fixtureCode.length};
+  const inv = {path:'/synthetic/inventory',sha256:sha256(inventory),bytes:inventory.length};
+  const totals: Record<string,{files:number;bytes:number}> = {};
+  for (const row of files) { totals[row.role] ??= {files:0,bytes:0}; totals[row.role].files++; totals[row.role].bytes+=row.bytes; }
+  const toolchain = bytes({source,observed,packages,inventory:inv,repeatInventory:inv,node:measure,npm:{...measure,version:observed.npm},
+    git:{path:'/synthetic/git',version:'git version 1.0'},esbuild:{...measure,version:tools.esbuild},esbuildBinary:measure,vite:{...measure,version:tools.vite},
+    viteEsbuild:{...measure,version:sourceLock.packages['node_modules/esbuild'].version},viteRollup:{...measure,version:sourceLock.packages['node_modules/rollup'].version},
+    totals,largestRecord:files.reduce((left,right)=>left.bytes>=right.bytes?left:right),native:{...native,fileMode:'755',binaryDescription:'synthetic Mach-O '+(arch === 'arm64' ? arch : 'x86_64')},
+    packageFiles:files.filter(file=>file.path.startsWith('node_modules/')),runtimeFiles:files.filter(file=>file.path.startsWith('runtime/'))});
+  const toolPath = join(dir,'tools.json');
+  await writeFile(toolPath,toolchain);
+  const input = {staging:port,artifactRoot:tree,version:sourceLock.version as string,target:{os:'darwin' as const,arch}, ...(profile && { profile }),
+    schema:{min:1,max:1},expectedSource:source,expectedInventorySha256:inv.sha256,lockPath,toolchain:{path:toolPath,sha256:sha256(toolchain)}};
+  const identity = await inspectEmittedRuntimeMaterial(input);
+  const logs = await Promise.all(ids.map(async id=>{
+    const path=join(dir,id+'.log'), data=Buffer.from('synthetic contract fixture only '+id);
+    await writeFile(path,data);
+    return {id,path,sha256:sha256(data)};
+  }));
+  const report = bytes({format:'patrick-emitted-runtime-execution-v1',materialSha256:identity.materialSha256,inventorySha256:inv.sha256,
+    toolchainSha256:input.toolchain.sha256,nativeSha256:native.sha256,native,observed,entries,scenarios:logs.map(log=>({
+      id:log.id,argv:['synthetic-format-fixture'],cwd:'/synthetic',startedUtc:'2000-01-01T00:00:00.000Z',endedUtc:'2000-01-01T00:00:00.000Z',
+      exitCode:0,status:'passed',evidenceSha256:log.sha256}))});
+  const reportPath = join(dir,'execution.json');
+  await writeFile(reportPath,report);
+  const ready = await prepareEmittedRuntimeCandidate({...input,expectedMaterialSha256:identity.materialSha256,evidence:{report:{path:reportPath,sha256:sha256(report)},logs}});
+  const path = join(dir,'signed');
+  const signed = await packEmittedRuntimeCandidate(ready,{signatures:[signature(Buffer.from(ready.signingManifestBase64,'base64'))],outputStaging:port,outputPath:path});
+  const expected = {version:input.version,source,target:input.target,schema:input.schema,activeSchema:1,runtime:{node:observed.node,modules:observed.modules}, ...(profile && { profile }),
+    inventorySha256:inv.sha256,toolchainSha256:input.toolchain.sha256,materialSha256:identity.materialSha256,packageSha256:signed.packageSha256};
+  const policy = {keys:[{id:'fixture',publicKey}],executionReportSha256:sha256(report),requiredScenarios:logs.map(log=>({id:log.id,evidenceSha256:log.sha256}))};
+  return { path, port, expected, policy };
+}
+
 runTest('verifies an offline signed format fixture and refuses copied capabilities',async () => {
   const dir = await mkdtemp(join(await realpath(tmpdir()),'emitted-offline-'));
-  const port: ExclusiveRuntimeStaging = {withExclusiveReadRoot: work => work(dir)};
   try {
-    const tree = join(dir,'tree');
-    const files: Array<{path:string;role:string;mode:string;bytes:number;sha256:string}> = [];
-    async function put(path:string, role:string, data:Buffer, mode=0o644) {
-      await mkdir(dirname(join(tree,path)),{recursive:true,mode:0o700});
-      await writeFile(join(tree,path),data,{mode});
-      files.push({path,role,mode:'100'+mode.toString(8),bytes:data.length,sha256:sha256(data)});
-    }
-    const fixtureCode = Buffer.from('throw Error("offline fixture was executed");');
-    const sourceLock = JSON.parse(await readFile(join(root,'package-lock.json'),'utf8'));
-    const packages = ['better-sqlite3','bindings','file-uri-to-path'].map(name=>({name,version:sourceLock.packages['node_modules/'+name].version as string}));
-    for (const [index,{name,version}] of packages.entries()) {
-      const prefix = 'node_modules/'+name+'/';
-      await put(prefix+'package.json','runtime-package-metadata',bytes({name,version,main:['lib/index.js','./bindings.js','index.js'][index],
-        dependencies:sourceLock.packages['node_modules/'+name].dependencies ?? {}}));
-      await put(prefix+(name==='bindings'?'LICENSE.md':'LICENSE'),'runtime-package-license',Buffer.from('fixture only'));
-    }
-    const sqliteFiles = ['database','index','sqlite-error','util',...['aggregate','backup','function','inspect','pragma','serialize','table','transaction','wrappers'].map(n=>'methods/'+n)];
-    for (const name of [...sqliteFiles.map(n=>'better-sqlite3/lib/'+n+'.js'),'bindings/bindings.js','file-uri-to-path/index.js']) {
-      await put('node_modules/'+name,'runtime-package-code',fixtureCode);
-    }
-    for (const path of entries) await put(path,'runtime-entry',Buffer.from('import { fake } from "./chunk-TEST.mjs";'));
-    await put('runtime/chunk-TEST.mjs','runtime-shared-chunk',fixtureCode);
-    const sql = Buffer.from('select 1;');
-    await put('migrations/0001_fixture.sql','storage-migration',sql);
-    await put('migrations/manifest.json','storage-migration-manifest',bytes([{file:'0001_fixture.sql',sha256:sha256(sql)}]));
-    await put('web/index.html','web-entry',Buffer.from('<script src="/assets/test.js"></script><link href="/assets/test.css">'));
-    await put('web/assets/test.js','web-asset',fixtureCode);
-    await put('web/assets/test.css','web-asset',Buffer.from('body{}'));
-    const binary = Buffer.alloc(32);
-    binary.writeUInt32LE(0xfeedfacf); binary.writeUInt32LE(0x0100000c,4);
-    const nativePath = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
-    await put(nativePath,'native-addon',binary,0o755);
-    const lock = bytes(sourceLock), lockPath = join(dir,'lock.json');
-    await writeFile(lockPath,lock);
-    const source = {kind:'pinned-snapshot' as const, commit:'1'.repeat(40),snapshotSha256:sha256(fixtureCode),lockSha256:sha256(lock)};
-    const observed = {platform:'darwin',arch:'arm64',node:'v1.0.0',modules:'1',npm:'1.0.0'};
-    const tools = {esbuild:'0.28.2',vite:'7.3.8'};
-    const native = {path:nativePath,sha256:sha256(binary),bytes:binary.length,format:'mach-o',architecture:'arm64',observedArchitecture:'arm64',
-      observedNode:observed.node,observedModules:observed.modules,observedLoad:true,sqlite:'1.0.0'};
-    files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
-    const inventory = bytes({schemaVersion:1,materialKind:'emitted-runtime-materials',source,tools,observed,packages,native,files});
-    await mkdir(join(tree,'metadata'));
-    await writeFile(join(tree,'metadata/runtime-materials.json'),inventory);
-    const measure = {path:'/synthetic/tool',sha256:sha256(fixtureCode),bytes:fixtureCode.length};
-    const inv = {path:'/synthetic/inventory',sha256:sha256(inventory),bytes:inventory.length};
-    const totals: Record<string,{files:number;bytes:number}> = {};
-    for (const r of files) { totals[r.role] ??= {files:0,bytes:0}; totals[r.role].files++; totals[r.role].bytes+=r.bytes; }
-    const toolchain = bytes({source,observed,packages,inventory:inv,repeatInventory:inv,node:measure,npm:{...measure,version:observed.npm},
-      git:{path:'/synthetic/git',version:'git version 1.0'},esbuild:{...measure,version:tools.esbuild},esbuildBinary:measure,vite:{...measure,version:tools.vite},
-      viteEsbuild:{...measure,version:sourceLock.packages['node_modules/esbuild'].version},viteRollup:{...measure,version:sourceLock.packages['node_modules/rollup'].version},
-      totals,largestRecord:files.reduce((a,b)=>a.bytes>=b.bytes?a:b),native:{...native,fileMode:'755',binaryDescription:'synthetic Mach-O arm64'},
-      packageFiles:files.filter(f=>f.path.startsWith('node_modules/')),runtimeFiles:files.filter(f=>f.path.startsWith('runtime/'))});
-    const toolPath = join(dir,'tools.json');
-    await writeFile(toolPath,toolchain);
-    const input = {staging:port,artifactRoot:tree,version:sourceLock.version as string,target:{os:'darwin' as const,arch:'arm64' as const},
-      schema:{min:1,max:1},expectedSource:source,expectedInventorySha256:inv.sha256,lockPath,toolchain:{path:toolPath,sha256:sha256(toolchain)}};
-    const identity = await inspectEmittedRuntimeMaterial(input);
-    const logs = await Promise.all(ids.map(async id=>{
-      const path=join(dir,id+'.log'), data=Buffer.from('synthetic contract fixture only '+id);
-      await writeFile(path,data);
-      return {id,path,sha256:sha256(data)};
-    }));
-    const report = bytes({format:'patrick-emitted-runtime-execution-v1',materialSha256:identity.materialSha256,inventorySha256:inv.sha256,
-      toolchainSha256:input.toolchain.sha256,nativeSha256:native.sha256,native,observed,entries,scenarios:logs.map(l=>({
-        id:l.id,argv:['synthetic-format-fixture'],cwd:'/synthetic',startedUtc:'2000-01-01T00:00:00.000Z',endedUtc:'2000-01-01T00:00:00.000Z',
-        exitCode:0,status:'passed',evidenceSha256:l.sha256}))});
-    const reportPath = join(dir,'execution.json');
-    await writeFile(reportPath,report);
-    const ready = await prepareEmittedRuntimeCandidate({...input,expectedMaterialSha256:identity.materialSha256,evidence:{report:{path:reportPath,sha256:sha256(report)},logs}});
-    const path = join(dir,'signed');
-    const signed = await packEmittedRuntimeCandidate(ready,{signatures:[signature(Buffer.from(ready.signingManifestBase64,'base64'))],outputStaging:port,outputPath:path});
-    const expected = {version:input.version,source,target:input.target,schema:input.schema,activeSchema:1,runtime:{node:observed.node,modules:observed.modules},
-      inventorySha256:inv.sha256,toolchainSha256:input.toolchain.sha256,materialSha256:identity.materialSha256,packageSha256:signed.packageSha256};
-    const policy = {keys:[{id:'fixture',publicKey}],executionReportSha256:sha256(report),requiredScenarios:logs.map(l=>({id:l.id,evidenceSha256:l.sha256}))};
+    const { path, port, expected, policy } = await offlineSignedFixture(dir, 'arm64');
     const options = {staging:port,expected,policy};
     const verified = await verifyEmittedRuntimeCandidate(path,options);
-    expect(verified.materialSha256).toBe(identity.materialSha256);
+    expect(verified.materialSha256).toBe(expected.materialSha256);
     await expect(verifyEmittedRuntimeCandidate(path,{...options,policy:{...policy,executionReportSha256:'0'.repeat(64)}})).rejects.toThrow(/report pin/);
     const destination = join(dir,'stage');
     await expect(stageVerifiedEmittedRuntime({...verified},{staging:port,destination})).rejects.toThrow(/genuine/);
@@ -2161,3 +2173,59 @@ runTest('verifies an offline signed format fixture and refuses copied capabiliti
     await expect(verifyEmittedRuntimeCandidate(path,{...options,expected:{...expected,packageSha256:sha256(invalid)}})).rejects.toThrow(/signature verification/);
   } finally {await rm(dir,{recursive:true,force:true});}
 },30_000);
+
+runTest('verifies both signed Darwin assets against independent release pins and reports success only for the pair', async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'signed-darwin-assets-'));
+  try {
+    const arm64 = await offlineSignedFixture(join(dir, 'arm64'), 'arm64', 'deployment-complete');
+    const x64 = await offlineSignedFixture(join(dir, 'x64'), 'x64', 'deployment-complete');
+    const candidatePaths = [arm64.path, x64.path];
+    const pins = {
+      arm64: { expected: arm64.expected, policy: arm64.policy },
+      x64: { expected: x64.expected, policy: x64.policy },
+    };
+    const pinFile = join(dir, 'trusted-pins.json');
+    const assetScript = join(root, 'scripts/verify-signed-darwin-assets.mjs');
+    async function verifyAssets(releasePins: unknown, paths = candidatePaths) {
+      await writeFile(pinFile, JSON.stringify(releasePins));
+      return spawnSync(process.execPath, [assetScript, pinFile, ...paths], { encoding: 'utf8', timeout: 10_000 });
+    }
+    function rejected(output: Awaited<ReturnType<typeof verifyAssets>>, message: string) {
+      expect(output.status, output.stderr).toBe(1);
+      expect(output.stdout).toBe('');
+      expect(output.stderr).toContain(message);
+    }
+
+    const result = await verifyAssets(pins);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: 'verified-signed-darwin-assets', commit: arm64.expected.source.commit, version: arm64.expected.version,
+      assets: {
+        arm64: { packageSha256: arm64.expected.packageSha256, materialSha256: arm64.expected.materialSha256 },
+        x64: { packageSha256: x64.expected.packageSha256, materialSha256: x64.expected.materialSha256 },
+      },
+    });
+    rejected(await verifyAssets(pins, [x64.path, arm64.path]), 'finished package digest mismatch');
+    rejected(await verifyAssets({ arm64: pins.arm64 }), 'exactly arm64 and x64');
+    rejected(await verifyAssets({ ...pins, x64: { ...pins.x64, expected: arm64.expected } }), 'invalid x64 deployment pins');
+    rejected(await verifyAssets({ ...pins, x64: { ...pins.x64,
+      expected: { ...x64.expected, source: { ...x64.expected.source, commit: '2'.repeat(40) } },
+    } }), 'one release');
+    rejected(await verifyAssets({ ...pins, x64: { ...pins.x64,
+      policy: { ...x64.policy, executionReportSha256: '0'.repeat(64) },
+    } }), 'execution report pin mismatch');
+
+    const original = await readFile(x64.path);
+    const envelope = JSON.parse(original.toString());
+    envelope.signatures[0].signature = Buffer.alloc(64).toString('base64');
+    const tampered = bytes(envelope);
+    const tamperedPath = join(dir, 'tampered.json');
+    await writeFile(tamperedPath, tampered);
+    rejected(await verifyAssets({ ...pins, x64: { ...pins.x64,
+      expected: { ...x64.expected, packageSha256: sha256(tampered) },
+    } }, [arm64.path, tamperedPath]), 'detached signature verification failed');
+    expect(await readFile(x64.path)).toEqual(original);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30_000);

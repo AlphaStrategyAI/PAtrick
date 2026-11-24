@@ -1796,7 +1796,7 @@ export function automaticCompletion(finalFacts) {
 }
 ~~~
 
-- [ ] 重跑 T26并校验真实发布证据清单。预期全部任务有对应证据，P0/P1 已处置，P2 有处理责任和期限；unknown 及样本局限可见。完成每周维护与隔离恢复计时后，从 T23工作流发布 T25已验收的双架构候选包。下载已发布 asset 再验摘要和签名。提交 `docs: record pilot evidence and operating procedures`。
+- [ ] 重跑 T26并校验真实发布证据清单。预期全部任务有对应证据，P0/P1 已处置，P2 有处理责任和期限；unknown 及样本局限可见。完成每周维护与隔离恢复计时后，从 T23工作流发布 T25已验收的双架构候选包。发布前后的两份包都按[签名资产复验流程](../operations/release-report.md#复验已签名的-darwin-资产)核对摘要和签名。提交 `docs: record pilot evidence and operating procedures`。
 
 ### T28 中英文 README
 
