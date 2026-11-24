@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
-import { bindInstallPreviewEnrollment, installBootstrapRequirements, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
+import { bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
 import { leased } from '../lib/emitted-release.mjs';
 
@@ -89,13 +89,16 @@ export function parseArguments(argv) {
   if (!commands.has(command)) throw new Error('CLI_ARGUMENT_INVALID');
   const request = { command, action: 'preview' };
   const seen = new Set();
+  let explicitAction = false;
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (!flag.startsWith('--') || seen.has(flag)) throw new Error('CLI_ARGUMENT_INVALID');
     seen.add(flag);
     const name = flag.slice(2);
-    if (['preview', 'execute', 'readback'].includes(name)) {
-      if (seen.has('--preview') + seen.has('--execute') + seen.has('--readback') > 1 || command === 'doctor' && name !== 'preview') throw new Error('CLI_ARGUMENT_INVALID');
+    if (['preview', 'execute', 'readback', 'check-session'].includes(name)) {
+      if (explicitAction || command === 'doctor' && name !== 'preview' ||
+        name === 'check-session' && command !== 'install') throw new Error('CLI_ARGUMENT_INVALID');
+      explicitAction = true;
       request.action = name;
       continue;
     }
@@ -108,7 +111,9 @@ export function parseArguments(argv) {
     if (request.mode !== undefined && request.mode !== 'drill') throw new Error('CLI_ARGUMENT_INVALID');
     request.mode = 'drill';
   }
-  if (request.action !== 'preview' && !request.operation) throw new Error('CLI_ARGUMENT_INVALID');
+  if (request.action === 'check-session') {
+    if (!request.release || request.operation) throw new Error('CLI_ARGUMENT_INVALID');
+  } else if (request.action !== 'preview' && !request.operation) throw new Error('CLI_ARGUMENT_INVALID');
   return Object.freeze(request);
 }
 function response(request, status, code, nextStep, extra = {}) {
@@ -194,7 +199,8 @@ export function createPatrickCli(host, checkLiveStorage) {
       ? host?.backupReadback : undefined;
     const readbackTargets = enrolledReadback?.targets;
     const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
-    const installOperations = request.command === 'install' && request.action !== 'preview' ? host?.installOperations : undefined;
+    const installOperations = request.command === 'install' && ['execute', 'readback'].includes(request.action)
+      ? host?.installOperations : undefined;
     const installSelected = installOperations && Object.hasOwn(installOperations, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
@@ -278,7 +284,11 @@ export function createPatrickCli(host, checkLiveStorage) {
     }
     const installs = request.command === 'install' && request.release !== undefined
       ? host.installPreviews : undefined;
-    if (installSelected || request.action === 'preview' && installs && Object.hasOwn(installs, request.release)) {
+    const installEnrolled = installs && Object.hasOwn(installs, request.release);
+    const checkSession = request.action === 'check-session';
+    if (checkSession && !installEnrolled) return response(request, 'unavailable', 'INSTALL_SESSION_ENROLLMENT_REQUIRED',
+      'Provision the exact install plan and session credential through the registered controller.', context);
+    if (installSelected || (request.action === 'preview' || checkSession) && installEnrolled) {
       if (request.action === 'preview' && request.operation !== undefined) return response(request, 'invalid', 'CLI_ARGUMENT_INVALID',
         'Use install --release ID to preview this registration.');
       const enrollment = installs && Object.getOwnPropertyDescriptor(installs, request.release)?.value;
@@ -337,18 +347,29 @@ export function createPatrickCli(host, checkLiveStorage) {
       }
       // Only the specific module installed by trusted provisioning can select this route.
       // Never execute a function selected by registration, command input or candidate contents.
-      if (host.runtime?.previewFirstInstall !== previewFirstInstall) return response(request, 'unavailable',
-        'INSTALL_PREVIEW_RUNTIME_REQUIRED', 'Provision the registered controller with its first-install verifier.', context);
-      const result = await previewFirstInstall(() => { validate(); return enrollment; }, request.release);
+      const probe = checkSession ? observeInstallSession : previewFirstInstall;
+      const registeredProbe = checkSession ? hostBinding.value.runtime?.observeInstallSession : hostBinding.value.runtime?.previewFirstInstall;
+      if (registeredProbe !== probe) return response(request, 'unavailable',
+        checkSession ? 'INSTALL_SESSION_RUNTIME_REQUIRED' : 'INSTALL_PREVIEW_RUNTIME_REQUIRED',
+        'Provision the registered controller with its first-install verifier.', context);
+      const result = await probe(() => { validate(); return enrollment; }, request.release);
       validate();
       if (result.status === 'blocked') return response(request, 'blocked', result.code,
         'Inspect the registered release and physical installation prerequisites.', context);
       const { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
         volumes, outstanding, activationAuthorized, delegationAuthorized } = result;
+      const report = { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
+        volumes, outstanding, activationAuthorized, delegationAuthorized };
+      if (result.status === 'session-observed') {
+        const { credentialBindingSha256, observed } = result;
+        return response(request, 'completed', 'INSTALL_SESSION_OBSERVED',
+          'Retain the session observation and verify schema bootstrap and owner passkey enrollment.', {
+            ...context, installSession: { ...report, credentialBindingSha256, observed },
+          });
+      }
       return response(request, 'preview', 'INSTALL_BOOTSTRAP_PREVIEW',
         'Retain the plan digest and complete the outstanding bootstrap checks through the enrolled controller.', {
-          ...context, installPreview: { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
-            volumes, outstanding, activationAuthorized, delegationAuthorized },
+          ...context, installPreview: report,
         });
     }
     if (['install', 'upgrade'].includes(request.command)) {

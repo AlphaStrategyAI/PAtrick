@@ -1,6 +1,6 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
-import { previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
+import { observeInstallSession, previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
 export { installReleaseApproval } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -992,6 +992,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
       createRecoveryBackupReader,
       createLifecycleJournalReader,
       previewFirstInstall,
+      observeInstallSession,
       runFirstInstallRelease,
       selectVaultInit,
       createNetworkInspector,

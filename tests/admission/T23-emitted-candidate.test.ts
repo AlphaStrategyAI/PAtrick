@@ -1,7 +1,8 @@
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:https';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
@@ -565,7 +566,7 @@ async function promotionHost(label: string) {
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
 
-test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async () => {
+test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
   const instanceRoot = join(dir, 'first-install-cli');
   await mkdir(instanceRoot, { mode: 0o700 });
   const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
@@ -581,7 +582,27 @@ test('first-install CLI publishes only the approved release and reads back the s
   const { expected, policy } = complete;
   await cp(complete.packagePath, join(instanceRoot, 'packages', expected.packageSha256 + '.json'));
   const identity = { accountId: 'owner', scopeId: 'workspace', deviceId: 'darwin', domains: ['personal'], configRevision: 'r1' };
-  const origin = registration.origin;
+  const certificate = join(dir, 'install-session.pem');
+  const privateKey = join(dir, 'install-session.key');
+  child(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', privateKey,
+    '-out', certificate, '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], dir, '/usr/bin/openssl');
+  const ca = await readFile(certificate, 'utf8');
+  const bearer = randomBytes(32).toString('hex');
+  let requests = 0;
+  const endpoint = createServer({ cert: ca, key: await readFile(privateKey) }, (request, response) => {
+    requests++;
+    if (request.url !== '/api/v1/session' || request.method !== 'GET' || request.headers.authorization !== 'Bearer ' + bearer) {
+      response.writeHead(401).end();
+      return;
+    }
+    response.end(JSON.stringify({ schema_version: '1.0', scope: { account_id: identity.accountId, permission_epoch: 1, data_domain: 'personal' },
+      data: { account_id: identity.accountId, caller_id: 'web', auth_epoch: 1, domains: identity.domains } }));
+  });
+  await new Promise<void>((resolve, reject) => { endpoint.once('error', reject); endpoint.listen(0, '127.0.0.1', resolve); });
+  onTestFinished(() => new Promise<void>((resolve, reject) => endpoint.close(error => error ? reject(error) : resolve())));
+  const address = endpoint.address();
+  if (!address || typeof address === 'string') throw new Error('fixture endpoint missing');
+  const origin = 'https://localhost:' + address.port;
   const uid = process.geteuid!();
   const captureHost = hostname();
   const node = await realpath(process.execPath);
@@ -591,10 +612,11 @@ test('first-install CLI publishes only the approved release and reads back the s
     installationId: 'first-install', releaseId: 'release', identity, hostname: captureHost, uid, root: instanceRoot,
     rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
     expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
-    deployment: { ...registration, instanceRoot, certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
+    deployment: { ...registration, instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
+      certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
       keyPath: join(instanceRoot, 'caddy/trust', 'key.ref') },
     templates: Object.fromEntries(await Promise.all(Object.entries(deploymentPaths).map(async ([role, path]) => [role, await readFile(join(root, path), 'utf8')]))),
-    tls: { rpId: new URL(origin).hostname, caSha256: digest },
+    tls: { rpId: new URL(origin).hostname, caSha256: sha256(Buffer.from(ca)) },
     owner: { withExclusiveReadRoot<T>(read: (path: string) => Promise<T>) {
       const run = queue.then(async () => {
         const result = await read(instanceRoot);
@@ -611,7 +633,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   const installOperations: Record<string, InstallReleaseEnrollment> = {};
   const provisioning = createRuntimeProvisioning({
     registration: { identity, captureHost, serviceUid: uid, minimumFreeBytes: 1, dataRoot: join(instanceRoot, 'data'),
-      profile: 'test', origin, rpId: enrollment.tls.rpId, listener: { ...registration.listener, origin } },
+      profile: 'test', origin, rpId: enrollment.tls.rpId, listener: { ...enrollment.deployment.listener, origin } },
     hostCapabilities: { installPreviews: { release: enrollment }, installOperations },
     service: { databasePath: join(instanceRoot, 'data', 'service.sqlite'), credentialDirectory: join(instanceRoot, 'credentials'),
       recoveryRuntime: { attach() { throw new Error('unexpected runtime start'); } },
@@ -715,6 +737,21 @@ test('first-install CLI publishes only the approved release and reads back the s
   const selection = canonicalize({ order, signature: sign(null, bytes(order), generationKey.privateKey).toString('base64') });
   await expect(store.select(selection)).resolves.toMatchObject({ current: { order }, pending: null });
   await expect(store.observe('select-first')).resolves.toMatchObject({ current: { order }, historical: { order }, pending: null });
+  expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
+
+  expect(requests).toBe(0);
+  enrollment.session = { bootstrapPlanSha256: planSha256, ca, callerId: 'web', authEpoch: 1, credentialRevision: 'local-fixture',
+    readBearer: async () => bearer };
+  const checkSession = () => cli.run([...args, '--check-session']);
+  const session = await checkSession();
+  expect(session).toMatchObject({ action: 'check-session', status: 'completed', code: 'INSTALL_SESSION_OBSERVED',
+    installSession: { phase: 'authenticated-session', planSha256, observed: ['fixed-origin-tls', 'authenticated-session'],
+      outstanding: ['schema-bootstrap', 'owner-passkey'], activationAuthorized: false, delegationAuthorized: false } });
+  for (const privateValue of [bearer, ca, origin, instanceRoot]) expect(JSON.stringify(session)).not.toContain(privateValue);
+  expect(requests).toBe(1);
+  enrollment.session = { ...enrollment.session, authEpoch: 2 };
+  expect(await checkSession()).toMatchObject({ status: 'blocked', code: 'INSTALL_PREVIEW_SESSION' });
+  expect(requests).toBe(2);
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
   await writeFile(join(published, 'extra-file'), 'modified');

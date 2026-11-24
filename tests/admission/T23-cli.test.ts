@@ -75,7 +75,16 @@ test.each([
   ['doctor', '--execute'], ['backup', '--target', 'target', '--target', 'other'],
   ['install', '--release', '../path'], ['init', '--module', 'evil'], ['start', '--execute'],
   ['backup', '--manifest', '0'.repeat(64)], ['doctor', '--operation', 'op'],
+  ['install', '--check-session'], ['upgrade', '--release', 'release', '--check-session'],
+  ['install', '--release', 'release', '--check-session', '--operation', 'op'],
+  ['install', '--release', 'release', '--check-session', '--readback'],
 ])('strict parser refuses %j', (...args) => { expect(() => parseArguments(args)).toThrow('CLI_ARGUMENT_INVALID'); });
+test('install session check requires a registered preview and never falls back to a source candidate', async () => {
+  const fixtureHost = fixture();
+  const args = ['install', '--release', 'release', '--check-session'];
+  expect(parseArguments(args)).toEqual({ command: 'install', action: 'check-session', release: 'release' });
+  expect(await fixtureHost.cli().run(args)).toMatchObject({ status: 'unavailable', code: 'INSTALL_SESSION_ENROLLMENT_REQUIRED' });
+});
 test('actual recovery backup previews without reservation then survives fresh CLI same-ID replay', async () => {
   const f = fixture();
   expect(await f.cli().run(['backup', '--target', 'target'])).toMatchObject({ status: 'preview', identity: f.host.identity });
