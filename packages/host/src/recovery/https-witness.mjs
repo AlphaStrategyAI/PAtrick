@@ -69,15 +69,33 @@ function permits(current, next, writerId) {
 
 export function openRecoveryWitnessStore(path, { create = false } = {}) {
   const database = openAuthorityStore(path, { create, check,
-    schema: 'CREATE TABLE witness_domains (domain TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL) STRICT',
+    schema: 'CREATE TABLE witness_domains_v2 (domain TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL) STRICT',
   });
   try {
-    const select = database.prepare('SELECT revision, record FROM witness_domains WHERE domain = ?');
-    const insert = database.prepare('INSERT INTO witness_domains (domain, revision, record) VALUES (?, ?, ?)');
-    const compare = database.prepare('UPDATE witness_domains SET record = ?, revision = ? WHERE domain = ? AND revision = ?');
-    database.exec('CREATE TABLE IF NOT EXISTS witness_withdrawal_authority (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL) STRICT');
-    const logIdentity = database.prepare('SELECT identity FROM witness_withdrawal_authority WHERE singleton = 1');
-    const bindLog = database.prepare('INSERT INTO witness_withdrawal_authority VALUES (1, ?)');
+    immediate(() => {
+      const hasLegacyTable = database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'witness_domains'").get();
+      if (hasLegacyTable) database.exec('ALTER TABLE witness_domains RENAME TO witness_domains_v2');
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS witness_withdrawal_authority (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL, physical_file TEXT
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS witness_pending_withdrawals (
+          domain TEXT PRIMARY KEY, sequence INTEGER NOT NULL, hash TEXT NOT NULL
+        ) STRICT;
+      `);
+      const columns = database.prepare('PRAGMA table_info(witness_withdrawal_authority)').all();
+      if (!columns.some(column => column.name === 'physical_file')) {
+        database.exec('ALTER TABLE witness_withdrawal_authority ADD COLUMN physical_file TEXT');
+      }
+    });
+    const select = database.prepare('SELECT revision, record FROM witness_domains_v2 WHERE domain = ?');
+    const insert = database.prepare('INSERT INTO witness_domains_v2 (domain, revision, record) VALUES (?, ?, ?)');
+    const compare = database.prepare('UPDATE witness_domains_v2 SET record = ?, revision = ? WHERE domain = ? AND revision = ?');
+    const logBinding = database.prepare('SELECT identity, physical_file FROM witness_withdrawal_authority WHERE singleton = 1');
+    const bindLog = database.prepare('INSERT INTO witness_withdrawal_authority VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET physical_file = excluded.physical_file');
+    const readPending = database.prepare('SELECT sequence, hash FROM witness_pending_withdrawals WHERE domain = ?');
+    const reserve = database.prepare('INSERT INTO witness_pending_withdrawals VALUES (?, ?, ?)');
+    const confirm = database.prepare('DELETE FROM witness_pending_withdrawals WHERE domain = ?');
     function read(domain) {
       const row = select.get(domain);
       if (!row) return undefined;
@@ -97,24 +115,50 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
       }
     }
     function logMatches(log) {
-      return logIdentity.get()?.identity === log?.identity;
+      const binding = logBinding.get();
+      return binding ? binding.identity === log?.identity && binding.physical_file === log.fileIdentity : log === undefined;
+    }
+    function withdrawalAllows(current, next, log) {
+      if (!log || current.state !== 'open') return true;
+      const nextSeq = current.withdrawal.seq + 1;
+      const pending = readPending.get(current.domain);
+      if (next.state === 'sealed') return !pending && !log.pendingHash(current.domain, nextSeq, current.writerEpoch);
+      if (!pending || pending.sequence !== nextSeq || pending.hash !== next.withdrawal.hash) return false;
+      const entry = log.read(next.domain, nextSeq, next.withdrawal.hash);
+      return entry?.writerEpoch === current.writerEpoch && entry.previousHash === current.withdrawal.hash;
     }
     return Object.freeze({
       read,
       configureWithdrawals(log, domains) {
         immediate(() => {
-          const enrolled = logIdentity.get()?.identity;
-          if (enrolled !== undefined) check(logMatches(log), 'WITHDRAWAL_STORE_MISMATCH');
+          const enrolled = logBinding.get();
+          if (enrolled) check(enrolled.identity === log?.identity &&
+            (enrolled.physical_file === null || enrolled.physical_file === log.fileIdentity), 'WITHDRAWAL_STORE_MISMATCH');
+          if (log) check(matches(token, log.identity) && matches(/^\d+:\d+$/, log.fileIdentity), 'WITHDRAWAL_STORE_MISMATCH');
           for (const domain of domains) {
             const record = read(domain);
             check(record, 'DOMAIN_NOT_INITIALIZED');
+            if (!log) continue;
             const { seq, hash } = record.withdrawal;
-            if (log && seq > 0 && !log.read(domain, seq, hash)) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
+            let expectedHash = hash;
+            for (let cursor = seq; cursor > 0; cursor--) {
+              const entry = log.read(domain, cursor, expectedHash);
+              if (!entry) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
+              expectedHash = entry.previousHash;
+            }
+            if (expectedHash !== emptyWithdrawalHash) throw new Error('RECOVERY_WITHDRAWAL_HEAD_MISSING');
+            const pending = readPending.get(domain);
+            const nextHash = log.pendingHash(domain, seq + 1, record.writerEpoch);
+            check(!pending || (record.state === 'open' && pending.sequence === seq + 1 &&
+              (nextHash === undefined || pending.hash === nextHash)), 'WITHDRAWAL_PENDING_MISMATCH');
+            if (nextHash !== undefined) {
+              const next = log.read(domain, seq + 1, nextHash);
+              check(record.state === 'open' && next?.writerEpoch === record.writerEpoch &&
+                next.previousHash === hash, 'WITHDRAWAL_PENDING_MISMATCH');
+              if (!pending) reserve.run(domain, seq + 1, nextHash);
+            }
           }
-          if (log && enrolled === undefined) {
-            check(matches(token, log.identity), 'WITHDRAWAL_STORE_MISMATCH');
-            bindLog.run(log.identity);
-          }
+          if (log && enrolled?.physical_file == null) bindLog.run(log.identity, log.fileIdentity);
         });
       },
       initialize(record) {
@@ -133,13 +177,15 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
           if (!current || !writerId) return 'denied';
           if (current.revision !== revision) return 'conflict';
           if (!permits(current, next, writerId) || !withdrawalAllows(current, next, withdrawalStore)) return 'denied';
-          return compare.run(JSON.stringify(next), randomUUID(), domain, revision).changes === 1 ? 'applied' : 'conflict';
+          if (compare.run(JSON.stringify(next), randomUUID(), domain, revision).changes !== 1) return 'conflict';
+          if (next.withdrawal.seq > current.withdrawal.seq) confirm.run(domain);
+          return 'applied';
         });
       },
       appendWithdrawal(entry, writerId, log) {
         if (!encodeWithdrawal(entry)) return 'invalid';
         const { domain, seq, hash, writerEpoch, previousHash } = entry;
-        return immediate(() => {
+        const result = immediate(() => {
           if (!logMatches(log)) return 'denied';
           const current = read(domain);
           if (current?.state !== 'open' || current.writerId !== writerId || current.writerEpoch !== writerEpoch) return 'denied';
@@ -147,8 +193,15 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
             return log.read(domain, seq, hash) ? 'applied' : 'conflict';
           }
           if (seq !== current.withdrawal.seq + 1 || previousHash !== current.withdrawal.hash) return 'conflict';
-          return log.append(entry) ? 'applied' : 'conflict';
+          const pending = readPending.get(domain);
+          if (pending) return pending.sequence === seq && pending.hash === hash ? 'reserved' : 'conflict';
+          const loggedHash = log.pendingHash(domain, seq, writerEpoch);
+          if (loggedHash !== hash && (loggedHash !== undefined || log.hasEvent(domain, entry.event.eventId))) return 'conflict';
+          reserve.run(domain, seq, hash);
+          return 'reserved';
         });
+        if (result !== 'reserved') return result;
+        return log.append(entry) ? 'applied' : 'conflict';
       },
       close() { database.close(); },
     });
@@ -156,14 +209,6 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
     database.close();
     throw error;
   }
-}
-
-function withdrawalAllows(current, next, log) {
-  if (!log || current.state !== 'open') return true;
-  const nextSeq = current.withdrawal.seq + 1;
-  if (next.state === 'sealed') return !log.hasPending(current.domain, nextSeq, current.writerEpoch);
-  const entry = log.read(next.domain, nextSeq, next.withdrawal.hash);
-  return entry?.writerEpoch === current.writerEpoch && entry.previousHash === current.withdrawal.hash;
 }
 
 async function readBody(stream, limit = maxBody) {

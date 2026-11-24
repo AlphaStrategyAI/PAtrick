@@ -2,9 +2,11 @@ import type { WithdrawalEntry } from './types.js';
 
 export type RecoveryWithdrawalStore = Readonly<{
   identity: string;
+  fileIdentity: string;
   read(domain: string, seq: number, hash: string): WithdrawalEntry | undefined;
   append(entry: WithdrawalEntry): boolean;
-  hasPending(domain: string, seq: number, writerEpoch: string): boolean;
+  pendingHash(domain: string, seq: number, writerEpoch: string): string | undefined;
+  hasEvent(domain: string, eventId: string): boolean;
   close(): void;
 }>;
 

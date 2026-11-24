@@ -42,11 +42,15 @@ RecoverySet 使用独立注入的签名端口签出 manifest。恢复验证签�
 
 ### 登记独立撤回日志
 
-有序交接时，在见证主机执行 `node scripts/recovery-witness.mjs initialize-log LOG_STORE`，并在 `CONFIG` 的 `withdrawalStore` 字段登记该 SQLite 文件的绝对物理路径。见证控制记录和撤回事件分别写入各自的数据库。日志文件使用同一套服务账户、物理目录和文件权限检查。已有撤回水位的部署启用日志前须保留对应的完整历史。首次启动会在见证库登记日志身份。此后遗漏日志配置、日志文件缺失、身份不符或无法读回见证水位都会阻止启动。
+有序交接时，在见证主机执行 `node scripts/recovery-witness.mjs initialize-log LOG_STORE`，并在 `CONFIG` 的 `withdrawalStore` 字段登记该 SQLite 文件的绝对物理路径。见证控制记录和撤回事件分别写入各自的数据库。日志文件使用同一套服务账户、物理目录和文件权限检查。已有撤回水位的部署启用日志前须保留对应的完整历史。启动时校验从见证水位回溯到创世记录的哈希链。登记同时绑定日志 UUID、设备号和 inode。遗漏日志配置、换用副本或缺失链条都会阻止启动。
 
-为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。水位 CAS 先核对持久化事件的序号、摘要及前一条哈希。当前 epoch 尚有已追加待确认的事件时，见证拒绝封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
+为有权访问撤回事件的客户端配置 `withdrawals: true`。客户端从 `@patrick/host/recovery/https-witness` 导入 `createHttpsRecoveryWithdrawalLogPort`，使用已登记的 HTTPS 身份，将端口交给 `createRecoveryWithdrawalJournal` 和恢复器。追加由客户端证书登记的资料域、当前写者和 epoch 共同授权。见证先持久化待确认项的序号及摘要，再追加日志。水位 CAS 核对日志条目并在同一事务内清除待确认项。追加中断后，重启仍保留该项并拒绝封存。由当前写者重放同一条目并推进水位后，才可重新申请封存。恢复端以见证提供的水位为起点读完哈希链，再校验备份水位和恢复范围。
+
+升级前停止该权威的所有旧版见证进程，保留原见证库与当前登记的日志库。新版启动会迁移见证表并阻止旧版访问，同时登记旧日志中已落地、待确认的条目。启动失败时保持权威停止，使用原库修正配置后再运行新版。迁移后的库只支持新版二进制。切换后产生写入时，恢复旧快照需先核对并保全这些写入。
 
 本机恢复套件通过 386 项。双向 TLS 演练从签名 RecoverySet 恢复，在隔离库读回并补齐备份后产生的 18 条撤回，核对飞书需重新授权且外部写入为零。测试还覆盖独立进程内的持久化、见证封存、跨 epoch 接续，以及日志缺失或更换时的拒绝。登记主机部署和实测 RPO/RTO 待验收。
+
+加固后的恢复套件通过 389 项。新增用例覆盖写入中断后重启与重试、拒绝同 UUID 的日志副本，以及旧版见证表迁移与完整链条核验。
 
 ## 可选加密离机备份端口
 

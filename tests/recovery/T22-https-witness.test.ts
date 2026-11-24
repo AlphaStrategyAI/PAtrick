@@ -1,7 +1,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign, verify, X509Certificate } from 'node:crypto';
 import { once } from 'node:events';
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,6 +87,88 @@ function entry(seq: number, previousHash: string, writerEpoch: string = initial.
   };
   return { ...payload, hash: withdrawalEntryHash(payload) };
 }
+
+test('an interrupted withdrawal append blocks sealing across restarts until the same entry is reconciled', () => {
+  const witnessPath = join(root, 'interrupted-append-witness.sqlite');
+  const logPath = join(root, 'interrupted-append-log.sqlite');
+  const store = openRecoveryWitnessStore(witnessPath, { create: true });
+  const log = openRecoveryWithdrawalStore(logPath, { create: true });
+  const pending = entry(1, emptyHash);
+  const { revision, ...registered } = store.initialize(initial);
+  try {
+    store.configureWithdrawals(log, ['personal']);
+    expect(() => store.appendWithdrawal(pending, 'primary', {
+      ...log, append() { throw new Error('FIXTURE_LOG_UNAVAILABLE'); },
+    })).toThrow('FIXTURE_LOG_UNAVAILABLE');
+  } finally { store.close(); log.close(); }
+
+  const reopened = openRecoveryWitnessStore(witnessPath);
+  const reopenedLog = openRecoveryWithdrawalStore(logPath);
+  try {
+    reopened.configureWithdrawals(reopenedLog, ['personal']);
+    expect(reopened.compareAndSwap('personal', revision, { ...registered, state: 'sealed', certificate }, 'primary', reopenedLog))
+      .toBe('denied');
+    expect(reopened.appendWithdrawal(entry(1, emptyHash, initial.writerEpoch, 'different-entry'), 'primary', reopenedLog))
+      .toBe('conflict');
+    expect(reopened.appendWithdrawal(pending, 'primary', reopenedLog)).toBe('applied');
+    const withdrawal = { seq: pending.seq, hash: pending.hash };
+    expect(reopened.compareAndSwap('personal', revision, { ...registered, withdrawal }, 'primary', reopenedLog)).toBe('applied');
+    const advanced = reopened.read('personal')!;
+    expect(reopened.compareAndSwap('personal', advanced.revision,
+      { ...registered, state: 'sealed', certificate, withdrawal }, 'primary', reopenedLog)).toBe('applied');
+  } finally { reopened.close(); reopenedLog.close(); }
+});
+
+test('enrollment keeps the live log database when a backup has the same logical identity', () => {
+  const witnessPath = join(root, 'enrolled-log-copy-witness.sqlite');
+  const logPath = join(root, 'enrolled-log-source.sqlite');
+  const copyPath = join(root, 'enrolled-log-copy.sqlite');
+  const store = openRecoveryWitnessStore(witnessPath, { create: true });
+  const log = openRecoveryWithdrawalStore(logPath, { create: true });
+  try {
+    store.initialize(initial);
+    store.configureWithdrawals(log, ['personal']);
+  } finally { store.close(); log.close(); }
+  copyFileSync(logPath, copyPath);
+  const reopened = openRecoveryWitnessStore(witnessPath);
+  const copy = openRecoveryWithdrawalStore(copyPath);
+  try {
+    expect(copy.identity).toBe(log.identity);
+    expect(() => reopened.configureWithdrawals(copy, ['personal'])).toThrow('RECOVERY_WITNESS_WITHDRAWAL_STORE_MISMATCH');
+  } finally { reopened.close(); copy.close(); }
+});
+
+test('upgrade fences pre-upgrade witness storage and validates the entire enrolled history', () => {
+  const witnessPath = join(root, 'legacy-witness.sqlite');
+  const log = openRecoveryWithdrawalStore(join(root, 'legacy-witness-log.sqlite'), { create: true });
+  const first = entry(1, emptyHash);
+  const second = entry(2, first.hash);
+  const third = entry(3, second.hash);
+  const current = { ...initial, withdrawal: { seq: second.seq, hash: second.hash } };
+  const legacy = new Database(witnessPath);
+  chmodSync(witnessPath, 0o600);
+  legacy.exec(`
+    CREATE TABLE witness_domains (domain TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL) STRICT;
+    CREATE TABLE witness_withdrawal_authority (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL) STRICT;
+  `);
+  legacy.prepare('INSERT INTO witness_domains VALUES (?, ?, ?)').run('personal', 'legacy-revision', JSON.stringify(current));
+  legacy.prepare('INSERT INTO witness_withdrawal_authority VALUES (1, ?)').run(log.identity);
+  const priorReader = legacy.prepare('SELECT record FROM witness_domains WHERE domain = ?');
+  const store = openRecoveryWitnessStore(witnessPath);
+  try {
+    expect(store.read('personal')?.revision).toBe('legacy-revision');
+    expect(() => priorReader.get('personal')).toThrow(/no such table/);
+    expect(log.append(second)).toBe(true);
+    expect(() => store.configureWithdrawals(log, ['personal'])).toThrow('RECOVERY_WITHDRAWAL_HEAD_MISSING');
+    expect(log.append(first)).toBe(true);
+    expect(log.append(third)).toBe(true);
+    store.configureWithdrawals(log, ['personal']);
+    expect(store.compareAndSwap('personal', 'legacy-revision', { ...current, state: 'sealed', certificate }, 'primary', log))
+      .toBe('denied');
+    expect(store.compareAndSwap('personal', 'legacy-revision',
+      { ...current, withdrawal: { seq: third.seq, hash: third.hash } }, 'primary', log)).toBe('applied');
+  } finally { store.close(); legacy.close(); log.close(); }
+});
 
 test('withdrawal readback persists across restart and gates witness updates and recovery across writer epochs', async () => {
   const witnessPath = join(root, 'withdrawal-witness.sqlite');

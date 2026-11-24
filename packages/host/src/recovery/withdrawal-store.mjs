@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { openAuthorityStore } from './authority-store.mjs';
 import { canonical, digest } from './files.ts';
 
@@ -51,7 +52,8 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
   ` });
   try {
     const select = database.prepare('SELECT entry_json FROM withdrawal_entries WHERE domain = ? AND sequence = ? AND entry_hash = ?');
-    const pending = database.prepare('SELECT 1 FROM withdrawal_entries WHERE domain = ? AND sequence = ? AND writer_epoch = ?');
+    const pending = database.prepare('SELECT entry_hash FROM withdrawal_entries WHERE domain = ? AND sequence = ? AND writer_epoch = ?');
+    const event = database.prepare('SELECT 1 FROM withdrawal_entries WHERE domain = ? AND event_id = ?');
     const insert = database.prepare('INSERT INTO withdrawal_entries VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING');
     if (create) {
       database.exec('CREATE TABLE IF NOT EXISTS withdrawal_store_identity (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), identity TEXT NOT NULL) STRICT');
@@ -59,6 +61,8 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
     }
     const identity = database.prepare('SELECT identity FROM withdrawal_store_identity WHERE singleton = 1').get()?.identity;
     check(matches(writerEpochPattern, identity), 'STORE_INVALID');
+    const file = lstatSync(path, { bigint: true });
+    const fileIdentity = `${file.dev}:${file.ino}`;
     function read(domain, seq, hash) {
       const row = select.get(domain, seq, hash);
       if (!row) return undefined;
@@ -68,6 +72,7 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
     }
     return Object.freeze({
       identity,
+      fileIdentity,
       read,
       append(entry) {
         const content = encodeWithdrawal(entry);
@@ -76,8 +81,11 @@ export function openRecoveryWithdrawalStore(path, { create = false } = {}) {
         const persisted = select.get(entry.domain, entry.seq, entry.hash);
         return persisted?.entry_json === content;
       },
-      hasPending(domain, seq, writerEpoch) {
-        return pending.get(domain, seq, writerEpoch) !== undefined;
+      pendingHash(domain, seq, writerEpoch) {
+        return pending.get(domain, seq, writerEpoch)?.entry_hash;
+      },
+      hasEvent(domain, eventId) {
+        return event.get(domain, eventId) !== undefined;
       },
       close() { database.close(); },
     });
