@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { hostname } from 'node:os';
 import { doctor, sameIdentity, bindRegistration, bindHostRegistration, projectIdentity } from '../lib/doctor.mjs';
-import { bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
+import { bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession, prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease } from '../runtime/install-preview.ts';
 import { verifyRelease } from '../lib/release.mjs';
 import { leased } from '../lib/emitted-release.mjs';
 
@@ -95,9 +95,9 @@ export function parseArguments(argv) {
     if (!flag.startsWith('--') || seen.has(flag)) throw new Error('CLI_ARGUMENT_INVALID');
     seen.add(flag);
     const name = flag.slice(2);
-    if (['preview', 'execute', 'readback', 'check-session'].includes(name)) {
+    if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation'].includes(name)) {
       if (explicitAction || command === 'doctor' && name !== 'preview' ||
-        name === 'check-session' && command !== 'install') throw new Error('CLI_ARGUMENT_INVALID');
+        ['check-session', 'prepare-generation'].includes(name) && command !== 'install') throw new Error('CLI_ARGUMENT_INVALID');
       explicitAction = true;
       request.action = name;
       continue;
@@ -114,6 +114,7 @@ export function parseArguments(argv) {
   if (request.action === 'check-session') {
     if (!request.release || request.operation) throw new Error('CLI_ARGUMENT_INVALID');
   } else if (request.action !== 'preview' && !request.operation) throw new Error('CLI_ARGUMENT_INVALID');
+  if (request.action === 'prepare-generation' && !request.release) throw new Error('CLI_ARGUMENT_INVALID');
   return Object.freeze(request);
 }
 function response(request, status, code, nextStep, extra = {}) {
@@ -199,7 +200,8 @@ export function createPatrickCli(host, checkLiveStorage) {
       ? host?.backupReadback : undefined;
     const readbackTargets = enrolledReadback?.targets;
     const coldTargetSelected = readbackTargets && Object.hasOwn(readbackTargets, request.target);
-    const installOperations = request.command === 'install' && ['execute', 'readback'].includes(request.action)
+    const prepareGeneration = request.action === 'prepare-generation';
+    const installOperations = request.command === 'install' && ['execute', 'readback', 'prepare-generation'].includes(request.action)
       ? host?.installOperations : undefined;
     const installSelected = installOperations && Object.hasOwn(installOperations, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
@@ -286,6 +288,8 @@ export function createPatrickCli(host, checkLiveStorage) {
       ? host.installPreviews : undefined;
     const installEnrolled = installs && Object.hasOwn(installs, request.release);
     const checkSession = request.action === 'check-session';
+    if (prepareGeneration && (!installSelected || !installEnrolled)) return response(request, 'unavailable',
+      'INSTALL_GENERATION_ENROLLMENT_REQUIRED', 'Provision the release operation and first generation through the registered controller.', context);
     if (checkSession && !installEnrolled) return response(request, 'unavailable', 'INSTALL_SESSION_ENROLLMENT_REQUIRED',
       'Provision the exact install plan and session credential through the registered controller.', context);
     if (installSelected || (request.action === 'preview' || checkSession) && installEnrolled) {
@@ -329,6 +333,31 @@ export function createPatrickCli(host, checkLiveStorage) {
           return signature;
         };
         const details = { ...context, operationId: request.operation };
+        if (prepareGeneration) {
+          if (!run.generation || hostBinding.value.runtime?.prepareFirstInstallGeneration !== prepareFirstInstallGeneration) {
+            return response(request, 'unavailable', 'INSTALL_GENERATION_ENROLLMENT_REQUIRED',
+              'Provision the fixed Autoloop kernel and first generation through the registered controller.', details);
+          }
+          try {
+            const generation = await prepareFirstInstallGeneration(current, request.release, request.operation, run, validateOperation);
+            return response(request, 'completed', 'INSTALL_GENERATION_PREPARED',
+              'Retain the generation evidence and complete the remaining bootstrap checks.', {
+                ...details, generationId: generation.id,
+                prerequisites: installBootstrapRequirements.filter(requirement => requirement !== 'schema-bootstrap'),
+              });
+          } catch (error) {
+            if (error instanceof Error && error.message === 'INSTALL_GENERATION_SIGNER_REQUIRED') {
+              return response(request, 'unavailable', 'INSTALL_GENERATION_SIGNER_REQUIRED',
+                'Provision the enrolled journal signer to prepare the first generation.', details);
+            }
+            if (error instanceof Error && error.message === 'INSTALL_GENERATION_INTERRUPTED') {
+              return response(request, 'uncertain', 'INSTALL_GENERATION_INTERRUPTED',
+                'Read back the same generation and inspect any incomplete staging directory through the controller.', details);
+            }
+            return response(request, 'blocked', 'INSTALL_GENERATION_ADMISSION_FAILED',
+              'Inspect the authenticated release publication, kernel source and generation layout.', details);
+          }
+        }
         let result;
         try {
           validateOperation();
@@ -357,8 +386,9 @@ export function createPatrickCli(host, checkLiveStorage) {
       if (result.status === 'blocked') return response(request, 'blocked', result.code,
         'Inspect the registered release and physical installation prerequisites.', context);
       const { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
-        volumes, outstanding, activationAuthorized, delegationAuthorized } = result;
+        firstGenerationId, volumes, outstanding, activationAuthorized, delegationAuthorized } = result;
       const report = { phase, installationId, releaseId, packageSha256, planSha256, activeSchema, targetSchema,
+        ...(firstGenerationId === undefined ? {} : { firstGenerationId }),
         volumes, outstanding, activationAuthorized, delegationAuthorized };
       if (result.status === 'session-observed') {
         const { credentialBindingSha256, observed } = result;

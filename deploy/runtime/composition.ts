@@ -1,7 +1,7 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
-import { observeInstallSession, previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
-export { installReleaseApproval } from './install-preview.js';
+import { observeInstallSession, prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease } from './install-preview.js';
+export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -996,6 +996,7 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
       createLifecycleJournalReader,
       previewFirstInstall,
       observeInstallSession,
+      prepareFirstInstallGeneration,
       runFirstInstallRelease,
       selectVaultInit,
       createNetworkInspector,

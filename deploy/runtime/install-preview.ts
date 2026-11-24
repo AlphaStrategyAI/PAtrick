@@ -1,15 +1,20 @@
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
-import { accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, opendirSync, realpathSync, statfsSync } from 'node:fs';
+import { accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync,
+  readFileSync, realpathSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
+import { stripTypeScriptTypes } from 'node:module';
 import { hostname, machine } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { GenerationNode } from './lifecycle-generation.js';
+import { DatabaseSync } from 'node:sqlite';
+import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
+import { openDatabase } from '@patrick/storage';
+import type { GenerationNode, InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
   deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
-  type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
+  type AdmittedDeployment, type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
 } from '../lib/emitted-release.mjs';
 import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { createLifecycleJournal, createLifecycleJournalReader, lifecycleRecordName,
@@ -30,6 +35,7 @@ export type InstallPreviewEnrollment = {
   root: string; rootNode: GenerationNode; stores: Record<Store, GenerationNode>; owner: ExclusiveRuntimeStaging;
   node: { path: string; sha256: string }; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
   targetSchema: number; reserveBytes: Record<Budget, number>;
+  firstGenerationId?: string;
   deployment: DeploymentRegistration; templates: Record<'caddy' | 'service' | 'hub' | 'worker', string>;
   tls: { rpId: string; caSha256: string };
   session?: { bootstrapPlanSha256: string; ca: string; callerId: string; authEpoch: number; credentialRevision: string;
@@ -41,9 +47,11 @@ const bootstrapRequirements = installBootstrapRequirements;
 export type InstallReleaseEnrollment = {
   releaseId: string; planSha256: string; journalPublicKey: string; journalKeyId: string; approvalPublicKey: string;
   approval?: string; signJournal?(bytes: Uint8Array): Promise<string>;
+  generation?: { id: string; kernelPath?: string };
 };
 type LocalPlan = {
   installationId: string; releaseId: string; packageSha256: string; planSha256: string;
+  firstGenerationId?: string;
   activeSchema: number; targetSchema: number; volumes: { roles: Budget[]; requiredBytes: string }[];
   activationAuthorized: false; delegationAuthorized: false;
 };
@@ -237,6 +245,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
   }
   const data = dataFields(original, ['installationId', 'releaseId', 'identity', 'hostname', 'uid', 'root', 'rootNode',
     'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
+  const firstGenerationId = field(original, 'firstGenerationId', true);
   const owner = field(original, 'owner');
   trackPrototype(owner);
   requireFact(typeof field(owner, 'withExclusiveReadRoot') === 'function');
@@ -249,7 +258,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     requireFact(typeof readBearer === 'function');
     credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
   }
-  const value: InstallPreviewEnrollment = { ...data, session: credential, owner };
+  const value: InstallPreviewEnrollment = { ...data, firstGenerationId, session: credential, owner };
   function validate() {
     requireFact(current() === original);
     for (const check of checks) check();
@@ -348,11 +357,13 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
   const identity = projectIdentity(e.identity);
   identity.domains.sort();
   const { installationId, releaseId } = e;
+  requireFact(e.firstGenerationId === undefined || id(e.firstGenerationId));
   const planSha256 = digest({ format: 'patrick-first-install-preview-v2', installationId, releaseId,
     identity, uid: e.uid, hostname: e.hostname, node: e.node, root: e.root, rootNode: e.rootNode, stores: e.stores,
     policy: e.policy, expected: e.expected, manifestSha256: receipt.manifestSha256, targetSchema: e.targetSchema,
     reserveBytes: e.reserveBytes, volumes, deployment: e.deployment, renderedSha256: digest(rendered), descriptors,
-    required: bootstrapRequirements, tls: e.tls });
+    required: bootstrapRequirements, tls: e.tls,
+    ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId, autoloopKernelSha256 }) });
   const confirm = () => {
     reportStage('LAYOUT');
     layout(e, lease.root, options.empty, options.history);
@@ -371,6 +382,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
   confirm();
   const local: LocalPlan = { installationId, releaseId, planSha256, packageSha256: receipt.packageSha256,
     activeSchema: e.expected.activeSchema, targetSchema: e.targetSchema, volumes,
+    ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId }),
     activationAuthorized: false, delegationAuthorized: false };
   return { local, staging, receipt, confirm };
 }
@@ -396,8 +408,16 @@ function verifyInstallSignature(publicKey: ReturnType<typeof installVerification
 export async function runFirstInstallRelease(current: Registry, releaseId: string, operationId: string,
   action: 'execute' | 'readback', operation: InstallReleaseEnrollment, validateOperation: () => void):
 Promise<LifecycleStatus | { status: 'approval-required' }> {
+  requireFact(action === 'execute' || action === 'readback');
+  return runInstallOperation(current, releaseId, operationId, action, operation, validateOperation);
+}
+
+async function runInstallOperation<T = never>(current: Registry, releaseId: string, operationId: string,
+  action: 'execute' | 'readback' | 'prepare-generation', operation: InstallReleaseEnrollment, validateOperation: () => void,
+  prepare?: (e: InstallPreviewEnrollment, release: AdmittedDeployment, guard: () => void) => Promise<T>):
+Promise<LifecycleStatus | { status: 'approval-required' } | T> {
   const { planSha256, journalKeyId, approval, signJournal } = operation;
-  requireFact((action === 'execute' || action === 'readback') && id(operationId) && id(journalKeyId) && operation.releaseId === releaseId &&
+  requireFact(id(operationId) && id(journalKeyId) && operation.releaseId === releaseId &&
     typeof planSha256 === 'string' && /^[0-9a-f]{64}$/.test(planSha256));
   const approvalKey = installVerificationKey(operation.approvalPublicKey);
   const journalKey = installVerificationKey(operation.journalPublicKey);
@@ -452,6 +472,14 @@ Promise<LifecycleStatus | { status: 'approval-required' }> {
       };
       const journalRegistration = () => { guard(); return registration; };
       const previous = await createLifecycleJournalReader(journalRegistration).read(req);
+      if (action === 'prepare-generation') {
+        requireFact(previous.status === 'completed' && prepare);
+        const checked = material ?? await inspect(false);
+        return withPublishedDeployment(checked.receipt, { staging: checked.staging, releasesRoot }, async release => {
+          checked.confirm();
+          return prepare(e, release, guard);
+        });
+      }
       if (action === 'readback' || previous.status === 'completed') return previous;
       requireFact(e.stores.history.device === e.stores.releases.device);
       const journal = createLifecycleJournal(journalRegistration, { sign: signJournal! });
@@ -478,6 +506,166 @@ Promise<LifecycleStatus | { status: 'approval-required' }> {
     });
   } catch (error) {
     if (attempted) return { status: 'running_or_uncertain' };
+    throw error;
+  }
+}
+
+const autoloopKernelSha256 = '3c0e567212af6939f43d570420f54091015900b7886ced793de373e488886116';
+const firstDatabases = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'] as const;
+const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
+const generationReceiptName = '.patrick-bootstrap.json';
+const interruptedGeneration = 'INSTALL_GENERATION_INTERRUPTED';
+
+function initialNode(path: string, uid: number, directory: boolean): GenerationNode {
+  const info = stat(path);
+  requireFact(realpathSync.native(path) === path && info.uid === BigInt(uid) &&
+    (info.mode & 0o7777n) === (directory ? 0o700n : 0o600n) &&
+    (directory ? info.isDirectory() : info.isFile() && info.nlink === 1n));
+  return { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) };
+}
+
+function configureInitialDatabases(root: string, migrationsDir: string, initializeHub: (database: DatabaseSync) => void) {
+  for (const name of firstDatabases) closeSync(openSync(join(root, name), 'wx', 0o600));
+  openDatabase(join(root, 'service.sqlite'), { migrationsDir }).close();
+  createLocalHubPort(join(root, 'answers.sqlite')).close();
+  const hub = new DatabaseSync(join(root, 'hub.sqlite'));
+  try { initializeHub(hub); } finally { hub.close(); }
+  for (const name of firstDatabases) {
+    const database = new DatabaseSync(join(root, name));
+    try { database.exec('PRAGMA journal_mode = DELETE'); } finally { database.close(); }
+  }
+}
+
+function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) {
+  const manifest = JSON.parse(readFileSync(join(migrationsDir, 'manifest.json'), 'utf8'));
+  for (const name of firstDatabases) {
+    const path = join(root, name);
+    initialNode(path, uid, false);
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      requireFact(database.prepare('PRAGMA integrity_check').get()?.integrity_check === 'ok' &&
+        database.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete');
+      if (name === 'service.sqlite') {
+        const history = database.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all()
+          .map(({ file, sha256 }) => ({ file, sha256 }));
+        requireFact(canonicalize(history) === canonicalize(manifest));
+        database.prepare('SELECT seq FROM domain_events LIMIT 0').all();
+      } else if (name === 'hub.sqlite') {
+        requireFact(!database.prepare('SELECT seq, fact FROM facts LIMIT 1').get());
+        database.prepare('SELECT id, seq, next, format FROM projection_meta LIMIT 0').all();
+        database.prepare('SELECT collection, key, data FROM projections LIMIT 0').all();
+        database.prepare('SELECT collection, key, seq FROM projection_refs LIMIT 0').all();
+        database.prepare('SELECT key, card_id, channel FROM projection_pending LIMIT 0').all();
+      } else {
+        requireFact(!database.prepare('SELECT question_id, card_id, body_json, answer_event_id FROM hub_answers LIMIT 1').get());
+      }
+    } finally { database.close(); }
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  }
+}
+
+async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void) {
+  exactDirectory(root, [...firstDatabases, ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
+  const roles = {} as InstalledGeneration['roles'];
+  const databaseSha256: Record<string, string> = {};
+  for (const name of firstDatabases) {
+    const path = join(root, name);
+    roles[name] = initialNode(path, uid, false);
+    databaseSha256[name] = sha256(await readRegularFile(path, 64 * 1024 * 1024, { root, validate: guard }));
+  }
+  for (const name of firstDirectories) {
+    const path = join(root, name);
+    roles[name] = initialNode(path, uid, true);
+    exactDirectory(path, []);
+    syncStore(path, roles[name], uid);
+  }
+  return { roles, databaseSha256 };
+}
+
+async function loadAutoloopInitializer(kernelPath: string, guard: () => void) {
+  const root = admitReadRoot(dirname(kernelPath));
+  const source = await readRegularFile(kernelPath, 64 * 1024, { root: root.root, validate() {
+    guard();
+    root.validate();
+  } });
+  if (sha256(source) !== autoloopKernelSha256) throw new Error('AUTOLOOP_BOOTSTRAP_SOURCE_INVALID');
+  const code = Buffer.from(stripTypeScriptTypes(source.toString('utf8'))).toString('base64');
+  const { initialize } = await import('data:text/javascript;base64,' + code) as { initialize(database: DatabaseSync): void };
+  guard();
+  return initialize;
+}
+
+export async function prepareFirstInstallGeneration(current: Registry, releaseId: string, operationId: string,
+  operation: InstallReleaseEnrollment, validateOperation: () => void): Promise<InstalledGeneration> {
+  validateOperation();
+  const generationId = operation.generation?.id;
+  const kernelPath = operation.generation?.kernelPath;
+  requireFact(typeof generationId === 'string' && id(generationId));
+  let writing = false;
+  try {
+    const prepared = await runInstallOperation(current, releaseId, operationId, 'prepare-generation', operation, validateOperation,
+      async (e, release, guard) => {
+        requireFact(e.firstGenerationId === generationId);
+        requireFact(!lstatSync(join(e.root, 'current'), { throwIfNoEntry: false }));
+        exactDirectory(join(e.root, 'history'), [
+          lifecycleRecordName(operationId, 'reservation'), lifecycleRecordName(operationId, 'claim'), lifecycleRecordName(operationId, 'terminal'),
+        ]);
+        const data = join(e.root, 'data');
+        const path = join(data, generationId);
+        const migrations = join(release.root, 'migrations');
+        const existing = lstatSync(path, { throwIfNoEntry: false });
+        const stagingPath = join(data, '.bootstrap-' + generationId);
+        if (lstatSync(stagingPath, { throwIfNoEntry: false })) throw new Error(interruptedGeneration);
+        exactDirectory(data, existing ? [generationId] : []);
+        const stage = existing ? path : stagingPath;
+        const journalKey = installVerificationKey(operation.journalPublicKey);
+        guard();
+        if (!existing) {
+          if (typeof operation.signJournal !== 'function') throw new Error('INSTALL_GENERATION_SIGNER_REQUIRED');
+          requireFact(typeof kernelPath === 'string');
+          const initialize = await loadAutoloopInitializer(kernelPath, guard);
+          const disk = statfsSync(data, { bigint: true });
+          requireFact(disk.bsize > 0n && disk.bavail * disk.bsize >= BigInt(e.reserveBytes.data));
+          writing = true;
+          mkdirSync(stage, { mode: 0o700 });
+          for (const name of firstDirectories) mkdirSync(join(stage, name), { mode: 0o700 });
+          configureInitialDatabases(stage, migrations, initialize);
+          verifyInitialSchemas(stage, migrations, e.uid);
+        }
+        const dataRoot = initialNode(stage, e.uid, true);
+        const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard);
+        const generation: InstalledGeneration = { id: generationId, schema: e.targetSchema, packageSha256: release.packageSha256,
+          dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true) };
+        const body = { format: 'patrick-first-generation-v1', operationId, planSha256: operation.planSha256, generation, databaseSha256 };
+        const payload = Buffer.from(canonicalize(body));
+        const receipt = join(stage, generationReceiptName);
+        if (existing) {
+          initialNode(receipt, e.uid, false);
+          const retained = await readRegularFile(receipt, 8192, { root: stage, validate: guard });
+          const { signature } = JSON.parse(retained.toString());
+          requireFact(verifyInstallSignature(journalKey, payload, signature) && retained.equals(Buffer.from(canonicalize({ body, signature }))));
+        } else {
+          const signature = await operation.signJournal!(payload);
+          guard();
+          requireFact(verifyInstallSignature(journalKey, payload, signature));
+          const fd = openSync(receipt, 'wx', 0o600);
+          try {
+            writeFileSync(fd, canonicalize({ body, signature }));
+            fsyncSync(fd);
+          } finally { closeSync(fd); }
+        }
+        syncStore(stage, dataRoot, e.uid);
+        guard();
+        if (!existing) renameSync(stage, path);
+        syncStore(data, e.stores.data, e.uid);
+        physical(path, dataRoot, e.uid);
+        return generation;
+      });
+    requireFact('id' in prepared);
+    return prepared;
+  } catch (error) {
+    if (writing) throw new Error(interruptedGeneration, { cause: error });
     throw error;
   }
 }

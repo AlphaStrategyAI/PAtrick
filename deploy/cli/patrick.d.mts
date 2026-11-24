@@ -4,7 +4,7 @@ import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
 export type CliRequest = Readonly<{
-  command: CliCommand; action: 'preview' | 'execute' | 'readback' | 'check-session'; operation?: string;
+  command: CliCommand; action: 'preview' | 'execute' | 'readback' | 'check-session' | 'prepare-generation'; operation?: string;
   target?: string; vault?: string; release?: string; manifest?: string; mode?: 'drill';
 }>;
 export type CliResult = {
@@ -14,7 +14,7 @@ export type CliResult = {
   manifestHash?: string; mode?: 'backup' | 'drill'; externalWrites?: number; checks?: Record<string, DoctorCheck>;
   installPreview?: Omit<Extract<InstallPreviewResult, { status: 'preview' }>, 'status'>;
   installSession?: Omit<Extract<InstallPreviewResult, { status: 'session-observed' }>, 'status'>;
-  operationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
+  operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };

@@ -7,6 +7,7 @@ import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
@@ -15,7 +16,7 @@ import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedRe
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import { createRuntimeProvisioning, prepareFirstInstallGeneration } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 
@@ -619,6 +620,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   let queue: Promise<unknown> = Promise.resolve();
   const enrollment: InstallPreviewEnrollment = {
     installationId: 'first-install', releaseId: 'release', identity, hostname: captureHost, uid, root: instanceRoot,
+    firstGenerationId: 'first-generation',
     rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
     expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
     deployment: { ...registration, instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
@@ -654,6 +656,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   const run = (action: string) => cli.run([...args, '--operation', operationId, '--' + action]);
   const preview = await cli.run(args);
   expect(preview.status, preview.code).toBe('preview');
+  expect(preview.installPreview?.firstGenerationId).toBe('first-generation');
   const planSha256 = preview.installPreview!.planSha256;
   const approve = (plan: string, id = operationId, key = approvals.privateKey) => sign(null, installReleaseApproval({
     installationId: enrollment.installationId, releaseId: 'release', planSha256: plan,
@@ -714,21 +717,80 @@ test('first-install CLI publishes only the approved release and reads back the s
   expect(await readdir(join(instanceRoot, 'lima'))).toEqual([]);
   expect(await records()).toHaveLength(3);
 
-  const generationKey = generateKeyPairSync('ed25519');
+  const prepare = (kernelPath: string | undefined, operationName = operationId, publication: InstallReleaseEnrollment = operation) =>
+    prepareFirstInstallGeneration(() => enrollment, 'release', operationName,
+      { ...publication, generation: { id: 'first-generation', kernelPath } }, () => {});
+  const wrongKernel = join(dir, 'wrong-kernel.ts');
+  await writeFile(wrongKernel, 'export function initialize() {}');
+  await expect(prepare(wrongKernel, operationId, { ...operation, ...signer })).rejects.toThrow('AUTOLOOP_BOOTSTRAP_SOURCE_INVALID');
+  expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
+  expect(await run('prepare-generation')).toMatchObject({ status: 'unavailable', code: 'INSTALL_GENERATION_ENROLLMENT_REQUIRED' });
+  const kernelPath = process.env.PATRICK_T23_AUTOLOOP_KERNEL;
   const dataRoot = join(instanceRoot, 'data', 'first-generation');
-  await mkdir(dataRoot, { mode: 0o700 });
-  const roles = Object.fromEntries(await Promise.all(
-    ['service.sqlite', 'hub.sqlite', 'answers.sqlite', 'credentials', 'blobs', 'projections'].map(async role => {
-      const path = join(dataRoot, role);
-      if (role.endsWith('.sqlite')) await writeFile(path, '', { mode: 0o600 });
-      else await mkdir(path, { mode: 0o700 });
-      return [role, await pin(path)];
-    }),
-  )) as InstalledGeneration['roles'];
-  const generation: InstalledGeneration = {
-    id: 'first-generation', schema: expected.activeSchema, packageSha256: expected.packageSha256,
-    releaseRoot: await pin(published), dataRoot: await pin(dataRoot), roles,
-  };
+  let generation: InstalledGeneration;
+  if (kernelPath) {
+    await expect(prepare(kernelPath, 'wrong-operation')).rejects.toThrow();
+    await expect(prepare(kernelPath, operationId, { ...operation, planSha256: '0'.repeat(64) })).rejects.toThrow();
+    expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
+    installOperations[operationId] = { ...operation, generation: { id: 'first-generation', kernelPath } };
+    expect(await run('prepare-generation')).toMatchObject({ status: 'unavailable', code: 'INSTALL_GENERATION_SIGNER_REQUIRED' });
+    installOperations[operationId] = { ...installOperations[operationId]!, ...signer, generation: { id: 'other-generation', kernelPath } };
+    expect(await run('prepare-generation')).toMatchObject({ status: 'blocked', code: 'INSTALL_GENERATION_ADMISSION_FAILED' });
+    installOperations[operationId] = { ...installOperations[operationId]!, generation: { id: 'first-generation', kernelPath } };
+    lowSpace.path = join(instanceRoot, 'data');
+    expect(await run('prepare-generation').finally(() => { lowSpace.path = ''; })).toMatchObject({
+      status: 'blocked', code: 'INSTALL_GENERATION_ADMISSION_FAILED',
+    });
+    const staged = join(instanceRoot, 'data', '.bootstrap-first-generation');
+    await mkdir(staged, { mode: 0o700 });
+    expect(await run('prepare-generation')).toMatchObject({ status: 'uncertain', code: 'INSTALL_GENERATION_INTERRUPTED' });
+    expect(await readdir(staged)).toEqual([]);
+    await rm(staged, { recursive: true });
+    loseAck = true;
+    expect(await run('prepare-generation')).toMatchObject({ status: 'uncertain', code: 'INSTALL_GENERATION_INTERRUPTED' });
+    const initializedInode = (await lstat(dataRoot)).ino;
+    installOperations[operationId] = { ...operation, generation: { id: 'first-generation' } };
+    lowSpace.path = join(instanceRoot, 'data');
+    expect(await run('prepare-generation').finally(() => { lowSpace.path = ''; })).toMatchObject({
+      action: 'prepare-generation', status: 'completed', code: 'INSTALL_GENERATION_PREPARED',
+      operationId, generationId: 'first-generation', prerequisites: ['fixed-origin-tls', 'owner-passkey', 'authenticated-session'],
+    });
+    expect((await lstat(dataRoot)).ino).toBe(initializedInode);
+    generation = await prepare(undefined);
+    const readSchema = (name: string, sql: string) => {
+      const db = new DatabaseSync(join(dataRoot, name), { readOnly: true });
+      try { return db.prepare(sql).all(); } finally { db.close(); }
+    };
+    const manifest = JSON.parse(await readFile(join(published, 'migrations', 'manifest.json'), 'utf8'));
+    expect(readSchema('service.sqlite', 'SELECT file, sha256 FROM schema_migrations ORDER BY position')).toEqual(manifest);
+    expect(readSchema('hub.sqlite', 'SELECT name FROM sqlite_schema WHERE type = \'table\' ORDER BY name')).toEqual(
+      ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
+    expect(readSchema('answers.sqlite', 'SELECT question_id, card_id, body_json, answer_event_id FROM hub_answers')).toEqual([]);
+    expect(await readdir(dataRoot)).toHaveLength(7);
+    const hubDb = join(dataRoot, 'hub.sqlite');
+    const originalHub = await readFile(hubDb);
+    const modified = new DatabaseSync(hubDb);
+    try { modified.exec("INSERT INTO projections (collection, key, data) VALUES ('cards', 'fixture', '{}')"); }
+    finally { modified.close(); }
+    try { await expect(prepare(kernelPath)).rejects.toThrow(); }
+    finally { await writeFile(hubDb, originalHub); }
+    expect(await records()).toHaveLength(3);
+    await expect(lstat(join(instanceRoot, 'current'))).rejects.toMatchObject({ code: 'ENOENT' });
+    installOperations[operationId] = operation;
+  } else {
+    await mkdir(dataRoot, { mode: 0o700 });
+    const roles = Object.fromEntries(await Promise.all(
+      ['service.sqlite', 'hub.sqlite', 'answers.sqlite', 'credentials', 'blobs', 'projections'].map(async role => {
+        const path = join(dataRoot, role);
+        if (role.endsWith('.sqlite')) await writeFile(path, '', { mode: 0o600 });
+        else await mkdir(path, { mode: 0o700 });
+        return [role, await pin(path)];
+      }),
+    )) as InstalledGeneration['roles'];
+    generation = { id: 'first-generation', schema: expected.activeSchema, packageSha256: expected.packageSha256,
+      releaseRoot: await pin(published), dataRoot: await pin(dataRoot), roles };
+  }
+  const generationKey = generateKeyPairSync('ed25519');
   const { packages, releases, data, history } = enrollment.stores;
   const store = createGenerationStore({
     installationId: enrollment.installationId, hostId: 'fixture-host', identity, root: instanceRoot,
@@ -746,6 +808,7 @@ test('first-install CLI publishes only the approved release and reads back the s
   const selection = canonicalize({ order, signature: sign(null, bytes(order), generationKey.privateKey).toString('base64') });
   await expect(store.select(selection)).resolves.toMatchObject({ current: { order }, pending: null });
   await expect(store.observe('select-first')).resolves.toMatchObject({ current: { order }, historical: { order }, pending: null });
+  if (kernelPath) await expect(prepare(kernelPath)).rejects.toThrow();
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
   expect(requests).toBe(0);

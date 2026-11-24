@@ -76,6 +76,10 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 `INSTALL_RELEASE_PUBLISHED` 表示发布目录已通过核验。目标机仍需完成可信发布签名、数据库初始化、TLS、所有者通行密钥登记、已认证会话以及服务启动、重启和升级验收。
 
+控制器在批准安装计划之前登记首个代次 ID。发布完成后，为同一操作登记 Autoloop `kernel/evolve.ts` 的物理路径，再运行 `patrick install --release ID --operation ID --prepare-generation`。程序核验 `45aecbf578289cda72d1fc773dcad069bfe7778b` 的内核文件摘要和数据预留空间，在独占租约内应用发布包的服务库迁移，离线初始化 Hub 核心表及本地答案表。数据目录与包含三个数据库摘要的签名回执一起原子发布。重试用公钥核对同一操作的回执和实际文件。若留下暂存目录，命令报告 `INSTALL_GENERATION_INTERRUPTED`，由登记控制器检查。
+
+`INSTALL_GENERATION_PREPARED` 记录三个 SQLite 文件的初始化完成。选择代次仍须独立签名。Hub 启动时安装依赖运行配置的视图和索引，TLS、所有者通行密钥、会话及三服务启动也分别验收。设置 `PATRICK_T23_AUTOLOOP_KERNEL` 为固定版本内核的绝对路径可在安装准入测试中复验数据库初始化。
+
 控制器登记会话凭据和安装预览摘要后，可以运行 `patrick install --release ID --check-session`。`INSTALL_SESSION_OBSERVED` 记录固定源的 TLS 校验及账户、调用者、授权版本和资料域的只读核验。输出包含安装计划与凭据绑定摘要。数据库初始化和所有者通行密钥需要各自的验收证据。
 
 2026-11-24 的 T23 准入回归通过 451 项，70 项依赖额外登记或夹具的用例跳过。双进程测试使用真实目录同步竞争同一认领记录，获胜进程退出后，新控制器在独立证据到位时补写同一操作的回执。
