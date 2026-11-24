@@ -14,17 +14,24 @@ const format = 'patrick-installed-selection-v1' as const;
 const maxRecords = 4096;
 const maxInstallJournalFiles = 3;
 const recordLimit = 8 * 1024;
-const dataFiles = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'] as const;
+const dataFiles = ['service.sqlite', 'answers.sqlite'] as const;
+export const autoloopHubDatabase = 'hub.db';
+export const legacyHubDatabase = 'hub.sqlite';
 const dataDirectories = ['credentials', 'blobs', 'projections'] as const;
 const storeDirectories = ['releases', 'packages', 'data', 'history'] as const;
 type DataRole = typeof dataFiles[number] | typeof dataDirectories[number];
 type Store = typeof storeDirectories[number];
+type HubDatabaseRole = typeof autoloopHubDatabase | typeof legacyHubDatabase;
 
 /** Provisioned outside the selected release. IDs are decimal strings from bigint lstat. */
 export type GenerationNode = { device: string; inode: string; birthtimeNs: string };
 export type InstalledGeneration = {
   id: string; schema: number; packageSha256: string;
-  releaseRoot: GenerationNode; dataRoot: GenerationNode; roles: Record<DataRole, GenerationNode>;
+  releaseRoot: GenerationNode; dataRoot: GenerationNode;
+  roles: Record<DataRole, GenerationNode> & (
+    Record<typeof autoloopHubDatabase, GenerationNode> & Partial<Record<typeof legacyHubDatabase, never>> |
+    Record<typeof legacyHubDatabase, GenerationNode> & Partial<Record<typeof autoloopHubDatabase, never>>
+  );
 };
 export type GenerationEnrollment = {
   installationId: string; hostId: string; identity: HostIdentity; target: DarwinTarget;
@@ -48,6 +55,10 @@ type State = { current: Entry | null; pending: Entry | null; historical: Entry |
 
 function requireValue(value: unknown): asserts value {
   if (!value) throw new Error('GENERATION_BINDING_INVALID');
+}
+
+export function generationHubDatabase(roles: InstalledGeneration['roles']): HubDatabaseRole {
+  return Object.hasOwn(roles, autoloopHubDatabase) ? autoloopHubDatabase : legacyHubDatabase;
 }
 function token(value: unknown): asserts value is string {
   requireValue(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value));
@@ -145,7 +156,8 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     const r = releases.get(g.packageSha256)?.expected;
     requireValue(r?.profile === 'deployment-complete' && canonicalize(r.target) === canonicalize(e.target) &&
       Number.isSafeInteger(g.schema) && g.schema >= r.schema.min && g.schema <= r.schema.max);
-    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize([...dataFiles, ...dataDirectories].sort()));
+    const hubName = generationHubDatabase(g.roles);
+    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize([...dataFiles, hubName, ...dataDirectories].sort()));
     for (const node of [g.dataRoot, ...Object.values(g.roles)]) {
       const id = canonicalize(node);
       requireValue(!dataNodes.has(id));
@@ -185,6 +197,10 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     checkNode(join(e.root, 'releases', g.packageSha256), g.releaseRoot, true);
     const path = join(e.root, 'data', g.id);
     checkNode(path, g.dataRoot, true);
+    const hubName = generationHubDatabase(g.roles);
+    const alternate = hubName === autoloopHubDatabase ? legacyHubDatabase : autoloopHubDatabase;
+    requireValue(!lstatSync(join(path, alternate), { throwIfNoEntry: false }));
+    checkNode(join(path, hubName), g.roles[hubName]!, false);
     for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
     for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);
   }

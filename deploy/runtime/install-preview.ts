@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { openDatabase } from '@patrick/storage';
-import type { GenerationNode, InstalledGeneration } from './lifecycle-generation.js';
+import { autoloopHubDatabase, legacyHubDatabase, type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
@@ -511,7 +511,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
 }
 
 const autoloopKernelSha256 = '3c0e567212af6939f43d570420f54091015900b7886ced793de373e488886116';
-const firstDatabases = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'] as const;
+const firstDatabases = ['service.sqlite', autoloopHubDatabase, 'answers.sqlite'] as const;
 const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
 const generationReceiptName = '.patrick-bootstrap.json';
 const interruptedGeneration = 'INSTALL_GENERATION_INTERRUPTED';
@@ -528,7 +528,7 @@ function configureInitialDatabases(root: string, migrationsDir: string, initiali
   for (const name of firstDatabases) closeSync(openSync(join(root, name), 'wx', 0o600));
   openDatabase(join(root, 'service.sqlite'), { migrationsDir }).close();
   createLocalHubPort(join(root, 'answers.sqlite')).close();
-  const hub = new DatabaseSync(join(root, 'hub.sqlite'));
+  const hub = new DatabaseSync(join(root, autoloopHubDatabase));
   try { initializeHub(hub); } finally { hub.close(); }
   for (const name of firstDatabases) {
     const database = new DatabaseSync(join(root, name));
@@ -550,7 +550,7 @@ function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) 
           .map(({ file, sha256 }) => ({ file, sha256 }));
         requireFact(canonicalize(history) === canonicalize(manifest));
         database.prepare('SELECT seq FROM domain_events LIMIT 0').all();
-      } else if (name === 'hub.sqlite') {
+      } else if (name === autoloopHubDatabase) {
         requireFact(!database.prepare('SELECT seq, fact FROM facts LIMIT 1').get());
         database.prepare('SELECT id, seq, next, format FROM projection_meta LIMIT 0').all();
         database.prepare('SELECT collection, key, data FROM projections LIMIT 0').all();
@@ -566,10 +566,12 @@ function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) 
 }
 
 async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void) {
-  exactDirectory(root, [...firstDatabases, ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
+  const retainedLegacy = existing && !lstatSync(join(root, autoloopHubDatabase), { throwIfNoEntry: false });
+  const databases = retainedLegacy ? ['service.sqlite', legacyHubDatabase, 'answers.sqlite'] as const : firstDatabases;
+  exactDirectory(root, [...databases, ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
   const roles = {} as InstalledGeneration['roles'];
   const databaseSha256: Record<string, string> = {};
-  for (const name of firstDatabases) {
+  for (const name of databases) {
     const path = join(root, name);
     roles[name] = initialNode(path, uid, false);
     databaseSha256[name] = sha256(await readRegularFile(path, 64 * 1024 * 1024, { root, validate: guard }));

@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import type { ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
-import { withConfirmedGeneration, type GenerationEnrollment } from './lifecycle-generation.js';
+import { generationHubDatabase, withConfirmedGeneration, type GenerationEnrollment } from './lifecycle-generation.js';
 
 export type SelectedRuntimePaths = Readonly<{
   role: 'service' | 'worker';
@@ -63,7 +63,7 @@ export async function startSelectedRuntimeRole(
         role, identity, installationId, generationId: generation.id,
         selectionSha256: selected.sha256, packageSha256: deployment.packageSha256,
         dataRoot, databasePath: join(dataRoot, 'service.sqlite'), localAnswersPath: join(dataRoot, 'answers.sqlite'),
-        operationalHubPath: join(dataRoot, 'hub.sqlite'), credentialDirectory: join(dataRoot, 'credentials'),
+        operationalHubPath: join(dataRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
       });
       guard();
       const composition: typeof import('./composition.js') = await import(pathToFileURL(deployment.entrypoints.composition).href);

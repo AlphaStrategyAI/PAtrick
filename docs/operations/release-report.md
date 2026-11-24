@@ -102,6 +102,8 @@ GitHub 要求默认分支包含该工作流文件才能手动触发。受保护�
 
 控制器在批准安装计划之前登记首个代次 ID。发布完成后，为同一操作登记 Autoloop `kernel/evolve.ts` 的物理路径，再运行 `patrick install --release ID --operation ID --prepare-generation`。程序核验 `45aecbf578289cda72d1fc773dcad069bfe7778b` 的内核文件摘要和数据预留空间，在独占租约内应用发布包的服务库迁移，离线初始化 Hub 核心表及本地答案表。数据目录与包含三个数据库摘要的签名回执一起原子发布。重试用公钥核对同一操作的回执和实际文件。若留下暂存目录，命令报告 `INSTALL_GENERATION_INTERRUPTED`，由登记控制器检查。
 
+新代次使用锁定版 Autoloop Hub 直接打开的 `hub.db`。旧代次按原签名继续读回 `hub.sqlite`。两个文件同时出现时拒绝使用该代次。用锁定提交的 `host/http.ts` 在隔离回环启动后，`/healthz` 返回该提交，SQLite 读回的路径和 inode 与预建数据库一致。
+
 `INSTALL_GENERATION_PREPARED` 记录三个 SQLite 文件的初始化完成。选择代次仍须独立签名。Hub 启动时安装依赖运行配置的视图和索引，TLS、所有者通行密钥、会话及三服务启动也分别验收。设置 `PATRICK_T23_AUTOLOOP_KERNEL` 为固定版本内核的绝对路径可在安装准入测试中复验数据库初始化。
 
 已安装服务启动后，可信宿主控制器可从监听器调用 `issueOwnerBootstrap()`，通过受控渠道把两分钟有效的一次性口令交给登记账户的所有者。所有者在已登记的 HTTPS 源选择「首次登记通行密钥」。新口令会撤销前一个口令及尚未完成的登记挑战。控制器应将明文留在交付渠道内，安装回执只记录非敏感验证结果。已有通行密钥或当前代次失去写入许可时，服务拒绝签发。
