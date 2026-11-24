@@ -16,6 +16,7 @@ import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntim
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
+import { createGenerationStore, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 
 const test = runTest;
 let hook: ReturnType<typeof registerHooks>;
@@ -681,6 +682,41 @@ test('first-install CLI publishes only the approved release and reads back the s
   expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
   expect(await readdir(join(instanceRoot, 'lima'))).toEqual([]);
   expect(await records()).toHaveLength(3);
+
+  const generationKey = generateKeyPairSync('ed25519');
+  const dataRoot = join(instanceRoot, 'data', 'first-generation');
+  await mkdir(dataRoot, { mode: 0o700 });
+  const roles = Object.fromEntries(await Promise.all(
+    ['service.sqlite', 'hub.sqlite', 'answers.sqlite', 'credentials', 'blobs', 'projections'].map(async role => {
+      const path = join(dataRoot, role);
+      if (role.endsWith('.sqlite')) await writeFile(path, '', { mode: 0o600 });
+      else await mkdir(path, { mode: 0o700 });
+      return [role, await pin(path)];
+    }),
+  )) as InstalledGeneration['roles'];
+  const generation: InstalledGeneration = {
+    id: 'first-generation', schema: expected.activeSchema, packageSha256: expected.packageSha256,
+    releaseRoot: await pin(published), dataRoot: await pin(dataRoot), roles,
+  };
+  const { packages, releases, data, history } = enrollment.stores;
+  const store = createGenerationStore({
+    installationId: enrollment.installationId, hostId: 'fixture-host', identity, root: instanceRoot,
+    target: expected.target, publicKey: pem(generationKey.publicKey), rootNode: enrollment.rootNode,
+    stores: { packages, releases, data, history }, releases: [{ expected, policy }], generations: [generation],
+  }, enrollment.owner, {
+    async signRecord(payload) { return sign(null, payload, generationKey.privateKey).toString('base64'); },
+  });
+  await expect(store.observe()).resolves.toEqual({ current: null, pending: null, historical: null });
+  const unknownRecord = join(instanceRoot, 'history', 'lifecycle-v1.publish.unrecognized.json');
+  await writeFile(unknownRecord, '{}', { mode: 0o600 });
+  await expect(store.observe()).rejects.toThrow('GENERATION_BINDING_INVALID');
+  await unlink(unknownRecord);
+  const order = store.order('select-first', null, generation.id);
+  const selection = canonicalize({ order, signature: sign(null, bytes(order), generationKey.privateKey).toString('base64') });
+  await expect(store.select(selection)).resolves.toMatchObject({ current: { order }, pending: null });
+  await expect(store.observe('select-first')).resolves.toMatchObject({ current: { order }, historical: { order }, pending: null });
+  expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
+
   await writeFile(join(published, 'extra-file'), 'modified');
   expect(await run('readback')).toMatchObject({ status: 'blocked', code: 'INSTALL_RELEASE_ADMISSION_FAILED' });
 }, 120_000);

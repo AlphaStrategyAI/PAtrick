@@ -37,7 +37,9 @@ export type LifecycleStatus = { status: 'absent' | 'reserved' | 'running_or_unce
 declare const owner: unique symbol;
 export type LifecycleClaimToken = { readonly [owner]: true };
 type ClaimResult = LifecycleStatus | { status: 'claimed'; token: LifecycleClaimToken; subject: LifecycleEvidenceSubject };
-type Kind = 'reservation' | 'claim' | 'terminal';
+const recordPrefix = 'lifecycle-v1';
+const recordKinds = ['reservation', 'claim', 'terminal'] as const;
+type Kind = typeof recordKinds[number];
 type Payload = { kind: Kind; binding: Binding; nonce: string; parentSha256: string | null; receipt?: LifecycleReceipt };
 type Observed = { dev: number; ino: number; bytes: Buffer; sha256: string };
 const maxBytes = 32 * 1024;
@@ -48,7 +50,13 @@ const generation = (value: unknown) => value === null || boundedName(value);
 
 export function lifecycleRecordName(operationId: string, kind: Kind) {
   requireState(boundedName(operationId), 'REQUEST');
-  return `lifecycle-v1.${operationId}.${kind}.json`;
+  return `${recordPrefix}.${operationId}.${kind}.json`;
+}
+
+export function isLifecycleRecordName(name: string) {
+  const [prefix, operationId, kind, extension, ...extra] = name.split('.');
+  return prefix === recordPrefix && boundedName(operationId) && recordKinds.some(value => value === kind)
+    && extension === 'json' && extra.length === 0;
 }
 
 function requireState(ok: unknown, code: string): asserts ok {

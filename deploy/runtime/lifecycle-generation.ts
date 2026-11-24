@@ -6,11 +6,13 @@ import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
+import { isLifecycleRecordName } from './lifecycle-journal.js';
 
 type Lease = RuntimeLease;
 
 const format = 'patrick-installed-selection-v1' as const;
 const maxRecords = 4096;
+const maxInstallJournalFiles = 3;
 const recordLimit = 8 * 1024;
 const dataFiles = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'] as const;
 const dataDirectories = ['credentials', 'blobs', 'projections'] as const;
@@ -213,10 +215,16 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
   function uncertain(operationId: string) {
     return Object.assign(new Error('GENERATION_SELECTION_UNCERTAIN'), { code: 'GENERATION_SELECTION_UNCERTAIN', operationId });
   }
+  function selectionHistory() {
+    const entries = readdirSync(history, { withFileTypes: true });
+    requireValue(entries.length <= maxRecords * 2 + maxInstallJournalFiles);
+    const selection = entries.filter(entry => !entry.isFile() || !isLifecycleRecordName(entry.name));
+    requireValue(selection.length <= maxRecords * 2);
+    return selection.map(entry => entry.name);
+  }
   async function readState(lease: Lease, operationId?: string, unusedGeneration?: string, ownedScratch?: GenerationNode): Promise<State> {
     boundary(lease);
-    const entries = readdirSync(history);
-    requireValue(entries.length <= maxRecords * 2);
+    const entries = selectionHistory();
     const names = entries.filter(name => name.endsWith('.json'));
     requireValue(names.length <= maxRecords);
     const completions = new Map<string, { path: string; signature: string }>();
@@ -352,7 +360,7 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
           return verifyObservation(lease, state, id);
         }
         requireValue(!state.pending && (state.current?.sha256 ?? null) === next.order.previous);
-        requireValue(readdirSync(history).filter(name => name.endsWith('.json')).length < maxRecords);
+        requireValue(selectionHistory().filter(name => name.endsWith('.json')).length < maxRecords);
         if (state.current) { await withGeneration(lease, state.current.order.generation, async () => {}); boundary(lease); }
         return withGeneration(lease, next.order.generation, async () => {
           const before = await readState(lease, id, next.order.generation.id);
