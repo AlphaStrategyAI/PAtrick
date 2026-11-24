@@ -780,13 +780,17 @@ test('first-install CLI publishes only the approved release and reads back the s
     };
     const manifest = JSON.parse(await readFile(join(published, 'migrations', 'manifest.json'), 'utf8'));
     expect(readSchema('service.sqlite', 'SELECT file, sha256 FROM schema_migrations ORDER BY position')).toEqual(manifest);
-    expect(readSchema('hub.db', 'SELECT name FROM sqlite_schema WHERE type = \'table\' ORDER BY name')).toEqual(
+    expect(readSchema('hub/hub.db', 'SELECT name FROM sqlite_schema WHERE type = \'table\' ORDER BY name')).toEqual(
       ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
     expect(readSchema('answers.sqlite', 'SELECT question_id, card_id, body_json, answer_event_id FROM hub_answers')).toEqual([]);
     expect(await readdir(dataRoot)).toHaveLength(7);
-    expect(generation.roles).toHaveProperty(['hub.db']);
+    expect(generation.roles).toHaveProperty(['hub']);
+    expect(generation.roles).toHaveProperty(['hub/hub.db']);
+    const hubHome = join(dataRoot, 'hub');
+    expect(await readdir(hubHome)).toEqual(['hub.db']);
+    expect((await lstat(hubHome)).mode & 0o777).toBe(0o700);
     expect(await readdir(dataRoot)).not.toContain('hub.sqlite');
-    const hubDb = join(dataRoot, 'hub.db');
+    const hubDb = join(hubHome, 'hub.db');
     const originalHub = await readFile(hubDb);
     const modified = new DatabaseSync(hubDb);
     try { modified.exec("INSERT INTO projections (collection, key, data) VALUES ('cards', 'fixture', '{}')"); }
@@ -795,24 +799,30 @@ test('first-install CLI publishes only the approved release and reads back the s
     finally { await writeFile(hubDb, originalHub); }
     const receiptPath = join(dataRoot, '.patrick-bootstrap.json');
     const originalReceipt = await readFile(receiptPath);
-    const legacyReceipt = JSON.parse(originalReceipt.toString()).body;
-    const legacyHubDb = join(dataRoot, 'hub.sqlite');
-    for (const record of [legacyReceipt.generation.roles, legacyReceipt.databaseSha256]) {
-      record['hub.sqlite'] = record['hub.db'];
-      delete record['hub.db'];
-    }
-    await rename(hubDb, legacyHubDb);
-    try {
-      await writeFile(receiptPath, canonicalize({ body: legacyReceipt, signature: await signer.signJournal(bytes(legacyReceipt)) }));
-      const legacy = await prepare(undefined);
-      expect(legacy.roles).toHaveProperty(['hub.sqlite'], generation.roles['hub.db']);
-      expect(await readFile(legacyHubDb)).toEqual(originalHub);
-      await writeFile(hubDb, '', { flag: 'wx', mode: 0o600 });
-      try { await expect(prepare(undefined)).rejects.toThrow(); }
-      finally { await unlink(hubDb); }
-    } finally {
-      await rename(legacyHubDb, hubDb);
-      await writeFile(receiptPath, originalReceipt);
+    const savedHubHome = join(dir, 'original-hub-home');
+    for (const previousName of ['hub.db', 'hub.sqlite']) {
+      const previousReceipt = JSON.parse(originalReceipt.toString()).body;
+      const previousDatabase = join(dataRoot, previousName);
+      delete previousReceipt.generation.roles.hub;
+      for (const record of [previousReceipt.generation.roles, previousReceipt.databaseSha256]) {
+        record[previousName] = record['hub/hub.db'];
+        delete record['hub/hub.db'];
+      }
+      await rename(hubHome, savedHubHome);
+      await rename(join(savedHubHome, 'hub.db'), previousDatabase);
+      try {
+        await writeFile(receiptPath, canonicalize({ body: previousReceipt, signature: await signer.signJournal(bytes(previousReceipt)) }));
+        const previous = await prepare(undefined);
+        expect(previous.roles).toHaveProperty([previousName], generation.roles['hub/hub.db']);
+        expect(await readFile(previousDatabase)).toEqual(originalHub);
+        await mkdir(hubHome, { mode: 0o700 });
+        try { await expect(prepare(undefined)).rejects.toThrow(); }
+        finally { await rm(hubHome, { recursive: true }); }
+      } finally {
+        await rename(previousDatabase, join(savedHubHome, 'hub.db'));
+        await rename(savedHubHome, hubHome);
+        await writeFile(receiptPath, originalReceipt);
+      }
     }
     expect(await records()).toHaveLength(3);
     await expect(lstat(join(instanceRoot, 'current'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -848,10 +858,26 @@ test('first-install CLI publishes only the approved release and reads back the s
   const selection = canonicalize({ order, signature: sign(null, bytes(order), generationKey.privateKey).toString('base64') });
   await expect(store.select(selection)).resolves.toMatchObject({ current: { order }, pending: null });
   await expect(store.observe('select-first')).resolves.toMatchObject({ current: { order }, historical: { order }, pending: null });
-  const extraHub = join(dataRoot, kernelPath ? 'hub.sqlite' : 'hub.db');
-  await writeFile(extraHub, '', { flag: 'wx', mode: 0o600 });
-  try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
-  finally { await unlink(extraHub); }
+  for (const name of kernelPath ? ['hub.sqlite', 'hub.db'] : ['hub.db']) {
+    const extraHub = join(dataRoot, name);
+    await writeFile(extraHub, '', { flag: 'wx', mode: 0o600 });
+    try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
+    finally { await unlink(extraHub); }
+  }
+  if (kernelPath) {
+    const hubHome = join(dataRoot, 'hub');
+    await chmod(hubHome, 0o755);
+    try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
+    finally { await chmod(hubHome, 0o700); }
+    const replacedHub = join(dir, 'replaced-hub-home');
+    await rename(hubHome, replacedHub);
+    await symlink(replacedHub, hubHome);
+    try { await expect(store.observe('select-first')).rejects.toThrow('GENERATION_BINDING_INVALID'); }
+    finally {
+      await unlink(hubHome);
+      await rename(replacedHub, hubHome);
+    }
+  }
   if (kernelPath) await expect(prepare(kernelPath)).rejects.toThrow();
   expect((await run('readback')).lifecycleReceipt).toEqual(readback.lifecycleReceipt);
 
@@ -1135,8 +1161,8 @@ test('starts installed roles from the confirmed generation and fails closed when
   await cp(archive, join(packages, expected.packageSha256 + '.json'));
   async function createGeneration(id: string): Promise<InstalledGeneration> {
     const generationRoot = join(data, id);
-    const files = ['service.sqlite', 'hub.sqlite', 'answers.sqlite'];
-    const directories = ['credentials', 'blobs', 'projections'];
+    const files = ['service.sqlite', 'hub/hub.db', 'answers.sqlite'];
+    const directories = ['credentials', 'blobs', 'projections', 'hub'];
     await mkdir(generationRoot, { mode: 0o700 });
     for (const name of directories) await mkdir(join(generationRoot, name), { mode: 0o700 });
     for (const name of files) await writeFile(join(generationRoot, name), '', { mode: 0o600 });
@@ -1198,14 +1224,14 @@ test('starts installed roles from the confirmed generation and fails closed when
   const launch = (input = provisioning) => startSelectedRuntimeRole(enrollment, owner, 'service', context => {
     provisions++;
     expect(context).toMatchObject({ generationId: 'first', packageSha256: generation.packageSha256, dataRoot,
-      databasePath: servicePath, localAnswersPath: answersPath, operationalHubPath: join(dataRoot, 'hub.sqlite') });
+      databasePath: servicePath, localAnswersPath: answersPath, operationalHubPath: join(dataRoot, 'hub/hub.db') });
     return input;
   });
   await expect(launch()).rejects.toThrow('INSTALLED_ROLE_SELECTION_REQUIRED');
   expect(provisions).toBe(0);
   const order = store.order('select-first', null, generation.id);
   await store.select(canonicalize({ order, signature: sign(null, bytes(order), signer.privateKey).toString('base64') }));
-  await expect(launch({ ...provisioning, service: { ...provisioning.service, databasePath: join(dataRoot, 'hub.sqlite') } }))
+  await expect(launch({ ...provisioning, service: { ...provisioning.service, databasePath: join(dataRoot, 'hub/hub.db') } }))
     .rejects.toThrow('INSTALLED_ROLE_PROVISIONING_MISMATCH');
   expect(attached).toHaveLength(0);
   const started = await launch();

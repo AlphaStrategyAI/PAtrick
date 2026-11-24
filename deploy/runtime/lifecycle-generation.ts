@@ -15,23 +15,22 @@ const maxRecords = 4096;
 const maxInstallJournalFiles = 3;
 const recordLimit = 8 * 1024;
 const dataFiles = ['service.sqlite', 'answers.sqlite'] as const;
-export const autoloopHubDatabase = 'hub.db';
+export const autoloopHubDirectory = 'hub';
+export const autoloopHubDatabase = 'hub/hub.db';
+export const flatAutoloopHubDatabase = 'hub.db';
 export const legacyHubDatabase = 'hub.sqlite';
 const dataDirectories = ['credentials', 'blobs', 'projections'] as const;
 const storeDirectories = ['releases', 'packages', 'data', 'history'] as const;
 type DataRole = typeof dataFiles[number] | typeof dataDirectories[number];
 type Store = typeof storeDirectories[number];
-type HubDatabaseRole = typeof autoloopHubDatabase | typeof legacyHubDatabase;
+type HubDatabaseRole = typeof autoloopHubDatabase | typeof flatAutoloopHubDatabase | typeof legacyHubDatabase;
 
 /** Provisioned outside the selected release. IDs are decimal strings from bigint lstat. */
 export type GenerationNode = { device: string; inode: string; birthtimeNs: string };
 export type InstalledGeneration = {
   id: string; schema: number; packageSha256: string;
   releaseRoot: GenerationNode; dataRoot: GenerationNode;
-  roles: Record<DataRole, GenerationNode> & (
-    Record<typeof autoloopHubDatabase, GenerationNode> & Partial<Record<typeof legacyHubDatabase, never>> |
-    Record<typeof legacyHubDatabase, GenerationNode> & Partial<Record<typeof autoloopHubDatabase, never>>
-  );
+  roles: Record<DataRole, GenerationNode> & Partial<Record<HubDatabaseRole | typeof autoloopHubDirectory, GenerationNode>>;
 };
 export type GenerationEnrollment = {
   installationId: string; hostId: string; identity: HostIdentity; target: DarwinTarget;
@@ -58,7 +57,8 @@ function requireValue(value: unknown): asserts value {
 }
 
 export function generationHubDatabase(roles: InstalledGeneration['roles']): HubDatabaseRole {
-  return Object.hasOwn(roles, autoloopHubDatabase) ? autoloopHubDatabase : legacyHubDatabase;
+  if (Object.hasOwn(roles, autoloopHubDatabase)) return autoloopHubDatabase;
+  return Object.hasOwn(roles, flatAutoloopHubDatabase) ? flatAutoloopHubDatabase : legacyHubDatabase;
 }
 function token(value: unknown): asserts value is string {
   requireValue(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value));
@@ -157,7 +157,8 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     requireValue(r?.profile === 'deployment-complete' && canonicalize(r.target) === canonicalize(e.target) &&
       Number.isSafeInteger(g.schema) && g.schema >= r.schema.min && g.schema <= r.schema.max);
     const hubName = generationHubDatabase(g.roles);
-    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize([...dataFiles, hubName, ...dataDirectories].sort()));
+    const directories = hubName === autoloopHubDatabase ? [...dataDirectories, autoloopHubDirectory] : dataDirectories;
+    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize([...dataFiles, hubName, ...directories].sort()));
     for (const node of [g.dataRoot, ...Object.values(g.roles)]) {
       const id = canonicalize(node);
       requireValue(!dataNodes.has(id));
@@ -198,8 +199,14 @@ function generationStorage(registration: GenerationEnrollment, owner: ExclusiveR
     const path = join(e.root, 'data', g.id);
     checkNode(path, g.dataRoot, true);
     const hubName = generationHubDatabase(g.roles);
-    const alternate = hubName === autoloopHubDatabase ? legacyHubDatabase : autoloopHubDatabase;
-    requireValue(!lstatSync(join(path, alternate), { throwIfNoEntry: false }));
+    const hubEntry = hubName === autoloopHubDatabase ? autoloopHubDirectory : hubName;
+    for (const entry of [autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase]) {
+      if (entry !== hubEntry) requireValue(!lstatSync(join(path, entry), { throwIfNoEntry: false }));
+    }
+    if (hubEntry === autoloopHubDirectory) {
+      const hubDirectory = checkNode(join(path, hubEntry), g.roles[hubEntry]!, true);
+      requireValue((hubDirectory.mode & 0o7777n) === 0o700n);
+    }
     checkNode(join(path, hubName), g.roles[hubName]!, false);
     for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
     for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);

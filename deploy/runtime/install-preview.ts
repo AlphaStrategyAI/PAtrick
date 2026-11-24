@@ -9,7 +9,8 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { openDatabase } from '@patrick/storage';
-import { autoloopHubDatabase, legacyHubDatabase, type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
+import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase,
+  type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
@@ -566,11 +567,23 @@ function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) 
 }
 
 async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void) {
-  const retainedLegacy = existing && !lstatSync(join(root, autoloopHubDatabase), { throwIfNoEntry: false });
-  const databases = retainedLegacy ? ['service.sqlite', legacyHubDatabase, 'answers.sqlite'] as const : firstDatabases;
-  exactDirectory(root, [...databases, ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
   const roles = {} as InstalledGeneration['roles'];
   const databaseSha256: Record<string, string> = {};
+  const hubPath = join(root, autoloopHubDirectory);
+  let hubDatabase: typeof autoloopHubDatabase | typeof flatAutoloopHubDatabase | typeof legacyHubDatabase = autoloopHubDatabase;
+  if (existing && !lstatSync(hubPath, { throwIfNoEntry: false })) {
+    hubDatabase = lstatSync(join(root, flatAutoloopHubDatabase), { throwIfNoEntry: false })
+      ? flatAutoloopHubDatabase : legacyHubDatabase;
+  }
+  const nested = hubDatabase === autoloopHubDatabase;
+  exactDirectory(root, ['service.sqlite', 'answers.sqlite', nested ? autoloopHubDirectory : hubDatabase,
+    ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
+  if (nested) {
+    roles[autoloopHubDirectory] = initialNode(hubPath, uid, true);
+    exactDirectory(hubPath, [flatAutoloopHubDatabase]);
+    syncStore(hubPath, roles[autoloopHubDirectory], uid);
+  }
+  const databases = ['service.sqlite', 'answers.sqlite', hubDatabase] as const;
   for (const name of databases) {
     const path = join(root, name);
     roles[name] = initialNode(path, uid, false);
@@ -631,7 +644,7 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
           requireFact(disk.bsize > 0n && disk.bavail * disk.bsize >= BigInt(e.reserveBytes.data));
           writing = true;
           mkdirSync(stage, { mode: 0o700 });
-          for (const name of firstDirectories) mkdirSync(join(stage, name), { mode: 0o700 });
+          for (const name of [...firstDirectories, autoloopHubDirectory]) mkdirSync(join(stage, name), { mode: 0o700 });
           configureInitialDatabases(stage, migrations, initialize);
           verifyInitialSchemas(stage, migrations, e.uid);
         }
