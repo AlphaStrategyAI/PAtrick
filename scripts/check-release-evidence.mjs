@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { admitReadRoot, readRegularFile, RELEASE_LIMITS, sha256, validatePaths } from '../deploy/lib/release.mjs';
 import { releaseEvidencePlan } from './release-evidence-plan.mjs';
 
 function fail(message) {
@@ -8,14 +8,24 @@ function fail(message) {
   process.exit(1);
 }
 
-function sha256(bytes) {
-  return createHash('sha256').update(bytes).digest('hex');
+async function readEvidence(relativePath, label) {
+  if (strict) {
+    try {
+      validatePaths([relativePath]);
+      return await readRegularFile(join(root, relativePath), RELEASE_LIMITS.artifactBytes, admission);
+    } catch (error) {
+      fail(`${label}: ${error.message}`);
+    }
+  }
+  const path = join(root, relativePath);
+  if (!existsSync(path)) fail(`missing ${label}: ${path}`);
+  return readFileSync(path);
 }
 
-function readJson(path, label) {
-  if (!existsSync(path)) fail(`missing ${label}: ${path}`);
+async function readJson(path, label) {
+  const bytes = await readEvidence(path, label);
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(bytes);
   } catch (error) {
     fail(`invalid JSON for ${label}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -30,7 +40,15 @@ if (args.length !== (strict ? 3 : 1) || !root || root.startsWith('-') ||
   fail('usage: node scripts/check-release-evidence.mjs [--require-complete <candidate-commit>] <release-evidence-dir>');
 }
 
-const manifest = readJson(join(root, 'manifest.json'), 'manifest');
+let admission;
+if (strict) {
+  try {
+    admission = admitReadRoot(resolve(root), { allowAncestorEntriesChange: true });
+  } catch (error) {
+    fail(`invalid release evidence root: ${error.message}`);
+  }
+}
+const manifest = await readJson('manifest.json', 'manifest');
 if (!manifest || typeof manifest !== 'object') fail('manifest must be an object');
 if (!manifest.versions || typeof manifest.versions !== 'object') fail('manifest.versions is required');
 if (!Array.isArray(manifest.tasks) || manifest.tasks.length === 0) fail('manifest.tasks is required');
@@ -44,7 +62,7 @@ for (const taskId of manifest.tasks) {
   if (strict && tasks.has(taskId)) fail(`duplicate release task ${taskId}`);
   tasks.add(taskId);
   const seen = new Set();
-  const report = readJson(join(root, 'tasks', `${taskId}.json`), `task ${taskId}`);
+  const report = await readJson(`tasks/${taskId}.json`, `task ${taskId}`);
   if (report.task !== taskId) fail(`task file ${taskId} has task=${report.task}`);
   if (!Array.isArray(report.scenarios)) fail(`task ${taskId} is missing scenarios`);
   for (const scenario of report.scenarios) {
@@ -73,9 +91,8 @@ for (const taskId of manifest.tasks) {
         fail(`cannot mark scenario ${scenario.id} as passed without evidence`);
       }
       if (!/^[a-f0-9]{64}$/.test(scenario.evidenceSha256)) fail(`${label} evidenceSha256 is not sha256 hex`);
-      const evidencePath = join(root, scenario.evidenceFile);
-      if (!existsSync(evidencePath)) fail(`${label} missing evidence file ${scenario.evidenceFile}`);
-      const actual = sha256(readFileSync(evidencePath));
+      if (typeof scenario.evidenceFile !== 'string') fail(`${label} invalid evidence file`);
+      const actual = sha256(await readEvidence(scenario.evidenceFile, `${label} evidence file`));
       if (actual !== scenario.evidenceSha256) fail(`${label} evidence hash mismatch`);
     }
     checked += 1;

@@ -2229,3 +2229,113 @@ runTest('verifies both signed Darwin assets against independent release pins and
     await rm(dir, { recursive: true, force: true });
   }
 }, 30_000);
+
+runTest('promotes only the reviewed Darwin pair after draft readback and safely re-verifies the published release', async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'darwin-promotion-'));
+  try {
+    const arm64 = await offlineSignedFixture(join(dir, 'arm64'), 'arm64', 'deployment-complete');
+    const x64 = await offlineSignedFixture(join(dir, 'x64'), 'x64', 'deployment-complete');
+    const pinFile = join(dir, 'pins.json');
+    const paths = [join(dir, 'patrick-darwin-arm64.signed.json'), join(dir, 'patrick-darwin-x64.signed.json')];
+    await cp(arm64.path, paths[0]);
+    await cp(x64.path, paths[1]);
+    await writeFile(pinFile, JSON.stringify({
+      arm64: { expected: arm64.expected, policy: arm64.policy },
+      x64: { expected: x64.expected, policy: x64.policy },
+    }));
+    const evidenceRoot = join(dir, 'release-evidence');
+    await mkdir(join(evidenceRoot, 'tasks'), { recursive: true });
+    const { releaseEvidencePlan } = createRequire(import.meta.url)('../../scripts/release-evidence-plan.mjs') as {
+      releaseEvidencePlan: Record<string, { scenarios: { id: string; command: string }[] }>;
+    };
+    const commit = arm64.expected.source.commit;
+    const version = arm64.expected.version;
+    const tag = `v${version}`;
+    const versions = { code: commit, node: process.version };
+    const manifest = join(evidenceRoot, 'manifest.json');
+    const expectedTasks = Object.keys(releaseEvidencePlan);
+    const testimony = Buffer.from('synthetic promotion test');
+    await writeFile(join(evidenceRoot, 'testimony.log'), testimony);
+    for (const [task, { scenarios }] of Object.entries(releaseEvidencePlan)) {
+      await writeFile(join(evidenceRoot, 'tasks', task + '.json'), JSON.stringify({
+        task,
+        scenarios: scenarios.map(scenario => ({ ...scenario, versions, status: 'passed', exitCode: 0,
+          evidenceFile: 'testimony.log', evidenceSha256: sha256(testimony) })),
+      }));
+    }
+
+    const script = join(root, 'scripts/publish-signed-darwin-assets.mjs');
+    const { promoteDarwinRelease } = await import(script) as {
+      promoteDarwinRelease(options: { repo: string; pinFile: string; artifactRoot: string },
+        github: (args: string[], output?: string) => string | Promise<string>): Promise<{ status: string; commit: string; tag: string }>;
+    };
+    const repo = 'fixture/PAtrick';
+    const calls: string[] = [];
+    const assets = await Promise.all(paths.map(async (path, index) => ({
+      id: index + 10, name: path.slice(dir.length + 1), state: 'uploaded', size: (await lstat(path)).size,
+    })));
+    let release: { id: number; tag_name: string; draft: boolean; target_commitish: string; assets: typeof assets } | undefined;
+    let tagCommit: string | undefined;
+    let badReadback = true;
+    async function github(args: string[], output?: string) {
+      const [command, action, endpoint] = args;
+      calls.push(args.join(' '));
+      if (endpoint === `repos/${repo}/git/matching-refs/tags/${tag}`) {
+        return JSON.stringify(tagCommit ? [{ ref: `refs/tags/${tag}`, object: { type: 'commit', sha: tagCommit } }] : []);
+      }
+      if (endpoint === `repos/${repo}/releases?per_page=100`) return JSON.stringify([release ? [release] : []]);
+      if (command === 'release' && action === 'create') {
+        expect(args).toContain('--draft');
+        expect(args).toContain(commit);
+        release = { id: 7, tag_name: tag, draft: true, target_commitish: commit, assets: [] };
+        return '';
+      }
+      if (command === 'release' && action === 'upload') {
+        expect(args.slice(0, 3)).toEqual(['release', 'upload', tag]);
+        expect(args).not.toContain('--clobber');
+        expect(args).toEqual(expect.arrayContaining(paths));
+        release!.assets = assets;
+        return '';
+      }
+      if (output && endpoint?.startsWith(`repos/${repo}/releases/assets/`)) {
+        const index = assets.findIndex(asset => endpoint.endsWith('/' + asset.id));
+        if (badReadback && index === 1) await writeFile(output, 'changed draft bytes');
+        else await cp(paths[index], output);
+        return '';
+      }
+      if (endpoint === `repos/${repo}/releases/7` && action === '--method=PATCH') {
+        expect(args).toContain('draft=false');
+        release!.draft = false;
+        tagCommit = commit;
+        return JSON.stringify(release);
+      }
+      throw new Error('unexpected GitHub command ' + args.join(' '));
+    }
+    const promote = () => promoteDarwinRelease({ repo, pinFile, artifactRoot: dir }, github);
+    await writeFile(manifest, JSON.stringify({ tasks: expectedTasks.filter(task => task !== 'T25'), versions }));
+    await expect(promote()).rejects.toThrow(/missing release task T25/);
+    expect(calls).toEqual([]);
+
+    await writeFile(manifest, JSON.stringify({ tasks: expectedTasks, versions }));
+    tagCommit = '2'.repeat(40);
+    await expect(promote()).rejects.toThrow(/tag points to a different commit/);
+    expect(release).toBeUndefined();
+    tagCommit = undefined;
+
+    await expect(promote()).rejects.toThrow(/draft readback.*finished package digest mismatch/);
+    expect(release?.draft).toBe(true);
+    expect(calls.some(call => call.includes('PATCH'))).toBe(false);
+    badReadback = false;
+    await expect(promote()).resolves.toMatchObject({ status: 'published', commit, tag });
+    expect(release?.draft).toBe(false);
+    expect(calls.filter(call => call.startsWith('release create'))).toHaveLength(1);
+    expect(calls.filter(call => call.startsWith('release upload'))).toHaveLength(1);
+    expect(calls.filter(call => call.includes('PATCH'))).toHaveLength(1);
+    const patch = calls.findIndex(call => call.includes('PATCH'));
+    expect(calls.slice(patch + 1).filter(call => call.includes('/releases/assets/'))).toHaveLength(2);
+    await expect(promote()).resolves.toMatchObject({ status: 'published', commit, tag });
+    expect(calls.filter(call => call.includes('PATCH'))).toHaveLength(1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30_000);

@@ -16,9 +16,8 @@ function readInput(input, limit) {
   return readRegularFile(path, limit, admitReadRoot(dirname(path)));
 }
 
-async function verifyAssets(args) {
-  requireCondition(args.length === 3 && args.every(arg => arg && !arg.startsWith('-')), usage);
-  const [pinsPath, ...assets] = args;
+export async function verifySignedDarwinAssets(pinsPath, arm64Path, x64Path) {
+  const assets = [arm64Path, x64Path];
   const pins = JSON.parse(await readInput(pinsPath, RELEASE_LIMITS.artifactBytes));
   requireCondition(pins && Object.keys(pins).length === architectures.length &&
     architectures.every(arch => Object.hasOwn(pins, arch)), 'expected deployment pins for exactly arm64 and x64');
@@ -55,9 +54,13 @@ async function verifyAssets(args) {
   return { status: 'verified-signed-darwin-assets', commit: source.commit, version, assets: receipts };
 }
 
-try {
-  console.log(JSON.stringify(await verifyAssets(process.argv.slice(2)), null, 2));
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    const args = process.argv.slice(2);
+    requireCondition(args.length === 3 && args.every(arg => arg && !arg.startsWith('-')), usage);
+    console.log(JSON.stringify(await verifySignedDarwinAssets(...args), null, 2));
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

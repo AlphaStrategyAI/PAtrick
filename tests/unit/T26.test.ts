@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { admitReadRoot } from '../../deploy/lib/release.mjs';
 
 const script = new URL('../../scripts/summarize-pilot.mjs', import.meta.url);
 const scope = { workScopeId: 'pilot-work-scope', standardDomainId: 'pilot-standard-domain' };
@@ -25,10 +26,12 @@ describe('T26 release evidence coverage', () => {
   const tasks = Object.keys(releaseEvidencePlan);
 
   function coverage(mutate?: (manifest: { tasks: string[]; versions: { code: string; node: string } },
-    reports: Record<string, Array<{ id: string; status: string; versions: { code: string; node: string } }>>) => void) {
-    const directory = mkdtempSync(join(tmpdir(), 'patrick-t26-release-'));
+    reports: Record<string, Array<{ id: string; status: string; versions: { code: string; node: string }; evidenceFile: string }>>,
+    directory: string) => void) {
+    const temporary = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t26-release-'));
+    const directory = join(temporary, 'evidence');
     try {
-      mkdirSync(join(directory, 'tasks'));
+      mkdirSync(join(directory, 'tasks'), { recursive: true });
       const manifest = { tasks: [...tasks], versions };
       const reports = Object.fromEntries(Object.entries(releaseEvidencePlan).map(([task, { scenarios }]) => [task,
         scenarios.map(({ id, command }) => {
@@ -39,7 +42,7 @@ describe('T26 release evidence coverage', () => {
             evidenceSha256: createHash('sha256').update(evidence).digest('hex') };
         }),
       ]));
-      mutate?.(manifest, reports);
+      mutate?.(manifest, reports, directory);
       writeFileSync(join(directory, 'manifest.json'), JSON.stringify(manifest));
       for (const [task, scenarios] of Object.entries(reports)) {
         writeFileSync(join(directory, 'tasks', `${task}.json`), JSON.stringify({ task, scenarios }));
@@ -47,7 +50,7 @@ describe('T26 release evidence coverage', () => {
       const invoke = (options: string[]) => spawnSync(process.execPath, [checker, ...options, directory], { encoding: 'utf8' });
       return { inventory: invoke([]), release: invoke(['--require-complete', commit]) };
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      rmSync(temporary, { recursive: true, force: true });
     }
   }
 
@@ -78,6 +81,39 @@ describe('T26 release evidence coverage', () => {
     expect(release.stderr).toContain('T23/empty-host-install-and-upgrade: blocked');
     expect(release.stderr).toContain('T25/provider-backed-work-routes: pending');
     expect(release.stderr).toContain('T26/pilot-and-release-policy: candidate commit mismatch');
+  });
+
+  it('keeps release evidence within the reviewed artifact tree', () => {
+    const traversal = coverage((_manifest, reports, directory) => {
+      const scenario = reports.T25[0];
+      copyFileSync(join(directory, scenario.evidenceFile), join(directory, '..', scenario.evidenceFile));
+      scenario.evidenceFile = '../' + scenario.evidenceFile;
+    });
+    expect(traversal.inventory.status).toBe(0);
+    expect(traversal.release.status).toBe(1);
+    expect(traversal.release.stderr).toContain('unsafe artifact path');
+    const link = coverage((_manifest, reports, directory) => {
+      symlinkSync(join(directory, reports.T25[0].evidenceFile), join(directory, 'linked.log'));
+      reports.T25[0].evidenceFile = 'linked.log';
+    });
+    expect(link.inventory.status).toBe(0);
+    expect(link.release.status).toBe(1);
+    expect(link.release.stderr).toContain('invalid or oversized regular file');
+  });
+
+  it('tolerates sibling changes while detecting evidence-root changes', () => {
+    const temporary = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t26-staging-'));
+    try {
+      const directory = join(temporary, 'release-evidence');
+      mkdirSync(directory);
+      const admission = admitReadRoot(directory, { allowAncestorEntriesChange: true });
+      mkdirSync(join(temporary, 'other-worker'));
+      expect(() => admission.validate()).not.toThrow();
+      writeFileSync(join(directory, 'unreviewed.log'), 'late entry');
+      expect(() => admission.validate()).toThrow('read root or ancestor changed');
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
   });
 });
 

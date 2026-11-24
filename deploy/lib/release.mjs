@@ -42,10 +42,12 @@ export function validatePaths(paths) {
   requireCondition(paths.every((path, index) => index === 0 || paths[index - 1] < path), 'artifact paths must be sorted');
 }
 const sameIdentity = (left, right) => left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.ctimeMs === right.ctimeMs;
+const sameDirectory = (left, right) => left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+  left.birthtimeMs === right.birthtimeMs && left.uid === right.uid && left.gid === right.gid;
 // Callers must provision a trusted, exclusively controlled staging root. These
 // identity checks detect persistent replacements. Node's public path-based fs API
 // cannot exclude an adversarial replace-and-restore (ABA) between system calls.
-export function admitReadRoot(root) {
+export function admitReadRoot(root, { allowAncestorEntriesChange = false } = {}) {
   requireCondition(typeof root === 'string' && isAbsolute(root) && resolve(root) === root, 'physical absolute read root required');
   const components = [sep];
   for (const part of root.split(sep).filter(Boolean)) components.push(resolve(components.at(-1), part));
@@ -55,7 +57,10 @@ export function admitReadRoot(root) {
     return { path, info };
   });
   function validate() {
-    for (const { path, info } of ancestors) requireCondition(sameIdentity(info, lstatSync(path)), 'read root or ancestor changed');
+    for (const { path, info } of ancestors) {
+      const same = allowAncestorEntriesChange && path !== root ? sameDirectory : sameIdentity;
+      requireCondition(same(info, lstatSync(path)), 'read root or ancestor changed');
+    }
   }
   return Object.freeze({ root, validate });
 }

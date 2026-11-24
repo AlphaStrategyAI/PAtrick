@@ -2,6 +2,11 @@ name: darwin release candidates
 
 on:
   workflow_dispatch:
+    inputs:
+      promotion_run_id:
+        description: 'Run with reviewed promotion artifact. Leave blank to build candidates.'
+        type: string
+        required: false
   pull_request:
     paths:
       - 'apps/**'
@@ -33,6 +38,7 @@ permissions:
 
 jobs:
   candidate:
+    if: github.event_name != 'workflow_dispatch' || inputs.promotion_run_id == ''
     strategy:
       fail-fast: false
       matrix:
@@ -213,5 +219,48 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  # T25 accepts this unsigned material using separately protected evidence.
-  # Native admission requires the independently signed exact envelope and its pin.
+  promote:
+    if: github.event_name == 'workflow_dispatch' && inputs.promotion_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: darwin-release
+    concurrency:
+      group: darwin-release-promotion
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.13.0'
+      - name: Require reviewed promotion inputs
+        env:
+          PROMOTION_RUN_ID: ${{ inputs.promotion_run_id }}
+          ACCEPTED_ARTIFACT_ID: ${{ secrets.PATRICK_DARWIN_PROMOTION_ARTIFACT_ID }}
+          ACCEPTANCE_PINS: ${{ secrets.PATRICK_DARWIN_ACCEPTANCE_PINS }}
+        run: |
+          [[ "$PROMOTION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACCEPTED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          test -n "$ACCEPTANCE_PINS"
+          umask 077
+          printf '%s' "$ACCEPTANCE_PINS" > "$RUNNER_TEMP/darwin-release-pins.json"
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ secrets.PATRICK_DARWIN_PROMOTION_ARTIFACT_ID }}
+          merge-multiple: true
+          run-id: ${{ inputs.promotion_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/darwin-promotion
+      - name: Promote exact accepted assets and verify published bytes
+        env:
+          GH_TOKEN: ${{ secrets.PATRICK_DARWIN_RELEASE_TOKEN || github.token }}
+        run: |
+          node scripts/publish-signed-darwin-assets.mjs "$GITHUB_REPOSITORY" \
+            "$RUNNER_TEMP/darwin-release-pins.json" "$RUNNER_TEMP/darwin-promotion"

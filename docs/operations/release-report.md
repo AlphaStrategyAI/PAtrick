@@ -37,6 +37,18 @@ node scripts/verify-signed-darwin-assets.mjs "$trusted_pins" "$arm64_envelope" "
 
 发布前对待上传包运行一次，发布后对重新下载的两份资产使用同一份验收文件复验。输入文件须位于物理路径下。两份包都通过后才输出提交、版本和每个架构的包、清单、材料、库存与原生模块摘要。任一包或信任材料不匹配时退出非零。发布决策还需核对 T26 的完整试点及任务证据。
 
+### 从验收产物发布
+
+在受保护的签名和验收流程中，用 `actions/upload-artifact@v4` 上传已审核的发布目录，并保留其 `artifact-id` 和所属运行 ID。目录根包含 `patrick-darwin-arm64.signed.json`、`patrick-darwin-x64.signed.json` 和 `release-evidence/`。证据目录使用 `manifest.json`、`tasks/` 和清单引用的脱敏原始证据。此仓库公开，上传前须完成证据脱敏并核验可公开范围。
+
+在 GitHub 的 `darwin-release` 环境中登记 `PATRICK_DARWIN_PROMOTION_ARTIFACT_ID` 和 `PATRICK_DARWIN_ACCEPTANCE_PINS`，分别保存审核后的产物 ID 和上节所述双架构验收 JSON。手动运行 `release-darwin.yml` 时填入该产物所属的 `promotion_run_id`。作业按登记的产物 ID 下载输入，用签名包的提交 SHA 核对完整证据，再按包版本建立 `v<version>` Release 草稿。留空时运行候选构建。
+
+GitHub 要求默认分支包含该工作流文件才能手动触发。受保护的发布主机也可使用相同的验收文件和已审核目录运行 `node scripts/publish-signed-darwin-assets.mjs "$GITHUB_REPOSITORY" "$trusted_pins" "$promotion_dir"`。
+
+发布作业默认使用 `GITHUB_TOKEN`。若候选相对默认分支修改了 `.github/workflows/`，GitHub 要求发布令牌额外具备 `Workflows: write` 权限。这种情况下通过同一环境的 `PATRICK_DARWIN_RELEASE_TOKEN` 引用已获准的仓库发布令牌。
+
+作业从草稿下载两个资产并复验，通过后才发布。随后重新下载已发布资产，核对版本标签的提交、包摘要和签名，并将复验回执写入作业日志。重跑时会复核同版本的草稿或已发布资产，草稿中缺失的预期文件可以补传。发现资产不符时作业失败，已有资产保留供核查。
+
 ## 双架构构建与产物读回
 
 `.github/workflows/release-darwin.yml` 使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 26.13.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。

@@ -26,7 +26,7 @@ export function sha256(bytes: Uint8Array): string;
 export function validatePaths(paths: readonly string[]): void;
 export interface ReadRootAdmission { readonly root: string; validate(): void }
 /** Physical root and ancestors must remain exclusively controlled during reads. */
-export function admitReadRoot(root: string): ReadRootAdmission;
+export function admitReadRoot(root: string, options?: { allowAncestorEntriesChange?: boolean }): ReadRootAdmission;
 export function readRegularFile(path: string, limit: number | undefined, admission: ReadRootAdmission): Promise<Buffer>;
 export function verifyRelease(path: string, options: { policy: ReleaseTrustPolicy; expected: ReleaseExpectation; readRoot: string;
   validate?: () => void }): Promise<VerifiedReleaseCandidate>;
