@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { releaseEvidencePlan } from './release-evidence-plan.mjs';
 
 function fail(message) {
   console.error(message);
@@ -20,17 +21,29 @@ function readJson(path, label) {
   }
 }
 
-const root = process.argv[2];
-if (!root) fail('usage: node scripts/check-release-evidence.mjs <release-evidence-dir>');
+const args = process.argv.slice(2);
+const strict = args[0] === '--require-complete';
+const commit = strict ? args[1] : undefined;
+const root = strict ? args[2] : args[0];
+if (args.length !== (strict ? 3 : 1) || !root || root.startsWith('-') ||
+  (strict && !/^[0-9a-f]{40}$/.test(commit ?? ''))) {
+  fail('usage: node scripts/check-release-evidence.mjs [--require-complete <candidate-commit>] <release-evidence-dir>');
+}
 
 const manifest = readJson(join(root, 'manifest.json'), 'manifest');
 if (!manifest || typeof manifest !== 'object') fail('manifest must be an object');
 if (!manifest.versions || typeof manifest.versions !== 'object') fail('manifest.versions is required');
 if (!Array.isArray(manifest.tasks) || manifest.tasks.length === 0) fail('manifest.tasks is required');
 
+const incomplete = [];
+const tasks = new Set();
+if (strict && manifest.versions.code !== commit) incomplete.push('manifest: candidate commit mismatch');
 let checked = 0;
 for (const taskId of manifest.tasks) {
   if (typeof taskId !== 'string' || !/^T\d{2}$/.test(taskId)) fail(`invalid task id: ${taskId}`);
+  if (strict && tasks.has(taskId)) fail(`duplicate release task ${taskId}`);
+  tasks.add(taskId);
+  const seen = new Set();
   const report = readJson(join(root, 'tasks', `${taskId}.json`), `task ${taskId}`);
   if (report.task !== taskId) fail(`task file ${taskId} has task=${report.task}`);
   if (!Array.isArray(report.scenarios)) fail(`task ${taskId} is missing scenarios`);
@@ -48,6 +61,12 @@ for (const taskId of manifest.tasks) {
     if (!['passed', 'failed', 'blocked', 'pending'].includes(scenario.status)) {
       fail(`${label} has invalid status ${scenario.status}`);
     }
+    if (strict) {
+      if (seen.has(scenario.id)) fail(`duplicate scenario ${label}`);
+      seen.add(scenario.id);
+      if (scenario.status !== 'passed') incomplete.push(`${label}: ${scenario.status}`);
+      if (scenario.versions.code !== commit) incomplete.push(`${label}: candidate commit mismatch`);
+    }
     if (scenario.status === 'passed') {
       if (scenario.exitCode !== 0) fail(`${label} passed with non-zero exitCode`);
       if (!scenario.evidenceFile || !scenario.evidenceSha256) {
@@ -61,6 +80,17 @@ for (const taskId of manifest.tasks) {
     }
     checked += 1;
   }
+  if (strict) {
+    for (const { id } of releaseEvidencePlan[taskId]?.scenarios ?? []) {
+      if (!seen.has(id)) incomplete.push(`missing release scenario ${taskId}/${id}`);
+    }
+  }
 }
 
-console.log(`checked ${checked} scenario(s)`);
+if (strict) {
+  for (const id of Object.keys(releaseEvidencePlan)) {
+    if (!tasks.has(id)) incomplete.push(`missing release task ${id}`);
+  }
+  if (incomplete.length) fail(incomplete.join('\n'));
+}
+console.log(`checked ${checked} scenario(s)${strict ? ` for candidate commit ${commit}` : ''}`);

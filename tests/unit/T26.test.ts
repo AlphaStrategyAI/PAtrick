@@ -1,4 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +14,72 @@ const critical = {
   missedRequiredQuestion: false,
   recalledWithdrawnMaterial: false,
 };
+
+describe('T26 release evidence coverage', () => {
+  const checker = fileURLToPath(new URL('../../scripts/check-release-evidence.mjs', import.meta.url));
+  const { releaseEvidencePlan } = createRequire(import.meta.url)('../../scripts/release-evidence-plan.mjs') as {
+    releaseEvidencePlan: Record<string, { scenarios: { id: string; command: string }[] }>;
+  };
+  const commit = 'a'.repeat(40);
+  const versions = { code: commit, node: process.version };
+  const tasks = Object.keys(releaseEvidencePlan);
+
+  function coverage(mutate?: (manifest: { tasks: string[]; versions: { code: string; node: string } },
+    reports: Record<string, Array<{ id: string; status: string; versions: { code: string; node: string } }>>) => void) {
+    const directory = mkdtempSync(join(tmpdir(), 'patrick-t26-release-'));
+    try {
+      mkdirSync(join(directory, 'tasks'));
+      const manifest = { tasks: [...tasks], versions };
+      const reports = Object.fromEntries(Object.entries(releaseEvidencePlan).map(([task, { scenarios }]) => [task,
+        scenarios.map(({ id, command }) => {
+          const evidence = `${task}/${id}\n`;
+          const evidenceFile = `${task}-${id}.log`;
+          writeFileSync(join(directory, evidenceFile), evidence);
+          return { id, command, status: 'passed', exitCode: 0, versions, evidenceFile,
+            evidenceSha256: createHash('sha256').update(evidence).digest('hex') };
+        }),
+      ]));
+      mutate?.(manifest, reports);
+      writeFileSync(join(directory, 'manifest.json'), JSON.stringify(manifest));
+      for (const [task, scenarios] of Object.entries(reports)) {
+        writeFileSync(join(directory, 'tasks', `${task}.json`), JSON.stringify({ task, scenarios }));
+      }
+      const invoke = (options: string[]) => spawnSync(process.execPath, [checker, ...options, directory], { encoding: 'utf8' });
+      return { inventory: invoke([]), release: invoke(['--require-complete', commit]) };
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  it('accepts complete evidence for the specified candidate commit', () => {
+    const { release } = coverage();
+    expect(release.status, release.stderr).toBe(0);
+    expect(release.stdout).toContain(`commit ${commit}`);
+  });
+
+  it('detects omitted tasks and omitted or duplicated planned scenarios', () => {
+    const omittedTask = coverage(manifest => { manifest.tasks = manifest.tasks.filter(task => task !== 'T23'); });
+    expect(omittedTask.inventory.status).toBe(0);
+    expect(omittedTask.release.stderr).toContain('missing release task T23');
+    const omittedScenario = coverage((_manifest, reports) => { reports.T23.pop(); });
+    expect(omittedScenario.release.stderr).toContain('missing release scenario T23/empty-host-install-and-upgrade');
+    const duplicateScenario = coverage((_manifest, reports) => { reports.T23.push(reports.T23[0]); });
+    expect(duplicateScenario.release.stderr).toContain('duplicate scenario T23/release-candidate-admission');
+  });
+
+  it('reports all incomplete or stale evidence while retaining ordinary inventory checks', () => {
+    const { release, inventory } = coverage((_manifest, reports) => {
+      reports.T23.at(-1)!.status = 'blocked';
+      reports.T25.at(-1)!.status = 'pending';
+      reports.T26[0].versions = { ...versions, code: 'b'.repeat(40) };
+    });
+    expect(inventory.status, inventory.stderr).toBe(0);
+    expect(release.status).toBe(1);
+    expect(release.stderr).toContain('T23/empty-host-install-and-upgrade: blocked');
+    expect(release.stderr).toContain('T25/provider-backed-work-routes: pending');
+    expect(release.stderr).toContain('T26/pilot-and-release-policy: candidate commit mismatch');
+  });
+});
 
 function input(workFacts: object[] = [], evidence: object = {}) {
   return { scope, workFacts, ...evidence };
