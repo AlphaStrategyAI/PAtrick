@@ -1,10 +1,14 @@
+import { constants as bufferConstants } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, request } from 'node:https';
 import { isDeepStrictEqual } from 'node:util';
 import { openAuthorityStore } from './authority-store.mjs';
-import { emptyWithdrawalHash, encodeWithdrawal, validWithdrawalHead, withdrawalEntryLimit, withdrawalPageSize } from './withdrawal-store.mjs';
+import { emptyWithdrawalHash, encodeWithdrawal, validWithdrawalHead, withdrawalPageSize } from './withdrawal-store.mjs';
 
 const maxBody = 16 * 1024;
+const withdrawalPageByteTarget = withdrawalPageSize * (maxBody + 1) + 2;
+const withdrawalEntryByteLimit = 3 * bufferConstants.MAX_STRING_LENGTH;
+const withdrawalTransferTimeout = 60_000;
 const emptyHash = createHash('sha256').update('').digest('hex');
 const recordFields = ['domain', 'writerEpoch', 'writerId', 'state', 'withdrawal', 'certificate', 'activationId', 'parentSealedRevision'];
 const certificateFields = ['id', 'cutId', 'previousWriterId', 'fenceProof', 'withdrawalsReconciled'];
@@ -212,14 +216,15 @@ export function openRecoveryWitnessStore(path, { create = false } = {}) {
 }
 
 async function readBody(stream, limit = maxBody) {
-  const chunks = [];
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let content = '';
   let bytes = 0;
   for await (const chunk of stream) {
     bytes += chunk.length;
     check(bytes <= limit, 'BODY_LIMIT');
-    chunks.push(chunk);
+    content += decoder.decode(chunk, { stream: true });
   }
-  return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
+  return JSON.parse(content + decoder.decode());
 }
 
 function tlsMaterial(value) {
@@ -235,21 +240,31 @@ async function handleWithdrawal(incoming, outgoing, path, peer, store, log) {
   if (!validWithdrawalHead(domain, seq, hash) || seq === 0) return finish(400);
   if (incoming.method === 'GET') {
     const entries = [];
+    let bytes = 2;
     let nextHash = hash;
-    for (let cursor = seq; cursor > 0 && entries.length < withdrawalPageSize; cursor--) {
+    for (let cursor = seq; cursor > 0 && entries.length < withdrawalPageSize && bytes < withdrawalPageByteTarget; cursor--) {
       const entry = log.read(domain, cursor, nextHash);
       if (!entry) return finish(404);
-      entries.push(entry);
+      const content = JSON.stringify(entry);
+      const contentBytes = Buffer.byteLength(content);
+      const entryBytes = contentBytes + (entries.length ? 1 : 0);
+      if (bytes + entryBytes > withdrawalPageByteTarget) {
+        if (entries.length) break;
+        outgoing.writeHead(200, { 'content-type': 'application/json', 'content-length': contentBytes }).end(content);
+        return;
+      }
+      entries.push(content);
+      bytes += entryBytes;
       nextHash = entry.previousHash;
     }
-    outgoing.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(entries));
+    outgoing.writeHead(200, { 'content-type': 'application/json', 'content-length': bytes }).end(`[${entries.join(',')}]`);
     return;
   }
   if (incoming.method !== 'PUT') return finish(405);
   if (!peer.writerId) return finish(403);
   if (incoming.headers['content-type'] !== 'application/json') return finish(415);
   let entry;
-  try { entry = await readBody(incoming, withdrawalEntryLimit); } catch { return finish(400); }
+  try { entry = await readBody(incoming, withdrawalEntryByteLimit); } catch { return finish(400); }
   if (!entry || entry.domain !== domain || entry.seq !== seq || entry.hash !== hash) return finish(400);
   const outcome = store.appendWithdrawal(entry, peer.writerId, log);
   return finish({ applied: 204, conflict: 409, denied: 403, invalid: 400 }[outcome]);
@@ -267,7 +282,7 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
     peers.set(fingerprint, { domains: new Set(client.domains), writerId: client.writerId, withdrawals: client.withdrawals });
   }
   const server = createServer({ ca: tlsMaterial(ca), key: tlsMaterial(key), cert: tlsMaterial(cert), minVersion: 'TLSv1.2',
-    requestCert: true, rejectUnauthorized: true, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 });
+    requestCert: true, rejectUnauthorized: true, handshakeTimeout: 5000, requestTimeout: withdrawalTransferTimeout, headersTimeout: 5000 });
   store.configureWithdrawals(withdrawalStore, new Set(clients.flatMap(client => client.domains)));
   server.setTimeout(5000, socket => socket.destroy());
   server.on('request', (incoming, outgoing) => {
@@ -301,14 +316,14 @@ export function createRecoveryWitnessServer({ ca, key, cert, authorityId, client
   return server;
 }
 
-function connectAuthority({ origin, authorityId, ca, key, cert }) {
+function connectAuthority({ origin, authorityId, ca, key, cert }, timeoutMs = 5000) {
   const url = new URL(origin);
   check(url.protocol === 'https:' && origin === url.origin && matches(token, authorityId), 'ENROLLMENT_INVALID');
   const tls = { ca: tlsMaterial(ca), key: tlsMaterial(key), cert: tlsMaterial(cert), minVersion: 'TLSv1.2', rejectUnauthorized: true };
   return (path, method, payload, read, deadline) => {
     const target = new URL(path, url);
     return new Promise((resolveRequest, rejectRequest) => {
-      const timeout = AbortSignal.timeout(5000);
+      const timeout = AbortSignal.timeout(timeoutMs);
       const signal = deadline ? AbortSignal.any([timeout, deadline]) : timeout;
       const outgoing = request(target, { ...tls, agent: false, method, signal, headers: payload && {
         'content-type': 'application/json', 'content-length': payload.length,
@@ -349,13 +364,14 @@ export function createHttpsRecoveryWitnessPort(options) {
 }
 
 export function createHttpsRecoveryWithdrawalLogPort(options) {
-  const connect = connectAuthority(options);
+  const connect = connectAuthority(options, withdrawalTransferTimeout);
   const path = (domain, seq, hash) => `/v1/withdrawals/${domain}/${seq}/${hash}`;
   function page(domain, seq, hash, deadline) {
     return connect(path(domain, seq, hash), 'GET', undefined, async incoming => {
       check(incoming.statusCode === 200 && incoming.headers['content-type'] === 'application/json', 'REMOTE_REJECTED');
-      const entries = await readBody(incoming, withdrawalPageSize * (withdrawalEntryLimit + 1) + 2);
-      check(Array.isArray(entries) && entries.length === Math.min(seq, withdrawalPageSize), 'WITHDRAWAL_CHAIN_INVALID');
+      const payload = await readBody(incoming, withdrawalEntryByteLimit);
+      const entries = Array.isArray(payload) ? payload : [payload];
+      check(entries.length > 0 && entries.length <= Math.min(seq, withdrawalPageSize), 'WITHDRAWAL_CHAIN_INVALID');
       let expectedHash = hash;
       let expectedSeq = seq;
       for (const entry of entries) {
@@ -382,7 +398,7 @@ export function createHttpsRecoveryWithdrawalLogPort(options) {
     async readComplete(domain, record) {
       let { seq, hash } = record.withdrawal;
       check(record.domain === domain && validWithdrawalHead(domain, seq, hash), 'WITHDRAWAL_CHAIN_INVALID');
-      const deadline = AbortSignal.timeout(60_000);
+      const deadline = AbortSignal.timeout(withdrawalTransferTimeout);
       const entries = [];
       const eventIds = new Set();
       while (seq > 0) {

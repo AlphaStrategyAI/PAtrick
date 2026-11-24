@@ -79,14 +79,35 @@ function logPort(origin: string, name: string) {
   return createHttpsRecoveryWithdrawalLogPort({ origin, authorityId: 'independent-fixture', ...credentials.get(name)!, ca });
 }
 
-function entry(seq: number, previousHash: string, writerEpoch: string = initial.writerEpoch, eventId = `withdrawal-${seq}`): WithdrawalEntry {
+function entry(seq: number, previousHash: string, writerEpoch: string = initial.writerEpoch, eventId = `withdrawal-${seq}`, reason = '本人撤回'): WithdrawalEntry {
   const payload = {
     domain: initial.domain, seq, writerEpoch, previousHash,
     event: { eventId, targetKind: 'knowledge', targetId: 'note-fixed', epoch: seq, targetVersion: 1,
-      reason: '本人撤回', createdAt: '2026-11-25T00:00:00.000Z' },
+      reason, createdAt: '2026-11-25T00:00:00.000Z' },
   };
   return { ...payload, hash: withdrawalEntryHash(payload) };
 }
+
+test('backs up and reads back a legacy withdrawal reason larger than a regular history page without truncation', async () => {
+  const store = openRecoveryWitnessStore(join(root, 'long-reason-witness.sqlite'), { create: true });
+  const log = openRecoveryWithdrawalStore(join(root, 'long-reason-log.sqlite'), { create: true });
+  store.initialize(initial);
+  const server = start(store, log);
+  const origin = await listen(server);
+  try {
+    const primary = createRecoveryWitness({ writerId: 'primary', port: connect(origin, 'primary'), verifySealedProof: async () => true });
+    const logClient = logPort(origin, 'primary');
+    const first = entry(1, emptyHash);
+    const large = entry(2, first.hash, initial.writerEpoch, 'legacy-reason', '本人撤回："\\\n'.repeat(17_000));
+    const last = entry(3, large.hash);
+    for (const withdrawalEntry of [first, large, last]) {
+      await expect(logClient.appendAndReadBack(withdrawalEntry)).resolves.toMatchObject({ verified: true });
+      expect(await primary.advanceWithdrawalHead(initial.domain, initial.writerEpoch, withdrawalEntry)).toBe(true);
+    }
+    expect(await logPort(origin, 'read-only').readComplete(initial.domain, (await primary.current(initial.domain))!))
+      .toEqual([first, large, last]);
+  } finally { await close(server); store.close(); log.close(); }
+}, 15_000);
 
 test('an interrupted withdrawal append blocks sealing across restarts until the same entry is reconciled', () => {
   const witnessPath = join(root, 'interrupted-append-witness.sqlite');

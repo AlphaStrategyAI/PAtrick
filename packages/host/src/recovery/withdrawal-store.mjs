@@ -4,7 +4,6 @@ import { openAuthorityStore } from './authority-store.mjs';
 import { canonical, digest } from './files.ts';
 
 export const withdrawalPageSize = 16;
-export const withdrawalEntryLimit = 16 * 1024;
 export const emptyWithdrawalHash = digest('');
 const domainId = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -37,7 +36,6 @@ export function encodeWithdrawal(entry) {
   if (!present(event.eventId) || !present(event.targetKind) || !present(event.targetId) || !present(event.createdAt)
     || typeof event.reason !== 'string' || !integer(event.targetVersion, 0) || !integer(event.epoch, 1)) return;
   const content = canonical(entry);
-  if (Buffer.byteLength(content) > withdrawalEntryLimit) return;
   const { hash, ...payload } = entry;
   if (digest(canonical(payload)) === hash) return content;
 }
