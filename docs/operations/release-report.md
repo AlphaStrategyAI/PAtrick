@@ -101,3 +101,7 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 提交 `7b8812e67590c8ec007e2cc6b50f376c70e44d76` 的 T23 本地回归通过 92 项，8 项跳过。固定版本 Autoloop 内核用于实测首次初始化。用例覆盖三个数据库的 schema、本地签名代次回执、回执丢失后的读回、篡改拒绝以及低磁盘门禁。
 
 构建 `45432798408` 的 Intel 任务首次通过。Apple Silicon 任务首次在排队时被取消，单独重试后通过。独立下载复验核对了两套未签名候选、各自归档中的 458 个载荷文件及其原生模块架构。Mac Pro 实机验收和发布签名待完成。[双架构下载回执](evidence/darwin-candidates-2026-11-25-7b8812e.json)
+
+## 2026-11-25 所有者首登候选
+
+构建 `45440694418` 从提交 `11bd94c900922398b56bc9d3c15c8ce713732b62` 生成 Apple Silicon 和 Intel 候选。下载复验逐份核对 458 个载荷文件、归档及清单摘要和原生模块架构。该批候选包含浏览器通行密钥登记、登录和宿主一次性口令签发，待正式发布签名及 Mac Pro 实机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-25-11bd94c.json)
