@@ -1,7 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { leased, type ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
+import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
@@ -54,7 +54,7 @@ type StartedHub = Readonly<{
   generationId: string;
   selectionSha256: string;
   packageSha256: string;
-  runtime: Pick<HubProcess, 'read' | 'stop' | 'drain'>;
+  runtime: Pick<HubProcess, 'read' | 'drain'> & { stop(): void };
 }>;
 
 export async function startSelectedHubRole(
@@ -62,6 +62,15 @@ export async function startSelectedHubRole(
   owner: ExclusiveRuntimeStaging | undefined,
   registration: HubRoleRegistration,
 ): Promise<StartedHub> {
+  return launchSelectedHubRole(enrollment, owner, registration).ready;
+}
+
+function launchSelectedHubRole(
+  enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined,
+  registration: HubRoleRegistration,
+  signal?: AbortSignal,
+) {
   const binding = bindRegistration(() => registration);
   const generationBinding = bindRegistration(() => enrollment);
   const { root, hubOwner, hubRole } = generationBinding.value;
@@ -82,8 +91,9 @@ export async function startSelectedHubRole(
   let resolveReady!: (value: StartedHub) => void;
   let rejectReady!: (error: unknown) => void;
   const ready = new Promise<StartedHub>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-  const lifetime = leased(roleOwner, async lease => {
+  const run = async (lease: RuntimeLease) => {
     let runtime: HubProcess | undefined;
+    function stopChild() { runtime?.stop(signal?.reason); }
     const rulesRoot = admitReadRoot(roleRoot, { allowAncestorEntriesChange: true });
     function validateRole() {
       lease.guard();
@@ -102,6 +112,7 @@ export async function startSelectedHubRole(
         const hub = deployment.autoloopHub;
         if (!database || !hub) throw new Error('INSTALLED_HUB_MATERIAL_REQUIRED');
         function validate() {
+          signal?.throwIfAborted();
           validateRole();
           guard();
         }
@@ -111,24 +122,29 @@ export async function startSelectedHubRole(
         await startHubProcess({ entry: hub.entry, commit: hub.commit, database, rulesPath, rulesSha256,
           writerFence: { path: hubWriterFencePath(root), node: hubRole.writerNode },
           hubHome: join(root, 'data', generation.id, autoloopHubDirectory), uid, gid, host, port, publicUrl },
-        validate, child => { runtime = child; });
+        validate, child => {
+          runtime = child;
+          signal?.addEventListener('abort', stopChild, { once: true });
+        });
         validate();
         return { generationId: generation.id, selectionSha256: selected.sha256, packageSha256: deployment.packageSha256 };
       });
+      signal?.throwIfAborted();
       validateRole();
       const child = runtime!;
       await child.activate();
       validateRole();
       if (child.read().state !== 'running') throw new Error('INSTALLED_HUB_START_FAILED');
       resolveReady(Object.freeze({ role: 'hub', ...identity, runtime: Object.freeze({
-        read: child.read, stop: child.stop,
+        read: child.read, stop: () => child.stop(),
         async drain(options?: { timeoutMs?: number }) {
           const result = await child.drain(options);
           if (result.state === 'closed') await lifetime;
           return result;
         },
       }) }));
-      await child.exited;
+      const exit = await child.exited;
+      return { ...exit, stopRequested: signal?.aborted === true };
     } catch (error) {
       if (runtime) {
         runtime.stop();
@@ -139,12 +155,50 @@ export async function startSelectedHubRole(
           }));
           await runtime.exited;
         }
+        if (signal?.aborted && signal.reason === error) requireCleanHubExit(await runtime.exited);
       }
       throw error;
+    } finally {
+      signal?.removeEventListener('abort', stopChild);
     }
-  }, true, () => { binding.validate(); generationBinding.validate(); });
+  };
+  const lifetime = leased(roleOwner, run, true, () => { binding.validate(); generationBinding.validate(); });
   void lifetime.catch(rejectReady);
-  return ready;
+  return { ready, lifetime };
+}
+
+function requireCleanHubExit(exit: Awaited<HubProcess['exited']>) {
+  if (exit.code !== 0 || exit.signal !== null) throw new Error('INSTALLED_HUB_STOP_FAILED');
+}
+
+export async function runInstalledHubRole(
+  enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined,
+  registration: HubRoleRegistration,
+  onReady?: (started: StartedHub) => void,
+): Promise<void> {
+  const stopping = new AbortController();
+  const stopReason = new Error('INSTALLED_HUB_STOP_REQUESTED');
+  const stop = () => stopping.abort(stopReason);
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  try {
+    const { ready, lifetime } = launchSelectedHubRole(enrollment, owner, registration, stopping.signal);
+    try {
+      const started = await ready;
+      if (!stopping.signal.aborted) onReady?.(started);
+      const exit = await lifetime;
+      if (!exit.stopRequested) throw new Error('INSTALLED_HUB_EXITED_UNEXPECTEDLY');
+      requireCleanHubExit(exit);
+    } catch (error) {
+      stop();
+      await lifetime.catch(() => {});
+      if (error !== stopReason) throw error;
+    }
+  } finally {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  }
 }
 
 export async function startSelectedRuntimeRole(

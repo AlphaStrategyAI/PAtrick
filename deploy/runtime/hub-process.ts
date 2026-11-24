@@ -24,11 +24,13 @@ type HubProcessState = Readonly<{
   pid: number | undefined;
 }>;
 
+type HubProcessExit = Readonly<{ code: number | null; signal: NodeJS.Signals | null }>;
+
 export type HubProcess = Readonly<{
   read(): HubProcessState;
-  exited: Promise<HubProcessState>;
+  exited: Promise<HubProcessExit>;
   activate(): Promise<void>;
-  stop(): void;
+  stop(reason?: Error): void;
   drain(options?: { timeoutMs?: number }): Promise<HubProcessState>;
 }>;
 
@@ -185,6 +187,7 @@ function readRules() {
 
 function shutdown(code) {
   if (stopping) return;
+  if (reporting) code = 1;
   stopping = true;
   active = false;
   const deadline = setTimeout(() => process.exit(1), ${termGraceMs}).unref();
@@ -421,22 +424,24 @@ export async function startHubProcess(input: HubProcessInput, guard: () => void,
   let bound: { port: number; healthKey: string } | undefined;
   let failure: Error | undefined;
   let activation: Promise<void> | undefined;
+  let signalReady = false;
   let escalation: ReturnType<typeof setTimeout> | undefined;
   type Report = 'fenced' | 'bound' | 'active';
   let awaiting: { type: Report; finish(error?: Error): void } | undefined;
-  let settleExit!: (result: HubProcessState) => void;
-  const exited = new Promise<HubProcessState>(resolve => { settleExit = resolve; });
+  let settleExit!: (result: HubProcessExit) => void;
+  const exited = new Promise<HubProcessExit>(resolve => { settleExit = resolve; });
   const exitWaiters = new Set<() => void>();
   const stopped = new AbortController();
   const read = (): HubProcessState => ({ state, pid });
 
-  function stop() {
+  function stop(reason?: Error) {
     if (state === 'closed' || state === 'draining') return;
+    failure ??= reason;
     state = 'draining';
     awaiting?.finish(failure ?? new Error('HUB_PROCESS_STOPPED'));
     stopped.abort();
     if (pid === undefined) return;
-    child.kill('SIGTERM');
+    if (signalReady) child.kill('SIGTERM');
     escalation = setTimeout(() => {
       if (state !== 'closed') child.kill('SIGKILL');
     }, termGraceMs);
@@ -447,7 +452,7 @@ export async function startHubProcess(input: HubProcessInput, guard: () => void,
     stop();
   }
 
-  function finishExit() {
+  function finishExit(code: number | null, signal: NodeJS.Signals | null) {
     if (state === 'closed') return;
     failure ??= new Error('HUB_PROCESS_EXITED');
     state = 'closed';
@@ -455,21 +460,28 @@ export async function startHubProcess(input: HubProcessInput, guard: () => void,
     awaiting?.finish(failure);
     stopped.abort();
     child.removeListener('message', onMessage);
-    const result = read();
-    settleExit(result);
+    settleExit({ code, signal });
     for (const notify of exitWaiters) notify();
   }
 
   function onMessage(message: unknown) {
-    if (state === 'closed' || state === 'draining') return;
+    if (state === 'closed') return;
     if (message === null || typeof message !== 'object') return fail('HUB_PROCESS_PROTOCOL_INVALID');
     const report = message as { type?: unknown; pid?: unknown; port?: unknown; code?: unknown; healthKey?: unknown };
+    if (state === 'draining') {
+      if (!signalReady && report.type === 'fenced' && pid !== undefined && report.pid === pid) {
+        signalReady = true;
+        child.kill('SIGTERM');
+      }
+      return;
+    }
     if (report.type === 'failed') {
       return fail(typeof report.code === 'string' && faults.has(report.code) ? report.code : 'HUB_PROCESS_START_FAILED');
     }
     if (!awaiting || report.type !== awaiting.type || pid === undefined || report.pid !== pid) {
       return fail('HUB_PROCESS_PROTOCOL_INVALID');
     }
+    if (report.type === 'fenced') signalReady = true;
     if (report.type === 'bound') {
       if (typeof report.port !== 'number' || !Number.isInteger(report.port) || report.port < 1 || report.port > 65535 ||
           (config.port !== 0 && report.port !== config.port) || typeof report.healthKey !== 'string' ||
@@ -546,7 +558,7 @@ export async function startHubProcess(input: HubProcessInput, guard: () => void,
         await sendAndWait('activate', 'active');
         await checkHealth(config.host, listener.port, config.commit, listener.healthKey, AbortSignal.any([
           stopped.signal, AbortSignal.timeout(phaseTimeoutMs),
-        ]));
+        ])).catch(error => { throw failure ?? error; });
         if (failure || state !== 'starting') throw failure ?? new Error('HUB_PROCESS_STOPPED');
         state = 'running';
         ready = true;

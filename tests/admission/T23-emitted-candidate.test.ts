@@ -15,7 +15,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { createInstalledRootOwner, leased, publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
-import { checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
+import { autoloopHub, checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -23,6 +23,7 @@ import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+import { startHubProcess, type HubProcess } from '../../deploy/runtime/hub-process.js';
 import { hubRules, PINNED_HUB_COMMIT } from '../../packages/integrations/autoloop/client.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
@@ -815,6 +816,20 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     .rejects.toThrow('INSTALLED_HUB_RULES_INVALID');
   await expect(start()).rejects.toThrow('HUB_PROCESS_BIND_FAILED');
   await new Promise<void>(resolve => { busy.close(() => resolve()); });
+  const stopReason = new Error('stop before child acknowledges fencing');
+  let startupExit: HubProcess['exited'] | undefined;
+  await expect(startHubProcess({
+    entry: join(instanceRoot, 'releases', expected.packageSha256, autoloopHub.root, autoloopHub.entry),
+    hubHome: join(instanceRoot, 'data', generation.id, 'hub'),
+    rulesPath, rulesSha256: registration.rulesSha256, ...registration.listener, publicUrl: origin,
+    uid: process.getuid!(), gid: process.getgid!(), commit: PINNED_HUB_COMMIT,
+    database: generation.roles['hub/hub.db']!,
+    writerFence: { path: writerPath, node: selected.hubRole!.writerNode },
+  }, () => {}, runtime => {
+    startupExit = runtime.exited;
+    runtime.stop(stopReason);
+  })).rejects.toBe(stopReason);
+  expect(await startupExit).toEqual({ code: 0, signal: null });
   failAfterVerification = async () => {
     expect((await fetch(origin + '/healthz')).status).toBe(503);
     throw new Error('fixture lost launch confirmation');
@@ -873,15 +888,30 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     selected, generationLockRegistration, registration,
   ]);
   await writeFile(join(nativeRole, 'entry.mjs'), `
+    import { once } from 'node:events';
+    import { existsSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
     const [entry, lockModule, enrollment, lockRegistration, registration] = JSON.parse(${JSON.stringify(controllerInput)});
-    const { startSelectedHubRole } = await import(pathToFileURL(entry).href);
+    const { runInstalledHubRole } = await import(pathToFileURL(entry).href);
     const { createInstalledRootOwner, leased } = await import(pathToFileURL(lockModule).href);
     const lock = createInstalledRootOwner(lockRegistration);
-    const owner = { withExclusiveReadRoot(read) { return leased(lock, lease => read(lease.root)); } };
+    const owner = { withExclusiveReadRoot(read) {
+      return leased(lock, async lease => {
+        if (existsSync('stop-at-startup')) {
+          const deadline = setTimeout(() => process.exit(1), 5000);
+          try {
+            const stop = once(process, 'SIGINT');
+            process.stdout.write(JSON.stringify({ phase: 'selection' }) + '\\n');
+            await stop;
+          } finally { clearTimeout(deadline); }
+        }
+        return read(lease.root);
+      });
+    } };
     try {
-      const started = await startSelectedHubRole(enrollment, owner, registration);
-      process.stdout.write(JSON.stringify({ pid: started.runtime.read().pid }) + '\\n');
+      await runInstalledHubRole(enrollment, owner, registration, started => {
+        process.stdout.write(JSON.stringify({ pid: started.runtime.read().pid }) + '\\n');
+      });
     } catch (error) {
       process.stdout.write(JSON.stringify({ error: String(error?.message) }) + '\\n');
       process.exitCode = 1;
@@ -896,41 +926,82 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
   const controllerPath = join(nativeRegistry, 'patrick-host-controller');
   child(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-include', nativeHeader,
     join(root, 'deploy', 'host-controller', 'main.cc'), '-o', controllerPath], dir, '/usr/bin/xcrun');
-  const controller = spawn(controllerPath, ['run-role', 'hub'], { stdio: ['ignore', 'pipe', 'ignore'] });
-  const reports = createInterface({ input: controller.stdout });
-  const controllerClosed = new Promise<void>(resolve => controller.once('close', () => resolve()));
-  let pausedHub: number | undefined;
-  try {
-    const [line] = await Promise.race([
-      once(reports, 'line', { signal: AbortSignal.timeout(45_000) }),
-      controllerClosed.then(() => { throw new Error('fixture Hub controller exited before reporting'); }),
-    ]);
-    const reported = JSON.parse(line);
-    const reportedPid = reported.pid;
-    expect(Number.isSafeInteger(reportedPid) && reportedPid > 0, reported.error).toBe(true);
-    expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
-    process.kill(reportedPid, 'SIGSTOP');
-    pausedHub = reportedPid;
-    expect(controller.kill('SIGKILL')).toBe(true);
-    await controllerClosed;
-    await expect(store.select(nextEnvelope)).rejects.toThrow('INSTALLED_HUB_WRITER_BUSY');
-    const movedControlRoot = controlRoot + '-moved';
-    await rename(controlRoot, movedControlRoot);
-    try {
-      const legacyOrder = previousEnrollment.order('select-without-fence', started.selectionSha256, nextGeneration.id);
-      const legacyEnvelope = canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), key.privateKey).toString('base64') });
-      await expect(previousEnrollment.select(legacyEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
-    } finally { await rename(movedControlRoot, controlRoot); }
-  } finally {
-    reports.close();
-    controller.kill('SIGKILL');
-    if (pausedHub !== undefined) process.kill(pausedHub, 'SIGCONT');
-    await controllerClosed;
-  }
-  await vi.waitFor(() => {
+  function probeWriter() {
     const writer = new DatabaseSync(writerPath, { timeout: 0 });
     try { writer.exec('BEGIN IMMEDIATE'); } finally { writer.close(); }
-  }, { timeout: 5000 });
+  }
+  async function withNativeController(use: (running: {
+    controller: ReturnType<typeof spawn>;
+    report: { pid?: number; phase?: string; error?: string };
+    closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  }) => Promise<void>) {
+    const controller = spawn(controllerPath, ['run-role', 'hub'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const reports = createInterface({ input: controller.stdout });
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      resolve => controller.once('close', (code, signal) => resolve({ code, signal })),
+    );
+    try {
+      const [line] = await Promise.race([
+        once(reports, 'line', { signal: AbortSignal.timeout(45_000) }),
+        closed.then(() => { throw new Error('fixture Hub controller exited before reporting'); }),
+      ]);
+      await use({ controller, report: JSON.parse(line), closed });
+    } finally {
+      reports.close();
+      controller.kill('SIGKILL');
+      await closed;
+    }
+  }
+  async function withNativeHub(use: (running: {
+    controller: ReturnType<typeof spawn>;
+    pid: number;
+    closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  }) => Promise<void>) {
+    await withNativeController(async ({ controller, report, closed }) => {
+      const { pid, error } = report;
+      expect(pid !== undefined && Number.isSafeInteger(pid) && pid > 0, error).toBe(true);
+      expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+      await use({ controller, pid: pid!, closed });
+    });
+  }
+  const stopAtStartup = join(nativeRole, 'stop-at-startup');
+  await writeFile(stopAtStartup, '');
+  try {
+    await withNativeController(async ({ controller, report, closed }) => {
+      expect(report).toEqual({ phase: 'selection' });
+      expect(controller.kill('SIGINT')).toBe(true);
+      await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+      await expect(fetch(origin + '/healthz')).rejects.toThrow();
+      probeWriter();
+    });
+  } finally { await unlink(stopAtStartup); }
+  await withNativeHub(async ({ controller, closed }) => {
+    expect(controller.kill('SIGTERM')).toBe(true);
+    await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+    await expect(fetch(origin + '/healthz')).rejects.toThrow();
+    probeWriter();
+  });
+  await withNativeHub(async ({ pid, closed }) => {
+    process.kill(pid, 'SIGKILL');
+    await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 1, signal: null });
+    probeWriter();
+  });
+  await withNativeHub(async ({ controller, pid, closed }) => {
+    process.kill(pid, 'SIGSTOP');
+    try {
+      expect(controller.kill('SIGKILL')).toBe(true);
+      await closed;
+      await expect(store.select(nextEnvelope)).rejects.toThrow('INSTALLED_HUB_WRITER_BUSY');
+      const movedControlRoot = controlRoot + '-moved';
+      await rename(controlRoot, movedControlRoot);
+      try {
+        const legacyOrder = previousEnrollment.order('select-without-fence', started.selectionSha256, nextGeneration.id);
+        const legacyEnvelope = canonicalize({ order: legacyOrder, signature: sign(null, bytes(legacyOrder), key.privateKey).toString('base64') });
+        await expect(previousEnrollment.select(legacyEnvelope)).rejects.toThrow('INSTALLED_HUB_REGISTRATION_REQUIRED');
+      } finally { await rename(movedControlRoot, controlRoot); }
+    } finally { process.kill(pid, 'SIGCONT'); }
+  });
+  await vi.waitFor(probeWriter, { timeout: 5000 });
   await expect(store.select(nextEnvelope)).resolves.toMatchObject({ current: { order: next } });
   const restarted = await start();
   onTestFinished(async () => { restarted.runtime.stop(); await restarted.runtime.drain(); });
