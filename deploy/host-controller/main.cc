@@ -2,7 +2,7 @@
 #include <cstring>
 #include <sysexits.h>
 
-#if defined(__APPLE__) && defined(__arm64__) && defined(PATRICK_SYNTHETIC_REGISTRATION)
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__)) && defined(PATRICK_SYNTHETIC_REGISTRATION)
 #include <CommonCrypto/CommonDigest.h>
 #include <cerrno>
 #include <climits>
@@ -17,7 +17,6 @@
 #include <unistd.h>
 
 namespace {
-constexpr char node_sha[] = "533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4";
 constexpr int control_fd = 3;
 
 bool private_directory(const std::string& path, struct stat& metadata) {
@@ -110,7 +109,7 @@ int launch() {
       !realpath(fixture_root, canonical) || root != canonical ||
       !private_directory(root, metadata) || static_cast<unsigned long long>(metadata.st_dev) != fixture_device ||
       metadata.st_ino != fixture_inode || !private_directory(cwd, metadata) ||
-      !private_directory(home, metadata) || !matches_file(node, 0500, node_sha) ||
+      !private_directory(home, metadata) || !matches_file(node, 0500, fixture_node_sha) ||
       !matches_file(bootstrap, 0400, bootstrap_sha)) return EX_CONFIG;
   // The fixture's only writer is its parent. Hash then exec by pathname under this
   // private root does not establish immutable, independently owned production materials.
@@ -132,7 +131,7 @@ int launch() {
 
 int main(int argc, char** argv) {
   if (argc != 3 || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
-#if defined(__APPLE__) && defined(__arm64__) && defined(PATRICK_SYNTHETIC_REGISTRATION)
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__)) && defined(PATRICK_SYNTHETIC_REGISTRATION)
   return launch();
 #else
   return EX_CONFIG;

@@ -16,6 +16,7 @@ on:
       - 'scripts/build-runtime.mjs'
       - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
+      - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -29,6 +30,7 @@ on:
       - 'scripts/build-runtime.mjs'
       - 'scripts/observe-darwin-toolchain.mjs'
       - 'scripts/pack-release.mjs'
+      - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -182,6 +184,8 @@ jobs:
           /usr/bin/tar -xpf "$upload/runtime-materials.tar" -C "$work/readback"
           node scripts/build-runtime.mjs verify --profile deployment-complete \
             --artifact-root "$work/readback" > "$work/readback.json"
+          PATRICK_T23_CONTROLLED_LAUNCH=1 PATRICK_T23_CONTROLLED_MATERIALS="$work/readback" \
+            node node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts
 
           node --input-type=module - "$work" "$upload" > "$upload/readback-receipt.json" <<'JS'
           import { readFileSync } from "node:fs";

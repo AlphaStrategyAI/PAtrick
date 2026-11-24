@@ -1,10 +1,10 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createReadStream } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
-import { constants } from 'node:os';
+import { constants, machine } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -12,9 +12,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
-const clang = '/Library/Developer/CommandLineTools/usr/bin/clang++';
-const clangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
-const nodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
+const archivedMaterials = process.env.PATRICK_T23_CONTROLLED_MATERIALS;
+const clt = '/Library/Developer/CommandLineTools';
+const localClangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
+const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -24,7 +25,7 @@ async function digest(path: string) {
   return hash.digest('hex');
 }
 
-function buildPreflight(projectRoot: string, artifact: string): string {
+function admitPreflight(projectRoot: string, artifact: string, archived: boolean): string {
   const run = (executable: string, args: string[]) => {
     const result = spawnSync(executable, args, {
       cwd: projectRoot, env: { PATH: '/usr/bin:/bin', TMPDIR: '/private/tmp' }, timeout: 45_000, encoding: 'utf8',
@@ -32,17 +33,18 @@ function buildPreflight(projectRoot: string, artifact: string): string {
     expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     return result.stdout;
   };
-  const commit = run('/usr/bin/git', ['--no-replace-objects', 'rev-parse', 'HEAD']).trim();
   const script = join(projectRoot, 'scripts/build-runtime.mjs');
-  const sources = ['--profile', 'deployment-complete', '--source-root', projectRoot, '--source-commit', commit];
-  const snapshot = JSON.parse(run(process.execPath, [script, 'snapshot', ...sources]));
-  run(process.execPath, [script, 'build', ...sources, '--output-root', artifact,
-    ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
+  if (!archived) {
+    const commit = run('/usr/bin/git', ['--no-replace-objects', 'rev-parse', 'HEAD']).trim();
+    const sources = ['--profile', 'deployment-complete', '--source-root', projectRoot, '--source-commit', commit];
+    const snapshot = JSON.parse(run(process.execPath, [script, 'snapshot', ...sources]));
+    run(process.execPath, [script, 'build', ...sources, '--output-root', artifact,
+      ...(snapshot.changed ? ['--source-snapshot', snapshot.snapshotSha256] : [])]);
+  }
   run(process.execPath, [script, 'verify', '--profile', 'deployment-complete', '--artifact-root', artifact]);
   return join(artifact, servicePreflight.path);
 }
 
-// Opt in with the verified Darwin arm64 Node 26.13.0 and matching Apple CLT.
 describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, () => {
   let root: string;
   let node: string;
@@ -51,11 +53,28 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
   let endpoint: string;
   let controller: string;
   let unregistered: string;
+  let mismatchedNode: string;
 
   beforeAll(async () => {
-    expect([process.platform, process.arch, process.version]).toEqual(['darwin', 'arm64', 'v26.13.0']);
-    expect(await digest(process.execPath)).toBe(nodeSha);
-    expect(await digest(clang)).toBe(clangSha);
+    expect([process.platform, process.version]).toEqual(['darwin', 'v26.13.0']);
+    expect(['arm64', 'x64']).toContain(process.arch);
+    const darwinArch = process.arch === 'x64' ? 'x86_64' : 'arm64';
+    expect(machine()).toBe(darwinArch);
+    if (process.arch === 'x64') {
+      const translated = execFileSync('/usr/sbin/sysctl', ['-in', 'sysctl.proc_translated'], { encoding: 'utf8' }).trim();
+      expect(['', '0']).toContain(translated);
+    }
+    const xcrun = (...args: string[]) => execFileSync('/usr/bin/xcrun', args, { encoding: 'utf8', timeout: 5000 }).trim();
+    const clang = archivedMaterials ? xcrun('--find', 'clang++') : join(clt, 'usr/bin/clang++');
+    const linker = archivedMaterials ? xcrun('--find', 'ld') : join(clt, 'usr/bin/ld');
+    const sdk = await realpath(archivedMaterials ? xcrun('--show-sdk-path') : join(clt, 'SDKs/MacOSX.sdk'));
+    const clangSha = await digest(clang);
+    const nodeSha = await digest(process.execPath);
+    if (!archivedMaterials) {
+      expect(process.arch).toBe('arm64');
+      expect(nodeSha).toBe(localNodeSha);
+      expect(clangSha).toBe(localClangSha);
+    }
     root = await mkdtemp('/private/tmp/patrick-role-');
     node = join(root, 'node');
     // .mts fixes ESM interpretation independently of the enclosing package.
@@ -64,10 +83,12 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     endpoint = join(root, 'control.sock');
     controller = join(root, 'controller');
     unregistered = join(root, 'unregistered');
+    mismatchedNode = join(root, 'mismatched-node');
     await mkdir(cwd, { mode: 0o700 });
     await mkdir(join(cwd, 'home'), { mode: 0o700 });
     await copyFile(process.execPath, node);
-    const entry = buildPreflight(await realpath(project), join(root, 'materials'));
+    const artifact = archivedMaterials ? await realpath(archivedMaterials) : join(root, 'materials');
+    const entry = admitPreflight(await realpath(project), artifact, Boolean(archivedMaterials));
     expect(await digest(entry)).toBe(servicePreflight.sha256);
     await copyFile(entry, bootstrap);
     await chmod(node, 0o500);
@@ -82,11 +103,14 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
       `constexpr char bootstrap_sha[] = "${await digest(bootstrap)}";`,
     ].join('\n');
     const headerPath = join(root, 'registration.h');
-    await writeFile(headerPath, header);
-    const sdk = await realpath('/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk');
-    const args = ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-arch', 'arm64', '-isysroot', sdk,
-      '-isystem', join(sdk, 'usr/include/c++/v1'), '--ld-path=/Library/Developer/CommandLineTools/usr/bin/ld'];
-    for (const [output, extra] of [[unregistered, []], [controller, ['-include', headerPath]]] as const) {
+    const mismatchedHeader = join(root, 'mismatched-node.h');
+    await writeFile(headerPath, `${header}\nconstexpr char fixture_node_sha[] = "${nodeSha}";\n`);
+    await writeFile(mismatchedHeader, `${header}\nconstexpr char fixture_node_sha[] = "${'0'.repeat(64)}";\n`);
+    const args = ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-arch', darwinArch, '-isysroot', sdk,
+      '-isystem', join(sdk, 'usr/include/c++/v1'), '--ld-path=' + linker];
+    for (const [output, extra] of [
+      [unregistered, []], [controller, ['-include', headerPath]], [mismatchedNode, ['-include', mismatchedHeader]],
+    ] as const) {
       const argv = [...args, ...extra, source, '-o', output];
       const result = spawnSync(clang, argv, {
         cwd: root, env: { PATH: '/usr/bin:/bin', LC_ALL: 'C', TMPDIR: root },
@@ -95,7 +119,7 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
       expect(result.status, result.error?.message ?? result.stderr).toBe(0);
       console.info(JSON.stringify({ clang, clangSha, arch: process.arch, sdk, argv,
         controllerSha256: await digest(output), nodeSha256: await digest(node),
-        bootstrapSha256: await digest(bootstrap), headerSha256: await digest(headerPath) }));
+        bootstrapSha256: await digest(bootstrap), ...(extra.length ? { headerSha256: await digest(extra[1]) } : {}) }));
     }
   }, 60_000);
 
@@ -112,6 +136,13 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
       env: {}, cwd: root, timeout: 5000, encoding: 'utf8',
     });
     expect([result.error, result.signal, result.status]).toEqual([undefined, null, code]);
+  });
+
+  test('rejects a controller whose registration pins different Node bytes', () => {
+    const result = spawnSync(mismatchedNode, ['run-role', 'service'], {
+      env: {}, cwd: root, timeout: 5000, encoding: 'utf8',
+    });
+    expect([result.error, result.signal, result.status]).toEqual([undefined, null, 78]);
   });
 
   async function runLocalChild(server: Server, executable: string, sentinels: number[],
