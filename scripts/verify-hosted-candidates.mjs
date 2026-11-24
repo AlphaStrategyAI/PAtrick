@@ -17,6 +17,7 @@ const expectedNode = Object.freeze({ node: 'v26.13.0', modules: '147' });
 const inventoryPath = 'metadata/runtime-materials.json';
 const nativePath = 'node_modules/better-sqlite3/build/Release/better_sqlite3.node';
 const nativeMachO = Object.freeze({ arm64: 'arm64', x64: 'x86_64' });
+const controllerName = 'patrick-host-controller';
 
 function fail(code) {
   throw new Error(code);
@@ -96,6 +97,23 @@ function verifyNative(root, architecture, inspect) {
   return { sha256: digest, description };
 }
 
+function verifyController(materials, receipt, listed, architecture, inspect, allowLegacy) {
+  const path = join(materials, controllerName);
+  const info = lstatSync(path, { throwIfNoEntry: false });
+  const checksums = listed.filter(entry => entry.path === controllerName);
+  if (allowLegacy && !info && !Object.hasOwn(receipt, 'controller') && checksums.length === 0) return undefined;
+  if (!info) fail('CANDIDATE_CONTROLLER_MISSING');
+  if (!info.isFile() || info.size === 0 || info.size > RELEASE_LIMITS.artifactBytes) fail('CANDIDATE_CONTROLLER_INVALID');
+  const digest = sha256(readFileSync(path));
+  if (checksums.length !== 1 || checksums[0].sha256 !== digest) fail('CANDIDATE_CONTROLLER_DIGEST_MISMATCH');
+  if (receipt.controller?.name !== controllerName || receipt.controller.sha256 !== digest ||
+      receipt.controller.bytes !== info.size) fail('CANDIDATE_CONTROLLER_RECEIPT_MISMATCH');
+  const description = inspect(path, architecture);
+  const expected = new RegExp(`^Mach-O 64-bit executable ${nativeMachO[architecture]}(?:\\s|$)`);
+  if (!expected.test(description)) fail('CANDIDATE_CONTROLLER_ARCHITECTURE_MISMATCH');
+  return { sha256: digest, bytes: info.size, description };
+}
+
 /**
  * Verifies one downloaded candidate tree and returns the registry entry for it.
  * The tree is the directory that `gh run download` writes for a single run.
@@ -129,6 +147,7 @@ export function verifyCandidateTree(tree, options = {}) {
           receipt.native?.observedArchitecture !== architecture) fail('CANDIDATE_NATIVE_TARGET_MISMATCH');
       if (receipt.native?.observedNode !== expectedNode.node || receipt.native?.observedModules !== expectedNode.modules) fail('CANDIDATE_NATIVE_RUNTIME_MISMATCH');
       if (receipt.archive?.sha256 !== archiveSha256) fail('CANDIDATE_RECEIPT_ARCHIVE_MISMATCH');
+      const controller = verifyController(materials, receipt, listed, architecture, inspect, options.allowLegacy);
       const payloadRoot = join(workspace, architecture);
       mkdirSync(payloadRoot, { recursive: true });
       run('/usr/bin/tar', ['-xpf', archive, '--no-same-owner', '-C', payloadRoot], { failure: 'CANDIDATE_ARCHIVE_INVALID' });
@@ -178,6 +197,7 @@ export function verifyCandidateTree(tree, options = {}) {
         payloadFiles: payloadCount,
         nativeSha256: native.sha256,
         nativeDescription: native.description,
+        ...(controller && { controller }),
         sourceCandidateSha256: candidateSha256,
         sourceManifestSha256,
       };
@@ -207,12 +227,13 @@ function runSummary(runId) {
 }
 
 function main() {
-  const runId = process.env.PATRICK_DARWIN_RELEASE_RUN?.trim() || process.argv[2];
+  const args = process.argv.slice(2);
+  const runId = process.env.PATRICK_DARWIN_RELEASE_RUN?.trim() || args.find(arg => arg !== '--legacy');
   if (!runId) fail('CANDIDATE_RUN_UNSPECIFIED');
   const view = runSummary(runId);
   const tree = downloadRun(runId);
   try {
-    const entries = verifyCandidateTree(tree, { expectedCommit: view.headSha });
+    const entries = verifyCandidateTree(tree, { expectedCommit: view.headSha, allowLegacy: args.includes('--legacy') });
     const receipt = {
       format: 'patrick-hosted-candidates-v1',
       run: String(runId),

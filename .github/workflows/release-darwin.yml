@@ -175,6 +175,15 @@ jobs:
           upload="$RUNNER_TEMP/patrick-native-material-upload"
           mkdir "$upload" "$work/readback"
 
+          controller_arch="$TARGET_ARCH"
+          if [ "$controller_arch" = x64 ]; then controller_arch=x86_64; fi
+          controller="$upload/patrick-host-controller"
+          xcrun --sdk macosx clang++ -std=c++17 -Wall -Wextra -Werror -O2 -arch "$controller_arch" \
+            deploy/host-controller/main.cc -o "$controller"
+          controller_exit=0
+          "$controller" || controller_exit=$?
+          test "$controller_exit" = 64
+
           hub_commit=$(node --input-type=module -e 'import { autoloopHub } from "./deploy/lib/deployment-templates.mjs"; console.log(autoloopHub.commit)')
           git init --quiet "$work/autoloop"
           git -C "$work/autoloop" fetch --quiet --depth=1 https://github.com/KKKKhazix/agent-autoloop.git "$hub_commit"
@@ -187,7 +196,7 @@ jobs:
           /usr/bin/tar --format=ustar --no-mac-metadata -cf "$upload/runtime-materials.tar" -C "$work/materials" .
           (
             cd "$upload"
-            shasum -a 256 runtime-materials.tar > SHA256SUMS
+            shasum -a 256 runtime-materials.tar patrick-host-controller > SHA256SUMS
             shasum -a 256 -c SHA256SUMS
           )
           /usr/bin/tar -xpf "$upload/runtime-materials.tar" -C "$work/readback"
@@ -201,6 +210,7 @@ jobs:
               --testNamePattern 'signed deployment includes|first install initializes Hub|starts the packaged Hub|starts installed roles from the confirmed generation'
 
           node --input-type=module - "$work" "$upload" > "$upload/readback-receipt.json" <<'JS'
+          import { createHash } from "node:crypto";
           import { readFileSync } from "node:fs";
           import { join } from "node:path";
 
@@ -219,10 +229,17 @@ jobs:
             throw new Error("archived runtime inventory differs from the build");
           }
           const sha256 = readFileSync(join(upload, "SHA256SUMS"), "utf8").split(" ")[0];
+          const controllerName = "patrick-host-controller";
+          const controllerBytes = readFileSync(join(upload, controllerName));
           console.log(JSON.stringify({
             kind: "unsigned-deployment-complete-materials",
             source, observed, native,
             archive: { name: "runtime-materials.tar", sha256 },
+            controller: {
+              name: controllerName,
+              sha256: createHash("sha256").update(controllerBytes).digest("hex"),
+              bytes: controllerBytes.length,
+            },
             readback,
           }, null, 2));
           JS
@@ -231,6 +248,7 @@ jobs:
           name: patrick-darwin-${{ matrix.arch }}-unsigned-deployment-complete-materials
           path: |
             ${{ runner.temp }}/patrick-native-material-upload/runtime-materials.tar
+            ${{ runner.temp }}/patrick-native-material-upload/patrick-host-controller
             ${{ runner.temp }}/patrick-native-material-upload/SHA256SUMS
             ${{ runner.temp }}/patrick-native-material-upload/readback-receipt.json
           if-no-files-found: error

@@ -21,10 +21,11 @@ function workspace() {
 }
 
 const inspect = (path: string, architecture: string) =>
-  `Mach-O 64-bit bundle ${architecture === 'arm64' ? 'arm64' : 'x86_64'}: ${path}`;
+  `Mach-O 64-bit ${path.endsWith('/patrick-host-controller') ? 'executable' : 'bundle'} ${architecture === 'arm64' ? 'arm64' : 'x86_64'}`;
 
 function buildTree(root: string, options: {
   commit?: string; x64Commit?: string; inventoryCommit?: string; node?: string; modules?: string; sign?: boolean; changePayload?: 'bytes' | 'mode';
+  controller?: 'legacy' | 'missing' | 'changed';
 } = {}) {
   for (const architecture of ['arm64', 'x64']) {
     const sourceCommit = (architecture === 'x64' ? options.x64Commit : undefined) ?? options.commit ?? commit;
@@ -59,11 +60,21 @@ function buildTree(root: string, options: {
     const tar = spawnSync('/usr/bin/tar', ['-cf', archive, '-C', payload, '.']);
     expect(tar.status, tar.stderr?.toString()).toBe(0);
     const archiveSha256 = sha(readFileSync(archive));
-    writeFileSync(join(materials, 'SHA256SUMS'), `${archiveSha256}  runtime-materials.tar\n`);
+    const controllerName = 'patrick-host-controller';
+    const controllerBytes = Buffer.from(`controller-${architecture}\n`);
+    const controller = { name: controllerName, sha256: sha(controllerBytes), bytes: controllerBytes.length };
+    const legacy = options.controller === 'legacy';
+    if (!legacy && options.controller !== 'missing') {
+      writeFileSync(join(materials, controllerName), options.controller === 'changed'
+        ? Buffer.alloc(controllerBytes.length) : controllerBytes);
+    }
+    writeFileSync(join(materials, 'SHA256SUMS'), `${archiveSha256}  runtime-materials.tar\n` +
+      (legacy ? '' : `${controller.sha256}  ${controllerName}\n`));
     const receipt = {
       kind: 'unsigned-deployment-complete-materials',
       source, observed, native,
       archive: { name: 'runtime-materials.tar', sha256: archiveSha256 },
+      ...(!legacy && { controller }),
       readback: { status: 'verified', profile: 'deployment-complete', files: files.length,
         bytes: nativeBytes.length + runtimeBytes.length, inventoryBytes: inventory.length, inventorySha256: sha(inventory) },
     };
@@ -99,6 +110,46 @@ it('registers both architectures from the downloaded bytes and their own digests
   expect(entries.x64.nativeDescription).toContain('Mach-O 64-bit bundle x86_64');
   expect(entries.arm64.payloadFiles).toBe(3);
   expect(entries.arm64.sourceCandidateSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(entries.arm64.controller).toEqual({
+    sha256: sha(Buffer.from('controller-arm64\n')), bytes: 17, description: 'Mach-O 64-bit executable arm64',
+  });
+  expect(entries.x64.controller?.description).toBe('Mach-O 64-bit executable x86_64');
+});
+
+it.each([
+  ['missing', 'CANDIDATE_CONTROLLER_MISSING'],
+  ['changed', 'CANDIDATE_CONTROLLER_DIGEST_MISMATCH'],
+] as const)('rejects a %s published controller', (controller, code) => {
+  const tree = buildTree(workspace(), { controller });
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow(code);
+});
+
+it('checks controller bytes against the receipt and checksum list', () => {
+  const tree = buildTree(workspace());
+  const materials = join(tree, 'patrick-darwin-arm64-unsigned-deployment-complete-materials');
+  const receiptPath = join(materials, 'readback-receipt.json');
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  writeFileSync(receiptPath, JSON.stringify({ ...receipt, controller: { ...receipt.controller, bytes: 1 } }));
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow('CANDIDATE_CONTROLLER_RECEIPT_MISMATCH');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  const sums = join(materials, 'SHA256SUMS');
+  writeFileSync(sums, readFileSync(sums, 'utf8').replace(receipt.controller.sha256, 'e'.repeat(64)));
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow('CANDIDATE_CONTROLLER_DIGEST_MISMATCH');
+});
+
+it.each(['Mach-O 64-bit executable x86_64', 'Mach-O 64-bit bundle arm64'])(
+  'rejects a controller described as %s on arm64', description => {
+    const tree = buildTree(workspace());
+    const inspectArtifact = (path: string, architecture: string) =>
+      path.endsWith('/patrick-host-controller') ? description : inspect(path, architecture);
+    expect(() => verifyCandidateTree(tree, { inspectNative: inspectArtifact })).toThrow('CANDIDATE_CONTROLLER_ARCHITECTURE_MISMATCH');
+  },
+);
+
+it('supports previous hosted runs only when legacy verification is explicitly requested', () => {
+  const tree = buildTree(workspace(), { controller: 'legacy' });
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspect })).toThrow('CANDIDATE_CONTROLLER_MISSING');
+  expect(verifyCandidateTree(tree, { inspectNative: inspect, allowLegacy: true }).arm64.controller).toBeUndefined();
 });
 
 it.each(['bytes', 'mode'] as const)('rejects changed runtime %s even when the archive digest matches its receipt', changePayload => {
@@ -129,7 +180,9 @@ it('rejects a tampered archive, a foreign runtime, a mismatched commit and a sig
 
 it('rejects a native extension whose machine architecture does not match the target', () => {
   const tree = buildTree(workspace());
-  expect(() => verifyCandidateTree(tree, { inspectNative: () => 'Mach-O 64-bit bundle x86_64' })).toThrow(/CANDIDATE_NATIVE_ARCHITECTURE_MISMATCH/);
+  const inspectArtifact = (path: string, architecture: string) =>
+    inspect(path, path.endsWith(nativePath) ? 'x64' : architecture);
+  expect(() => verifyCandidateTree(tree, { inspectNative: inspectArtifact })).toThrow(/CANDIDATE_NATIVE_ARCHITECTURE_MISMATCH/);
 });
 
 it('binds both architecture builds to the hosted run commit', () => {

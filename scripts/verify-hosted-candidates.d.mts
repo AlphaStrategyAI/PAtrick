@@ -12,6 +12,7 @@ export type HostedCandidateEntry = Readonly<{
   payloadFiles: number;
   nativeSha256: string;
   nativeDescription: string;
+  controller?: Readonly<{ sha256: string; bytes: number; description: string }>;
   sourceCandidateSha256: string;
   sourceManifestSha256: string;
 }>;
@@ -20,6 +21,7 @@ export type VerifyCandidateTreeOptions = Readonly<{
   workspace?: string;
   expectedCommit?: string;
   inspectNative?: (path: string, architecture: string) => string;
+  allowLegacy?: boolean;
 }>;
 
 export function verifyCandidateTree(
