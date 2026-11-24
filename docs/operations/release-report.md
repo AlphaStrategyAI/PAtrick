@@ -87,3 +87,5 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 包含安装会话核验命令的提交 `c3fd14e9e16b3a5f654b747a716c5f4c64175e3c` 在构建 `45417098683` 上通过 Apple Silicon 与 Intel 构建。下载后逐项核对每套归档的 458 个载荷文件、源码清单与原生模块架构。两套未签名候选等待发布签名和目标机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-24-c3fd14e.json)
 
 修复已登记代次答案库打开方式的提交 `c72280e9b66ca2cc15e97ad6f827841cc4d3af1e` 在构建 `45419588750` 上通过 Apple Silicon 与 Intel 构建。下载复验逐项核对了每套归档的 458 个载荷文件、源码清单与原生模块架构。两套候选等待发布签名和目标机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-24-c72280e.json)
+
+提交 `73de2d49752ae8814992f7a0b7e3baa6615261b9` 修复安装完成后只读会话核验重复要求安装预留空间的问题。构建 `45424554179` 在 Apple Silicon 和 Intel 上均通过。独立下载复验核对了两套未签名候选与各自归档中的 458 个载荷文件。[双架构下载回执](evidence/darwin-candidates-2026-11-24-73de2d4.json)
