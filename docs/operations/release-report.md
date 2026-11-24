@@ -51,7 +51,7 @@ GitHub 要求默认分支包含该工作流文件才能手动触发。受保护�
 
 ## 双架构构建与产物读回
 
-`.github/workflows/release-darwin.yml` 使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 26.13.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。
+`.github/workflows/release-darwin.yml` 的候选构建使用只读仓库权限。Apple Silicon 和 Intel runner 分别核对本机架构、Node 26.13.0 和匹配的头文件，按依赖锁安装并编译原生 SQLite 扩展。每种架构分别上传源码候选和 `deployment-complete` 部署材料。部署材料包含 `runtime-materials.tar`、`SHA256SUMS` 和 `readback-receipt.json`。工作流在构建时实测加载原生扩展，解包后复验归档内容、文件权限和扩展架构。
 
 提交 `bee6c9e9f7eed417aef7d47cc4cd256aac715e50` 的两个托管构建均通过。下载后独立核对了 GitHub ZIP 的摘要、内层 tar 的摘要、每个归档的 452 个载荷文件和清单，以及 SQLite 扩展的 Mach-O 架构。两种架构均记录了 Node ABI 137 和 SQLite 3.53.2。[GitHub Actions 构建记录](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/44285957621)
 
@@ -127,3 +127,7 @@ GitHub 要求默认分支包含该工作流文件才能手动触发。受保护�
 ## 2026-11-25 所有者首登候选
 
 构建 `45440694418` 从提交 `11bd94c900922398b56bc9d3c15c8ce713732b62` 生成 Apple Silicon 和 Intel 候选。下载复验逐份核对 458 个载荷文件、归档及清单摘要和原生模块架构。该批候选包含浏览器通行密钥登记、登录和宿主一次性口令签发，待正式发布签名及 Mac Pro 实机验收。[双架构下载回执](evidence/darwin-candidates-2026-11-25-11bd94c.json)
+
+## 2026-11-25 发布作业候选
+
+提交 `bcfb0afa7c9701300a8f4023839dcf17d0ef9780` 的本地 T23/T26 回归通过 123 项，8 项跳过。构建 `45448592602` 的 Apple Silicon 和 Intel 任务均通过，普通推送触发的发布作业跳过。独立下载复验核对了两份未签名候选、各自归档中的 458 个载荷文件及原生模块架构。正式发布仍需签名、实机验收和试点证据。[双架构下载回执](evidence/darwin-candidates-2026-11-25-bcfb0af.json)
