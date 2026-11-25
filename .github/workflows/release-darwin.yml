@@ -215,10 +215,15 @@ jobs:
             controller_checkout="$work/controller-checkout"
             sudo -n /bin/cp -cRP "$source_root" "$controller_checkout"
             sudo -n /usr/sbin/chown -RP 0:0 "$controller_checkout"
+            controller_runtime=$(sudo -n /usr/bin/mktemp -d /private/tmp/patrick-controller-node.XXXXXXXX)
+            trap 'sudo -n /bin/rm -rf "$controller_runtime"' EXIT
+            sudo -n /bin/cp "$installed_node" "$controller_runtime/node"
+            sudo -n /bin/ln -s "$(dirname "$installed_node")/npm" "$controller_runtime/npm"
+            sudo -n /bin/chmod 0555 "$controller_runtime" "$controller_runtime/node"
             (
               cd "$controller_checkout"
               sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
-                "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
+                "$controller_runtime/node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
                 --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the Hub database'
             )
           fi

@@ -845,6 +845,11 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     expect(canAccess('-r', join(instanceRoot, 'packages', expected.packageSha256 + '.json'))).toBe(1);
     expect(canAccess('-r', join(prepared, 'service.sqlite'))).toBe(1);
     expect(canAccess('-w', join(prepared, 'hub', 'hub.db'))).toBe(0);
+    const nodeProbe = spawnSync(process.execPath, ['-p', 'JSON.stringify([process.getuid(), process.getgid()])'], {
+      uid, gid, cwd: join(prepared, 'hub'), env: {}, encoding: 'utf8', timeout: 5000,
+    });
+    expect(nodeProbe.status, nodeProbe.error?.message ?? nodeProbe.stderr).toBe(0);
+    expect(JSON.parse(nodeProbe.stdout)).toEqual([uid, gid]);
 
     const runtimeRoot = join(instanceRoot, 'runtime');
     const controlRoot = join(runtimeRoot, 'hub-control');
