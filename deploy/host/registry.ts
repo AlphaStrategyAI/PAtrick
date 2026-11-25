@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { promisify } from 'node:util';
 
 export const hostRegistryRoot = '/Library/Application Support/PAtrick/controller-v1';
 export const hostRegistryRoles = Object.freeze(['service', 'hub', 'worker'] as const);
@@ -11,6 +13,7 @@ const directoryMode = 0o755;
 const nodeMode = 0o555;
 const entryMode = 0o444;
 const maxEntryBytes = 256 * 1024;
+const inspectPermissions = promisify(execFile);
 
 export type HostRoleAccount = Readonly<{ uid: number; gid: number; entry: string }>;
 export type HostRegistryRegistration = Readonly<{
@@ -130,6 +133,14 @@ async function protectedDirectory(path: string, owner: number, mode?: number) {
       (mode !== undefined && permissions !== mode)) throw new Error('HOST_REGISTRY_DIRECTORY_INVALID');
 }
 
+async function requireNoAcl(path: string, code: string) {
+  if (process.platform !== 'darwin') return;
+  const result = await inspectPermissions('/bin/ls', ['-ldeq', path], {
+    env: { LC_ALL: 'C' }, timeout: 2000, maxBuffer: 16 * 1024,
+  }).catch(() => undefined);
+  if (!result?.stdout || result.stderr || result.stdout.trimEnd().includes('\n')) throw new Error(code);
+}
+
 async function syncDirectory(path: string) {
   const directory = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { await directory.sync(); }
@@ -175,6 +186,7 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
   if (await existingRegistry(plan)) return;
 
   const staged = await mkdtemp(join(parent, '.patrick-registry-'));
+  const cliRoot = join(plan.registryRoot, 'cli');
   const stagedPath = (path: string) => {
     const child = relative(plan.registryRoot, path);
     if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('HOST_REGISTRY_INVALID');
@@ -200,6 +212,10 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
       await chmod(path, directory.mode);
       await syncDirectory(path);
     }
+    if (plan.directories.some(directory => directory.path === cliRoot)) {
+      await requireNoAcl(stagedPath(cliRoot), 'HOST_REGISTRY_DIRECTORY_INVALID');
+      await requireNoAcl(stagedPath(join(cliRoot, 'entry.mjs')), 'HOST_REGISTRY_FILE_CONFLICT');
+    }
     try { await rename(staged, plan.registryRoot); }
     catch (error) {
       if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '') ||
@@ -214,7 +230,19 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
 /** Reads the applied tree back and reports the observed digests. */
 export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly Readonly<{ path: string; sha256: string }>[]> {
   const owner = registryOwner(plan);
-  for (const directory of plan.directories) await protectedDirectory(directory.path, owner, directory.mode);
+  const cliRoot = join(plan.registryRoot, 'cli');
+  const cliPlanned = plan.directories.some(directory => directory.path === cliRoot);
+  if (!cliPlanned) {
+    const actual = await lstat(cliRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return undefined;
+    });
+    if (actual) throw new Error('HOST_REGISTRY_ENTRY_CONFLICT');
+  }
+  for (const directory of plan.directories) {
+    await protectedDirectory(directory.path, owner, directory.mode);
+    if (directory.path === cliRoot) await requireNoAcl(directory.path, 'HOST_REGISTRY_DIRECTORY_INVALID');
+  }
   return Promise.all(plan.files.map(async file => {
     const descriptor = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
@@ -222,6 +250,7 @@ export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly
       if (!info.isFile() || info.uid !== owner || info.nlink !== 1 || (info.mode & 0o7777) !== file.mode) {
         throw new Error('HOST_REGISTRY_FILE_CONFLICT');
       }
+      if (file.path === join(cliRoot, 'entry.mjs')) await requireNoAcl(file.path, 'HOST_REGISTRY_FILE_CONFLICT');
       const sha256 = digest(await descriptor.readFile());
       if (sha256 !== file.sha256) throw new Error('HOST_REGISTRY_FILE_CONFLICT');
       return { path: file.path, sha256 };
