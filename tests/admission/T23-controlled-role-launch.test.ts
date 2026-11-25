@@ -2,13 +2,13 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_pr
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, createReadStream, openSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { constants, machine } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
@@ -147,6 +147,7 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     ['wrong role', true, ['run-role', 'editor'], 64],
     ['extra argument', true, ['run-role', 'service', 'other'], 64],
     ['absent registration', false, ['run-role', 'service'], 78],
+    ['wrong supervised role', false, ['run-supervisor', 'worker'], 64],
   ] as const)('%s exits before connecting', (_reason, registered, argv, code) => {
     const result = spawnSync(registered ? controller : unregistered, argv, {
       env: {}, cwd: root, timeout: 5000, encoding: 'utf8',
@@ -304,6 +305,71 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
     expect(runRegisteredRole('hub').status).toBe(78);
+  });
+
+  test.skipIf(process.env.PATRICK_T23_LAUNCHD_ADMISSION !== '1')('launchd hands the registered Hub supervisor its listener', async ({ onTestFinished }) => {
+    const role = await enrolledRole('hub');
+    const supervisor = join(registryRoot, 'hub-supervisor');
+    await mkdir(supervisor, { mode: 0o755 });
+    onTestFinished(async () => {
+      await rm(supervisor, { recursive: true, force: true });
+      await rm(role.directory, { recursive: true, force: true });
+    });
+    await writeFile(join(role.directory, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
+    await writeFile(join(supervisor, 'entry.mjs'), [
+      'import { closeSync, constants, openSync } from "node:fs";',
+      'import { createServer } from "node:net";',
+      'if (process.env.PATRICK_SUPERVISOR_LISTENER_FD !== "3" || process.env.PATRICK_FIXTURE_PARENT) process.exit(76);',
+      'const fd = openSync("/dev/fd/3", constants.O_RDWR);',
+      'closeSync(3);',
+      'const server = createServer(socket => socket.end("hub-listener\\n"));',
+      'server.listen({ fd });',
+    ].join('\n'), { mode: 0o444, flag: 'wx' });
+
+    const orphan = spawnSync(registeredController, ['run-supervisor', 'hub'], { cwd: root, env: {}, timeout: 5000 });
+    expect([orphan.error, orphan.status]).toEqual([undefined, 78]);
+    const domain = `gui/${process.getuid!()}`;
+    const label = 'com.patrick.admission.hub.' + randomBytes(8).toString('hex');
+    const plist = join(root, label + '.plist');
+    const stderr = join(root, label + '.stderr');
+    const socketPath = join(role.directory, 'supervisor.sock');
+    await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>${registeredController}</string><string>run-supervisor</string><string>hub</string></array>
+<key>StandardErrorPath</key><string>${stderr}</string>
+<key>EnvironmentVariables</key><dict><key>PATRICK_FIXTURE_PARENT</key><string>inherited</string></dict>
+<key>Sockets</key><dict><key>HubControl</key><dict>
+<key>SockPathName</key><string>${socketPath}</string>
+<key>SockPathGroup</key><integer>${process.getgid!()}</integer>
+<key>SockPathMode</key><integer>432</integer>
+</dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
+    const launchctl = (...args: string[]) => spawnSync('/bin/launchctl', args, {
+      cwd: root, encoding: 'utf8', timeout: 5000,
+    });
+    const bootstrapped = launchctl('bootstrap', domain, plist);
+    expect(bootstrapped.status, bootstrapped.error?.message ?? bootstrapped.stderr).toBe(0);
+    try {
+      await vi.waitFor(async () => {
+        const socket = await stat(socketPath);
+        expect(socket.isSocket()).toBe(true);
+        expect(socket.mode & 0o777).toBe(0o660);
+      }, { timeout: 2000 });
+      const client = createConnection(socketPath);
+      client.setTimeout(4000, () => client.destroy(new Error('Hub supervisor did not accept the launchd listener')));
+      try {
+        let response = '';
+        for await (const part of client) response += part.toString();
+        expect(response).toBe('hub-listener\n');
+      } finally { client.destroy(); }
+    } catch (error) {
+      const job = launchctl('print', `${domain}/${label}`).stdout.match(/^\s*(?:state|runs|last exit code)\s*=.*$/gm);
+      const output = await readFile(stderr, 'utf8').catch(() => '');
+      throw new Error([String(error), ...(job ?? []), output].filter(Boolean).join('\n'), { cause: error });
+    } finally {
+      const removed = launchctl('bootout', `${domain}/${label}`);
+      expect(removed.status, removed.error?.message ?? removed.stderr).toBe(0);
+    }
   });
 
   test('the supervisor rejects a non-socket or a peer outside the enrolled account', async ({ onTestFinished }) => {
