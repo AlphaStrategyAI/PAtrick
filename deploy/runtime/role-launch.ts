@@ -1,5 +1,8 @@
-import { lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { closeSync, constants, lstatSync, openSync } from 'node:fs';
+import { Socket } from 'node:net';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
@@ -199,21 +202,131 @@ export async function runInstalledHubRole(
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   try {
-    const { ready, lifetime } = launchSelectedHubRole(enrollment, owner, registration, stopping.signal);
-    try {
-      const started = await ready;
-      if (!stopping.signal.aborted) onReady?.(started);
-      const exit = await lifetime;
-      if (!exit.stopRequested) throw new Error('INSTALLED_HUB_EXITED_UNEXPECTEDLY');
-      requireCleanHubExit(exit);
-    } catch (error) {
-      stop();
-      await lifetime.catch(() => {});
-      if (error !== stopReason) throw error;
-    }
+    await runHubUntilStopped(enrollment, owner, registration, stopping, stopReason, onReady);
   } finally {
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
+  }
+}
+
+async function runHubUntilStopped(enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
+  registration: HubRoleRegistration, stopping: AbortController, stopReason: Error,
+  onReady?: (started: StartedHub) => void) {
+  const { ready, lifetime } = launchSelectedHubRole(enrollment, owner, registration, stopping.signal);
+  try {
+    const started = await ready;
+    if (!stopping.signal.aborted) onReady?.(started);
+    const exit = await lifetime;
+    if (!exit.stopRequested) throw new Error('INSTALLED_HUB_EXITED_UNEXPECTEDLY');
+    requireCleanHubExit(exit);
+  } catch (error) {
+    stopping.abort(stopReason);
+    await lifetime.catch(() => {});
+    if (error !== stopReason) throw error;
+  }
+}
+
+type SupervisorProgram = Readonly<{ path: string; sha256: string }>;
+const hubReady = 'READY 1 hub\n';
+const hubStopped = 'STOPPED 1 hub\n';
+
+async function verifyHubPeer(socket: Socket, program: SupervisorProgram) {
+  const { path, sha256: expected } = program;
+  const denied = new Error('INSTALLED_HUB_SUPERVISOR_PEER_INVALID');
+  if (resolve(path) !== path || !/^[a-f0-9]{64}$/.test(expected)) throw denied;
+  const root = admitReadRoot(dirname(path), { allowAncestorEntriesChange: true });
+  const initial = lstatSync(path);
+  function validate() {
+    root.validate();
+    const current = lstatSync(path);
+    if (!current.isFile() || current.nlink !== 1 || current.uid !== process.geteuid?.() ||
+        (current.mode & 0o7022) !== 0 || (current.mode & 0o100) === 0 ||
+        current.dev !== initial.dev || current.ino !== initial.ino || current.ctimeMs !== initial.ctimeMs) throw denied;
+  }
+  if (sha256(await readRegularFile(path, 1024 * 1024, { root: root.root, validate })) !== expected) throw denied;
+  validate();
+  if (socket.destroyed) throw denied;
+  const child = spawn(path, ['check-role-peer', 'hub'], {
+    env: {}, stdio: ['ignore', 'ignore', 'ignore', socket], timeout: 5000, killSignal: 'SIGKILL',
+  });
+  const [code, signal] = await once(child, 'close');
+  validate();
+  if (code !== 0 || signal !== null) throw denied;
+}
+
+export async function serveInstalledHubRole(socket: Socket, program: SupervisorProgram,
+  enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, registration: HubRoleRegistration): Promise<void> {
+  const stopping = new AbortController();
+  const stopReason = new Error('INSTALLED_HUB_STOP_REQUESTED');
+  const stop = () => stopping.abort(stopReason);
+  socket.pause();
+  socket.once('close', stop);
+  socket.once('end', stop);
+  socket.once('error', stop);
+  let invalid = false;
+  let completed = false;
+  try {
+    await verifyHubPeer(socket, program);
+    socket.on('data', () => { invalid = true; stop(); });
+    socket.resume();
+    if (!stopping.signal.aborted) {
+      await runHubUntilStopped(enrollment, owner, registration, stopping, stopReason, () => socket.write(hubReady));
+    }
+    if (invalid) throw new Error('INSTALLED_HUB_SUPERVISOR_PROTOCOL_INVALID');
+    completed = true;
+  } finally {
+    if (!completed) socket.destroy();
+    else if (!socket.destroyed) socket.end(hubStopped);
+  }
+}
+
+export async function runSupervisedHubRole(onReady?: () => void): Promise<void> {
+  const failure = new Error('INSTALLED_HUB_SUPERVISOR_PROTOCOL_INVALID');
+  if (process.env.PATRICK_SUPERVISOR_FD !== '3') throw failure;
+  const fd = openSync('/dev/fd/3', constants.O_RDWR);
+  closeSync(3);
+  const socket = new Socket({ fd, readable: true, writable: true, allowHalfOpen: true });
+  let deadline = setTimeout(() => socket.destroy(failure), 120_000);
+  let pending = '';
+  let ready = false;
+  let stopping = false;
+  let stopped = false;
+  function stop() {
+    if (stopping || socket.destroyed) return;
+    stopping = true;
+    clearTimeout(deadline);
+    deadline = setTimeout(() => socket.destroy(failure), 30_000);
+    socket.end();
+  }
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  try {
+    socket.on('data', (bytes: Buffer) => {
+      if (pending.length + bytes.length > hubReady.length + hubStopped.length) return socket.destroy(failure);
+      pending += bytes.toString('latin1');
+      if (!ready && !stopped && pending.startsWith(hubReady)) {
+        pending = pending.slice(hubReady.length);
+        ready = true;
+        if (!stopping) {
+          clearTimeout(deadline);
+          try { onReady?.(); } catch { return socket.destroy(failure); }
+        }
+      }
+      if (stopping && !stopped && pending.startsWith(hubStopped)) {
+        pending = pending.slice(hubStopped.length);
+        stopped = true;
+      }
+      if (pending && (stopped || !((!ready && hubReady.startsWith(pending)) ||
+          (stopping && hubStopped.startsWith(pending))))) socket.destroy(failure);
+    });
+    socket.once('end', () => socket.destroy());
+    await once(socket, 'close');
+    if (!stopped || pending) throw failure;
+  } finally {
+    clearTimeout(deadline);
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+    socket.destroy();
   }
 }
 

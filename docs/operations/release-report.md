@@ -192,7 +192,9 @@ Darwin 候选工作流为每种架构编译生产配置的 `patrick-host-control
 
 角色目录登记受保护的 `supervisor-required` 文件后，控制器在执行入口前连接同目录的 `supervisor.sock`。它校验套接字的属主和物理节点，并通过 Darwin 内核核对监听端的有效 UID。连接以 fd 3 交给角色入口，环境中的 `PATRICK_SUPERVISOR_FD=3` 由控制器设置。套接字缺失、不可用或身份核验失败时，启动返回 `EX_CONFIG`。
 
-监听端将已接受的连接作为 fd 3 传给 `patrick-host-controller check-role-peer ROLE`。命令核对调用方是登记所有者，再通过 Darwin 内核确认对端的有效 UID/GID 与对应角色的 `account` 一致。本机准入覆盖连接交接、双向身份校验和错误端点。生产监督进程仍需接入代次验证与角色排空。
+监听端将已接受的连接作为 fd 3 传给 `patrick-host-controller check-role-peer ROLE`。命令核对调用方是登记所有者，再通过 Darwin 内核确认对端的有效 UID/GID 与对应角色的 `account` 一致。本机准入覆盖连接交接、双向身份校验和错误端点。
+
+Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连接、已登记控制器的路径与摘要，以及代次和 Hub 登记。由监督端验签并启动持有写者锁的 Hub。角色侧 `runSupervisedHubRole` 等待就绪回执，收到停止信号时半关闭连接。监督端在 Hub 退出并释放锁后发回停止回执。角色进程被强杀时，连接断开也会触发同一排空流程。Mac Pro 上仍需登记生产监督进程、独立账号及启动材料。
 
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
 

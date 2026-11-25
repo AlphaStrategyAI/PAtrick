@@ -5,6 +5,7 @@ import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:https';
+import { createServer as createSocketServer } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
@@ -877,7 +878,8 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     await expect(start()).rejects.toThrow('HUB_PROCESS_MASTER_KEY_INVALID');
     await expect(lstat(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { await rename(savedKey, keyPath); }
-  const nativeRegistry = join(dir, 'selected-packaged-hub-registry');
+  const nativeRegistry = await mkdtemp('/private/tmp/patrick-hub-');
+  onTestFinished(() => rm(nativeRegistry, { recursive: true, force: true }));
   const nativeRole = join(nativeRegistry, 'hub');
   await mkdir(nativeRole, { mode: 0o755, recursive: true });
   const registeredNode = join(nativeRegistry, 'node');
@@ -1016,6 +1018,53 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
   await expect(pin(join(nextRoot, 'hub', 'hub.db'))).resolves.toEqual(nextGeneration.roles['hub/hub.db']);
   restarted.runtime.stop();
   await expect(restarted.runtime.drain()).resolves.toMatchObject({ state: 'closed' });
+
+  const installed = join(instanceRoot, 'releases', expected.packageSha256);
+  authorizedRuntimePrefix = pathToFileURL(installed).href + '/';
+  onTestFinished(() => { authorizedRuntimePrefix = undefined; });
+  const compositionPath = pathToFileURL(join(installed, 'runtime', 'composition.mjs')).href;
+  const composition = await import(compositionPath) as typeof import('../../deploy/runtime/composition.js');
+  expect(typeof composition.serveInstalledHubRole).toBe('function');
+  const supervisorPin = { path: controllerPath, sha256: sha256(await readFile(controllerPath)) };
+  let session: Promise<void> | undefined;
+  const socketPath = join(nativeRole, 'supervisor.sock');
+  await writeFile(join(nativeRole, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
+  await unlink(join(nativeRole, 'entry.mjs'));
+  await writeFile(join(nativeRole, 'entry.mjs'), `
+    import { runSupervisedHubRole } from ${JSON.stringify(pathToFileURL(join(instanceRoot, 'releases',
+      expected.packageSha256, 'runtime', 'composition.mjs')).href)};
+    await runSupervisedHubRole(() => process.stdout.write(JSON.stringify({ phase: 'supervised' }) + '\\n'));
+  `, { mode: 0o444, flag: 'wx' });
+  const supervisor = createSocketServer({ allowHalfOpen: true, pauseOnConnect: true }, socket => {
+    session = composition.serveInstalledHubRole(socket, supervisorPin, selected, selectionOwner, registration);
+    void session.catch(() => {});
+  });
+  const listening = once(supervisor, 'listening');
+  supervisor.listen(socketPath);
+  await listening;
+  try {
+    await withNativeController(async ({ controller, report, closed }) => {
+      expect(report).toEqual({ phase: 'supervised' });
+      expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+      expect(probeWriter).toThrow();
+      expect(controller.kill('SIGTERM')).toBe(true);
+      await expect(Promise.race([closed, delay(5000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
+      await expect(session).resolves.toBeUndefined();
+      await expect(fetch(origin + '/healthz')).rejects.toThrow();
+      probeWriter();
+    });
+    await withNativeController(async ({ controller, report, closed }) => {
+      expect(report).toEqual({ phase: 'supervised' });
+      expect(probeWriter).toThrow();
+      expect(controller.kill('SIGKILL')).toBe(true);
+      await expect(closed).resolves.toEqual({ code: null, signal: 'SIGKILL' });
+      await expect(session).resolves.toBeUndefined();
+      await expect(fetch(origin + '/healthz')).rejects.toThrow();
+      probeWriter();
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => supervisor.close(error => error ? reject(error) : resolve()));
+  }
 }, darwinInstallTimeoutMs);
 
 test('first-install CLI publishes only the approved release and reads back the same claim after acknowledgement loss', async ({ onTestFinished }) => {
