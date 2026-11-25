@@ -666,7 +666,8 @@ async function prepareOwnerLock(root: string, pin: (path: string) => Promise<Gen
   return pin(lockPath);
 }
 
-async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void) {
+async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void,
+  hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>) {
   const instanceRoot = join(dir, name);
   await mkdir(instanceRoot, { mode: 0o700 });
   const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
@@ -713,7 +714,9 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
     firstGenerationId: 'first-generation',
     rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
     expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
+    ...(hubOwner ? { hubOwner } : {}),
     deployment: { ...registration, instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
+      ...(hubOwner ? { accounts: { ...registration.accounts, hub: '_www' }, hubSupervisorGid: hubOwner.gid } : {}),
       certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
       keyPath: join(instanceRoot, 'caddy/trust', 'key.ref') },
     templates: Object.fromEntries(await Promise.all(Object.entries(deploymentPaths).map(async ([role, path]) => [role, await readFile(join(root, path), 'utf8')]))),
@@ -763,8 +766,11 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
 }
 
 test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed package', async ({ onTestFinished }) => {
-  const { run, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot } =
+  const { run, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot, enrollment } =
     await firstInstallFixture('first-install-packaged-hub', onTestFinished);
+  const invalid = { ...enrollment, hubOwner: { uid: 0, gid: 1 } };
+  expect(await previewFirstInstall(() => invalid, 'release'))
+    .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
   installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
   expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
   expect(await run('prepare-generation')).toMatchObject({
@@ -777,6 +783,26 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
       ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
   } finally { hub.close(); }
 }, darwinInstallTimeoutMs);
+
+test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
+  'first install assigns the Hub database to the registered independent UID', async ({ onTestFinished }) => {
+    const uid = Number(child(['-u', '_www'], dir, '/usr/bin/id').trim());
+    const gid = Number(child(['-g', '_www'], dir, '/usr/bin/id').trim());
+    const { instanceRoot, enrollment, run, operation, operationId, installOperations, signer, approve, planSha256 } =
+      await firstInstallFixture('first-install-independent-hub', onTestFinished, { uid, gid });
+    const invalid = { ...enrollment, hubOwner: { uid: 0, gid } };
+    expect(await previewFirstInstall(() => invalid, 'release'))
+      .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+    installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+    expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+    expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
+    const prepared = join(instanceRoot, 'data', 'first-generation');
+    const nodes = await Promise.all(['.', 'service.sqlite', 'hub', 'hub/hub.db'].map(path => lstat(join(prepared, path))));
+    expect(nodes.map(info => [info.uid, info.mode & 0o7777])).toEqual([[0, 0o710], [0, 0o600], [uid, 0o700], [uid, 0o600]]);
+    expect([nodes[0]?.gid, nodes[2]?.gid, nodes[3]?.gid]).toEqual([gid, gid, gid]);
+    expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
+  }, darwinInstallTimeoutMs,
+);
 
 test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed database and holds its role lock until exit', async ({ onTestFinished }) => {
   const fixture = await firstInstallFixture('selected-packaged-hub', onTestFinished);

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
-import { accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync,
+import { accessSync, chmodSync, chownSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync,
   readFileSync, realpathSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { stripTypeScriptTypes } from 'node:module';
@@ -26,6 +26,7 @@ const budgets = ['releases', 'data', 'lima'] as const;
 type Store = typeof stores[number];
 type Budget = typeof budgets[number];
 type Stage = 'REGISTRATION' | 'HOST' | 'LAYOUT' | 'PACKAGE' | 'CAPACITY' | 'DEPLOYMENT' | 'SESSION' | 'LEASE';
+type HubOwner = Readonly<{ uid: number; gid: number }>;
 
 /** Installed-controller input. The owner excludes changes to the registered installation and
  * its ancestry until the awaited callback ends. Session credentials are selected independently
@@ -38,6 +39,7 @@ export type InstallPreviewEnrollment = {
   node: { path: string; sha256: string }; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
   targetSchema: number; reserveBytes: Record<Budget, number>;
   firstGenerationId?: string;
+  hubOwner?: HubOwner;
   deployment: DeploymentRegistration; templates: Record<'caddy' | 'service' | 'hub' | 'worker', string>;
   tls: { rpId: string; caSha256: string };
   session?: { bootstrapPlanSha256: string; ca: string; callerId: string; authEpoch: number; credentialRevision: string;
@@ -248,6 +250,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
   const data = dataFields(original, ['installationId', 'releaseId', 'identity', 'hostname', 'uid', 'root', 'rootNode',
     'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
   const firstGenerationId = field(original, 'firstGenerationId', true);
+  const hubOwner = copy(field(original, 'hubOwner', true));
   const ownerLockNode = copy(field(original, 'ownerLockNode', true)) as GenerationNode | undefined;
   const suppliedOwner = field(original, 'owner', true) as ExclusiveRuntimeStaging | undefined;
   requireFact((suppliedOwner === undefined) !== (ownerLockNode === undefined));
@@ -265,7 +268,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     requireFact(typeof readBearer === 'function');
     credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
   }
-  const value = { ...data, firstGenerationId, session: credential, owner, ownerLockNode };
+  const value = { ...data, firstGenerationId, hubOwner, session: credential, owner, ownerLockNode };
   function validate() {
     requireFact(current() === original);
     for (const check of checks) check();
@@ -355,6 +358,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
   const source = (role: keyof typeof e.templates) => Buffer.from(e.templates[role]);
   const rendered = renderDeploymentTemplates({ caddy: source('caddy'), service: source('service'),
     hub: source('hub'), worker: source('worker') }, e.deployment);
+  verifyHubOwner(e);
   const descriptors = Object.values(deploymentPaths).map(path => {
     const row = receipt.materials.find(file => file.path === path);
     requireFact(row);
@@ -371,6 +375,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     reserveBytes: e.reserveBytes, volumes, deployment: e.deployment, renderedSha256: digest(rendered), descriptors,
     required: bootstrapRequirements, tls: e.tls,
     ...(e.ownerLockNode === undefined ? {} : { ownerLockNode: e.ownerLockNode }),
+    ...(e.hubOwner === undefined ? {} : { hubOwner: e.hubOwner }),
     ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId, autoloopKernelSha256 }) });
   const confirm = () => {
     reportStage('LAYOUT');
@@ -524,10 +529,25 @@ const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
 const generationReceiptName = '.patrick-bootstrap.json';
 const interruptedGeneration = 'INSTALL_GENERATION_INTERRUPTED';
 
-function initialNode(path: string, uid: number, directory: boolean): GenerationNode {
+function verifyHubOwner(enrollment: InstallPreviewEnrollment) {
+  const owner = enrollment.hubOwner;
+  if (owner === undefined) return;
+  requireFact(owner && canonicalize(Object.keys(owner).sort()) === '["gid","uid"]' && enrollment.uid === 0 &&
+    [owner.uid, owner.gid].every(value => Number.isInteger(value) && value > 0 && value <= 0x7fffffff) &&
+    enrollment.deployment.hubSupervisorGid === owner.gid);
+  for (const [flag, value] of [['-u', owner.uid], ['-g', owner.gid]] as const) {
+    const account = execFileSync('/usr/bin/id', [flag, enrollment.deployment.accounts.hub], {
+      encoding: 'utf8', timeout: 2000, env: { LC_ALL: 'C' },
+    });
+    requireFact(account.trim() === String(value));
+  }
+}
+
+function initialNode(path: string, uid: number, directory: boolean, gid?: number,
+  mode = directory ? 0o700n : 0o600n): GenerationNode {
   const info = stat(path);
   requireFact(realpathSync.native(path) === path && info.uid === BigInt(uid) &&
-    (info.mode & 0o7777n) === (directory ? 0o700n : 0o600n) &&
+    (gid === undefined || info.gid === BigInt(gid)) && (info.mode & 0o7777n) === mode &&
     (directory ? info.isDirectory() : info.isFile() && info.nlink === 1n));
   return { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) };
 }
@@ -573,7 +593,7 @@ function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) 
   }
 }
 
-async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void) {
+async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void, hubOwner?: HubOwner) {
   const roles = {} as InstalledGeneration['roles'];
   const databaseSha256: Record<string, string> = {};
   const hubPath = join(root, autoloopHubDirectory);
@@ -583,17 +603,19 @@ async function observeGenerationFiles(root: string, uid: number, existing: boole
       ? flatAutoloopHubDatabase : legacyHubDatabase;
   }
   const nested = hubDatabase === autoloopHubDatabase;
+  requireFact(nested || !hubOwner);
   exactDirectory(root, ['service.sqlite', 'answers.sqlite', nested ? autoloopHubDirectory : hubDatabase,
     ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
   if (nested) {
-    roles[autoloopHubDirectory] = initialNode(hubPath, uid, true);
+    roles[autoloopHubDirectory] = initialNode(hubPath, hubOwner?.uid ?? uid, true, hubOwner?.gid);
     exactDirectory(hubPath, [flatAutoloopHubDatabase]);
-    syncStore(hubPath, roles[autoloopHubDirectory], uid);
+    syncStore(hubPath, roles[autoloopHubDirectory], hubOwner?.uid ?? uid);
   }
   const databases = ['service.sqlite', 'answers.sqlite', hubDatabase] as const;
   for (const name of databases) {
     const path = join(root, name);
-    roles[name] = initialNode(path, uid, false);
+    const owner = name === autoloopHubDatabase ? hubOwner : undefined;
+    roles[name] = initialNode(path, owner?.uid ?? uid, false, owner?.gid);
     databaseSha256[name] = sha256(await readRegularFile(path, 64 * 1024 * 1024, { root, validate: guard }));
   }
   for (const name of firstDirectories) {
@@ -655,9 +677,17 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
           for (const name of [...firstDirectories, autoloopHubDirectory]) mkdirSync(join(stage, name), { mode: 0o700 });
           configureInitialDatabases(stage, migrations, initialize);
           verifyInitialSchemas(stage, migrations, e.uid);
+          if (e.hubOwner) {
+            const { uid, gid } = e.hubOwner;
+            verifyHubOwner(e);
+            chownSync(join(stage, autoloopHubDatabase), uid, gid);
+            chownSync(join(stage, autoloopHubDirectory), uid, gid);
+            chownSync(stage, e.uid, gid);
+          }
         }
-        const dataRoot = initialNode(stage, e.uid, true);
-        const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard);
+        const hubTraversalEnabled = e.hubOwner && existing && (existing.mode & 0o7777) === 0o710;
+        const dataRoot = initialNode(stage, e.uid, true, e.hubOwner?.gid, hubTraversalEnabled ? 0o710n : 0o700n);
+        const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard, e.hubOwner);
         const generation: InstalledGeneration = { id: generationId, schema: e.targetSchema, packageSha256: release.packageSha256,
           dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true) };
         const body = { format: 'patrick-first-generation-v1', operationId, planSha256: operation.planSha256, generation, databaseSha256 };
@@ -680,7 +710,12 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
         }
         syncStore(stage, dataRoot, e.uid);
         guard();
+        verifyHubOwner(e);
         if (!existing) renameSync(stage, path);
+        if (e.hubOwner && !hubTraversalEnabled) {
+          chmodSync(path, 0o710);
+          syncStore(path, dataRoot, e.uid);
+        }
         syncStore(data, e.stores.data, e.uid);
         physical(path, dataRoot, e.uid);
         return generation;
