@@ -1,6 +1,6 @@
 import { createPublicKey, randomUUID, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, renameSync } from 'node:fs';
-import { link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
+import { chmod, chown, link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits, sha256, validatePaths } from './release.mjs';
@@ -323,7 +323,7 @@ export function artifactTable(files, identity, logs) {
 }
 
 const stat = path => lstatSync(path, { bigint: true });
-function physical(info) { return [info.dev, info.ino, info.mode, info.uid].join('/'); }
+function physical(info) { return [info.dev, info.ino, info.mode, info.uid, info.gid].join('/'); }
 function stable(info) { return [physical(info), info.ctimeNs, info.mtimeNs, info.size, info.nlink].join('/'); }
 function requireOwnedDirectory(info) {
   check(info.isDirectory() && info.uid === BigInt(process.geteuid()) && (info.mode & 0o022n) === 0n, 'directory ownership or permissions changed');
@@ -699,6 +699,15 @@ function runtimeDirectories(materials) {
   check(materials.length + directories.size <= limits.evidenceEntries, 'runtime tree entry limit');
   return [...directories].sort();
 }
+function hubTraversalDirectories(receipt, hubGroup) {
+  if (hubGroup === undefined) return new Set();
+  check(Number.isSafeInteger(hubGroup) && hubGroup > 0 && hubGroup <= 0x7fffffff, 'invalid installed Hub group');
+  check(receipt.profile === 'deployment-complete' && hasAutoloopHub(receipt.materials.map(({ path }) => path)),
+    'signed Hub closure required');
+  return new Set(runtimeDirectories(receipt.materials).filter(directory =>
+    directory === '.' || directory === dirname(autoloopHub.root) ||
+    directory === autoloopHub.root || directory.startsWith(autoloopHub.root + '/')));
+}
 function signaturesValid(signatures, bytes, keys) {
   signatureSet(signatures);
   check(Array.isArray(keys) && keys.length > 0 && keys.length <= 64, 'trusted keys required');
@@ -1002,7 +1011,7 @@ export function publishPackage(staging, path, data, packageSha256) {
     check(actual.data.equals(data), 'package output readback mismatch');
   });
 }
-async function createTree(lease, journal, materials, files) {
+async function createTree(lease, journal, materials, files, hubDirectories, hubGroup) {
   for (const dir of runtimeDirectories(materials)) {
     const path = join(journal.path, dir);
     guardOutput(lease, journal, path);
@@ -1015,13 +1024,21 @@ async function createTree(lease, journal, materials, files) {
     requireOwnedDirectory(info);
     entry.id = objectId(info);
     journal.pending = undefined;
+    if (hubDirectories.has(dir)) {
+      await chown(path, process.geteuid(), hubGroup);
+      guardOutput(lease, journal, path);
+      await chmod(path, 0o710);
+      guardOutput(lease, journal, path);
+    }
   }
   for (const r of materials) await writeNew(lease, journal, join(journal.path, r.path), files.get(r.path), parseInt(r.mode.slice(3), 8), r.sha256);
 }
-export async function stageVerifiedEmittedRuntime(receipt, { staging, destination }) {
+export async function stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup }) {
   const record = verified.get(receipt);
   check(record && record.staging === staging, 'genuine verified receipt and bound staging required');
   check(receipt.profile !== nativeProfile, 'byte-only native candidate cannot be staged');
+  check(hubGroup === undefined || record.publication, 'Hub access requires bound publication');
+  const hubDirectories = hubTraversalDirectories(receipt, hubGroup);
   const capture = await writeUnderLease(staging, 'stage', destination, receipt.packageSha256, async (lease, journal) => {
     if (record.publication) {
       checkPublication(lease, record);
@@ -1032,7 +1049,7 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
     const { data } = await readLeased(lease, record.path, limits.packageBytes);
     lease.guard();
     const { files } = decodePackage(data, record.pins.expected, record.pins.policy);
-    await createTree(lease, journal, receipt.materials, files);
+    await createTree(lease, journal, receipt.materials, files, hubDirectories, hubGroup);
     lease.guard();
     const tree = await readTree(lease, destination);
     lease.guard();
@@ -1098,10 +1115,11 @@ export async function withStagedDeployment(receipt, token, use) {
   return withStagedEmittedRuntime(receipt, token, use);
 }
 
-export async function withPublishedDeployment(receipt, { staging, releasesRoot }, use) {
+export async function withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup }, use) {
   const record = verified.get(receipt);
   check(record && record.staging === staging && receipt.profile === 'deployment-complete' && typeof use === 'function',
     'genuine complete deployment receipt and bound staging required');
+  const hubDirectories = hubTraversalDirectories(receipt, hubGroup);
   return leased(staging, lease => {
     check(lease.root !== sep, 'non-root physical owner required');
     inside(lease.root, releasesRoot);
@@ -1109,7 +1127,15 @@ export async function withPublishedDeployment(receipt, { staging, releasesRoot }
       check(releasesRoot === record.publication.releasesRoot, 'registered release store required');
       checkPublication(lease, record);
     }
-    return useVerifiedTree(lease, record, receipt, join(releasesRoot, receipt.packageSha256), use);
+    const root = join(releasesRoot, receipt.packageSha256);
+    return useVerifiedTree(lease, record, receipt, root, async deployment => {
+      for (const directory of hubDirectories) {
+        lease.guard();
+        const info = stat(join(root, directory));
+        check(info.gid === BigInt(hubGroup) && (info.mode & 0o7777n) === 0o710n, 'installed Hub access mismatch');
+      }
+      return use(deployment);
+    });
   });
 }
 

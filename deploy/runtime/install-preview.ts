@@ -448,6 +448,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       const destination = join(history, `.release-${operationId}`);
       const releasesRoot = join(e.root, 'releases');
       const publication = { stagingRoot: history, releasesRoot };
+      const hubGroup = e.hubOwner?.gid;
       const req: LifecycleRequest = { operationId, command: 'install', targetId: releaseId, planSha256, expectedGeneration: null };
       const evidenceId = 'published-release';
       let material: Awaited<ReturnType<typeof inspectLeasedInstall>> | undefined;
@@ -469,7 +470,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
           guard();
           requireFact(expectedId === evidenceId);
           const { receipt, staging } = material ??= await inspect(false);
-          return await withPublishedDeployment(receipt, { staging, releasesRoot }, async () => {
+          return await withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup }, async () => {
             guard();
             if (reconciling) {
               requireFact(!lstatSync(destination, { throwIfNoEntry: false }));
@@ -488,7 +489,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       if (action === 'prepare-generation') {
         requireFact(previous.status === 'completed' && prepare);
         const checked = material ?? await inspect(false);
-        return withPublishedDeployment(checked.receipt, { staging: checked.staging, releasesRoot }, async release => {
+        return withPublishedDeployment(checked.receipt, { staging: checked.staging, releasesRoot, hubGroup }, async release => {
           checked.confirm();
           return prepare(e, release, guard);
         });
@@ -512,7 +513,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       const { receipt, staging, confirm } = material;
       await journal.readOwnedClaim(claim.token);
       confirm();
-      const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination });
+      const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup });
       await journal.readOwnedClaim(claim.token);
       await publishStagedDeployment(receipt, stage);
       return await journal.markCompleted(claim.token, evidenceId);

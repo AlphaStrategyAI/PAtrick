@@ -2,7 +2,7 @@ import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { watch } from 'node:fs';
-import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
+import { chmod, chown, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:https';
 import { createConnection, createServer as createSocketServer } from 'node:net';
@@ -627,7 +627,7 @@ async function publishFixture(label: string) {
 }
 
 // The fixture host serializes every lease under its private temporary root.
-async function promotionHost(label: string) {
+async function promotionHost(label: string, hubGroup?: number) {
   const owner = join(dir, label);
   await mkdir(owner, { mode: 0o700 });
   const stagingRoot = join(owner, 'staging');
@@ -651,10 +651,27 @@ async function promotionHost(label: string) {
   const pins = { expected: complete.expected, policy: complete.policy };
   const checked = await verifyEmittedRuntimeCandidate(archive, { staging: port, ...pins });
   const destination = join(stagingRoot, 'first');
-  const stage = await stageVerifiedEmittedRuntime(checked, { staging: port, destination });
+  const stage = await stageVerifiedEmittedRuntime(checked, { staging: port, destination, hubGroup });
   return { port, hooks, checked, stage, destination, installed: join(releasesRoot, checked.packageSha256),
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
+
+test.skipIf(!upstreamHubSource || !process.getgid?.())('publishes the signed Hub closure with group traversal', async () => {
+  const hubGroup = process.getgid!();
+  const { checked, stage, scope, installed } = await promotionHost('hub-group-release', hubGroup);
+  await publishStagedDeployment(checked, stage);
+  await withPublishedDeployment(checked, { ...scope, hubGroup }, async () => {
+    for (const directory of ['.', 'runtime', autoloopHub.root, join(autoloopHub.root, 'host')]) {
+      const info = await lstat(join(installed, directory));
+      expect([info.gid, info.mode & 0o7777]).toEqual([hubGroup, 0o710]);
+    }
+    expect((await lstat(join(installed, 'deploy'))).mode & 0o7777).toBe(0o700);
+  });
+  const hubHost = join(installed, autoloopHub.root, 'host');
+  await chmod(hubHost, 0o700);
+  await expect(withPublishedDeployment(checked, { ...scope, hubGroup }, async () => {}))
+    .rejects.toThrow('installed Hub access mismatch');
+}, darwinInstallTimeoutMs);
 
 async function prepareOwnerLock(root: string, pin: (path: string) => Promise<GenerationNode>) {
   const directory = root + '.owner';
@@ -668,8 +685,14 @@ async function prepareOwnerLock(root: string, pin: (path: string) => Promise<Gen
 
 async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void,
   hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>) {
-  const instanceRoot = join(dir, name);
-  await mkdir(instanceRoot, { mode: 0o700 });
+  const instanceRoot = hubOwner ? await mkdtemp('/private/tmp/patrick-independent-hub-') : join(dir, name);
+  if (hubOwner) {
+    onTestFinished(() => rm(instanceRoot, { recursive: true, force: true }));
+    await chown(instanceRoot, 0, hubOwner.gid);
+    await chmod(instanceRoot, 0o710);
+  } else {
+    await mkdir(instanceRoot, { mode: 0o700 });
+  }
   const stores = ['packages', 'releases', 'data', 'history', 'lima'] as const;
   const pin = async (path: string) => {
     const info = await lstat(path, { bigint: true });
@@ -678,6 +701,10 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
   const storePins = await Promise.all(stores.map(async name => {
     const path = join(instanceRoot, name);
     await mkdir(path, { mode: 0o700 });
+    if (hubOwner && (name === 'releases' || name === 'data')) {
+      await chown(path, 0, hubOwner.gid);
+      await chmod(path, 0o710);
+    }
     return [name, await pin(path)];
   }));
   const { expected, policy } = complete;
@@ -788,7 +815,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
   'first install assigns the Hub database to the registered independent UID', async ({ onTestFinished }) => {
     const uid = Number(child(['-u', '_www'], dir, '/usr/bin/id').trim());
     const gid = Number(child(['-g', '_www'], dir, '/usr/bin/id').trim());
-    const { instanceRoot, enrollment, run, operation, operationId, installOperations, signer, approve, planSha256 } =
+    const { instanceRoot, enrollment, expected, published, run, operation, operationId, installOperations, signer, approve, planSha256 } =
       await firstInstallFixture('first-install-independent-hub', onTestFinished, { uid, gid });
     const invalid = { ...enrollment, hubOwner: { uid: 0, gid } };
     expect(await previewFirstInstall(() => invalid, 'release'))
@@ -800,6 +827,20 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     const nodes = await Promise.all(['.', 'service.sqlite', 'hub', 'hub/hub.db'].map(path => lstat(join(prepared, path))));
     expect(nodes.map(info => [info.uid, info.mode & 0o7777])).toEqual([[0, 0o710], [0, 0o600], [uid, 0o700], [uid, 0o600]]);
     expect([nodes[0]?.gid, nodes[2]?.gid, nodes[3]?.gid]).toEqual([gid, gid, gid]);
+    const canAccess = (flag: '-r' | '-w', path: string) => {
+      const result = spawnSync('/bin/test', [flag, path], { uid, gid, timeout: 5000 });
+      expect(result.error).toBeUndefined();
+      return result.status;
+    };
+    const hubEntry = join(published, autoloopHub.root, autoloopHub.entry);
+    expect(canAccess('-r', hubEntry)).toBe(0);
+    expect(canAccess('-w', hubEntry)).toBe(1);
+    const proxyTemplate = join(published, deploymentPaths.caddy);
+    expect((await lstat(proxyTemplate)).isFile()).toBe(true);
+    expect(canAccess('-r', proxyTemplate)).toBe(1);
+    expect(canAccess('-r', join(instanceRoot, 'packages', expected.packageSha256 + '.json'))).toBe(1);
+    expect(canAccess('-r', join(prepared, 'service.sqlite'))).toBe(1);
+    expect(canAccess('-w', join(prepared, 'hub', 'hub.db'))).toBe(0);
     expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
   }, darwinInstallTimeoutMs,
 );

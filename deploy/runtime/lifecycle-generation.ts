@@ -266,7 +266,8 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     });
     boundary(lease);
     signal?.throwIfAborted();
-    return withPublishedDeployment(receipt, { staging, releasesRoot: join(e.root, 'releases') }, async installed => {
+    const deploymentOptions = { staging, releasesRoot: join(e.root, 'releases'), hubGroup: e.hubOwner?.gid };
+    return withPublishedDeployment(receipt, deploymentOptions, async installed => {
       requireValue(installed.packageSha256 === g.packageSha256 && installed.root === join(e.root, 'releases', g.packageSha256));
       boundary(lease);
       physical(g);

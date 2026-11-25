@@ -93,7 +93,7 @@ export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate
  * Paths are valid during awaited use. A late rejection can follow an executed callback.
  */
 export function withPublishedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, options: {
-  staging: ExclusiveRuntimeStaging; releasesRoot: string;
+  staging: ExclusiveRuntimeStaging; releasesRoot: string; hubGroup?: number;
 }, use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
   staging: ExclusiveRuntimeStaging; expected: NativeByteReleaseExpectation; policy: EmittedReleaseTrustPolicy;
@@ -113,7 +113,7 @@ export type EmittedWriteOutcome = Readonly<Pick<EmittedWriteFailure, 'operation'
 export function readEmittedWriteOutcome(failure: unknown): Promise<EmittedWriteOutcome>;
 /** A failed lease completion can reject with EmittedWriteFailure. */
 export function stageVerifiedEmittedRuntime(receipt: VerifiedEmittedRuntimeCandidate, options: {
-  staging: ExclusiveRuntimeStaging; destination: string;
+  staging: ExclusiveRuntimeStaging; destination: string; hubGroup?: number;
 }): Promise<StagedEmittedRuntime>;
 /** Entry paths may be consumed inside the awaited callback while the host lease is held. */
 export function withStagedEmittedRuntime<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
