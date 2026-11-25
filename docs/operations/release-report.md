@@ -210,6 +210,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 独立 Hub 安装时，签名发布树的根、`runtime` 和 `runtime/autoloop-hub` 各级源码目录由安装控制器持有。登记组获得 `0710` 目录穿越权限，签名文件的模式和内容按清单复验。发布读回和代次选择均核对这些目录的组和权限。目标宿主在登记时为同一组配置安装根、`releases` 及 `data` 的穿越权限。控制器持有 `runtime/hub-control`，该目录使用登记组和 `0750` 权限，供 Hub 监听规则变更。规则文件和写者锁按各自的登记权限检查。
 
+构建 `45536318420` 为提交 `13a58c5` 生成 Apple Silicon 和 Intel 未签名候选。两个作业均实测以独立 UID 启动 Hub、读回健康状态、在运行期间阻止重选代次，并在停止后确认写者锁释放。下载后复验两套包各自的 481 个载荷文件、原生控制器和 SQLite 扩展。Mac Pro 的正式签名安装与重启待实测。[双架构下载回执](evidence/darwin-candidates-2026-11-25-13a58c5.json)
+
 构建 `45530047120` 为提交 `964f49b` 生成 Apple Silicon 和 Intel 未签名候选。两个作业均通过独立 Hub UID 登记及首次安装的 CI 回归。下载复验核对了每份归档中的 481 个载荷文件、源码候选、原生控制器和 SQLite 扩展。Mac Pro 实机验收仍需可登录账号和可信发布签名。[双架构下载回执](evidence/darwin-candidates-2026-11-25-964f49b.json)
 
 安装预览收到 `hubSupervisorGid` 时，会渲染 `com.patrick.autoloop-hub-supervisor` 并将其纳入预览摘要。此系统域作业由套接字连接触发，监听器归 root 和已登记的 Hub 组所有。宿主仍负责建立受保护的入口和组登记。
