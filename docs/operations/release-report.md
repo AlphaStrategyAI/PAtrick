@@ -204,6 +204,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 2026-11-25，T23 本机执行构建、宿主登记和角色准入测试，79 项通过，3 项跳过。登记函数进入现有共享运行时模块后，签名归档验证通过。本机另外用锁定版 Hub 通过 4 项已签名部署准入，覆盖包内初始化、启动、关停和写者锁。复核 Mac Pro 时，SSH 主机指纹匹配，现有账户的公钥认证被拒绝。实机验收还需要可登录的账户和可信发布签名入口。
 
+构建 `45525886907` 为提交 `ebaa243` 生成 Apple Silicon 和 Intel 未签名候选。两种架构的系统域 `launchd` 测试均验证了 Hub 跨 UID 的对端认证及错误身份拒绝。独立下载核对了每份归档的 481 个载荷文件、源码清单、控制器及 SQLite 扩展的摘要和架构。[双架构下载回执](evidence/darwin-candidates-2026-11-25-ebaa243.json)
+
 安装预览收到 `hubSupervisorGid` 时，会渲染 `com.patrick.autoloop-hub-supervisor` 并将其纳入预览摘要。此系统域作业由套接字连接触发，监听器归 root 和已登记的 Hub 组所有。宿主仍负责建立受保护的入口和组登记。
 
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
