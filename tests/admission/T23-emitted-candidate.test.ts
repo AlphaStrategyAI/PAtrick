@@ -815,15 +815,19 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
   'first install assigns the Hub database to the registered independent UID', async ({ onTestFinished }) => {
     const uid = Number(child(['-u', '_www'], dir, '/usr/bin/id').trim());
     const gid = Number(child(['-g', '_www'], dir, '/usr/bin/id').trim());
-    const { instanceRoot, enrollment, expected, published, run, operation, operationId, installOperations, signer, approve, planSha256 } =
+    const { instanceRoot, enrollment, expected, policy, identity, pin, published, run, operation, operationId, installOperations,
+      signer, approve, planSha256 } =
       await firstInstallFixture('first-install-independent-hub', onTestFinished, { uid, gid });
     const invalid = { ...enrollment, hubOwner: { uid: 0, gid } };
     expect(await previewFirstInstall(() => invalid, 'release'))
       .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
-    installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+    const approved = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+    installOperations[operationId] = approved;
     expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+    const generation = await prepareFirstInstallGeneration(() => enrollment, 'release', operationId, approved, () => {});
+    expect(generation.id).toBe('first-generation');
     expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
-    const prepared = join(instanceRoot, 'data', 'first-generation');
+    const prepared = join(instanceRoot, 'data', generation.id);
     const nodes = await Promise.all(['.', 'service.sqlite', 'hub', 'hub/hub.db'].map(path => lstat(join(prepared, path))));
     expect(nodes.map(info => [info.uid, info.mode & 0o7777])).toEqual([[0, 0o710], [0, 0o600], [uid, 0o700], [uid, 0o600]]);
     expect([nodes[0]?.gid, nodes[2]?.gid, nodes[3]?.gid]).toEqual([gid, gid, gid]);
@@ -841,7 +845,60 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     expect(canAccess('-r', join(instanceRoot, 'packages', expected.packageSha256 + '.json'))).toBe(1);
     expect(canAccess('-r', join(prepared, 'service.sqlite'))).toBe(1);
     expect(canAccess('-w', join(prepared, 'hub', 'hub.db'))).toBe(0);
-    expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
+
+    const runtimeRoot = join(instanceRoot, 'runtime');
+    const controlRoot = join(runtimeRoot, 'hub-control');
+    for (const directory of [runtimeRoot, controlRoot]) {
+      await mkdir(directory, { mode: 0o700 });
+      await chown(directory, 0, gid);
+      await chmod(directory, 0o710);
+    }
+    const writerPath = join(controlRoot, 'writer.sqlite');
+    await writeFile(writerPath, '', { mode: 0o600, flag: 'wx' });
+    const fence = new DatabaseSync(writerPath);
+    try { fence.exec('PRAGMA user_version = 1'); } finally { fence.close(); }
+    await chown(writerPath, uid, gid);
+    function probeWriter() {
+      const database = new DatabaseSync(writerPath, { timeout: 0 });
+      try { database.exec('BEGIN IMMEDIATE'); } finally { database.close(); }
+    }
+    const rules = canonicalize(hubRules([process.execPath, '-e', 'process.exit(0)']));
+    await writeFile(join(controlRoot, 'rules.json'), rules, { mode: 0o444, flag: 'wx' });
+    const key = generateKeyPairSync('ed25519');
+    const selected: GenerationEnrollment = {
+      installationId: enrollment.installationId, hostId: 'fixture-host', identity, root: instanceRoot,
+      target: expected.target, publicKey: key.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      rootNode: enrollment.rootNode, stores: enrollment.stores, ownerLockNode: await prepareOwnerLock(instanceRoot, pin),
+      hubOwner: { uid, gid }, releases: [{ expected, policy }], generations: [generation],
+      hubRole: { rootNode: await pin(controlRoot), lockNode: await prepareOwnerLock(controlRoot, pin), writerNode: await pin(writerPath) },
+    };
+    const store = createGenerationStore(selected, undefined, {
+      async signRecord(payload) { return sign(null, payload, key.privateKey).toString('base64'); },
+    });
+    const order = store.order('select-hub', null, generation.id);
+    const envelope = canonicalize({ order, signature: sign(null, bytes(order), key.privateKey).toString('base64') });
+    await store.select(envelope);
+    const probe = createHttpServer();
+    await new Promise<void>((resolve, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', resolve); });
+    const address = probe.address();
+    await new Promise<void>((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+    if (!address || typeof address === 'string') throw new Error('fixture endpoint missing');
+    const origin = 'http://127.0.0.1:' + address.port;
+    const hub = await startSelectedHubRole(selected, undefined, {
+      rulesSha256: sha256(Buffer.from(rules)), listener: { host: '127.0.0.1', port: address.port }, publicUrl: origin,
+    });
+    try {
+      expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+      const keyFile = await lstat(join(prepared, 'hub', 'master.key'));
+      expect([keyFile.uid, keyFile.gid, keyFile.mode & 0o7777]).toEqual([uid, gid, 0o600]);
+      expect(probeWriter).toThrow('database is locked');
+      await expect(store.select(envelope)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+    } finally {
+      hub.runtime.stop();
+      expect(await hub.runtime.drain()).toMatchObject({ state: 'closed' });
+    }
+    expect(probeWriter).not.toThrow();
+    await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
   }, darwinInstallTimeoutMs,
 );
 

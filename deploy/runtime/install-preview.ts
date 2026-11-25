@@ -690,7 +690,7 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
         const dataRoot = initialNode(stage, e.uid, true, e.hubOwner?.gid, hubTraversalEnabled ? 0o710n : 0o700n);
         const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard, e.hubOwner);
         const generation: InstalledGeneration = { id: generationId, schema: e.targetSchema, packageSha256: release.packageSha256,
-          dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true) };
+          dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true, e.hubOwner?.gid, e.hubOwner ? 0o710n : 0o700n) };
         const body = { format: 'patrick-first-generation-v1', operationId, planSha256: operation.planSha256, generation, databaseSha256 };
         const payload = Buffer.from(canonicalize(body));
         const receipt = join(stage, generationReceiptName);
