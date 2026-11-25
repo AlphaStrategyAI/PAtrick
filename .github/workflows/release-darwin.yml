@@ -218,7 +218,6 @@ jobs:
             (
               cd "$controller_checkout"
               sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
-                PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
                 "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
                 --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the Hub database'
             )
