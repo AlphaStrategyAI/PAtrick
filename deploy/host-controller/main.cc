@@ -234,6 +234,27 @@ bool has_protected_file(int directory, const char* name) {
   return fd >= 0 && close(fd) == 0;
 }
 
+int check_role_peer(const char* role) {
+  if (getuid() != registry_owner || geteuid() != registry_owner) return EX_CONFIG;
+  const int registry = open_registry();
+  if (registry < 0) return EX_CONFIG;
+  const int directory = open_protected(registry, role, true);
+  Account account {};
+  const bool admitted = directory >= 0 && read_account(directory, account) &&
+                        distinct_role_accounts(registry, role, account.uid);
+  const bool closed_directory = directory < 0 || close(directory) == 0;
+  if (close(registry) != 0 || !closed_directory || !admitted) return EX_CONFIG;
+
+  sockaddr_storage address {};
+  socklen_t address_size = sizeof(address);
+  uid_t peer_uid;
+  gid_t peer_gid;
+  if (getpeername(control_fd, reinterpret_cast<sockaddr*>(&address), &address_size) != 0 ||
+      address.ss_family != AF_UNIX || getpeereid(control_fd, &peer_uid, &peer_gid) != 0 ||
+      peer_uid != account.uid || peer_gid != account.gid) return EX_CONFIG;
+  return EX_OK;
+}
+
 int launch_registered_role(const char* role) {
   const int registry = open_registry();
   if (registry < 0) return EX_CONFIG;
@@ -273,13 +294,15 @@ int launch_registered_role(const char* role) {
 #endif
 
 int main(int argc, char** argv) {
-  if (argc != 3 || strcmp(argv[1], "run-role") ||
+  if (argc != 3 ||
+      (strcmp(argv[1], "run-role") && strcmp(argv[1], "check-role-peer")) ||
       (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker"))) return EX_USAGE;
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
-  if (strcmp(argv[2], "service")) return EX_USAGE;
+  if (strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
   return launch();
 #else
+  if (strcmp(argv[1], "check-role-peer") == 0) return check_role_peer(argv[2]);
   return launch_registered_role(argv[2]);
 #endif
 #else

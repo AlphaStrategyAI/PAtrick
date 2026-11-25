@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, createReadStream, openSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
-import { createServer, type Server, type Socket } from 'node:net';
+import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { constants, machine } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -194,6 +194,17 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     } finally { closeSync(descriptor); }
   }
 
+  function checkSupervisorPeer(role: string, descriptor: Socket | number) {
+    return new Promise<number | null>(resolve => {
+      const child = spawn(registeredController, ['check-role-peer', role], {
+        cwd: root, env: {}, timeout: 5000,
+        stdio: ['ignore', 'ignore', 'ignore', descriptor],
+      });
+      child.once('error', () => resolve(null));
+      child.once('close', resolve);
+    });
+  }
+
   test('the native registry dispatches only admitted role entries for the enrolled account', async () => {
     for (const role of ['service', 'hub', 'worker']) {
       expect(runRegisteredRole(role).status).toBe(78);
@@ -263,9 +274,13 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     ].join('\n'), { mode: 0o444, flag: 'wx' });
 
     expect(runRegisteredRole('hub').status).toBe(78);
-    const server = createServer(socket => {
+    let peerStatus: number | null | undefined;
+    const server = createServer(async socket => {
       socket.on('error', () => socket.destroy());
+      peerStatus = await checkSupervisorPeer('hub', socket);
+      if (peerStatus !== 0) return socket.destroy();
       socket.once('data', bytes => socket.end(bytes.toString() === 'hub\n' ? 'enrolled\n' : 'invalid\n'));
+      socket.resume();
     });
     const listening = once(server, 'listening');
     server.listen(socketPath);
@@ -283,12 +298,42 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
           child.once('error', reject);
           child.once('close', code => resolve({ code, stdout }));
         });
-        expect(result).toEqual({ code: 0, stdout: 'enrolled\n' });
+        expect({ ...result, peerStatus }).toEqual({ code: 0, stdout: 'enrolled\n', peerStatus: 0 });
       } finally { closeSync(descriptor); }
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
     expect(runRegisteredRole('hub').status).toBe(78);
+  });
+
+  test('the supervisor rejects a non-socket or a peer outside the enrolled account', async ({ onTestFinished }) => {
+    const role = await enrolledRole('service', process.getuid!(), process.getgid!() + 1);
+    onTestFinished(() => rm(role.directory, { recursive: true, force: true }));
+    const descriptor = openSync(join(root, 'descriptor-sentinel'), 'r');
+    try { expect(await checkSupervisorPeer('service', descriptor)).toBe(78); }
+    finally { closeSync(descriptor); }
+
+    const server = createServer(async socket => {
+      socket.once('error', () => socket.destroy());
+      socket.end(String(await checkSupervisorPeer('service', socket)));
+      socket.resume();
+    });
+    const socketPath = join(role.directory, 'supervisor.sock');
+    const listening = once(server, 'listening');
+    server.listen(socketPath);
+    await listening;
+    try {
+      const client = createConnection(socketPath);
+      const response = await new Promise<string>((resolve, reject) => {
+        let output = '';
+        client.setEncoding('utf8').on('data', chunk => { output += chunk; });
+        client.once('error', reject);
+        client.once('end', () => resolve(output));
+      });
+      expect(response).toBe('78');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   test.each(['file', 'link'] as const)('an enrolled supervisor rejects a %s in place of its endpoint', async kind => {
