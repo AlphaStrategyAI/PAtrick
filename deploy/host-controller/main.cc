@@ -9,19 +9,21 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <string>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
 #include <CommonCrypto/CommonDigest.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #else
 #include <charconv>
 #include <sys/acl.h>
 #endif
 
 namespace {
+
+constexpr int control_fd = 3;
 
 // Enumerate the open descriptors themselves. A soft limit need not cover every inherited fd.
 bool confine_descriptors(int last_allowed_fd) {
@@ -49,9 +51,36 @@ bool confine_descriptors(int last_allowed_fd) {
   return closedir(directory) == 0 && ok;
 }
 
-#ifdef PATRICK_SYNTHETIC_REGISTRATION
-constexpr int control_fd = 3;
+bool connect_control(const std::string& path, uid_t owner) {
+  sockaddr_un address {};
+  if (path.size() >= sizeof(address.sun_path)) return false;
+  struct stat endpoint {};
+  if (lstat(path.c_str(), &endpoint) != 0 || !S_ISSOCK(endpoint.st_mode) ||
+      endpoint.st_uid != owner) return false;
+  address.sun_family = AF_UNIX;
+  memcpy(address.sun_path, path.c_str(), path.size() + 1);
+  address.sun_len = SUN_LEN(&address);
+  const int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (socket_fd < 0) return false;
+  uid_t peer_uid;
+  gid_t peer_gid;
+  struct stat observed {};
+  if (socket_fd < control_fd || fcntl(socket_fd, F_SETFL, O_NONBLOCK) != 0 ||
+      connect(socket_fd, reinterpret_cast<sockaddr*>(&address), address.sun_len) != 0 ||
+      getpeereid(socket_fd, &peer_uid, &peer_gid) != 0 || peer_uid != owner ||
+      lstat(path.c_str(), &observed) != 0 || !S_ISSOCK(observed.st_mode) ||
+      observed.st_uid != owner || observed.st_dev != endpoint.st_dev || observed.st_ino != endpoint.st_ino) {
+    close(socket_fd);
+    return false;
+  }
+  if (socket_fd != control_fd) {
+    const bool installed = dup2(socket_fd, control_fd) == control_fd;
+    if (close(socket_fd) != 0 || !installed) return false;
+  }
+  return fcntl(control_fd, F_SETFD, 0) == 0;
+}
 
+#ifdef PATRICK_SYNTHETIC_REGISTRATION
 bool private_directory(const std::string& path, struct stat& metadata) {
   return lstat(path.c_str(), &metadata) == 0 && S_ISDIR(metadata.st_mode) &&
          metadata.st_uid == fixture_uid && (metadata.st_mode & 07777) == 0700;
@@ -85,25 +114,6 @@ bool matches_file(const std::string& path, mode_t permissions, const char* expec
   return strcmp(hex, expected_sha) == 0;
 }
 
-bool connect_control(const std::string& path) {
-  sockaddr_un address {};
-  if (path.size() >= sizeof(address.sun_path)) return false;
-  struct stat endpoint {};
-  if (lstat(path.c_str(), &endpoint) != 0 || !S_ISSOCK(endpoint.st_mode) ||
-      endpoint.st_uid != fixture_uid) return false;
-  address.sun_family = AF_UNIX;
-  memcpy(address.sun_path, path.c_str(), path.size() + 1);
-  address.sun_len = SUN_LEN(&address);
-  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (fd < control_fd || fcntl(fd, F_SETFL, O_NONBLOCK) != 0 ||
-      connect(fd, reinterpret_cast<sockaddr*>(&address), address.sun_len) != 0) return false;
-  uid_t peer_uid;
-  gid_t peer_gid;
-  if (getpeereid(fd, &peer_uid, &peer_gid) != 0 || peer_uid != fixture_uid) return false;
-  if (fd != control_fd && (dup2(fd, control_fd) < 0 || close(fd) != 0)) return false;
-  return fcntl(control_fd, F_SETFD, 0) == 0;
-}
-
 int launch() {
   std::string root = fixture_root;
   std::string node = root + "/node";
@@ -121,7 +131,7 @@ int launch() {
   // The fixture's only writer is its parent. Hash then exec by pathname under this
   // private root does not establish immutable, independently owned production materials.
   umask(0077);
-  if (chdir(cwd.c_str()) != 0 || !connect_control(root + "/control.sock") ||
+  if (chdir(cwd.c_str()) != 0 || !connect_control(root + "/control.sock", fixture_uid) ||
       !confine_descriptors(control_fd)) return EX_UNAVAILABLE;
   char no_addons[] = "--no-addons";
   char* argv[] = {node.data(), no_addons, bootstrap.data(), nullptr};
@@ -239,15 +249,22 @@ int launch_registered_role(const char* role) {
     if (directory >= 0) close(directory);
     return EX_CONFIG;
   }
+  const int marker = open_protected(directory, "supervisor-required", false);
+  const bool controlled = marker >= 0;
+  const bool valid_marker = controlled ? close(marker) == 0 : errno == ENOENT;
   const bool entered = fchdir(directory) == 0;
-  if (close(directory) != 0 || !entered || !confine_descriptors(STDERR_FILENO)) return EX_UNAVAILABLE;
+  if (close(directory) != 0 || !entered) return EX_UNAVAILABLE;
+  const std::string role_root = std::string(registry_root) + "/" + role;
+  if (!valid_marker || (controlled && !connect_control(role_root + "/supervisor.sock", registry_owner))) return EX_CONFIG;
+  if (!confine_descriptors(controlled ? control_fd : STDERR_FILENO)) return EX_UNAVAILABLE;
   umask(0077);
   std::string node = std::string(registry_root) + "/node";
-  std::string entry = std::string(registry_root) + "/" + role + "/entry.mjs";
+  std::string entry = role_root + "/entry.mjs";
   char* argv[] = {node.data(), entry.data(), nullptr};
   char encoding[64];
   snprintf(encoding, sizeof(encoding), "__CF_USER_TEXT_ENCODING=0x%X:0x0:0x0", getuid());
-  char* envp[] = {encoding, nullptr};
+  char control[] = "PATRICK_SUPERVISOR_FD=3";
+  char* envp[] = {encoding, controlled ? control : nullptr, nullptr};
   execve(node.c_str(), argv, envp);
   return EX_UNAVAILABLE;
 }

@@ -223,8 +223,9 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     expect(runRegisteredRole('service').status).toBe(0);
   });
 
-  test('the native registry refuses mutable entries, links and a mismatched account', async () => {
+  test('the native registry refuses mutable entries, links and a mismatched account', async ({ onTestFinished }) => {
     const { directory, entry, account } = await enrolledRole('worker');
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
     await chmod(directory, 0o775);
     try { expect(runRegisteredRole('worker').status).toBe(78); }
     finally { await chmod(directory, 0o755); }
@@ -241,6 +242,65 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     finally { await unlink(account); }
     await writeFile(account, `${process.getuid!()}:${process.getgid!() + 1}\n`, { mode: 0o444, flag: 'wx' });
     expect(runRegisteredRole('worker').status).toBe(78);
+  });
+
+  test('an enrolled supervisor connection reaches the role on fd 3', async ({ onTestFinished }) => {
+    const role = await enrolledRole('hub');
+    onTestFinished(() => rm(role.directory, { recursive: true, force: true }));
+    const socketPath = join(role.directory, 'supervisor.sock');
+    await writeFile(join(role.directory, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
+    await unlink(role.entry);
+    await writeFile(role.entry, [
+      'import { closeSync, constants, openSync } from "node:fs";',
+      'import { Socket } from "node:net";',
+      'if (process.env.PATRICK_SUPERVISOR_FD !== "3") process.exit(76);',
+      'const fd = openSync("/dev/fd/3", constants.O_RDWR);',
+      'closeSync(3);',
+      'const supervisor = new Socket({ fd, readable: true, writable: true });',
+      'supervisor.on("error", () => { process.exitCode = 76; });',
+      'supervisor.pipe(process.stdout);',
+      'supervisor.write("hub\\n");',
+    ].join('\n'), { mode: 0o444, flag: 'wx' });
+
+    expect(runRegisteredRole('hub').status).toBe(78);
+    const server = createServer(socket => {
+      socket.on('error', () => socket.destroy());
+      socket.once('data', bytes => socket.end(bytes.toString() === 'hub\n' ? 'enrolled\n' : 'invalid\n'));
+    });
+    const listening = once(server, 'listening');
+    server.listen(socketPath);
+    await listening;
+    try {
+      const descriptor = openSync(join(root, 'descriptor-sentinel'), 'r');
+      try {
+        const result = await new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+          const child = spawn(registeredController, ['run-role', 'hub'], {
+            cwd: root, env: { PATRICK_SUPERVISOR_FD: '11' },
+            stdio: ['ignore', 'pipe', 'pipe', descriptor], timeout: 5000,
+          });
+          let stdout = '';
+          child.stdout?.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+          child.once('error', reject);
+          child.once('close', code => resolve({ code, stdout }));
+        });
+        expect(result).toEqual({ code: 0, stdout: 'enrolled\n' });
+      } finally { closeSync(descriptor); }
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+    expect(runRegisteredRole('hub').status).toBe(78);
+  });
+
+  test.each(['file', 'link'] as const)('an enrolled supervisor rejects a %s in place of its endpoint', async kind => {
+    const role = await enrolledRole('worker');
+    try {
+      const socketPath = join(role.directory, 'supervisor.sock');
+      await writeFile(join(role.directory, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
+      if (kind === 'file') await writeFile(socketPath, '', { mode: 0o644, flag: 'wx' });
+      else await symlink(join(root, 'descriptor-sentinel'), socketPath);
+      const refused = runRegisteredRole('worker');
+      expect([refused.status, refused.stdout]).toEqual([78, '']);
+    } finally { await rm(role.directory, { recursive: true, force: true }); }
   });
 
   async function runLocalChild(server: Server, executable: string, sentinels: number[],
