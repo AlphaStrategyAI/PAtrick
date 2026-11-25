@@ -5,7 +5,7 @@ import { watch } from 'node:fs';
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:https';
-import { createServer as createSocketServer } from 'node:net';
+import { createConnection, createServer as createSocketServer } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire, registerHooks } from 'node:module';
@@ -144,6 +144,29 @@ describe('offline deployment renderer', () => {
   beforeAll(async () => {
     const read = (key: keyof typeof deploymentPaths) => readFile(join(root, deploymentPaths[key]));
     sources = { caddy: await read('caddy'), service: await read('service'), hub: await read('hub'), worker: await read('worker') };
+  });
+
+  test('renders the enrolled Hub supervisor as a socket-activated job', async () => {
+    expect(renderDeploymentTemplates(sources, registration).plists.hubSupervisor).toBeUndefined();
+    const rendered = renderDeploymentTemplates(sources, { ...registration, hubSupervisorGid: 502 });
+    const directory = await mkdtemp(join(tmpdir(), 'patrick-hub-plist-'));
+    try {
+      const path = join(directory, 'supervisor.plist');
+      await writeFile(path, rendered.plists.hubSupervisor!);
+      child(['-lint', path], directory, '/usr/bin/plutil');
+      expect(JSON.parse(child(['-convert', 'json', '-o', '-', path], directory, '/usr/bin/plutil'))).toEqual({
+        Label: 'com.patrick.autoloop-hub-supervisor',
+        ProgramArguments: [registration.controllerPath, 'run-supervisor', 'hub'],
+        UserName: 'root', Umask: 63, ProcessType: 'Background', ExitTimeOut: 60,
+        Sockets: { HubControl: {
+          SockPathName: '/Library/Application Support/PAtrick/controller-v1/hub/supervisor.sock',
+          SockPathOwner: 0, SockPathGroup: 502, SockPathMode: 432,
+        } },
+      });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+    for (const hubSupervisorGid of [0, -1, 1.5, 0x80000000, '502']) {
+      expect(() => renderDeploymentTemplates(sources, { ...registration, hubSupervisorGid } as typeof registration)).toThrow();
+    }
   });
 
   for (const host of ['127.0.0.1', '::1'] as const) {
@@ -1064,6 +1087,70 @@ test.skipIf(!upstreamHubSource)('starts the packaged Hub on the confirmed databa
     });
   } finally {
     await new Promise<void>((resolve, reject) => supervisor.close(error => error ? reject(error) : resolve()));
+  }
+
+  if (process.env.PATRICK_T23_LAUNCHD_ADMISSION === '1') {
+    expect(typeof composition.runInstalledHubSupervisor).toBe('function');
+    const supervisorDirectory = join(nativeRegistry, 'hub-supervisor');
+    await mkdir(supervisorDirectory, { mode: 0o755 });
+    await writeFile(join(supervisorDirectory, 'entry.mjs'), `
+      import { runInstalledHubSupervisor } from ${JSON.stringify(compositionPath)};
+      import { createInstalledRootOwner, leased } from ${JSON.stringify(pathToFileURL(join(root, 'deploy/lib/emitted-release.mjs')).href)};
+      const [program, enrollment, owner, registration] = JSON.parse(${JSON.stringify(JSON.stringify([
+        supervisorPin, selected, generationLockRegistration, registration,
+      ]))});
+      const lock = createInstalledRootOwner(owner);
+      await runInstalledHubSupervisor(program, enrollment, {
+        withExclusiveReadRoot(read) { return leased(lock, lease => read(lease.root)); },
+      }, registration);
+    `, { mode: 0o444, flag: 'wx' });
+    const domain = `gui/${process.getuid!()}`;
+    const label = 'com.patrick.admission.hub-runtime.' + randomBytes(8).toString('hex');
+    const job = `${domain}/${label}`;
+    const plist = join(nativeRegistry, label + '.plist');
+    const stderr = join(nativeRegistry, 'supervisor.stderr');
+    await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>${controllerPath}</string><string>run-supervisor</string><string>hub</string></array>
+<key>StandardErrorPath</key><string>${stderr}</string>
+<key>Sockets</key><dict><key>HubControl</key><dict>
+<key>SockPathName</key><string>${socketPath}</string>
+<key>SockPathGroup</key><integer>${process.getgid!()}</integer>
+<key>SockPathMode</key><integer>432</integer>
+</dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
+    child(['bootstrap', domain, plist], nativeRegistry, '/bin/launchctl');
+    try {
+      await vi.waitFor(async () => expect((await lstat(socketPath)).isSocket()).toBe(true), { timeout: 5000 });
+      const connection = createConnection(socketPath);
+      const reports = createInterface({ input: connection });
+      const closed = once(connection, 'close');
+      void closed.catch(() => {});
+      try {
+        const [ready] = await Promise.race([
+          once(reports, 'line', { signal: AbortSignal.timeout(roleReportTimeoutMs) }),
+          closed.then(() => { throw new Error('fixture Hub supervisor disconnected before reporting'); }),
+        ]);
+        expect(ready).toBe('READY 1 hub');
+        expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
+        expect(probeWriter).toThrow();
+        child(['kill', 'SIGTERM', job], nativeRegistry, '/bin/launchctl');
+        await expect(Promise.race([closed, delay(10_000).then(() => 'timed out')]))
+          .resolves.toEqual([false]);
+        await vi.waitFor(probeWriter, { timeout: 10_000 });
+        await expect(fetch(origin + '/healthz')).rejects.toThrow();
+        await vi.waitFor(() => {
+          expect(child(['print', job], nativeRegistry, '/bin/launchctl')).toMatch(/last exit code = 0\b/);
+        }, { timeout: 5000 });
+      } finally {
+        reports.close();
+        connection.destroy();
+      }
+    } catch (error) {
+      throw new Error(await readFile(stderr, 'utf8').catch(() => '') || String(error), { cause: error });
+    } finally {
+      child(['bootout', job], nativeRegistry, '/bin/launchctl');
+    }
   }
 }, darwinInstallTimeoutMs);
 

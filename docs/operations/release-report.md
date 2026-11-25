@@ -198,6 +198,10 @@ Darwin 候选工作流为每种架构编译生产配置的 `patrick-host-control
 
 Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连接、已登记控制器的路径与摘要，以及代次和 Hub 登记。由监督端验签并启动持有写者锁的 Hub。角色侧 `runSupervisedHubRole` 等待就绪回执，收到停止信号时半关闭连接。监督端在 Hub 退出并释放锁后发回停止回执。角色进程被强杀时，连接断开也会触发同一排空流程。Mac Pro 上仍需登记生产监督进程、独立账号及启动材料。
 
+宿主登记的监督入口可调用已核验发布材料中的 `runInstalledHubSupervisor`。它接管 `launchd` 交付的监听器，一次只维持一个 Hub 会话。监督进程收到 `SIGTERM` 或 `SIGINT` 后停止接收连接并等待 Hub 排空。本机的用户域作业使用签名测试部署包验证内核对端认证、Hub 健康检查、退出及写者锁释放。
+
+安装预览收到 `hubSupervisorGid` 时，会渲染 `com.patrick.autoloop-hub-supervisor` 并将其纳入预览摘要。此系统域作业由套接字连接触发，监听器归 root 和已登记的 Hub 组所有。宿主仍负责建立受保护的入口和组登记。
+
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
 
 提交 `6e3a199` 的构建 `45504186987` 在 Apple Silicon 和 Intel 上通过候选构建与原生控制器准入。该构建早于本机的 Hub 关停回归。

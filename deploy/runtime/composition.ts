@@ -6,7 +6,7 @@ import {
 } from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 export {
-  runInstalledHubRole, runInstalledRuntimeRole, runSupervisedHubRole, serveInstalledHubRole,
+  runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runSupervisedHubRole, serveInstalledHubRole,
   startSelectedHubRole, startSelectedRuntimeRole,
 } from './role-launch.js';
 import type { SelectedRuntimePaths } from './role-launch.js';

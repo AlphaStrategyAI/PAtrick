@@ -294,12 +294,45 @@ function render(key, bytes, substitutions) {
   });
 }
 
+function hubSupervisorLaunchd(controller, group) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.patrick.autoloop-hub-supervisor</string>
+  <key>ProgramArguments</key>
+  <array><string>${controller.replaceAll('&', '&amp;')}</string><string>run-supervisor</string><string>hub</string></array>
+  <key>UserName</key><string>root</string>
+  <key>Umask</key><integer>63</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>ExitTimeOut</key><integer>60</integer>
+  <key>Sockets</key>
+  <dict>
+    <key>HubControl</key>
+    <dict>
+      <key>SockPathName</key><string>/Library/Application Support/PAtrick/controller-v1/hub/supervisor.sock</string>
+      <key>SockPathOwner</key><integer>0</integer>
+      <key>SockPathGroup</key><integer>${group}</integer>
+      <key>SockPathMode</key><integer>432</integer>
+    </dict>
+  </dict>
+</dict>
+</plist>
+`;
+}
+
 // Pure render. The host independently admits these principals, protected
 // physical roots, controller binary digest and TLS references before effects.
 export function renderDeploymentTemplates(sources, registration) {
   fields(sources, ['caddy', ...jobs]);
-  fields(registration, ['instanceRoot', 'controllerPath', 'controllerSha256', 'accounts', 'origin', 'listener', 'certificatePath', 'keyPath']);
-  const { accounts, listener, origin, controllerPath, controllerSha256, certificatePath, keyPath } = registration;
+  const registrationFields = ['instanceRoot', 'controllerPath', 'controllerSha256', 'accounts', 'origin', 'listener', 'certificatePath', 'keyPath'];
+  const supervisedHub = registration != null && Object.hasOwn(registration, 'hubSupervisorGid');
+  if (supervisedHub) registrationFields.push('hubSupervisorGid');
+  fields(registration, registrationFields);
+  const { accounts, listener, origin, controllerPath, controllerSha256, certificatePath, keyPath, hubSupervisorGid } = registration;
+  if (supervisedHub && (!Number.isInteger(hubSupervisorGid) || hubSupervisorGid < 1 || hubSupervisorGid > 0x7fffffff)) {
+    throw new Error('invalid deployment Hub group');
+  }
   fields(accounts, ['caddy', ...jobs]);
   fields(listener, ['host', 'port']);
   const names = Object.values(accounts);
@@ -334,6 +367,7 @@ export function renderDeploymentTemplates(sources, registration) {
       STDOUT: log + '/redacted.stdout.log', STDERR: log + '/redacted.stderr.log' };
     plists[job] = render(job, sources[job], Object.fromEntries(Object.entries(substitutions).map(([k,v]) => [k,v.replaceAll('&','&amp;')])));
   }
+  if (supervisedHub) plists.hubSupervisor = hubSupervisorLaunchd(controller, hubSupervisorGid);
   return Object.freeze({ caddy, plists: Object.freeze(plists), caddyProcess: Object.freeze({
     account: accounts.caddy, configPath: base + '/config/Caddyfile', workingDirectory: base,
     environment: Object.freeze({ HOME: base + '/home', XDG_CONFIG_HOME: base + '/config', XDG_DATA_HOME: base + '/data' }),

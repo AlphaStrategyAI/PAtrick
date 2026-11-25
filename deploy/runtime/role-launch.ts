@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, constants, lstatSync, openSync } from 'node:fs';
-import { Socket } from 'node:net';
+import { close, closeSync, constants, fstatSync, lstatSync, openSync } from 'node:fs';
+import { createServer, Socket } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -277,6 +277,60 @@ export async function serveInstalledHubRole(socket: Socket, program: SupervisorP
   } finally {
     if (!completed) socket.destroy();
     else if (!socket.destroyed) socket.end(hubStopped);
+  }
+}
+
+export async function runInstalledHubSupervisor(program: SupervisorProgram, enrollment: GenerationEnrollment,
+  owner: ExclusiveRuntimeStaging | undefined, registration: HubRoleRegistration): Promise<void> {
+  if (process.env.PATRICK_SUPERVISOR_LISTENER_FD !== '3' || !fstatSync(3).isSocket()) {
+    throw new Error('INSTALLED_HUB_SUPERVISOR_LISTENER_REQUIRED');
+  }
+  const fixedProgram = bindRegistration(() => program).value;
+  const fixedEnrollment = bindRegistration(() => enrollment).value;
+  const fixedRole = bindRegistration(() => registration).value;
+  const descriptor = openSync('/dev/fd/3', constants.O_RDWR);
+  closeSync(3);
+
+  let active: { socket: Socket; finished: Promise<void> } | undefined;
+  let closing = false;
+  let failure: unknown;
+  const server = createServer({ allowHalfOpen: true, pauseOnConnect: true }, socket => {
+    if (closing || active) {
+      socket.destroy();
+      return;
+    }
+    const finished = serveInstalledHubRole(socket, fixedProgram, fixedEnrollment, owner, fixedRole).catch(error => {
+      if (closing) failure ??= error;
+      const code = error instanceof Error && /^[A-Z][A-Z_]{1,95}$/.test(error.message) ? error.message : 'UNKNOWN';
+      console.error('INSTALLED_HUB_SUPERVISOR_SESSION_FAILED', code);
+    }).finally(() => { active = undefined; });
+    active = { socket, finished };
+  });
+  const closed = new Promise<void>(resolveClosed => server.once('close', resolveClosed));
+  function stop() {
+    if (closing) return;
+    closing = true;
+    server.close();
+    active?.socket.destroy();
+  }
+  server.on('error', error => {
+    failure ??= error;
+    stop();
+  });
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  try {
+    try { server.listen({ fd: descriptor }); }
+    catch (error) {
+      close(descriptor, () => undefined);
+      throw error;
+    }
+    await closed;
+    await active?.finished;
+    if (failure) throw failure;
+  } finally {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
   }
 }
 
