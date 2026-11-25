@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
@@ -31,14 +32,6 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
     await chmod(root, 0o755);
     const registry = join(root, 'registry');
     const hub = join(registry, 'hub');
-    const supervisor = join(registry, 'hub-supervisor');
-    for (const path of [registry, hub, supervisor]) {
-      await mkdir(path, { mode: 0o755 });
-      await chmod(path, 0o755);
-    }
-    const node = join(registry, 'node');
-    await copyFile(process.execPath, node);
-    await chmod(node, 0o555);
     const controller = join(root, 'controller');
     const header = join(root, 'registry.h');
     await writeFile(header, [
@@ -49,9 +42,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
     execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
     await chmod(controller, 0o555);
-    await writeFile(join(hub, 'account'), `${hubUid}:${hubGid}\n`, { mode: 0o444, flag: 'wx' });
-    await writeFile(join(hub, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
-    await writeFile(join(hub, 'entry.mjs'), `
+    const hubEntry = `
       import { closeSync, constants, openSync } from 'node:fs';
       import { Socket } from 'node:net';
       if (process.env.PATRICK_SUPERVISOR_FD !== '3') process.exit(76);
@@ -61,8 +52,8 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       let response = '';
       for await (const part of connection) response += part.toString();
       console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid(), response }));
-    `, { mode: 0o444, flag: 'wx' });
-    await writeFile(join(supervisor, 'entry.mjs'), `
+    `;
+    const supervisorEntry = `
       import { spawn } from 'node:child_process';
       import { closeSync, constants, openSync } from 'node:fs';
       import { createServer } from 'node:net';
@@ -79,7 +70,19 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
           connection.end(status === 0 ? 'enrolled\\n' : 'rejected\\n');
         });
       }).listen({ fd });
-    `, { mode: 0o444, flag: 'wx' });
+    `;
+    const plan = planHostRegistry({
+      registryRoot: registry,
+      node: { path: process.execPath, sha256: await digest(process.execPath) },
+      roles: {
+        service: { uid: hubUid + 1, gid: hubGid, entry: 'process.exit(76);' },
+        hub: { uid: hubUid, gid: hubGid, entry: hubEntry },
+        worker: { uid: hubUid + 2, gid: hubGid, entry: 'process.exit(76);' },
+      },
+      supervisor: { entry: supervisorEntry },
+    });
+    await applyHostRegistry(plan);
+    expect(await readHostRegistry(plan)).toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
     const label = 'com.patrick.admission.system-hub.' + randomBytes(8).toString('hex');
     const job = 'system/' + label;
     const endpoint = join(hub, 'supervisor.sock');

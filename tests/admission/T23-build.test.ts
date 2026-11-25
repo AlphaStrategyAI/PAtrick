@@ -311,6 +311,12 @@ describe('T23 installed runtime build and bootstrap', () => {
     expect(imports.status, output(imports)).toBe(0);
     expect(imports.stdout).toBe('IMPORTED\n');
 
+    const registration = runNode(['--input-type=module', '--eval', `
+      const cli = await import(${JSON.stringify(pathToFileURL(join(relocated, 'runtime/cli.mjs')).href)});
+      if (['planHostRegistry', 'applyHostRegistry', 'readHostRegistry'].some(name => typeof cli[name] !== 'function')) process.exit(1);
+    `], { cwd: temporary });
+    expect(registration.status, output(registration)).toBe(0);
+
     const cli = runNode([join(relocated, 'runtime/cli.mjs'), 'doctor'], { cwd: temporary });
     expect(cli.status, output(cli)).toBe(3);
     expect(JSON.parse(String(cli.stdout))).toMatchObject({

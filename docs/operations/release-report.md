@@ -200,6 +200,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 宿主登记的监督入口可调用已核验发布材料中的 `runInstalledHubSupervisor`。它接管 `launchd` 交付的监听器，一次只维持一个 Hub 会话。监督进程收到 `SIGTERM` 或 `SIGINT` 后停止接收连接并等待 Hub 排空。本机的用户域作业使用签名测试部署包验证内核对端认证、Hub 健康检查、退出及写者锁释放。
 
+已核验发布材料的 `runtime/cli.mjs` 导出宿主登记的规划、写入和读回函数，供可信安装控制器调用。写入前核对 Node 的摘要，在同一父目录下生成完整的登记树，再原子发布。重复调用核验已有文件的属主、权限和摘要，内容冲突时停止。本机准入验证了损坏输入、并发重试、登记冲突和原生控制器读回。GitHub Actions 的系统域用例使用同一写入函数准备跨 UID 测试登记。Mac Pro 上的生产入口和账号仍需实际登记。
+
 安装预览收到 `hubSupervisorGid` 时，会渲染 `com.patrick.autoloop-hub-supervisor` 并将其纳入预览摘要。此系统域作业由套接字连接触发，监听器归 root 和已登记的 Hub 组所有。宿主仍负责建立受保护的入口和组登记。
 
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
