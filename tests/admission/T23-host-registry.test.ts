@@ -2,7 +2,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { chmod, copyFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,13 +32,14 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
   let root: string;
   let registry: string;
   let node: string;
+  let nodeSha256: string;
 
   beforeAll(async () => {
     root = await mkdtemp('/private/tmp/patrick-registry-');
     registry = join(root, 'registry');
     node = join(root, 'node');
-    await copyFile(process.execPath, node);
-    await chmod(node, 0o555);
+    await writeFile(node, 'fixture node bytes\n', { mode: 0o555 });
+    nodeSha256 = sha256File(node);
   });
 
   afterAll(async () => {
@@ -48,7 +49,7 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
   function registration(overrides: Partial<HostRegistryRegistration> = {}): HostRegistryRegistration {
     const base = {
       registryRoot: registry,
-      node: { path: node, sha256: sha256File(node) },
+      node: { path: node, sha256: nodeSha256 },
       roles: {
         service: { uid: process.getuid!() + 1, gid: process.getgid!(), entry: roleEntry },
         hub: { uid: process.getuid!(), gid: process.getgid!(), entry: roleEntry },
@@ -121,30 +122,34 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
   });
 
   test('the native controller admits the applied registry', async () => {
-    const plan = planHostRegistry(registration());
+    const executableRoot = join(root, 'native-registry');
+    const executable = process.execPath;
+    const plan = planHostRegistry(registration({
+      registryRoot: executableRoot, node: { path: executable, sha256: sha256File(executable) },
+    }));
     await applyHostRegistry(plan);
     const header = join(root, 'registry.h');
     await writeFile(header, [
       '#define PATRICK_NATIVE_REGISTRY_TEST 1',
-      `constexpr char registry_root[] = ${JSON.stringify(registry)};`,
+      `constexpr char registry_root[] = ${JSON.stringify(executableRoot)};`,
       `constexpr auto registry_owner = ${process.geteuid!()}U;`,
     ].join('\n'));
     const controller = join(root, 'controller');
     execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
     await chmod(controller, 0o555);
-    const socketPath = join(registry, 'hub', 'supervisor.sock');
+    const socketPath = join(executableRoot, 'hub', 'supervisor.sock');
     const server = createServer(socket => socket.end('supervised\n'));
     const listening = once(server, 'listening');
     server.listen(socketPath);
     await listening;
     try {
       const { stdout } = await exec(controller, ['run-role', 'hub'], {
-        cwd: registry, env: {}, encoding: 'utf8', timeout: 8000,
+        cwd: executableRoot, env: {}, encoding: 'utf8', timeout: 15_000,
       });
       expect(stdout).toBe('supervised\n');
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
-  });
+  }, 60_000);
 });
