@@ -20,6 +20,7 @@
 #include <charconv>
 #include <launch.h>
 #include <sys/acl.h>
+#include <vector>
 #endif
 
 namespace {
@@ -160,13 +161,14 @@ bool no_extended_acl(int fd) {
   return empty;
 }
 
-int open_protected(int parent, const char* name, bool directory) {
+int open_protected(int parent, const char* name, bool directory, mode_t mode = 0) {
   const int fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK |
                         (directory ? O_DIRECTORY : 0));
   if (fd < 0) return -1;
   struct stat metadata {};
   if (fstat(fd, &metadata) == 0 && metadata.st_uid == registry_owner &&
       (metadata.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID | S_ISVTX)) == 0 && no_extended_acl(fd) &&
+      (mode == 0 || (metadata.st_mode & 07777) == mode) &&
       (directory ? S_ISDIR(metadata.st_mode) : S_ISREG(metadata.st_mode) && metadata.st_nlink == 1)) return fd;
   close(fd);
   errno = EPERM;
@@ -329,6 +331,34 @@ int check_role_peer(const char* role) {
   return EX_OK;
 }
 
+int launch_registered_cli(int argc, char** caller_argv) {
+  if (getuid() != registry_owner || geteuid() != registry_owner) return EX_CONFIG;
+  const int registry = open_registry();
+  if (registry < 0) return EX_CONFIG;
+  const int directory = open_protected(registry, "cli", true, 0700);
+  const int script = directory < 0 ? -1 : open_protected(directory, "entry.mjs", false, 0400);
+  const bool admitted = script >= 0 && has_protected_file(registry, "node") && fchdir(directory) == 0;
+  const bool closed_script = script < 0 || close(script) == 0;
+  const bool closed_directory = directory < 0 || close(directory) == 0;
+  if (close(registry) != 0 || !closed_script || !closed_directory || !admitted) {
+    fputs("PATRICK_CLI_REGISTRATION_INVALID\n", stderr);
+    return EX_CONFIG;
+  }
+  if (!confine_descriptors(STDERR_FILENO)) return EX_UNAVAILABLE;
+
+  umask(0077);
+  std::string node = std::string(registry_root) + "/node";
+  std::string entry = std::string(registry_root) + "/cli/entry.mjs";
+  std::vector<char*> args {node.data(), entry.data()};
+  args.insert(args.end(), caller_argv + 2, caller_argv + argc);
+  args.push_back(nullptr);
+  char encoding[64];
+  snprintf(encoding, sizeof(encoding), "__CF_USER_TEXT_ENCODING=0x%X:0x0:0x0", getuid());
+  char* envp[] = {encoding, nullptr};
+  execve(node.c_str(), args.data(), envp);
+  return EX_UNAVAILABLE;
+}
+
 int launch_registered_role(const char* role) {
   const int registry = open_registry();
   if (registry < 0) {
@@ -387,15 +417,17 @@ int launch_registered_role(const char* role) {
 #endif
 
 int main(int argc, char** argv) {
-  if (argc != 3 ||
+  const bool cli = argc >= 2 && strcmp(argv[1], "run-cli") == 0;
+  if (!cli && (argc != 3 ||
       (strcmp(argv[1], "run-role") && strcmp(argv[1], "check-role-peer") && strcmp(argv[1], "run-supervisor")) ||
       (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker")) ||
-      (strcmp(argv[1], "run-supervisor") == 0 && strcmp(argv[2], "hub"))) return EX_USAGE;
+      (strcmp(argv[1], "run-supervisor") == 0 && strcmp(argv[2], "hub")))) return EX_USAGE;
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
-  if (strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
+  if (cli || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
   return launch();
 #else
+  if (cli) return launch_registered_cli(argc, argv);
   if (strcmp(argv[1], "run-supervisor") == 0) return launch_hub_supervisor();
   if (strcmp(argv[1], "check-role-peer") == 0) return check_role_peer(argv[2]);
   return launch_registered_role(argv[2]);

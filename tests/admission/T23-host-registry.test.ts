@@ -1,7 +1,7 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -124,8 +124,19 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
   test('the native controller admits the applied registry', async () => {
     const executableRoot = join(root, 'native-registry');
     const executable = process.execPath;
+    const cliEntry = [
+      'import { fstatSync } from "node:fs";',
+      'let inherited = false;',
+      'try { inherited = fstatSync(3).isFile(); } catch {}',
+      'process.stdout.write(JSON.stringify({',
+      '  args: process.argv.slice(2), cwd: process.cwd(), umask: process.umask(), inherited,',
+      '  options: process.env.NODE_OPTIONS ?? null, caller: process.env.PATRICK_CALLER ?? null,',
+      '}));',
+      'process.exitCode = 5;',
+    ].join('\n');
     const plan = planHostRegistry(registration({
       registryRoot: executableRoot, node: { path: executable, sha256: sha256File(executable) },
+      cli: { entry: cliEntry },
     }));
     await applyHostRegistry(plan);
     const header = join(root, 'registry.h');
@@ -138,6 +149,28 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
     execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
     await chmod(controller, 0o555);
+    const cliRoot = join(executableRoot, 'cli');
+    const cliPath = join(cliRoot, 'entry.mjs');
+    const descriptor = openSync(node, 'r');
+    try {
+      const args = ['doctor', '--vault', '隔离 Vault #1'];
+      const result = spawnSync(controller, ['run-cli', ...args], {
+        cwd: root, env: { NODE_OPTIONS: '--unsupported-fixture-option', PATRICK_CALLER: 'ignored' },
+        stdio: ['ignore', 'pipe', 'pipe', descriptor], encoding: 'utf8', timeout: 15_000,
+      });
+      expect(result.status, result.error?.message ?? result.stderr).toBe(5);
+      expect(JSON.parse(result.stdout)).toEqual({
+        args, cwd: cliRoot, umask: 0o077, inherited: false, options: null, caller: null,
+      });
+    } finally { closeSync(descriptor); }
+    expect((await stat(cliRoot)).mode & 0o777).toBe(0o700);
+    expect((await stat(cliPath)).mode & 0o777).toBe(0o400);
+    await chmod(cliPath, 0o644);
+    await expect(exec(controller, ['run-cli', 'doctor'])).rejects.toMatchObject({ code: 78 });
+    await chmod(cliPath, 0o400);
+    execFileSync('/bin/chmod', ['+a', 'everyone allow write', cliPath]);
+    try { await expect(exec(controller, ['run-cli', 'doctor'])).rejects.toMatchObject({ code: 78 }); }
+    finally { execFileSync('/bin/chmod', ['-a#', '0', cliPath]); }
     const socketPath = join(executableRoot, 'hub', 'supervisor.sock');
     const server = createServer(socket => socket.end('supervised\n'));
     const listening = once(server, 'listening');

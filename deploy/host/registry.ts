@@ -18,6 +18,7 @@ export type HostRegistryRegistration = Readonly<{
   node: Readonly<{ path: string; sha256: string }>;
   roles: Readonly<Record<'service' | 'hub' | 'worker', HostRoleAccount>>;
   supervisor: Readonly<{ entry: string }>;
+  cli?: Readonly<{ entry: string }>;
 }>;
 
 export type HostRegistryFile = Readonly<{
@@ -106,6 +107,13 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
   const supervisorBytes = Buffer.from(supervisorEntry, 'utf8');
   files.push({ path: join(root, hostRegistrySupervisor, 'entry.mjs'), mode: entryMode, sha256: digest(supervisorBytes),
     bytes: supervisorBytes.length, source: { kind: 'bytes', bytes: supervisorBytes } });
+  if (registration.cli !== undefined) {
+    const cliRoot = join(root, 'cli');
+    const cliBytes = Buffer.from(entry(registration.cli?.entry), 'utf8');
+    directories.push({ path: cliRoot, mode: 0o700 });
+    files.push({ path: join(cliRoot, 'entry.mjs'), mode: 0o400, sha256: digest(cliBytes), bytes: cliBytes.length,
+      source: { kind: 'bytes', bytes: cliBytes } });
+  }
   return Object.freeze({ registryRoot: root, directories: Object.freeze(directories), files: Object.freeze(files) });
 }
 

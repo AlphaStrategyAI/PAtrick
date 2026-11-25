@@ -80,9 +80,18 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
         worker: { uid: hubUid + 2, gid: hubGid, entry: 'process.exit(76);' },
       },
       supervisor: { entry: supervisorEntry },
+      cli: { entry: 'console.log(JSON.stringify({ uid: process.getuid(), args: process.argv.slice(2) }));' },
     });
     await applyHostRegistry(plan);
     expect(await readHostRegistry(plan)).toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
+    const cliArgs = ['doctor', '--vault', 'test-vault'];
+    const refusedCli = spawnSync(controller, ['run-cli', ...cliArgs], {
+      uid: hubUid, gid: hubGid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
+    });
+    expect([refusedCli.status, refusedCli.error, refusedCli.stdout]).toEqual([78, undefined, '']);
+    const ownerCli = spawnSync(controller, ['run-cli', ...cliArgs], { env: {}, cwd: root, encoding: 'utf8', timeout: 8000 });
+    expect([ownerCli.status, ownerCli.error, ownerCli.stderr]).toEqual([0, undefined, '']);
+    expect(JSON.parse(ownerCli.stdout)).toEqual({ uid: 0, args: cliArgs });
     const label = 'com.patrick.admission.system-hub.' + randomBytes(8).toString('hex');
     const job = 'system/' + label;
     const endpoint = join(hub, 'supervisor.sock');
