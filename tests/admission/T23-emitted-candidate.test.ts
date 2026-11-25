@@ -877,9 +877,10 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
       hubOwner: { uid, gid }, releases: [{ expected, policy }], generations: [generation],
       hubRole: { rootNode: await pin(controlRoot), lockNode: await prepareOwnerLock(controlRoot, pin), writerNode: await pin(writerPath) },
     };
-    const store = createGenerationStore(selected, undefined, {
-      async signRecord(payload) { return sign(null, payload, key.privateKey).toString('base64'); },
-    });
+    const selectionSigner = {
+      async signRecord(payload: Uint8Array) { return sign(null, payload, key.privateKey).toString('base64'); },
+    };
+    const store = createGenerationStore(selected, undefined, selectionSigner);
     const order = store.order('select-hub', null, generation.id);
     const envelope = canonicalize({ order, signature: sign(null, bytes(order), key.privateKey).toString('base64') });
     await store.select(envelope);
@@ -894,19 +895,20 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     };
     await expect(startSelectedHubRole(selected, undefined, hubRegistration)).rejects.toThrow('INSTALLED_HUB_RULES_DIRECTORY_INVALID');
     await chmod(controlRoot, 0o750);
+    const runningStore = createGenerationStore(selected, undefined, selectionSigner);
     const hub = await startSelectedHubRole(selected, undefined, hubRegistration);
     try {
       expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
       const keyFile = await lstat(join(prepared, 'hub', 'master.key'));
       expect([keyFile.uid, keyFile.gid, keyFile.mode & 0o7777]).toEqual([uid, gid, 0o600]);
       expect(probeWriter).toThrow('database is locked');
-      await expect(store.select(envelope)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
+      await expect(runningStore.select(envelope)).rejects.toThrow('INSTALLED_ROOT_OWNER_BUSY');
     } finally {
       hub.runtime.stop();
       expect(await hub.runtime.drain()).toMatchObject({ state: 'closed' });
     }
     expect(probeWriter).not.toThrow();
-    await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
+    await expect(runningStore.select(envelope)).resolves.toMatchObject({ current: { order } });
   }, darwinInstallTimeoutMs,
 );
 
