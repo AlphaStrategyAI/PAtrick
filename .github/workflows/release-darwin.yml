@@ -212,10 +212,16 @@ jobs:
             sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_SYSTEM_SUPERVISOR_TEST=1 \
               "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts \
               --root "$source_root" --pool forks --maxWorkers 1 --testNamePattern 'independent UIDs'
-            sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
-              PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
-              "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
-              --root "$source_root" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the Hub database'
+            controller_checkout="$work/controller-checkout"
+            sudo -n /bin/cp -cRP "$source_root" "$controller_checkout"
+            sudo -n /usr/sbin/chown -RP 0:0 "$controller_checkout"
+            (
+              cd "$controller_checkout"
+              sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
+                PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
+                "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
+                --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the Hub database'
+            )
           fi
           admission_tmp=$(mktemp -d "$work/admission.XXXXXXXX")
           TMPDIR="$admission_tmp" PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
