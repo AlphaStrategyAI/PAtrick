@@ -463,6 +463,8 @@ T00在`design-inputs.lock.json`锁产品/技术文档、原型、Figma交付记�
 
 主机为Mac mini（24GB/200GB），Mac Pro（16GB/100GB）承担开发/隔离恢复；只有获得公司访问资格的设备才接内网GitLab。起步模型并发1，后台服务不依赖浏览器/编辑器常开，不做双主。
 
+2026-11-25 已获准使用 Mac Pro 作为 T23 安装与升级、T27 Obsidian 与 Vault 的实机验收目标。验收开始时登记该机的 macOS 版本、原生架构和安装实例。
+
 | 单元 | 运行身份与边界 | 启动/健康 |
 |---|---|---|
 | Caddy同源TLS入口 | 固定Web origin/RP ID，服务仅监听loopback；跨设备使用已登记私有网络/DNS/证书 | TLS与origin检查；证书未信任时不能假装passkey可用 |
