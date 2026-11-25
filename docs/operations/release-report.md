@@ -209,3 +209,5 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 构建 `45512953968` 为提交 `9d43258` 生成两种架构的未签名候选与生产配置的原生控制器。两个构建作业均通过。以 `--require-controller` 重新下载并核对控制器 SHA-256、字节数和 Mach-O 架构，同时复验各自归档中的 481 个载荷文件。正式签名、生产角色接线及 Mac Pro 安装、重启和升级仍待验收。[双架构下载回执](evidence/darwin-candidates-2026-11-25-9d43258.json)
 
 构建 `45516398475` 为提交 `efae1a0` 生成两种架构的未签名候选。两个构建作业均通过。独立下载复验核对了支持 `check-role-peer` 的控制器摘要、字节数和 Mach-O 架构，以及每份归档中的 481 个载荷文件。[双架构下载回执](evidence/darwin-candidates-2026-11-25-efae1a0.json)
+
+构建 `45517817809` 为提交 `46888f4` 生成 Apple Silicon 和 Intel 未签名候选。两种架构均通过打包后的 Hub 监督连接、停止及断连释放写者锁回归。独立下载后核对每份归档中的 481 个载荷文件、原生控制器和 SQLite 扩展的摘要与架构。Mac Pro 上的生产账号和签名包验收待完成。[双架构下载回执](evidence/darwin-candidates-2026-11-25-46888f4.json)
