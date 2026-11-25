@@ -117,6 +117,13 @@ function launchSelectedHubRole(
     function validateRole() {
       lease.guard();
       rulesRoot.validate();
+      if (uid !== process.geteuid!()) {
+        const directory = lstatSync(roleRoot, { bigint: true });
+        if (!directory.isDirectory() || directory.uid !== BigInt(process.geteuid!()) ||
+            directory.gid !== BigInt(gid) || (directory.mode & 0o7777n) !== 0o750n) {
+          throw new Error('INSTALLED_HUB_RULES_DIRECTORY_INVALID');
+        }
+      }
       const rules = lstatSync(rulesPath, { bigint: true });
       if (!rules.isFile() || rules.nlink !== 1n || rules.uid !== BigInt(process.geteuid!()) ||
           ((rules.mode & 0o7777n) !== 0o444n && (uid !== process.geteuid!() || (rules.mode & 0o7777n) !== 0o400n))) {

@@ -889,9 +889,12 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     await new Promise<void>((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
     if (!address || typeof address === 'string') throw new Error('fixture endpoint missing');
     const origin = 'http://127.0.0.1:' + address.port;
-    const hub = await startSelectedHubRole(selected, undefined, {
-      rulesSha256: sha256(Buffer.from(rules)), listener: { host: '127.0.0.1', port: address.port }, publicUrl: origin,
-    });
+    const hubRegistration = {
+      rulesSha256: sha256(Buffer.from(rules)), listener: { host: '127.0.0.1' as const, port: address.port }, publicUrl: origin,
+    };
+    await expect(startSelectedHubRole(selected, undefined, hubRegistration)).rejects.toThrow('INSTALLED_HUB_RULES_DIRECTORY_INVALID');
+    await chmod(controlRoot, 0o750);
+    const hub = await startSelectedHubRole(selected, undefined, hubRegistration);
     try {
       expect(await (await fetch(origin + '/healthz')).json()).toEqual({ ok: true, commit: PINNED_HUB_COMMIT });
       const keyFile = await lstat(join(prepared, 'hub', 'master.key'));
