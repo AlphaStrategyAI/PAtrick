@@ -331,7 +331,10 @@ int check_role_peer(const char* role) {
 
 int launch_registered_role(const char* role) {
   const int registry = open_registry();
-  if (registry < 0) return EX_CONFIG;
+  if (registry < 0) {
+    fputs("PATRICK_ROLE_REGISTRY_INVALID\n", stderr);
+    return EX_CONFIG;
+  }
   const int directory = open_protected(registry, role, true);
   Account account {};
   const bool admitted = directory >= 0 && has_protected_file(registry, "node") &&
@@ -339,6 +342,15 @@ int launch_registered_role(const char* role) {
                         account.uid == getuid() && account.uid == geteuid() &&
                         account.gid == getgid() && account.gid == getegid() &&
                         distinct_role_accounts(registry, role, account.uid) && has_protected_file(directory, "entry.mjs");
+  if (!admitted) {
+    if (directory < 0) fputs("PATRICK_ROLE_DIRECTORY_INVALID\n", stderr);
+    else if (!has_protected_file(registry, "node")) fputs("PATRICK_ROLE_NODE_INVALID\n", stderr);
+    else if (!read_account(directory, account)) fputs("PATRICK_ROLE_ACCOUNT_INVALID\n", stderr);
+    else if (account.uid != getuid() || account.uid != geteuid() || account.gid != getgid() || account.gid != getegid()) {
+      fprintf(stderr, "PATRICK_ROLE_IDENTITY_MISMATCH %u:%u %u:%u\n", account.uid, account.gid, getuid(), getgid());
+    } else if (!distinct_role_accounts(registry, role, account.uid)) fputs("PATRICK_ROLE_DISTINCT_INVALID\n", stderr);
+    else fputs("PATRICK_ROLE_ENTRY_INVALID\n", stderr);
+  }
   close(registry);
   if (!admitted) {
     if (directory >= 0) close(directory);
@@ -350,7 +362,14 @@ int launch_registered_role(const char* role) {
   const bool entered = fchdir(directory) == 0;
   if (close(directory) != 0 || !entered) return EX_UNAVAILABLE;
   const std::string role_root = std::string(registry_root) + "/" + role;
-  if (!valid_marker || (controlled && !connect_control(role_root + "/supervisor.sock", registry_owner))) return EX_CONFIG;
+  if (!valid_marker) {
+    fputs("PATRICK_ROLE_MARKER_INVALID\n", stderr);
+    return EX_CONFIG;
+  }
+  if (controlled && !connect_control(role_root + "/supervisor.sock", registry_owner)) {
+    fputs("PATRICK_ROLE_SUPERVISOR_UNAVAILABLE\n", stderr);
+    return EX_CONFIG;
+  }
   if (!confine_descriptors(controlled ? control_fd : STDERR_FILENO)) return EX_UNAVAILABLE;
   umask(0077);
   std::string node = std::string(registry_root) + "/node";
