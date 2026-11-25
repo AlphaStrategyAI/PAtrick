@@ -20,7 +20,7 @@ import { autoloopHub, checkDirectoryAuthority, checkDirectoryDefinition, directo
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
-import { createInstalledCli } from '../../deploy/runtime/cli.js';
+import { createFirstInstallCli, createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
@@ -793,13 +793,25 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
 }
 
 test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed package', async ({ onTestFinished }) => {
-  const { run, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot, enrollment } =
+  const { args, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot, enrollment } =
     await firstInstallFixture('first-install-packaged-hub', onTestFinished);
+  const cli = createFirstInstallCli({
+    identity: enrollment.identity, captureHost: enrollment.hostname, serviceUid: enrollment.uid,
+    dataRoot: join(instanceRoot, 'data'), minimumFreeBytes: 1, profile: 'Headless',
+    origin: enrollment.deployment.origin, rpId: enrollment.tls.rpId,
+    installPreviews: { release: enrollment }, installOperations,
+  });
+  expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
+  expect(await cli.run(args)).toMatchObject({
+    code: 'INSTALL_BOOTSTRAP_PREVIEW', installPreview: { planSha256 },
+  });
+  const run = (action: string) => cli.run([...args, '--operation', operationId, '--' + action]);
   const invalid = { ...enrollment, hubOwner: { uid: 0, gid: 1 } };
   expect(await previewFirstInstall(() => invalid, 'release'))
     .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
   installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
   expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+  expect(await run('readback')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
   expect(await run('prepare-generation')).toMatchObject({
     status: 'completed', code: 'INSTALL_GENERATION_PREPARED', generationId: 'first-generation',
   });

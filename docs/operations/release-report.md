@@ -204,6 +204,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 宿主可在首次登记时提供 `cli.entry`。`patrick-host-controller run-cli doctor` 由登记所有者执行，固定读取私有的 `cli/entry.mjs`，以原样参数启动登记的 Node。控制器清理继承环境和额外文件描述符。入口在宿主注入已核验的安装登记和发布信任材料后，可用 `createInstalledCli(provisioning).run(process.argv.slice(2))` 分派命令，并返回 JSON 和退出码。启用 CLI 需要包含该入口的登记回执，登记树有冲突时安装器会阻止写入。Mac Pro 的 CLI 登记与安装验收待实测。
 
+初装入口可从已核验的 `runtime/cli.mjs` 载入 `createFirstInstallCli(registration)`，注入宿主身份、发布信任材料和签名操作登记。该入口在服务数据库建立前即可预览、发布和读取已批准的签名包，并准备首个数据代次。后续代次选择及服务启动仍各自需要登记和验收。
+
 2026-11-25，T23 本机执行构建、宿主登记和角色准入测试，79 项通过，3 项跳过。登记函数进入现有共享运行时模块后，签名归档验证通过。本机另外用锁定版 Hub 通过 4 项已签名部署准入，覆盖包内初始化、启动、关停和写者锁。复核 Mac Pro 时，SSH 主机指纹匹配，现有账户的公钥认证被拒绝。实机验收还需要可登录的账户和可信发布签名入口。
 
 构建 `45525886907` 为提交 `ebaa243` 生成 Apple Silicon 和 Intel 未签名候选。两种架构的系统域 `launchd` 测试均验证了 Hub 跨 UID 的对端认证及错误身份拒绝。独立下载核对了每份归档的 481 个载荷文件、源码清单、控制器及 SQLite 扩展的摘要和架构。[双架构下载回执](evidence/darwin-candidates-2026-11-25-ebaa243.json)

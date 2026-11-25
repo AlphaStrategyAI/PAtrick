@@ -1123,6 +1123,21 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   }, firstInstall);
 }
 
+type FirstInstallCliRegistration = Readonly<Pick<RegisteredHost,
+  'identity' | 'captureHost' | 'serviceUid' | 'profile' | 'dataRoot' | 'minimumFreeBytes' |
+  'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations'>>;
+
+export function createFirstInstallCli(registration: FirstInstallCliRegistration) {
+  const { identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies } = registration;
+  const host: RegisteredHost = Object.freeze({
+    identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies,
+    get installPreviews() { return ownCapability(registration, 'installPreviews'); },
+    get installOperations() { return ownCapability(registration, 'installOperations'); },
+    runtime: firstInstall,
+  });
+  return createPatrickCli(host, undefined, firstInstall);
+}
+
 export function createProvisionedServiceRuntime(provisioning: RuntimeProvisioning) {
   const { serviceOptions } = requireRuntimeProvisioning(provisioning);
   const { identity } = provisioning.registration;
