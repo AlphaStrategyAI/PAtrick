@@ -1,4 +1,5 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
+export { applyHostRegistry, hostRegistryRoot, planHostRegistry, readHostRegistry } from '../host/registry.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
 import {
   bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,

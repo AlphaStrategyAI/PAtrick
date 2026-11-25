@@ -6,7 +6,7 @@ import {
   type RuntimeProvisioning,
 } from './composition.js';
 
-export { applyHostRegistry, hostRegistryRoot, planHostRegistry, readHostRegistry } from '../host/registry.js';
+export { applyHostRegistry, hostRegistryRoot, planHostRegistry, readHostRegistry } from './composition.js';
 
 export function createInstalledCli(provisioning: RuntimeProvisioning) {
   return createRuntimeCli(provisioning);
