@@ -208,6 +208,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 首次安装预览可登记独立 Hub 的 UID 和 GID。安装器核对系统账户和监督作业的组，并将数字身份纳入签名批准所绑定的计划。准备代次时，只有 Hub 目录和数据库归该账户所有。签名记录落盘并发布代次目录后，该组获得目录穿越权限。重试按原签名记录和物理文件重新核对。双架构 CI 使用系统测试账户验证文件属主、权限和重复准备操作。
 
+构建 `45530047120` 为提交 `964f49b` 生成 Apple Silicon 和 Intel 未签名候选。两个作业均通过独立 Hub UID 登记及首次安装的 CI 回归。下载复验核对了每份归档中的 481 个载荷文件、源码候选、原生控制器和 SQLite 扩展。Mac Pro 实机验收仍需可登录账号和可信发布签名。[双架构下载回执](evidence/darwin-candidates-2026-11-25-964f49b.json)
+
 安装预览收到 `hubSupervisorGid` 时，会渲染 `com.patrick.autoloop-hub-supervisor` 并将其纳入预览摘要。此系统域作业由套接字连接触发，监听器归 root 和已登记的 Hub 组所有。宿主仍负责建立受保护的入口和组登记。
 
 本机准入以测试宿主登记从 `run-role hub` 启动已选择的签名包。`runInstalledHubRole` 处理 `SIGTERM` 和 `SIGINT`，等待子进程退出和角色租约释放。准入用例验证启动中断、正常关停、子进程异常退出，以及控制器被强杀后写者锁继续阻止代次切换。Mac Pro 的 root 登记、独立账号访问权限和三个 launchd 作业的生命周期需要在生产配置下验证。
