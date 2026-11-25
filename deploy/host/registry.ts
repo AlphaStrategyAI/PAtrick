@@ -141,6 +141,19 @@ async function requireNoAcl(path: string, code: string) {
   if (!result?.stdout || result.stderr || result.stdout.trimEnd().includes('\n')) throw new Error(code);
 }
 
+async function validateCliLaunchPath(root: string, registryRoot: string, owner: number) {
+  if (registryRoot === hostRegistryRoot) {
+    const parent = dirname(registryRoot);
+    const support = dirname(parent);
+    for (const directory of ['/', dirname(support), support, parent]) {
+      await protectedDirectory(directory, owner);
+      await requireNoAcl(directory, 'HOST_REGISTRY_DIRECTORY_INVALID');
+    }
+  }
+  for (const relativePath of ['', 'cli']) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_DIRECTORY_INVALID');
+  for (const relativePath of ['node', 'cli/entry.mjs']) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_FILE_CONFLICT');
+}
+
 async function syncDirectory(path: string) {
   const directory = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { await directory.sync(); }
@@ -213,8 +226,7 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
       await syncDirectory(path);
     }
     if (plan.directories.some(directory => directory.path === cliRoot)) {
-      await requireNoAcl(stagedPath(cliRoot), 'HOST_REGISTRY_DIRECTORY_INVALID');
-      await requireNoAcl(stagedPath(join(cliRoot, 'entry.mjs')), 'HOST_REGISTRY_FILE_CONFLICT');
+      await validateCliLaunchPath(staged, plan.registryRoot, owner);
     }
     try { await rename(staged, plan.registryRoot); }
     catch (error) {
@@ -239,10 +251,8 @@ export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly
     });
     if (actual) throw new Error('HOST_REGISTRY_ENTRY_CONFLICT');
   }
-  for (const directory of plan.directories) {
-    await protectedDirectory(directory.path, owner, directory.mode);
-    if (directory.path === cliRoot) await requireNoAcl(directory.path, 'HOST_REGISTRY_DIRECTORY_INVALID');
-  }
+  for (const directory of plan.directories) await protectedDirectory(directory.path, owner, directory.mode);
+  if (cliPlanned) await validateCliLaunchPath(plan.registryRoot, plan.registryRoot, owner);
   return Promise.all(plan.files.map(async file => {
     const descriptor = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
@@ -250,7 +260,6 @@ export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly
       if (!info.isFile() || info.uid !== owner || info.nlink !== 1 || (info.mode & 0o7777) !== file.mode) {
         throw new Error('HOST_REGISTRY_FILE_CONFLICT');
       }
-      if (file.path === join(cliRoot, 'entry.mjs')) await requireNoAcl(file.path, 'HOST_REGISTRY_FILE_CONFLICT');
       const sha256 = digest(await descriptor.readFile());
       if (sha256 !== file.sha256) throw new Error('HOST_REGISTRY_FILE_CONFLICT');
       return { path: file.path, sha256 };

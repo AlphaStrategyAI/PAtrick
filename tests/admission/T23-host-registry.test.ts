@@ -172,12 +172,15 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
     await chmod(cliPath, 0o644);
     await expect(exec(controller, ['run-cli', 'doctor'])).rejects.toMatchObject({ code: 78 });
     await chmod(cliPath, 0o400);
-    execFileSync('/bin/chmod', ['+a', 'everyone allow write', cliPath]);
-    try {
-      await expect(exec(controller, ['run-cli', 'doctor'])).rejects.toMatchObject({ code: 78 });
-      await expect(readHostRegistry(plan)).rejects.toThrow('HOST_REGISTRY_FILE_CONFLICT');
+    for (const [path, code] of [[cliPath, 'HOST_REGISTRY_FILE_CONFLICT'],
+      [join(executableRoot, 'node'), 'HOST_REGISTRY_FILE_CONFLICT'],
+      [cliRoot, 'HOST_REGISTRY_DIRECTORY_INVALID'], [executableRoot, 'HOST_REGISTRY_DIRECTORY_INVALID']]) {
+      execFileSync('/bin/chmod', ['+a', 'everyone allow write', path]);
+      try {
+        await expect(exec(controller, ['run-cli', 'doctor'])).rejects.toMatchObject({ code: 78 });
+        await expect(readHostRegistry(plan)).rejects.toThrow(code);
+      } finally { execFileSync('/bin/chmod', ['-a#', '0', path]); }
     }
-    finally { execFileSync('/bin/chmod', ['-a#', '0', cliPath]); }
     const disabled = planHostRegistry(registration({
       registryRoot: executableRoot, node: { path: executable, sha256: sha256File(executable) },
     }));
