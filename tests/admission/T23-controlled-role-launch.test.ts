@@ -19,6 +19,113 @@ const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
 
+test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
+  'authenticates the registered Hub across system launchd and independent UIDs', async ({ onTestFinished }) => {
+    expect([process.platform, process.getuid!(), process.geteuid!()]).toEqual(['darwin', 0, 0]);
+    const hubUid = Number(execFileSync('/usr/bin/id', ['-u', '_www'], { encoding: 'utf8' }).trim());
+    const hubGid = Number(execFileSync('/usr/bin/id', ['-g', '_www'], { encoding: 'utf8' }).trim());
+    expect(hubUid).toBeGreaterThan(0);
+    expect(hubGid).toBeGreaterThan(0);
+    const root = await mkdtemp('/private/tmp/patrick-system-role-');
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    await chmod(root, 0o755);
+    const registry = join(root, 'registry');
+    const hub = join(registry, 'hub');
+    const supervisor = join(registry, 'hub-supervisor');
+    for (const path of [registry, hub, supervisor]) {
+      await mkdir(path, { mode: 0o755 });
+      await chmod(path, 0o755);
+    }
+    const node = join(registry, 'node');
+    await copyFile(process.execPath, node);
+    await chmod(node, 0o555);
+    const controller = join(root, 'controller');
+    const header = join(root, 'registry.h');
+    await writeFile(header, [
+      '#define PATRICK_NATIVE_REGISTRY_TEST 1',
+      `constexpr char registry_root[] = ${JSON.stringify(registry)};`,
+      'constexpr auto registry_owner = 0U;',
+    ].join('\n'), { mode: 0o600, flag: 'wx' });
+    execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+      '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
+    await chmod(controller, 0o555);
+    await writeFile(join(hub, 'account'), `${hubUid}:${hubGid}\n`, { mode: 0o444, flag: 'wx' });
+    await writeFile(join(hub, 'supervisor-required'), '', { mode: 0o444, flag: 'wx' });
+    await writeFile(join(hub, 'entry.mjs'), `
+      import { closeSync, constants, openSync } from 'node:fs';
+      import { Socket } from 'node:net';
+      if (process.env.PATRICK_SUPERVISOR_FD !== '3') process.exit(76);
+      const fd = openSync('/dev/fd/3', constants.O_RDWR);
+      closeSync(3);
+      const connection = new Socket({ fd, readable: true, writable: true });
+      let response = '';
+      for await (const part of connection) response += part.toString();
+      console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid(), response }));
+    `, { mode: 0o444, flag: 'wx' });
+    await writeFile(join(supervisor, 'entry.mjs'), `
+      import { spawn } from 'node:child_process';
+      import { closeSync, constants, openSync } from 'node:fs';
+      import { createServer } from 'node:net';
+      if (process.env.PATRICK_SUPERVISOR_LISTENER_FD !== '3' || process.getuid() !== 0) process.exit(76);
+      const fd = openSync('/dev/fd/3', constants.O_RDWR);
+      closeSync(3);
+      createServer({ pauseOnConnect: true }, connection => {
+        const check = spawn(${JSON.stringify(controller)}, ['check-role-peer', 'hub'], {
+          env: {}, stdio: ['ignore', 'ignore', 'ignore', connection], timeout: 5000,
+        });
+        check.once('error', () => connection.destroy());
+        check.once('close', status => {
+          connection.resume();
+          connection.end(status === 0 ? 'enrolled\\n' : 'rejected\\n');
+        });
+      }).listen({ fd });
+    `, { mode: 0o444, flag: 'wx' });
+    const label = 'com.patrick.admission.system-hub.' + randomBytes(8).toString('hex');
+    const job = 'system/' + label;
+    const endpoint = join(hub, 'supervisor.sock');
+    const plist = join(root, label + '.plist');
+    const stderr = join(root, 'launchd.stderr');
+    await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>${controller}</string><string>run-supervisor</string><string>hub</string></array>
+<key>UserName</key><string>root</string>
+<key>StandardErrorPath</key><string>${stderr}</string>
+<key>Sockets</key><dict><key>HubControl</key><dict>
+<key>SockPathName</key><string>${endpoint}</string>
+<key>SockPathOwner</key><integer>0</integer>
+<key>SockPathGroup</key><integer>${hubGid}</integer>
+<key>SockPathMode</key><integer>432</integer>
+</dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
+    const launchctl = (...args: string[]) => execFileSync('/bin/launchctl', args, { cwd: root, encoding: 'utf8', timeout: 5000 });
+    launchctl('bootstrap', 'system', plist);
+    try {
+      await vi.waitFor(async () => {
+        const endpointInfo = await stat(endpoint);
+        expect([endpointInfo.isSocket(), endpointInfo.uid, endpointInfo.gid, endpointInfo.mode & 0o777])
+          .toEqual([true, 0, hubGid, 0o660]);
+      }, { timeout: 5000 });
+      const admitted = spawnSync(controller, ['run-role', 'hub'], {
+        uid: hubUid, gid: hubGid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
+      });
+      expect([admitted.status, admitted.error, admitted.stderr]).toEqual([0, undefined, '']);
+      expect(JSON.parse(admitted.stdout)).toEqual({ uid: hubUid, gid: hubGid, response: 'enrolled\n' });
+      const wrongPeer = createConnection(endpoint);
+      wrongPeer.setTimeout(5000, () => wrongPeer.destroy(new Error('wrong peer did not receive a reply')));
+      try {
+        let response = '';
+        for await (const part of wrongPeer) response += part.toString();
+        expect(response).toBe('rejected\n');
+      } finally { wrongPeer.destroy(); }
+    } catch (error) {
+      const output = await readFile(stderr, 'utf8').catch(() => '');
+      throw new Error([String(error), output].filter(Boolean).join('\n'), { cause: error });
+    } finally {
+      launchctl('bootout', job);
+    }
+  }, 60_000,
+);
+
 async function digest(path: string) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);

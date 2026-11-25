@@ -204,6 +204,12 @@ jobs:
             --artifact-root "$work/readback" > "$work/readback.json"
           PATRICK_T23_CONTROLLED_LAUNCH=1 PATRICK_T23_CONTROLLED_MATERIALS="$work/readback" \
             node node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            installed_node="$(node -p 'process.execPath')"
+            sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_SYSTEM_SUPERVISOR_TEST=1 \
+              "$installed_node" node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts \
+              --root "$source_root" --pool forks --maxWorkers 1 --testNamePattern 'independent UIDs'
+          fi
           admission_tmp=$(mktemp -d "$work/admission.XXXXXXXX")
           TMPDIR="$admission_tmp" PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" PATRICK_T23_AUTOLOOP_MATERIALS="$work/readback" \
             node node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts --maxWorkers 1 \
