@@ -12,6 +12,13 @@
     "verifiedFiles": 488,
     "targetMacAdmissionPassed": 4
   },
+  "hostedIntelMaterials": {
+    "runId": "45842812980",
+    "archiveSha256": "15c65e0a553a4c5fca9d2f241fc5c1bd9c7b237ee1d080e338e82c09d75fce62",
+    "controllerSha256": "64e2f1263ec99826c93e1407d2d8cc03fe2b3f160ef3af6fafd6fcd58bdbae6a",
+    "inventorySha256": "4c4aa32ca41615fb7154a037e08ed2aaef4919987f2bd0b9f8f641db0d0be7b5",
+    "verifiedFiles": 488
+  },
   "localCandidate": {
     "matchingLocalBuilds": 2,
     "inventorySha256": "c1cf9755723726d50eeb96a0da011f51a7e244ad96bdcae23afee72467ad0d88",
