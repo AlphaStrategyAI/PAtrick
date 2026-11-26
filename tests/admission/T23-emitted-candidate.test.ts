@@ -969,9 +969,11 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
       return { ...enrollment, deployment: { ...enrollment.deployment,
         accounts: { ...enrollment.deployment.accounts, worker: '_networkd' }, workerSupervisorGid } };
     }
-    expect(await previewFirstInstall(() => withWorkerGroup(workerOwner.gid + 1), 'release'))
+    const mismatchedWorkerGroup = withWorkerGroup(workerOwner.gid + 1);
+    const registeredWorkerGroup = withWorkerGroup(workerOwner.gid);
+    expect(await previewFirstInstall(() => mismatchedWorkerGroup, 'release'))
       .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
-    expect(await previewFirstInstall(() => withWorkerGroup(workerOwner.gid), 'release'))
+    expect(await previewFirstInstall(() => registeredWorkerGroup, 'release'))
       .toMatchObject({ status: 'preview' });
     child(['+a', '_mdnsresponder deny search', instanceRoot], dir, '/bin/chmod');
     try {
