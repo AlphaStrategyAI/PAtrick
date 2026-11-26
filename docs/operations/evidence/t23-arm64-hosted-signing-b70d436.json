@@ -1,0 +1,18 @@
+{
+  "format": "patrick-t23-hosted-signing-v1",
+  "observedDate": "2026-11-26",
+  "sourceCommit": "b70d4364b44ce5c9211732dd4a180a173b1a43d6",
+  "hostedBuild": "45802742032",
+  "architecture": "arm64",
+  "materialFiles": 489,
+  "repeatedBuildsMatchHostedInventory": true,
+  "inventorySha256": "6bfdee939f26fa300603a6367f7c8b3ae957ada48f289dbf521a2902b9c6d9f5",
+  "controllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+  "packageSha256": "3c04b3c9d487bd551e6bd52c8c61e68a3093d6e0d8e886955c3fe2782ecb0df5",
+  "publicKeySha256": "c24ff15bacd9fe312eda71328035e0b1681a7228df502f09b3b887a7f82a1f6e",
+  "executionReportSha256": "10739acfb295cd3180694682a92261748702db002d53a35c1ac0943341b6ea88",
+  "passed": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
+  "rejected": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
+  "ownerTrust": "pending",
+  "systemInstalled": false
+}

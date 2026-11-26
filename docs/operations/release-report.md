@@ -250,6 +250,8 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 构建 `45791673004` 的 Apple Silicon 和 Intel 作业均通过。`node scripts/verify-hosted-candidates.mjs 45791673004 --require-controller` 从该作业独立下载两套候选并复验每套的 489 个载荷文件、原生 SQLite 扩展和原生控制器。Intel 归档 SHA-256 为 `fef12d9e65786ff3620d5b72fa0fadac5f15f0d5769ff04696175ad6019ba0cb`，控制器为 `x86_64`。Intel 产物仍需发布签名。
 
+构建 `45802742032` 的 `arm64` 材料包含 `b70d436` 的原生控制器修复。下载后核对了归档与控制器的 SHA-256 及 Mach-O 架构。在目标 Mac 上两次复现托管清单，直接对下载材料运行四项回归并以一次性 Ed25519 密钥签名。签名包已独立复验，宿主信任登记及系统部署待执行。[新候选验签回执](evidence/t23-arm64-hosted-signing-b70d436.json)
+
 2026-11-26，目标 MacBook Pro 使用所有者确认的 Ed25519 公钥，在 `/Library/Application Support/PAtrick/t23-acceptance` 安装 `2c25555` 的托管 `arm64` 签名包。首次预览拦下了一次模式为 `0500` 的控制器。复验控制器摘要并校正为 `0555` 后，发布、重试、首代次准备及公钥读回均通过。Caddy、Service、Hub 与 Worker 已分配独立本机账号。首代次选择、三服务启动和所有者登录仍待验收。[系统目录初装回执](evidence/t23-arm64-system-intake-2c25555.json)
 
 目标 Mac 使用 `df814e2` 与 `ac7fe49` 的已签名 `arm64` 包完成隔离代次切换。两个包均登记 schema 1。切换后写入一条合成 SQLite 记录，复核了应答丢失后的读回、同操作重试、旧代次切回拒绝与新记录保留。另验证了切换后两个目录同步故障的恢复。此次使用临时安装根与合成数据库，正式实例的备份、迁移、主机重启与卸载保留待验收。
