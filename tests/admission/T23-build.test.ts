@@ -981,6 +981,18 @@ describe('T23 installed runtime build and bootstrap', () => {
       const drained = await listener.drain({ timeoutMs: 5000 });
       const finallyClosed = !serviceDatabase.open;
 
+      const idleListener = await runInstalledService(createRuntimeProvisioning({
+        registration, service: { ...service, databasePath: join(dataRoot, 'idle.sqlite') },
+      }));
+      let idleConnections, idleDrain;
+      try {
+        const responses = await Promise.all([fetch(idleListener.url + '/healthz'), fetch(idleListener.url + '/')]);
+        await Promise.all(responses.map(response => response.arrayBuffer()));
+        idleConnections = idleListener.read().openConnections;
+      } finally {
+        idleDrain = await idleListener.drain();
+      }
+
       const pin = '45aecbf578289cda72d1fc773dcad069bfe7778b';
       let reportedCommit = '0'.repeat(40);
       let preflights = 0;
@@ -1108,7 +1120,8 @@ describe('T23 installed runtime build and bootstrap', () => {
         homeTitle: homeBody.includes('<title>PAtrick</title>'), assetStatus: asset.status,
         assetType: asset.headers.get('content-type'), wrongOriginStatus: wrongOrigin.status,
         validOriginStatus: validOrigin.status, sessionStatus: session.status, wrongOriginBody, validOriginBody,
-        timedOut, remainedOpen, finallyClosed, drained, workerDrain, workerSharedGate, hubIdentityRejection, preflights, eventRequests, outboxResult, zeroPaidCalls, submitted: submitted.status,
+        timedOut, remainedOpen, finallyClosed, drained, idleConnections, idleDrain,
+        workerDrain, workerSharedGate, hubIdentityRejection, preflights, eventRequests, outboxResult, zeroPaidCalls, submitted: submitted.status,
         observationOwners, observedSeq, sourceReceipt, sourceCalls, serviceAfterWorker, sourcePending, sourceDatabaseOpen, sourceDrained, sourceLease,
       }) + '\\n');
     `;
@@ -1133,6 +1146,8 @@ describe('T23 installed runtime build and bootstrap', () => {
     expect(actual.forgedHost).toBe(400);
     expect(actual.sharedGateAllowed).toBe(true);
     expect(actual.persistedRowAloneAllowed).toBe(false);
+    expect(actual.idleConnections).toBeGreaterThan(0);
+    expect(actual.idleDrain).toMatchObject({ listener: 'closed', openConnections: 0, runtime: { status: 'closed' } });
     expect(actual).toMatchObject({
       healthStatus: 200,
       healthBody: { ok: true },

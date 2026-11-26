@@ -240,7 +240,12 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     const serverClosed = new Promise<boolean>((settle) => {
       server.close((error) => settle(!error));
     });
-    closing = Promise.all([serverClosed, Promise.allSettled([...tasks])]).then(([closed]) => {
+    closing = Promise.all([serverClosed, Promise.allSettled([...tasks])]).then(async ([closed]) => {
+      if (closed) {
+        await Promise.all([...sockets].map(socket => new Promise<void>(settle => {
+          socket.once('close', () => settle());
+        })));
+      }
       state = closed ? 'closed' : 'close_failed';
     });
   }
