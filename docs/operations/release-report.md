@@ -204,7 +204,9 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 宿主可在首次登记时提供 `cli.entry`。`patrick-host-controller run-cli doctor` 由登记所有者执行，固定读取私有的 `cli/entry.mjs`，以原样参数启动登记的 Node。控制器清理继承环境和额外文件描述符。入口在宿主注入已核验的安装登记和发布信任材料后，可用 `createInstalledCli(provisioning).run(process.argv.slice(2))` 分派命令，并返回 JSON 和退出码。启用 CLI 需要包含该入口的登记回执，登记树有冲突时安装器会阻止写入。Mac Pro 的 CLI 登记与安装验收待实测。
 
-登记 `serviceSupervisor` 后，控制器从 `ServiceControl` 接收固定路径的 Unix 流监听器，核对监听状态、属主、服务 GID 和 `0660` 权限，再将 fd 3 交给受保护的 `service-supervisor/entry.mjs`。部署渲染器支持生成对应的 `launchd` 配置。本机用临时套接字验证了这一入口。服务代次授权、生产账号启动和系统域读回待验收。
+登记 `serviceSupervisor` 后，控制器从 `ServiceControl` 接收 Unix 流监听器，核对监听状态、登记端点的属主、服务 GID 和 `0660` 权限，再将 fd 3 交给受保护的 `service-supervisor/entry.mjs`。当 `launchd` 发布的路径与内核报告的绑定名不同时，控制器通过登记端点核对连接对端的 UID 和绑定名。部署渲染器支持生成对应的 `launchd` 配置。
+
+2026-11-26，在获准的 Apple M1 MacBook Pro（macOS 27.2.1，`26B131`）用系统域 `launchd` 通过两项临时用例。Hub 和 Service 均以独立 UID/GID 连接，监督端均拒绝未登记身份。实机发现的绑定名差异已复现并修复，六项原生登记测试通过，覆盖发布后改名的监听端点及错误端点。构建 `45754551734` 的 `e980af4` 基线也在托管的 Apple Silicon 和 Intel 作业上通过系统域用例。T23 仍需实测服务代次授权、TLS、通行密钥、生产启动与生命周期。
 
 初装入口可从已核验的 `runtime/cli.mjs` 载入 `createFirstInstallCli(registration)`，注入宿主身份、发布信任材料和签名操作登记。该入口在服务数据库建立前即可预览、发布和读取已批准的签名包，并准备首个数据代次。后续代次选择及服务启动仍各自需要登记和验收。
 

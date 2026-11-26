@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, openSync, readFileSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, chown, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -155,9 +155,11 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
     await applyHostRegistry(planHostRegistry({ ...fixture, roles }));
     const socketPath = join(executableRoot, 'service', 'supervisor.sock');
     const otherSocket = join(root, 'other.sock');
+    const relocatedSocket = join(executableRoot, 'service-supervisor', 'activated.sock');
     const header = join(root, 'service-activation.h');
     await writeFile(header, `
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <launch.h>
@@ -185,6 +187,12 @@ inline int fixture_activation(const char* key, int** descriptors, size_t* count)
     close(listener);
     return failure;
   }
+  const char* published = std::getenv("PATRICK_FIXTURE_PUBLISHED_SOCKET");
+  if (published && std::rename(path, published) != 0) {
+    const int failure = errno;
+    close(listener);
+    return failure;
+  }
   *descriptors = static_cast<int*>(std::malloc(sizeof(listener)));
   if (!*descriptors) { close(listener); return ENOMEM; }
   **descriptors = listener;
@@ -196,8 +204,9 @@ inline int fixture_activation(const char* key, int** descriptors, size_t* count)
     const controller = join(root, 'service-controller');
     execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
-    const supervisor = (path?: string, boundOnly = false) => spawnSync(controller, ['run-supervisor', 'service'], {
+    const supervisor = (path?: string, boundOnly = false, published?: string) => spawnSync(controller, ['run-supervisor', 'service'], {
       cwd: root, env: { ...(path ? { PATRICK_FIXTURE_SOCKET: path } : {}),
+        ...(published ? { PATRICK_FIXTURE_PUBLISHED_SOCKET: published } : {}),
         ...(boundOnly ? { PATRICK_FIXTURE_BOUND_ONLY: '1' } : {}), NODE_OPTIONS: '--unsupported-fixture-option' },
       encoding: 'utf8', timeout: 5000,
     });
@@ -212,13 +221,27 @@ inline int fixture_activation(const char* key, int** descriptors, size_t* count)
     await expect(exec(controller, ['run-role', 'service'])).rejects.toMatchObject({ code: 78 });
     expect(supervisor().status).toBe(78);
     expect(supervisor(socketPath, true)).toMatchObject({ status: 78, stderr: 'PATRICK_SERVICE_LISTENER_ADDRESS_INVALID\n' });
-    try { expect(supervisor(otherSocket)).toMatchObject({ status: 78, stderr: 'PATRICK_SERVICE_LISTENER_ADDRESS_INVALID\n' }); }
-    finally { await rm(socketPath); }
+    await rm(socketPath);
+    const otherListener = createServer(socket => socket.destroy());
+    otherListener.listen(socketPath);
+    await once(otherListener, 'listening');
+    try {
+      await chown(socketPath, process.getuid!(), process.getgid!());
+      await chmod(socketPath, 0o660);
+      expect(supervisor(otherSocket)).toMatchObject({ status: 78, stderr: 'PATRICK_SERVICE_LISTENER_ADDRESS_INVALID\n' });
+    } finally {
+      otherListener.close();
+      await once(otherListener, 'close');
+    }
     const result = supervisor(socketPath);
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       cwd: join(executableRoot, 'service-supervisor'), fd: '3', socket: true, umask: 0o077, env: null,
     });
+    await rm(socketPath);
+    const relocated = supervisor(relocatedSocket, false, socketPath);
+    expect(relocated.status, relocated.stderr).toBe(0);
+    expect(JSON.parse(relocated.stdout)).toEqual(JSON.parse(result.stdout));
   }, 60_000);
 
   test('the native controller admits the applied registry', async () => {

@@ -250,6 +250,32 @@ struct Supervisor {
 constexpr Supervisor hub_supervisor {"hub", "hub-supervisor", "HubControl", "HUB", false};
 constexpr Supervisor service_supervisor {"service", "service-supervisor", "ServiceControl", "SERVICE", true};
 
+bool listener_matches_endpoint(const sockaddr_un& bound, const std::string& path, const struct stat& endpoint) {
+  sockaddr_un target {};
+  if (path.size() >= sizeof(target.sun_path)) return false;
+  if (strncmp(bound.sun_path, path.c_str(), sizeof(bound.sun_path)) == 0) return true;
+
+  const int probe = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (probe < 0) return false;
+  target.sun_family = AF_UNIX;
+  memcpy(target.sun_path, path.c_str(), path.size() + 1);
+  target.sun_len = SUN_LEN(&target);
+  sockaddr_un peer {};
+  socklen_t peer_size = sizeof(peer);
+  uid_t peer_uid;
+  gid_t peer_gid;
+  struct stat observed {};
+  const bool matches = fcntl(probe, F_SETFL, O_NONBLOCK) == 0 &&
+      connect(probe, reinterpret_cast<sockaddr*>(&target), target.sun_len) == 0 &&
+      getpeereid(probe, &peer_uid, &peer_gid) == 0 && peer_uid == registry_owner &&
+      getpeername(probe, reinterpret_cast<sockaddr*>(&peer), &peer_size) == 0 && peer.sun_family == AF_UNIX &&
+      strncmp(peer.sun_path, bound.sun_path, sizeof(peer.sun_path)) == 0 &&
+      lstat(path.c_str(), &observed) == 0 && S_ISSOCK(observed.st_mode) &&
+      observed.st_dev == endpoint.st_dev && observed.st_ino == endpoint.st_ino &&
+      observed.st_uid == endpoint.st_uid && observed.st_gid == endpoint.st_gid && observed.st_mode == endpoint.st_mode;
+  return close(probe) == 0 && matches;
+}
+
 bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
   int* descriptors = nullptr;
   size_t count = 0;
@@ -272,20 +298,19 @@ bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
   int socket_type = 0;
   socklen_t option_size = sizeof(socket_type);
   struct stat endpoint {};
+  const bool admitted_endpoint = lstat(path.c_str(), &endpoint) == 0 && S_ISSOCK(endpoint.st_mode) &&
+      endpoint.st_uid == registry_owner && endpoint.st_gid == group &&
+      (endpoint.st_mode & 07777) == 0660;
   bool admitted_address = listener >= control_fd &&
       getsockopt(listener, SOL_SOCKET, SO_TYPE, &socket_type, &option_size) == 0 && socket_type == SOCK_STREAM &&
       getsockname(listener, reinterpret_cast<sockaddr*>(&address), &address_size) == 0 &&
       address.sun_family == AF_UNIX && address.sun_path[0] != '\0';
   if (admitted_address && supervisor.require_exact_listener) {
     socket_fdinfo info {};
-    admitted_address = path.size() < sizeof(address.sun_path) &&
-        strncmp(address.sun_path, path.c_str(), sizeof(address.sun_path)) == 0 &&
-        proc_pidfdinfo(getpid(), listener, PROC_PIDFDSOCKETINFO, &info, sizeof(info)) == sizeof(info) &&
-        (info.psi.soi_options & SO_ACCEPTCONN) != 0;
+    admitted_address = proc_pidfdinfo(getpid(), listener, PROC_PIDFDSOCKETINFO, &info, sizeof(info)) == sizeof(info) &&
+        (info.psi.soi_options & SO_ACCEPTCONN) != 0 &&
+        (!admitted_endpoint || listener_matches_endpoint(address, path, endpoint));
   }
-  const bool admitted_endpoint = lstat(path.c_str(), &endpoint) == 0 && S_ISSOCK(endpoint.st_mode) &&
-      endpoint.st_uid == registry_owner && endpoint.st_gid == group &&
-      (endpoint.st_mode & 07777) == 0660;
   if (!admitted_address || !admitted_endpoint) {
     close(listener);
     fprintf(stderr, "PATRICK_%s_LISTENER_%s_INVALID\n", supervisor.diagnostic, admitted_address ? "ENDPOINT" : "ADDRESS");

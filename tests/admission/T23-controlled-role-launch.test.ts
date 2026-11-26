@@ -55,12 +55,10 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
     await chmod(controller, 0o555);
     const roleEntry = `
-      import { closeSync, constants, openSync } from 'node:fs';
+      import { fstatSync } from 'node:fs';
       import { Socket } from 'node:net';
-      if (process.env.PATRICK_SUPERVISOR_FD !== '3') process.exit(76);
-      const fd = openSync('/dev/fd/3', constants.O_RDWR);
-      closeSync(3);
-      const connection = new Socket({ fd, readable: true, writable: true });
+      if (process.env.PATRICK_SUPERVISOR_FD !== '3' || !fstatSync(3).isSocket()) process.exit(76);
+      const connection = new Socket({ fd: 3, readable: true, writable: true });
       let response = '';
       for await (const part of connection) response += part.toString();
       console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid(), response }));
@@ -73,6 +71,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       const fd = openSync('/dev/fd/3', constants.O_RDWR);
       closeSync(3);
       createServer({ pauseOnConnect: true }, connection => {
+        connection.on('error', () => connection.destroy());
         const check = spawn(${JSON.stringify(controller)}, ['check-role-peer', ${JSON.stringify(role)}], {
           env: {}, stdio: ['ignore', 'ignore', 'ignore', connection], timeout: 5000,
         });
