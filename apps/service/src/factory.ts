@@ -50,6 +50,8 @@ import { mountStatsRoutes } from './routes/stats.js';
 import { mountWorkProjectionRoutes } from './routes/work.js';
 import { mountProjectionEventRoutes } from './routes/events.js';
 import { createSourceWorkDispatch, type SourceWorkDispatchOptions } from './source-work.js';
+import { createVaultReconciliationWorker } from './vault-reconciliation.js';
+import type { VaultReconciliationScope } from '../../../packages/integrations/vault/reconciliation.js';
 import type { probeExecutorReadiness } from '@patrick/executor/readiness';
 
 export { createAuthenticatedConsultationMcp } from './consultation-mcp.js';
@@ -90,6 +92,7 @@ export type CreateAppOptions = {
   /** The provider that holds the GitHub token a source references. */
   sourceCredentialStore?: CredentialStore;
   sourceWorkDispatch?: SourceWorkDispatchOptions;
+  vaultReconciliation?: VaultReconciliationScope;
 };
 
 export type ServiceDrainResult = {
@@ -229,11 +232,15 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     const current = context();
     if (!state.vault || !state.databasePath) {
       state.vault = createVaultApi(current.db, {
-        blobs: createBlobStore(join(dirname(state.databasePath ?? options.databasePath ?? ''), 'blobs')),
+        blobs: vaultBlobs(),
         now,
       });
     }
     return state.vault;
+  }
+  let sharedVaultBlobs: ReturnType<typeof createBlobStore> | undefined;
+  function vaultBlobs() {
+    return sharedVaultBlobs ??= createBlobStore(join(dirname(state.databasePath ?? options.databasePath ?? ''), 'blobs'));
   }
   function closeResources() {
     // All joined finalizers still had both handles available. Close the Hub first.
@@ -370,6 +377,11 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
       const worker = createSourceWorkDispatch(context().db, now, options.sourceWorkDispatch);
       workers.push(worker);
       starters.unshift(() => { worker.start(); });
+    }
+    if (options.vaultReconciliation) {
+      const worker = createVaultReconciliationWorker(context().db, vaultBlobs(), options.vaultReconciliation, now, lifetime.signal);
+      workers.push(worker);
+      starters.push(worker.start);
     }
     const app = new Hono();
     app.use('/api/v1/*', async (_c, next) => {

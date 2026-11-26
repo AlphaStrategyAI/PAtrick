@@ -102,12 +102,12 @@ export function recordKnowledge(db: SqliteDatabase, input: {
   now: string;
 }): void {
   withImmediateTransaction(db, () => {
-    const existing = db.prepare('SELECT revision, data_domain, canonical_id FROM knowledge_records WHERE knowledge_id = ?').get(input.knowledgeId) as {
+    const existing = db.prepare('SELECT revision, account_id, data_domain FROM knowledge_records WHERE knowledge_id = ?').get(input.knowledgeId) as {
       revision: number;
+      account_id: string;
       data_domain: string;
-      canonical_id: string;
     } | undefined;
-    if (existing && existing.data_domain !== input.domain) throw new Error('CONFLICT');
+    if (existing && (existing.account_id !== input.accountId || existing.data_domain !== input.domain)) throw new Error('CONFLICT');
     assertRecoveryWriteAllowed(db, existing?.data_domain ?? input.domain);
     const revision = existing ? existing.revision + 1 : 1;
     if (!existing) {

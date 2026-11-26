@@ -1134,6 +1134,8 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     networkRepair: networkRepair && Object.freeze({ ...networkRepair }), feishuCredentials, feishuTestOutbound,
     httpSources, httpSourceWorker, settingsHandlers, prDeliveryWorker, productViewHub, notificationMaintenance, workStopSupervisor,
     githubApi, sourceCredentialStore, sourceWorkDispatch,
+    vaultReconciliation: Object.freeze({ accountId: identity.accountId, domains: identity.domains,
+      captureHost: registrationData.captureHost }),
     ...(controlledService && worker && registrationData.operationalHub ? {
       consultationWorker: {
         mode: 'manual',

@@ -29,6 +29,12 @@ export type ProjectionRequest = {
   files: Record<string, string>;
   editId?: string;
   adoptionRender?: AdoptionRender;
+  reconciliationRender?: {
+    blob: string;
+    configRevision: number;
+    connectionEpoch: number;
+    rootIdentity: string;
+  };
   expectedFailedReceiptRevision?: number;
 };
 
@@ -109,7 +115,7 @@ export async function projectVault(
           return { applied: false, pointer, state: 'failed' as const };
         };
         filesystemFailure = failed;
-        const batch = batchName(input.revision, input.adoptionRender?.intentId);
+        const batch = batchName(input.revision, projectionIntentId(vault, input));
         const index = indexBody(input.revision, batch);
         const previous = pointer === null ? undefined : db.prepare(`SELECT intent_id FROM projection_pointers
           WHERE data_domain=? AND view_kind=? AND projection_revision=?`).get(vault.data_domain, input.viewKind, pointer) as
@@ -117,7 +123,7 @@ export async function projectVault(
         const precedingBatch = pointer === null ? null : batchName(pointer, previous?.intent_id);
         if (!manifestComplete(input.files) || !await rootMatches(vault)) return failed();
         authorize();
-        const manifest = projectionManifest(input);
+        const manifest = projectionManifest(input.files);
         const scope = publicationScope(vault, input, pointer, manifest, index);
         const pending = loadPublicationProof(db, scope);
         if (pending === 'conflict') return failed();
@@ -166,7 +172,7 @@ export async function projectVault(
               if (actual.config_revision !== vault.config_revision || actual.connection_epoch !== vault.connection_epoch ||
                   !remember(db, vault, input, 'pending', 0, options.now, proof)) throw new Error('PROJECTION_SCOPE_CHANGED');
             });
-            await publishBatch(vault.root_path, batch, input.files, !pending && !input.adoptionRender, () => {
+            await publishBatch(vault.root_path, batch, input.files, !pending && !input.adoptionRender && !input.reconciliationRender, () => {
               authorize();
               if (input.adoptionRender) assertBoundRender(db, input);
             });
@@ -464,6 +470,7 @@ async function copyBatchToIsolation(
 }
 
 function batchName(revision: number, intent?: string): string {
+  if (intent && /^vault-sync-[0-9a-f]{24}-[0-9]+$/.test(intent)) return intent;
   return intent && /^intent_fact_[0-9a-f]{24}$/.test(intent) ? `standards-${intent}-${revision}` : String(revision);
 }
 
@@ -605,8 +612,8 @@ function manifestComplete(files: Record<string, string>): boolean {
   return PROJECTION_BATCH_FILES.every((path) => typeof files[path] === 'string');
 }
 
-function projectionManifest(input: ProjectionRequest) {
-  return PROJECTION_BATCH_FILES.map((path) => ({ path, sha256: sha256(filesBody(input.files, path)) }));
+export function projectionManifest(files: ProjectionRequest['files']) {
+  return PROJECTION_BATCH_FILES.map((path) => ({ path, sha256: sha256(filesBody(files, path)) }));
 }
 
 function remember(
@@ -619,8 +626,9 @@ function remember(
   publicationProof?: string,
 ): boolean {
   const manifestJson = publicationProof ?? canonicalPayload(input.adoptionRender
-    ? { format: 'patrick.adoption-render.v1', render: input.adoptionRender, manifest: projectionManifest(input) }
-    : projectionManifest(input));
+    ? { format: 'patrick.adoption-render.v1', render: input.adoptionRender, manifest: projectionManifest(input.files) }
+    : input.reconciliationRender ? { reconciliationRender: input.reconciliationRender, manifest: projectionManifest(input.files) }
+      : projectionManifest(input.files));
   const manifestHash = sha256(manifestJson);
   const intentId = projectionIntentId(vault, input);
   return db.prepare(`INSERT INTO projection_batches (

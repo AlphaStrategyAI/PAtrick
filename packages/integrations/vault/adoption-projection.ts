@@ -43,7 +43,7 @@ export async function projectPendingAdoption(
   return projectFrozen(db, blobs, target.row, options);
 }
 
-function renderCommittedView(db: SqliteDatabase, row: Adopted): Record<string, string> {
+export function renderCommittedView(db: SqliteDatabase, row: { account_id: string; data_domain: string }): Record<string, string> {
   const scope = [row.account_id, row.data_domain];
   const active = db.prepare(`SELECT s.standard_id, v.version, v.scope_text, v.rules_json, v.exceptions_text, v.counterexamples_text
     FROM standards s JOIN standard_versions v ON v.standard_id=s.standard_id AND v.data_domain=s.data_domain

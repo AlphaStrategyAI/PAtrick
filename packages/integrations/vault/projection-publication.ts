@@ -46,10 +46,12 @@ export function publicationScope(vault: VaultRecord, input: ProjectionRequest, p
     manifest,
     indexSha256: sha256(indexBody),
     ...(input.adoptionRender ? { adoptionRender: input.adoptionRender } : {}),
+    ...(input.reconciliationRender ? { reconciliationRender: input.reconciliationRender } : {}),
   };
 }
 
-export function projectionIntentId(vault: Pick<VaultRecord, 'data_domain'>, input: ProjectionRequest): string {
+export function projectionIntentId(vault: Pick<VaultRecord, 'data_domain' | 'vault_id'>, input: ProjectionRequest): string {
+  if (input.reconciliationRender) return `vault-sync-${sha256(vault.vault_id).slice(0, 24)}-${input.revision}`;
   return input.adoptionRender?.intentId ?? `projection:${vault.data_domain}:${input.viewKind}:${input.revision}`;
 }
 

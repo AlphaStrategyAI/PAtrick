@@ -17,7 +17,7 @@ type ParsedFrontMatter =
   | { ok: true; data: Record<string, Scalar>; body: string }
   | { ok: false; line: number };
 
-type FileSample = { dev: number; ino: number; size: number; mtimeMs: number };
+type FileSample = { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
 
 type ScannedFile = {
   relativePath: string;
@@ -26,6 +26,7 @@ type ScannedFile = {
   hash: string;
   dev: number;
   ino: number;
+  sample?: FileSample;
 };
 
 export type VaultReadResult = {
@@ -34,8 +35,11 @@ export type VaultReadResult = {
   attachments: number;
 };
 
-export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: string, now: string): Promise<VaultReadResult> {
+export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: string, now: string,
+  registered?: { authorize(): void },
+): Promise<VaultReadResult> {
   const vault = requireVault(db, vaultId);
+  registered?.authorize();
   assertVaultWriteAllowed(db, vault);
   if (vault.status !== 'connected') throw new Error('CONFLICT');
   let root;
@@ -48,23 +52,40 @@ export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: s
   const assertRoot = () => {
     const current = lstatSync(vault.root_path);
     if (!current.isDirectory() || current.dev !== root.dev || current.ino !== root.ino ||
+        (registered && `${current.dev}:${current.ino}` !== vault.root_identity) ||
         realpathSync(vault.root_path) !== vault.physical_root) throw new Error('CONFLICT');
   };
-  const scan = await scanVault(vault.root_path);
+  if (registered) {
+    registered.authorize();
+    assertRoot();
+  }
+  const observed = registered ? new Map((db.prepare(`SELECT relative_path,observed_seq FROM vault_documents
+    WHERE vault_id=?`).all(vaultId) as Array<{ relative_path: string; observed_seq: number }>)
+    .map(({ relative_path, observed_seq }) => [relative_path, observed_seq])) : undefined;
+  const scan = await scanVault(vault.root_path, Boolean(registered));
+  registered?.authorize();
   assertVaultWriteAllowed(db, vault);
   if (scan.state !== 'ready') return { state: scan.state, collected: 0, attachments: 0 };
   assertRoot();
   for (const file of scan.files) {
+    registered?.authorize();
     assertVaultWriteAllowed(db, vault);
     assertRoot();
     await blobs.putBlob(file.bytes);
   }
   return withImmediateTransaction(db, () => {
+    registered?.authorize();
     const current = assertVaultWriteAllowed(db, vault);
     assertRoot();
     let collected = 0;
     let attachments = 0;
+    const lookup = observed && db.prepare('SELECT observed_seq FROM vault_documents WHERE vault_id=? AND relative_path=?');
     for (const file of scan.files) {
+      if (lookup) {
+        const previous = lookup.get(vaultId, file.relativePath) as { observed_seq: number } | undefined;
+        if (previous?.observed_seq !== observed?.get(file.relativePath) ||
+            !file.sample || !sampleStillCurrent(resolve(vault.root_path, file.relativePath), file.sample)) continue;
+      }
       const wrote = applyFile(db, current, file, now);
       if (!wrote) continue;
       if (file.kind === 'attachment') attachments += 1;
@@ -72,6 +93,18 @@ export async function readVault(db: SqliteDatabase, blobs: BlobStore, vaultId: s
     }
     return { state: 'ready' as const, collected, attachments };
   });
+}
+
+function sampleStillCurrent(path: string, snapshot: FileSample): boolean {
+  try {
+    const live = lstatSync(path);
+    return live.isFile() && live.dev === snapshot.dev && live.ino === snapshot.ino && live.size === snapshot.size &&
+      live.mtimeMs === snapshot.mtimeMs && live.ctimeMs === snapshot.ctimeMs &&
+      realpathSync(path).normalize('NFC') === path.normalize('NFC');
+  } catch (error) {
+    if (OFFLINE_CODES.has(errorCode(error) ?? '')) return false;
+    throw error;
+  }
 }
 
 /** An explicit edit check observes one registered file. It never sweeps unrelated input. */
@@ -93,6 +126,9 @@ export async function readVaultEdit(
     parts.some((part) => !part || part.startsWith('.') || /[:\\\p{Cc}]/u.test(part) || skippedFile(part))) throw new Error('CONFLICT');
   const path = resolve(vault.root_path, ...parts);
   const limit = 8 * 1024 * 1024;
+  const observedSeq = db.prepare('SELECT observed_seq FROM vault_documents WHERE vault_id=? AND relative_path=?');
+  const readObservedSeq = () => (observedSeq.get(vaultId, relativePath) as { observed_seq: number } | undefined)?.observed_seq;
+  const previousSeq = readObservedSeq();
   const sameRoot = async () => {
     const root = await lstat(vault.root_path);
     return root.isDirectory() && `${root.dev}:${root.ino}` === vault.root_identity &&
@@ -119,6 +155,13 @@ export async function readVaultEdit(
         const current = authorizeWrite();
         if (current.root_identity !== vault.root_identity || current.status !== 'connected' ||
           current.connection_epoch !== vault.connection_epoch || current.config_revision !== vault.config_revision) throw new Error('CONFLICT');
+        if (!sampleStillCurrent(path, after)) throw new Error('CONFLICT');
+        if (readObservedSeq() !== previousSeq) {
+          const latest = db.prepare('SELECT content_hash,tombstone FROM vault_documents WHERE vault_id=? AND relative_path=?')
+            .get(vaultId, relativePath) as { content_hash: string | null; tombstone: number } | undefined;
+          if (latest?.content_hash === hash && latest.tombstone === 0) return;
+          throw new Error('CONFLICT');
+        }
         applyFile(db, current, { relativePath, kind: 'note', bytes, hash, dev: after.dev, ino: after.ino }, now);
       });
     } finally {
@@ -297,7 +340,7 @@ function knowledgeIdFor(vault: VaultRecord, file: ScannedFile, data: Record<stri
   return scalarString(data.knowledge_id) ?? `k_${sha256(`${vault.vault_id}\0${file.relativePath}`).slice(0, 16)}`;
 }
 
-async function scanVault(root: string): Promise<{ state: 'ready'; files: ScannedFile[] } | { state: 'offline' | 'placeholder' }> {
+async function scanVault(root: string, registered: boolean): Promise<{ state: 'ready'; files: ScannedFile[] } | { state: 'offline' | 'placeholder' }> {
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -309,14 +352,14 @@ async function scanVault(root: string): Promise<{ state: 'ready'; files: Scanned
   for (const entry of entries) {
     if (entry.isSymbolicLink()) continue;
     if (NOTE_DIRS.has(entry.name)) {
-      const nested = await walk(root, resolve(root, entry.name), 'note');
+      const nested = await walk(root, resolve(root, entry.name), 'note', registered);
       if (nested === 'offline') return { state: 'offline' };
       if (nested === 'placeholder') return { state: 'placeholder' };
       files.push(...nested);
       continue;
     }
     if (entry.name === '附件') {
-      const nested = await walk(root, resolve(root, entry.name), 'attachment');
+      const nested = await walk(root, resolve(root, entry.name), 'attachment', registered);
       if (nested === 'offline') return { state: 'offline' };
       if (nested === 'placeholder') return { state: 'placeholder' };
       files.push(...nested);
@@ -330,6 +373,7 @@ async function walk(
   root: string,
   dir: string,
   kind: 'note' | 'attachment',
+  registered: boolean,
 ): Promise<ScannedFile[] | 'offline' | 'placeholder'> {
   let entries;
   try {
@@ -344,7 +388,7 @@ async function walk(
     const full = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === '模板' || entry.name === '系统视图' || entry.name === '.obsidian') continue;
-      const nested = await walk(root, full, kind);
+      const nested = await walk(root, full, kind, registered);
       if (nested === 'offline' || nested === 'placeholder') return nested;
       files.push(...nested);
       continue;
@@ -357,10 +401,12 @@ async function walk(
     if (sample === 'placeholder') return 'placeholder';
     if (!sample) continue;
     const real = await realInside(root, full);
-    if (!real) continue;
+    if (!real || (registered && real.normalize('NFC') !== full.normalize('NFC'))) continue;
     const relativePath = relative(root, full).split(sep).join('/');
     if (!relativePath || relativePath.startsWith('..')) continue;
-    const bytes = kind === 'attachment' ? await readAttachment(real, sample) : new Uint8Array(await readFile(real));
+    const bytes = kind === 'attachment' || registered
+      ? await readStableFile(real, sample, kind === 'attachment' ? MAX_ATTACHMENT_BYTES : Infinity)
+      : new Uint8Array(await readFile(real));
     if (!bytes) continue;
     files.push({
       relativePath,
@@ -369,18 +415,19 @@ async function walk(
       hash: sha256(bytes),
       dev: sample.dev,
       ino: sample.ino,
+      sample,
     });
   }
   return files;
 }
 
-async function readAttachment(path: string, sample: FileSample): Promise<Uint8Array | undefined> {
+async function readStableFile(path: string, sample: FileSample, limit: number): Promise<Uint8Array | undefined> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = await file.stat();
     if (!before.isFile() || before.dev !== sample.dev || before.ino !== sample.ino) return;
-    if (before.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
-    if (before.size !== sample.size || before.mtimeMs !== sample.mtimeMs) return;
+    if (before.size > limit) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    if (before.size !== sample.size || before.mtimeMs !== sample.mtimeMs || before.ctimeMs !== sample.ctimeMs) return;
 
     const bytes = Buffer.alloc(before.size);
     let offset = 0;
@@ -390,10 +437,10 @@ async function readAttachment(path: string, sample: FileSample): Promise<Uint8Ar
       offset += bytesRead;
     }
     const after = await file.stat();
-    if (after.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    if (after.size > limit) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
     const named = await lstat(path);
     if (!named.isFile() || named.dev !== after.dev || named.ino !== after.ino) return;
-    if (named.size > MAX_ATTACHMENT_BYTES) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
+    if (named.size > limit) throw new Error('VAULT_ATTACHMENT_TOO_LARGE');
     if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs ||
         named.size !== after.size || named.ctimeMs !== after.ctimeMs) return;
     return bytes;
@@ -414,7 +461,8 @@ async function stableFile(path: string): Promise<FileSample | 'offline' | 'place
   if (first === 'offline' || first === 'placeholder' || !first) return first;
   const second = await sample(path);
   if (second === 'offline' || second === 'placeholder' || !second) return second;
-  if (first.size !== second.size || first.mtimeMs !== second.mtimeMs) return undefined;
+  if (first.dev !== second.dev || first.ino !== second.ino || first.size !== second.size ||
+      first.mtimeMs !== second.mtimeMs || first.ctimeMs !== second.ctimeMs) return undefined;
   return second;
 }
 
@@ -423,7 +471,7 @@ async function sample(path: string): Promise<FileSample | 'offline' | 'placehold
     const info = await stat(path);
     if (!info.isFile()) return undefined;
     if (info.size > 0 && info.blocks === 0) return 'placeholder';
-    return { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
+    return { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs };
   } catch (error) {
     const code = errorCode(error);
     if (code === 'ENOENT') return undefined;
