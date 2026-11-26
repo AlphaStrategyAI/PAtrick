@@ -10,7 +10,8 @@ import { createVaultInitController, createVaultInitReader, vaultInitApproval } f
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { expect, test } from 'vitest';
-import { createVaultKitInstaller } from '../../deploy/obsidian/install.mjs';
+import { createVaultKitInstaller, vaultEditorAccessApproval } from '../../deploy/obsidian/install.mjs';
+import { canonicalize } from '../../deploy/lib/release.mjs';
 import { connectVault, confirmVault, inspectVault, requireVault } from '../../packages/integrations/vault/connection.js';
 import { openDatabase } from '../../packages/storage/src/database.js';
 
@@ -66,6 +67,66 @@ test('previews a confirmed real Vault without reserving or installing any file',
     expect(plan.operationId).toBe(f.e.operationId);
     expect(readdirSync(f.journal)).toEqual([]);
     expect(readdirSync(f.root)).toEqual(['模板']);
+  } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
+});
+
+test('installs a kit for a distinct desktop account with a signed, scope-bound access receipt', async () => {
+  const f = await fixture();
+  try {
+    const editorUid = f.e.serviceUid + 1;
+    f.options.editorUid = editorUid;
+    const { vault } = f.e;
+    const subject = {
+      purpose: 'patrick-vault-editor-access-v1',
+      operationId: f.e.operationId,
+      captureHost: f.e.captureHost,
+      deviceId: f.e.identity.deviceId,
+      serviceUid: f.e.serviceUid,
+      editorUid,
+      vaultId: vault.vault_id,
+      sourceId: vault.source_id,
+      rootPath: vault.root_path,
+      rootIdentity: vault.root_identity,
+      configRevision: vault.config_revision,
+      connectionEpoch: vault.connection_epoch,
+      scopeHash: vault.scope_hash,
+      mappingRevision: f.e.mappingRevision,
+    };
+    const accessBytes = vaultEditorAccessApproval({ ...f.e, deviceId: f.e.identity.deviceId, editorUid });
+    expect(accessBytes.toString()).toBe(canonicalize(subject));
+    const editorAccessSignature = sign(null, accessBytes, f.approval.privateKey).toString('base64');
+    const enrollment = { ...f.e, editorUid, editorAccessSignature };
+    for (const rejected of [
+      { ...enrollment, editorAccessSignature: undefined },
+      { ...enrollment, operationId: 'other-operation' },
+      { ...enrollment, mappingRevision: enrollment.mappingRevision + 1 },
+      { ...enrollment, editorUid: editorUid + 1 },
+      { ...enrollment, vault: { ...vault, root_identity: '1:2' } },
+    ]) {
+      expect(() => createVaultInitController(() => rejected, f.owner, f.host, f.signer)).toThrow('VAULT_INIT_BINDING_INVALID');
+    }
+    expect(readdirSync(f.root)).toEqual(['模板']);
+    const controller = createVaultInitController(() => enrollment, f.owner, f.host, f.signer);
+    const plan = await controller.preview();
+    const approval = sign(null, vaultInitApproval(plan), f.approval.privateKey).toString('base64');
+    const origin = 'http://localhost';
+    const cli = createInstalledCli(createRuntimeProvisioning({
+      registration: { identity: f.e.identity, captureHost: f.e.captureHost, serviceUid: f.e.serviceUid,
+        profile: 'test', dataRoot: f.dir, minimumFreeBytes: 1, origin, rpId: 'localhost',
+        listener: { host: '127.0.0.1', port: 0, origin } },
+      hostCapabilities: { vaults: f.host.vaults, vaultInitOperations: {
+        [enrollment.operationId]: { format: 'patrick-installed-vault-init-v1', mode: 'approved', enrollment,
+          owner: f.owner, signer: f.signer, plan, approval },
+      } },
+      service: { databasePath: join(f.dir, 'source.sqlite'), credentialDirectory: f.dir,
+        recoveryRuntime: { attach() { throw Error('unexpected startup'); } }, bindRecoveryOperations() { throw Error('unexpected backup'); } },
+    }));
+    const args = ['init', '--vault', vault.vault_id, '--operation', enrollment.operationId];
+    expect(await cli.run([...args, '--preview'])).toMatchObject({ status: 'preview' });
+    expect(await cli.run([...args, '--execute'])).toMatchObject({ status: 'completed' });
+    expect(await cli.run([...args, '--readback'])).toMatchObject({ status: 'completed' });
+    expect(readFileSync(join(f.root, '模板/知识笔记.md'))).toEqual(f.human);
+    expect(readFileSync(join(f.root, '模板/判断案例.md'))).toEqual(readFileSync(join(f.e.assets.path, '判断案例.md')));
   } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
 });
 

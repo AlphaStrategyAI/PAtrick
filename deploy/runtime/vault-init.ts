@@ -10,7 +10,7 @@ import { INDEX_PATH, indexSeedMatches, readIndexFile, SEED_PROOF_PATH } from '..
 import { bindHostRegistration, bindRegistration, projectIdentity, sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doctor.mjs';
 import { leased, type ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
 import { canonicalize, readRegularFile } from '../lib/release.mjs';
-import { createVaultKitInstaller } from '../obsidian/install.mjs';
+import { createVaultKitInstaller, verifyVaultEditorAccess } from '../obsidian/install.mjs';
 import { createLifecycleJournal, createLifecycleJournalReader, type LifecycleEvidenceSubject, type LifecycleRegistration,
   type LifecycleRequest, type LifecycleStatus } from './lifecycle-journal.js';
 
@@ -30,6 +30,7 @@ export type VaultInitEnrollment = {
   vault: VaultRecord; mappingRevision: number; owner: Root; journal: Root; assets: Root; stage: Root;
   kitVersion: string; kitSha256: string; approvalPublicKey: string; journalKeyId: string; journalPublicKey: string;
   publishedKit?: PublishedKit;
+  editorAccessSignature?: string;
 };
 type FileStamp = { identity: string; sha256: string };
 type Snapshot = { directories: Record<string, string | null>; files: Record<string, FileStamp | null> };
@@ -71,10 +72,11 @@ const sha = (s: string) => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
 const physical = (path: string) => realpathSync.native(path).normalize('NFC') === path.normalize('NFC');
 const stat = (path: string) => lstatSync(path, { bigint: true, throwIfNoEntry: false });
 const node = (s: NonNullable<ReturnType<typeof stat>>) => [s.dev, s.ino, s.birthtimeNs].join(':');
-function dir(path: string): string | null {
+function dir(path: string, alternateUid?: number): string | null {
   const s = stat(path);
   if (!s) return null;
-  check(s.isDirectory() && physical(path) && s.uid === BigInt(process.geteuid!()) && (s.mode & 0o022n) === 0n);
+  const owned = s.uid === BigInt(process.geteuid!()) || (alternateUid !== undefined && s.uid === BigInt(alternateUid));
+  check(s.isDirectory() && physical(path) && owned && (s.mode & 0o022n) === 0n);
   return node(s);
 }
 function rootMatches(root: Root) {
@@ -161,7 +163,16 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     sameIdentity(projectIdentity(e.identity), e.identity) && e.identity.accountId === vault.account_id &&
     e.identity.domains.includes(vault.data_domain) && vault.capture_host === e.captureHost && vault.status === 'connected' &&
     vault.physical_root === vault.root_path && vault.config_revision >= 1 && vault.connection_epoch >= 1 &&
-    Number.isSafeInteger(e.mappingRevision) && e.mappingRevision >= 1 && e.serviceUid === process.geteuid!() && e.editorUid === e.serviceUid);
+    Number.isSafeInteger(e.mappingRevision) && e.mappingRevision >= 1 && e.serviceUid === process.geteuid!());
+  const editorAccess = e.editorAccessSignature === undefined ? undefined : {
+    operationId: e.operationId, publicKey: e.approvalPublicKey, signature: e.editorAccessSignature,
+  };
+  if (e.editorUid !== e.serviceUid) {
+    check(editorAccess && verifyVaultEditorAccess({
+      operationId: e.operationId, captureHost: e.captureHost, deviceId: e.identity.deviceId,
+      serviceUid: e.serviceUid, editorUid: e.editorUid, vault, mappingRevision: e.mappingRevision,
+    }, editorAccess));
+  }
   const subject: KitSubject = { vaultId: vault.vault_id, sourceId: vault.source_id, configRevision: vault.config_revision,
     scopeHash: vault.scope_hash, kitVersion: e.kitVersion, manifestSha256: e.kitSha256 };
   const components = vault.root_path.normalize('NFC').toLowerCase().split(sep);
@@ -233,7 +244,8 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     for (let parent = dirname(vault.root_path); parent !== dirname(parent); parent = dirname(parent)) {
       check(!stat(join(parent, '.obsidian')));
     }
-    const directories = Object.fromEntries([...layout, ...stagingDirectories, '.obsidian'].map(d => [d, dir(join(vault.root_path, d))]));
+    const directories = Object.fromEntries([...layout, ...stagingDirectories].map(name => [name, dir(join(vault.root_path, name))]));
+    directories['.obsidian'] = dir(join(vault.root_path, '.obsidian'), e.editorUid);
     const files: Snapshot['files'] = {};
     for (const name of [...k.files.map(f => f.path), intentPath, SEED_PROOF_PATH]) {
       const path = join(vault.root_path, name);
@@ -344,7 +356,7 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     };
     return { req, registration: () => { guard(lease); return registration; } };
   }
-  return { e, verifyApproval, guard, underOwner, preview, journal, observeFiles };
+  return { e, editorAccess, verifyApproval, guard, underOwner, preview, journal, observeFiles };
 }
 
 export function createVaultInitReader(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeStaging, original: VaultInitPlan) {
@@ -394,7 +406,9 @@ export function createVaultInitController(current: () => VaultInitEnrollment, ow
       async inspect() { await loadVault(vaultId); await inspectVault(e.identity.deviceId, vaultId); guard(); },
       async install() {
         // This is the exact native T27 factory used by the Vault CLI adapter.
-        const receipt = await createVaultKitInstaller({ ...options, loadVault, inspectVault }).installVaultKit(vaultId);
+        const receipt = await createVaultKitInstaller({
+          ...options, editorAccess: registration.editorAccess, loadVault, inspectVault,
+        }).installVaultKit(vaultId);
         guard();
         check(receipt.vaultId === vaultId && receipt.sourceId === e.vault.source_id && receipt.configRevision === e.vault.config_revision &&
           receipt.scopeHash === e.vault.scope_hash && receipt.version === e.kitVersion && receipt.manifestSha256 === e.kitSha256);

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, open, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { publishCreateOnly } from '../../packages/integrations/vault/create-file.ts';
 import { INDEX_PATH, SEED_PROOF_PATH, indexSeedProof, readIndexFile } from '../../packages/integrations/vault/index-proof.ts';
 import { resolveVaultKit } from '../../packages/integrations/vault/kit-path.ts';
+import { canonicalize } from '../lib/release.mjs';
 import { checkRoot, draftDirs, hasServiceIdentity, inside, kitDirs, readRegular, safeDirectory } from './scope.mjs';
 
 export { createMacObsidianInstaller } from './mac-install.mjs';
@@ -23,11 +24,39 @@ const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 const releaseKit = resolveVaultKit(import.meta.url, '../../assets/vault-kit/');
 
+export function vaultEditorAccessApproval({ operationId, captureHost, deviceId, serviceUid, editorUid, vault, mappingRevision }) {
+  return Buffer.from(canonicalize({
+    purpose: 'patrick-vault-editor-access-v1',
+    operationId, captureHost, deviceId, serviceUid, editorUid,
+    vaultId: vault.vault_id, sourceId: vault.source_id, rootPath: vault.root_path,
+    rootIdentity: vault.root_identity, configRevision: vault.config_revision, connectionEpoch: vault.connection_epoch,
+    scopeHash: vault.scope_hash, mappingRevision,
+  }));
+}
+
+export function verifyVaultEditorAccess(subject, authority) {
+  if (!authority || !Number.isSafeInteger(subject.editorUid) || subject.editorUid <= 0 ||
+      typeof subject.operationId !== 'string' ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(subject.operationId) ||
+      !Number.isSafeInteger(subject.mappingRevision) || subject.mappingRevision < 1 ||
+      typeof authority.signature !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(authority.signature)) return false;
+  try {
+    const signature = Buffer.from(authority.signature, 'base64');
+    const key = createPublicKey(authority.publicKey);
+    return key.asymmetricKeyType === 'ed25519' && signature.toString('base64') === authority.signature &&
+      verify(null, vaultEditorAccessApproval(subject), key, signature);
+  } catch {
+    return false;
+  }
+}
+
 export function createVaultKitInstaller(options) {
   const { assetRoot = releaseKit, stageParent = tmpdir() } = options;
+  const editorAccess = options.editorAccess && Object.freeze({ ...options.editorAccess });
   async function assertScope(vaultId, previous) {
     if (!hasServiceIdentity(options.serviceUid)) throw new Error('VAULT_SERVICE_IDENTITY_MISMATCH');
-    if (options.editorUid !== options.serviceUid || !hasServiceIdentity(options.editorUid)) {
+    const separateEditor = options.editorUid !== options.serviceUid;
+    if (separateEditor && !editorAccess) {
       throw new Error('VAULT_EDITOR_IDENTITY_UNVERIFIED');
     }
     if ((process.umask() & 0o700) !== 0) throw new Error('VAULT_UNSAFE_CREATE_MODE');
@@ -42,6 +71,10 @@ export function createVaultKitInstaller(options) {
         connection.source_id !== vault.source_id || connection.capture_host !== vault.capture_host ||
         connection.root_identity !== vault.root_identity || connection.config_revision !== vault.config_revision ||
         connection.scope_hash !== vault.scope_hash) throw new Error('VAULT_NOT_CONFIRMED');
+    if (separateEditor && !verifyVaultEditorAccess({
+      operationId: editorAccess.operationId, captureHost: options.captureHost, deviceId: options.deviceId,
+      serviceUid: options.serviceUid, editorUid: options.editorUid, vault, mappingRevision: connection.client_mapping_revision,
+    }, editorAccess)) throw new Error('VAULT_EDITOR_IDENTITY_UNVERIFIED');
     if (previous && (vault.vault_id !== previous.vault_id || vault.root_path !== previous.root_path ||
         vault.root_identity !== previous.root_identity || vault.config_revision !== previous.config_revision ||
         vault.connection_epoch !== previous.connection_epoch || vault.scope_hash !== previous.scope_hash)) {

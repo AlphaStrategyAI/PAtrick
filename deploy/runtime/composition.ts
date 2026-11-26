@@ -1,6 +1,7 @@
 import { hasVaultInitReadback, selectVaultInit } from './vault-init-cli.js';
 export { applyHostRegistry, hostRegistryRoot, planHostRegistry, readHostRegistry } from '../host/registry.js';
 export { createVaultInitController, vaultInitApproval } from './vault-init.js';
+export { vaultEditorAccessApproval } from '../obsidian/install.mjs';
 import {
   bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,

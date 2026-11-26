@@ -20,6 +20,7 @@ on:
       - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'tests/admission/T23-emitted-candidate.test.ts'
       - 'tests/admission/T23-host-registry.test.ts'
+      - 'tests/admission/T27-native-access.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -37,6 +38,7 @@ on:
       - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'tests/admission/T23-emitted-candidate.test.ts'
       - 'tests/admission/T23-host-registry.test.ts'
+      - 'tests/admission/T27-native-access.test.ts'
       - 'package*.json'
       - 'tsconfig.json'
       - '.github/workflows/release-darwin.yml'
@@ -224,6 +226,10 @@ jobs:
             sudo -n /bin/chmod 0555 "$controller_runtime" "$controller_runtime/node"
             (
               cd "$controller_checkout"
+              sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T27_NATIVE_ACCESS=1 \
+                PATRICK_T27_DESKTOP_USER=_www PATRICK_T27_SERVICE_USER=_mdnsresponder \
+                "$controller_runtime/node" node_modules/vitest/vitest.mjs run tests/admission/T27-native-access.test.ts \
+                --root "$controller_checkout" --pool forks --maxWorkers 1
               sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
                 "$controller_runtime/node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
                 --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the (Hub database|Service data)'

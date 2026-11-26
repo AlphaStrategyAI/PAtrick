@@ -1,10 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { chmod, chown, cp, lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { chmod, chown, cp, lstat, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { expect, test } from 'vitest';
+import { vaultEditorAccessApproval } from '../../deploy/obsidian/install.mjs';
+import type { VaultRecord } from '../../packages/integrations/vault/connection.js';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -30,6 +33,7 @@ const serviceEntry = `
   import { lstat, readFile, writeFile } from 'node:fs/promises';
   import { join } from 'node:path';
   import { openDatabase } from './packages/storage/src/database.ts';
+  import { inspectVault, requireVault } from './packages/integrations/vault/connection.ts';
   import { createVaultApi } from './packages/integrations/vault/drafts.ts';
   import { createBlobStore } from './packages/storage/src/blob-store.ts';
   import { INDEX_PATH } from './packages/integrations/vault/index-proof.ts';
@@ -95,7 +99,34 @@ const serviceEntry = `
       result,
       files,
       draft: { relativePath: draftRelativePath, content: draftBytes.toString('utf8'), sha256: draftSha256 },
+      vault: requireVault(db, vaultId),
+      mappingRevision: (await inspectVault(db, deviceId, vaultId)).client_mapping_revision,
     }));
+  } finally {
+    db.close();
+  }
+`;
+
+const kitEntry = `
+  import assert from 'node:assert/strict';
+  import { hostname } from 'node:os';
+  import { join } from 'node:path';
+  import { createVaultKitInstaller } from './deploy/obsidian/install.mjs';
+  import { inspectVault, requireVault } from './packages/integrations/vault/connection.ts';
+  import { openDatabase } from './packages/storage/src/database.ts';
+
+  const [privateRoot, migrations, serviceUid, editorUid, rawAccess] = process.argv.slice(2);
+  assert.equal(process.getuid(), Number(serviceUid));
+  process.umask(0o077);
+  const db = openDatabase(join(privateRoot, 'service.sqlite'), { migrationsDir: migrations });
+  try {
+    const kit = await createVaultKitInstaller({
+      deviceId: 'native-device', captureHost: hostname(), serviceUid: Number(serviceUid), editorUid: Number(editorUid),
+      assetRoot: join(process.cwd(), 'assets', 'vault-kit'), stageParent: privateRoot,
+      editorAccess: JSON.parse(rawAccess),
+      loadVault: id => requireVault(db, id), inspectVault: (deviceId, id) => inspectVault(db, deviceId, id),
+    }).installVaultKit('native-access-fixture');
+    console.log(JSON.stringify(kit));
   } finally {
     db.close();
   }
@@ -173,6 +204,7 @@ function localAccount(name: string) {
 
 async function buildRunner(runner: string) {
   const entry = join(runner, 'packages', 'integrations', 'vault', 'service.mjs');
+  const installEntry = join(runner, 'install-kit.mjs');
   const migrations = join(runner, 'migrations');
   const modules = join(runner, 'node_modules');
   const vaultKit = join(runner, 'assets', 'vault-kit');
@@ -184,13 +216,12 @@ async function buildRunner(runner: string) {
   }
   await cp(join(repo, 'packages/storage/migrations'), migrations, { recursive: true });
   await cp(join(repo, 'assets/vault-kit'), vaultKit, { recursive: true });
-  await build({
-    stdin: { contents: serviceEntry, resolveDir: repo },
-    outfile: entry,
+  await Promise.all([[entry, serviceEntry], [installEntry, kitEntry]].map(([outfile, contents]) => build({
+    stdin: { contents: contents!, resolveDir: repo }, outfile: outfile!,
     bundle: true, format: 'esm', platform: 'node', target: 'node26.13', external: ['better-sqlite3'],
-  });
+  })));
   run('/bin/chmod', ['-R', 'go-w,a+rX', runner]);
-  return { entry, migrations };
+  return { entry, installEntry, migrations, vaultKit };
 }
 
 test.skipIf(process.env.PATRICK_T27_NATIVE_ACCESS !== '1')(
@@ -216,24 +247,29 @@ test.skipIf(process.env.PATRICK_T27_NATIVE_ACCESS !== '1')(
     const batches = join(projection, '批次');
     const standards = join(vault, '标准修订');
     const standardsStage = join(standards, '.patrick-staging');
-    for (const directory of [vault, privateRoot, stage, projection, batches, standards, standardsStage]) {
+    const templates = join(vault, '模板');
+    const templateStage = join(templates, '.patrick-staging');
+    for (const directory of [vault, privateRoot, stage, projection, batches, standards, standardsStage, templates, templateStage]) {
       await mkdir(directory, { mode: 0o700 });
       await chown(directory, service.uid, service.gid);
     }
     await mkdir(runner);
     await chmod(runner, 0o755);
-    const { entry, migrations } = await buildRunner(runner);
+    const { entry, installEntry, migrations, vaultKit } = await buildRunner(runner);
     const addAcl = (path: string, user: string, rights: string) =>
       run('/bin/chmod', ['+a#', '0', `user:${user} allow ${rights}`, path]);
     addAcl(scratch, serviceName, 'search');
     addAcl(scratch, editorName, 'search');
-    for (const directory of [vault, projection, batches, standards]) addAcl(directory, editorName, 'list,search');
+    for (const directory of [vault, projection, batches, standards, templates]) addAcl(directory, editorName, 'list,search');
     addAcl(stage, editorName, 'list,search,directory_inherit,only_inherit');
     addAcl(stage, editorName, 'read,file_inherit,directory_inherit,only_inherit');
     addAcl(standardsStage, editorName, 'read,write,append,file_inherit,only_inherit');
+    addAcl(templateStage, editorName, 'read,file_inherit,only_inherit');
 
     const evidence = runAs(service, [entry, vault, privateRoot, migrations, String(service.uid), String(service.gid), '1'], runner);
-    const parsed = JSON.parse(evidence) as { result: unknown; draft: { relativePath: string } };
+    const parsed = JSON.parse(evidence) as {
+      result: unknown; draft: { relativePath: string }; vault: VaultRecord; mappingRevision: number;
+    };
     expect(parsed.result).toEqual({ applied: true, pointer: 1, state: 'current' });
     expect((await lstat(join(stage, 'service-marker'))).uid).toBe(service.uid);
     expect((await lstat(join(standardsStage, 'draft-marker'))).uid).toBe(service.uid);
@@ -242,6 +278,25 @@ test.skipIf(process.env.PATRICK_T27_NATIVE_ACCESS !== '1')(
     const editedDraft = await lstat(join(vault, parsed.draft.relativePath));
     expect(editedDraft.uid).toBe(service.uid);
     expect(editedDraft.mode & 0o777).toBe(0o600);
+
+    const index = join(projection, '索引.md');
+    const indexBefore = await readFile(index);
+    const authority = generateKeyPairSync('ed25519');
+    const operationId = 'native-kit-install';
+    const subject = { operationId, captureHost: parsed.vault.capture_host, deviceId: 'native-device',
+      serviceUid: service.uid, editorUid: editor.uid, vault: parsed.vault, mappingRevision: parsed.mappingRevision };
+    const editorAccess = { operationId, publicKey: authority.publicKey.export({ format: 'pem', type: 'spki' }),
+      signature: sign(null, vaultEditorAccessApproval(subject), authority.privateKey).toString('base64') };
+    const kit = JSON.parse(runAs(service, [installEntry, privateRoot, migrations,
+      String(service.uid), String(editor.uid), JSON.stringify(editorAccess)], runner));
+    expect(kit.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: '模板/判断案例.md', state: 'created' }),
+      expect.objectContaining({ path: '系统视图/索引.md', state: 'preserved' }),
+    ]));
+    expect(await readFile(index)).toEqual(indexBefore);
+    const template = join(templates, '判断案例.md');
+    const readTemplate = "import { readFileSync } from 'node:fs'; console.log(readFileSync(process.argv[1], 'base64'));";
+    expect(runAs(editor, ['--input-type=module', '-e', readTemplate, template], runner)).toBe((await readFile(join(vaultKit, '判断案例.md'))).toString('base64'));
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

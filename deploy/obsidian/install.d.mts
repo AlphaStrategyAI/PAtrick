@@ -8,6 +8,18 @@ export type VaultDeploymentPorts = {
   inspectVault: (deviceId: string, vaultId: string) => VaultConnection | Promise<VaultConnection>;
 };
 
+export type VaultEditorAccessSubject = Pick<VaultDeploymentPorts, 'captureHost' | 'serviceUid' | 'editorUid'> & {
+  operationId: string;
+  deviceId: string;
+  vault: VaultRecord;
+  mappingRevision: number;
+};
+
+type VaultEditorAccessAuthority = Readonly<{ publicKey: string; signature: string }>;
+
+export function vaultEditorAccessApproval(subject: VaultEditorAccessSubject): Buffer;
+export function verifyVaultEditorAccess(subject: VaultEditorAccessSubject, authority: VaultEditorAccessAuthority | undefined): boolean;
+
 export type VaultKitReceipt = {
   vaultId: string;
   sourceId: string;
@@ -23,6 +35,7 @@ export function createVaultKitInstaller(options: VaultDeploymentPorts & {
   deviceId: string;
   assetRoot?: string;
   stageParent?: string;
+  editorAccess?: VaultEditorAccessAuthority & { operationId: string };
 }): { installVaultKit(vaultId: string): Promise<VaultKitReceipt> };
 
 export function verifyObsidianInstaller(dmgPath: string, lock: {
