@@ -66,7 +66,7 @@ const entries = Object.freeze({
   cli: 'deploy/runtime/cli.ts',
   worker: 'deploy/runtime/worker.ts',
 });
-const hostRegistrySource = 'deploy/host/registry.ts';
+const hostSources = ['deploy/host/registry.ts', 'deploy/host/uninstall.ts'];
 const vaultKitResolver = 'packages/integrations/vault/kit-path.ts';
 const designPath = 'docs/designs/设计资产/v2/';
 const sourceRoots = Object.freeze([
@@ -81,7 +81,7 @@ const sourceRoots = Object.freeze([
   'apps/web/src',
   'apps/web/tsconfig.json',
   'deploy/cli',
-  hostRegistrySource,
+  ...hostSources,
   'deploy/lib',
   'deploy/obsidian',
   designPath + 'icons',
@@ -267,7 +267,7 @@ async function captureSource(root, commit, profile) {
   const templatePaths = deployment.completeProfile(profile)
     ? [...Object.values(deployment.deploymentPaths), preflight.source, ...deployment.vaultKitPaths] : [];
   const committed = sourceTree(root, commit, templatePaths);
-  const allowedAdditions = [...Object.values(entries), ...recipePaths, hostRegistrySource, 'deploy/host/uninstall.ts', 'deploy/lib/deployment-templates.d.mts',
+  const allowedAdditions = [...Object.values(entries), ...recipePaths, ...hostSources, 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
     'deploy/runtime/hub-process.ts', vaultKitResolver, ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
