@@ -3,9 +3,10 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { closeSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildSync } from 'esbuild';
 import { afterEach, expect, test } from 'vitest';
 import { canonicalize } from '../../deploy/lib/release.mjs';
 import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
@@ -183,10 +184,14 @@ async function nativeHost() {
     const receipt = await verifyEmittedRuntimeCandidate(archive, { ...release, staging });
     const staged = await stageVerifiedEmittedRuntime(receipt, { staging, destination: join(stageRoot, 'candidate') });
     await publishStagedDeployment(receipt, staged);
-    addGeneration(h, index === 0 ? 'one' : 'two', digest, index + 1);
+    addGeneration(h, index === 0 ? 'one' : 'two', digest, release.expected.activeSchema);
   }
-  addGeneration(h, 'three', releases[1].expected.packageSha256, 2);
-  return h;
+  const successor = releases[1].expected;
+  addGeneration(h, 'three', successor.packageSha256, successor.activeSchema);
+  const runtimeModule = join(h.fixture, 'lifecycle-generation.mjs');
+  buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node26', outfile: runtimeModule,
+    entryPoints: [fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))] });
+  return { ...h, runtimeModuleUrl: pathToFileURL(runtimeModule).href };
 }
 
 test.skipIf(inputs.length === 0)('reads a completed signed generation through its genuine recursive derived owner', async () => {
@@ -241,7 +246,7 @@ test.skipIf(inputs.length === 0)('stops the real generation release verifier whe
   const h = await nativeHost();
   const store = createGenerationStore(h.e, h.owner, h.signer);
   await store.select(h.signed(store.order('initial', null, 'one')));
-  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const module = h.runtimeModuleUrl;
   const probe = `
     import assert from 'node:assert/strict';
     import fs from 'node:fs';
@@ -281,7 +286,7 @@ test.skipIf(inputs.length === 0)('stops generation file writes when the owner ex
   const upgrade = h.signed(store.order('upgrade', initial.current!.sha256, 'two'));
   const rival = h.signed(store.order('rival', initial.current!.sha256, 'three'));
   const privateKey = h.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const module = h.runtimeModuleUrl;
   const probe = `
     import assert from 'node:assert/strict';
     import fs from 'node:fs';
@@ -540,7 +545,7 @@ test.skipIf(inputs.length === 0)('keeps a created scratch uncertain when open ac
   const store = createGenerationStore(h.e, h.owner, h.signer);
   const first = await store.select(h.signed(store.order('initial', null, 'one')));
   const envelope = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
-  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const module = h.runtimeModuleUrl;
   const probe = `
     import assert from 'node:assert/strict';
     import fs from 'node:fs';
@@ -582,7 +587,7 @@ test.skipIf(inputs.length === 0).each(['visible', 'completion'] as const)(
   const first = await store.select(h.signed(store.order('initial', null, 'one')));
   const envelope = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
   const privateKey = h.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-  const module = pathToFileURL(fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))).href;
+  const module = h.runtimeModuleUrl;
   const probe = `
     import assert from 'node:assert/strict';
     import fs from 'node:fs';
@@ -631,7 +636,7 @@ test.skipIf(inputs.length === 0).each(['visible', 'completion'] as const)(
   expect(result.status, result.stderr || result.stdout).toBe(0);
 }, 120_000);
 
-test.skipIf(inputs.length === 0)('selects both real releases and data generations, reconciles loss and refuses replay', async () => {
+test.skipIf(inputs.length === 0)('selects both signed releases and preserves post-upgrade writes across readback and replay', async () => {
   const h = await nativeHost();
   const store = createGenerationStore(h.e, h.owner, h.signer);
   const install = h.signed(store.order('install', null, 'one'));
@@ -653,19 +658,33 @@ test.skipIf(inputs.length === 0)('selects both real releases and data generation
   expect(newNode).toEqual(node(join(h.root, 'history/upgrade.json')));
   expect(newNode).not.toEqual(oldNode);
   expect(node(join(h.root, 'history/install.json'))).toEqual(oldNode);
+  const upgradedDatabasePath = join(h.root, 'data', h.e.generations[1].id, 'service.sqlite');
+  const upgradedDatabase = new DatabaseSync(upgradedDatabasePath);
+  try {
+    upgradedDatabase.prepare('insert into generation_marker values (?)').run('post-upgrade-write');
+  } finally {
+    upgradedDatabase.close();
+  }
   const state = await store.observe('install');
   expect(state.current?.order.generation).toEqual(h.e.generations[1]);
   expect(state.historical).toEqual(first.current);
   expect(state.pending).toBeNull();
   for (const g of h.e.generations) {
     const db = new DatabaseSync(join(h.root, 'data', g.id, 'service.sqlite'), { readOnly: true });
-    try { expect(db.prepare('select id from generation_marker').get()?.id).toBe(g.id); } finally { db.close(); }
+    try { expect(db.prepare('select id from generation_marker where id = ?').get(g.id)?.id).toBe(g.id); } finally { db.close(); }
   }
   await expect(store.select(rival)).rejects.toThrow();
   await expect(store.select(h.signed(store.order('back', state.current!.sha256, 'one')))).rejects.toThrow();
   expect(await store.select(install)).toEqual(state);
   expect((await store.select(upgrade)).current).toEqual(state.current);
   expect(node(pointer)).toEqual(newNode);
+  const reopenedDatabase = new DatabaseSync(upgradedDatabasePath, { readOnly: true });
+  try {
+    expect(reopenedDatabase.prepare('select id from generation_marker where id = ?').get('post-upgrade-write')?.id)
+      .toBe('post-upgrade-write');
+  } finally {
+    reopenedDatabase.close();
+  }
   const historyNames = readdirSync(join(h.root, 'history'));
   expect(historyNames.filter(name => name.endsWith('.json')).sort()).toEqual(['install.json', 'upgrade.json']);
   expect(historyNames.filter(name => name.endsWith('.durable'))).toHaveLength(2);
@@ -674,13 +693,13 @@ test.skipIf(inputs.length === 0)('selects both real releases and data generation
   // read access only, and an inherited descriptor for the fixture parent's held lock.
   const enrollment = join(h.fixture, 'enrollment.json');
   writeFileSync(enrollment, JSON.stringify(h.e), { mode: 0o600 });
-  const product = new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url);
   const code = `
     import assert from 'node:assert/strict';
     import { fstatSync, lstatSync, readFileSync } from 'node:fs';
-    import { createGenerationReader } from ${JSON.stringify(product.href)};
+    import { createGenerationReader } from ${JSON.stringify(h.runtimeModuleUrl)};
     const [registration, lock] = process.argv.slice(1);
     const e = JSON.parse(readFileSync(registration));
+    assert.equal(process.permission.has('fs.write', e.root), false);
     const owner = { async withExclusiveReadRoot(read) {
       const validate = () => {
         const a = fstatSync(3, { bigint: true }), b = lstatSync(lock, { bigint: true });
@@ -692,8 +711,8 @@ test.skipIf(inputs.length === 0)('selects both real releases and data generation
   `;
   const fd = openSync(h.lock, 'wx', 0o600);
   try {
-    const child = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module',
-      '-e', code, enrollment, h.lock], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', fd], cwd: dirname(fileURLToPath(product)) });
+    const child = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--allow-child-process', '--input-type=module',
+      '-e', code, enrollment, h.lock], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', fd], cwd: h.fixture });
     expect(child.status, child.stderr).toBe(0);
     expect(JSON.parse(child.stdout)).toEqual(state);
   } finally { closeSync(fd); unlinkSync(h.lock); }
@@ -719,7 +738,7 @@ test.skipIf(inputs.length === 0)('selects both real releases and data generation
     import fs from 'node:fs';
     import { sign } from 'node:crypto';
     import { syncBuiltinESMExports } from 'node:module';
-    import { createGenerationStore } from ${JSON.stringify(product.href)};
+    import { createGenerationStore } from ${JSON.stringify(h.runtimeModuleUrl)};
     const [registration, envelope, lock] = process.argv.slice(1);
     const e = JSON.parse(fs.readFileSync(registration));
     const sync = fs.fsyncSync;
@@ -772,7 +791,7 @@ test.skipIf(inputs.length === 0).each(['owner-before-fsync', 'confirmation-befor
   const upgrade = h.signed(store.order('upgrade', first.current!.sha256, 'two'));
   const enrollment = join(h.fixture, 'enrollment.json');
   writeFileSync(enrollment, JSON.stringify(h.e), { mode: 0o600 });
-  const product = new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url).href;
+  const product = h.runtimeModuleUrl;
   const writer = `
     import assert from 'node:assert/strict';
     import { sign } from 'node:crypto';
@@ -831,6 +850,7 @@ test.skipIf(inputs.length === 0).each(['owner-before-fsync', 'confirmation-befor
     import { createGenerationReader } from ${JSON.stringify(product)};
     const [registration,lock] = process.argv.slice(1);
     const e = JSON.parse(readFileSync(registration));
+    assert.equal(process.permission.has('fs.write', e.root), false);
     const owner = { async withExclusiveReadRoot(use) {
       const held = fstatSync(3,{bigint:true});
       const guard = () => {
@@ -843,7 +863,7 @@ test.skipIf(inputs.length === 0).each(['owner-before-fsync', 'confirmation-befor
   `;
   const fd = openSync(h.lock, 'wx', 0o600);
   try {
-    const child = spawnSync(process.execPath, ['--permission','--allow-fs-read=*','--input-type=module','-e',read,enrollment,h.lock],
+    const child = spawnSync(process.execPath, ['--permission','--allow-fs-read=*','--allow-child-process','--input-type=module','-e',read,enrollment,h.lock],
       {encoding:'utf8',stdio:['ignore','pipe','pipe',fd]});
     expect(child.status,child.stderr).toBe(0);
     const state = JSON.parse(child.stdout);
