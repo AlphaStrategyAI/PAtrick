@@ -735,6 +735,8 @@ T23 的 `2c25555` 托管候选已在目标 MacBook Pro 的系统目录完成验�
 
 2026-11-26，目标 Mac 的 `b70d436` Service 持续以状态码 `1` 退出，重启回执未生成，等待管理员授权读取脱敏诊断。同日构建的 `f94efdb` `arm64` 候选已完成本地签名和验签。打包后的 Service 在目标 Mac 的桌面 UID 501 下，用合成 Vault 验证了补采、投影和排空。目标机签名公钥登记和 Service UID 402 的验收仍待完成。[T27 签名候选回执](../operations/evidence/t27-arm64-service-candidate-f94efdb.json)
 
+包含 macOS 卸载控制器的 `d0ae0ce` `arm64` 候选已在目标 Mac 上复现构建、签名并验签。隔离测试通过 45 项，覆盖代次切换、已登记服务文件移除、数据保留与中断后的回执补记。签名公钥登记、Service 启动诊断和系统域验收仍待完成。[T23 签名候选回执](../operations/evidence/t23-arm64-uninstall-candidate-d0ae0ce.json)
+
 设计复核的六项已经全部落地：工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层、整理中／核验中／空／失败／离线的句子，以及咨询生成中流式显示且状态保持「正在回答」。
 
 逐场景的命令、退出码、版本和证据 hash 记录在 `release-evidence/impl-2026-11-19/`，`manifest.json` 关联产品条款、任务、frame/fixture 和测试；`scripts/check-release-evidence.mjs` 校验该清单，CI 在每次合并前复核。缺真实能力时标 blocked 或 pending，不写 passed。
