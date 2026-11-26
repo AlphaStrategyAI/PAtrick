@@ -32,5 +32,18 @@
       "payloadFiles": 489
     }
   },
+  "isolatedInstall": {
+    "scope": "target-mac-current-user",
+    "receiptSha256": "63cdc89bc22f8e07bc46c683a4f8108f2837675b5fef89472efd02638adee662",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeat": "INSTALL_RELEASE_PUBLISHED",
+    "prepare": "INSTALL_GENERATION_PREPARED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generationReadback": "INSTALL_GENERATION_PREPARED",
+    "payloadFiles": 489,
+    "serviceMigrations": 24,
+    "databaseIntegrity": { "service.sqlite": "ok", "answers.sqlite": "ok", "hub/hub.db": "ok" },
+    "currentSelected": false
+  },
   "systemInstalled": false
 }
