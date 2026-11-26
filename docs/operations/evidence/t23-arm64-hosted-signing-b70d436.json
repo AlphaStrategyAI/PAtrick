@@ -13,6 +13,24 @@
   "executionReportSha256": "10739acfb295cd3180694682a92261748702db002d53a35c1ac0943341b6ea88",
   "passed": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
   "rejected": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
-  "ownerTrust": "pending",
+  "ownerTrust": "approved-for-target-acceptance",
+  "hostedDownloads": {
+    "arm64": {
+      "archiveSha256": "400a4e389abfd3d5438ddc8c7a363ffbe7bbabd2dee6a2f3fa2b361feaf7e463",
+      "inventorySha256": "6bfdee939f26fa300603a6367f7c8b3ae957ada48f289dbf521a2902b9c6d9f5",
+      "controllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+      "controllerArchitecture": "arm64",
+      "nativeSqliteSha256": "cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d",
+      "payloadFiles": 489
+    },
+    "x64": {
+      "archiveSha256": "178f78dc2b01da99ea5052ad3e6dbbfa2210834b063527f0ba8b03b9d1d0bead",
+      "inventorySha256": "a836c627788b2baf75172878f8220d295906b93bc80ac401f339e4d2c2244c35",
+      "controllerSha256": "64e2f1263ec99826c93e1407d2d8cc03fe2b3f160ef3af6fafd6fcd58bdbae6a",
+      "controllerArchitecture": "x86_64",
+      "nativeSqliteSha256": "52ee7e68839aef1cb09a5acb1bd3d05e28b7259e8f0c18d9a760500efbf09211",
+      "payloadFiles": 489
+    }
+  },
   "systemInstalled": false
 }
