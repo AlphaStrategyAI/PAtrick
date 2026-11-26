@@ -1,0 +1,30 @@
+{
+  "format": "patrick-t27-service-candidate-v1",
+  "observedDate": "2026-11-26",
+  "sourceCommit": "f94efdb69aa80724f46f561b314c795975703707",
+  "sourceSnapshotSha256": "20fbd58f497c6bebecd50d1b1d328f08791917f1aa4366fcf7f1a66da938976d",
+  "architecture": "arm64",
+  "localCandidate": {
+    "matchingLocalBuilds": 2,
+    "inventorySha256": "c1cf9755723726d50eeb96a0da011f51a7e244ad96bdcae23afee72467ad0d88",
+    "packageSha256": "4a367ca53addacff535f6ed29d75c9ffc8beb1c35bd34cba9016fdcf1055d335",
+    "manifestSha256": "c8b123a76bafa1a4f7ccd960a59532f32acdc66f3a8227f3a5955c52730beff1",
+    "materialSha256": "7aed5c65e5fe7d422bb434e9d2d685f0cfa33a7bbd432037574717ceaa81ef9c",
+    "keyId": "t23-local-7ce62857e41cb5c9",
+    "publicKeySha256": "7ce62857e41cb5c9f2c91d77927f560b4862660a835b79bdd43a293fc7fb44ad",
+    "executionReportSha256": "7001f632690cf6ba164630a2c464352cd5c0640d80acdf9c36c6757b42cefd20",
+    "verifiedFiles": 489,
+    "passedScenarios": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
+    "verifiedRejections": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"]
+  },
+  "bundledServiceSmoke": {
+    "node": "v26.13.0",
+    "executionUid": 501,
+    "editorUsed": false,
+    "listenerUsed": false,
+    "archiveSha256": "c9374e4d75ff977426dea7dde55ccf288c1a296b002db3cf07534ea6aa769563",
+    "projectionRevision": 1,
+    "drain": "closed"
+  },
+  "outstanding": ["host-trust-enrollment", "supervised-service-uid-acceptance", "uninstall-preservation", "pilot-sync"]
+}
