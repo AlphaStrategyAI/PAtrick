@@ -115,3 +115,7 @@ GUI 保存由 CUA 执行并从原生无障碍树读回，没有伪造人工确�
 使用不同的桌面和 Service 账号时，宿主控制器先在登记的桌面 UID 下复核实际权限，再用本次安装的登记审批密钥签署 `vaultEditorAccessApproval` 返回的字节。将 base64 签名作为 `editorAccessSignature` 随 `vault-init` 操作登记。预览和安装核对同一操作、设备、两个 UID、Vault 物理根、配置范围和客户端映射版本。Service 仍按预览范围补齐模板，并读回已安装文件。`doctor` 使用自己的权限检查报告当前访问状态。
 
 构建 `45819488368` 在 Apple Silicon 和 Intel 上各通过 1 项 `T27-native-access` 测试。用例以独立 Service 账号安装合成 Vault 的 kit，并从桌面账号读回模板。另行下载的两份候选归档各核对 489 个载荷文件、原生 SQLite 扩展和控制器。目标 Mac 的正式 kit 安装、常驻 Service 补采与卸载保留待实测。[双架构下载回执](evidence/darwin-candidates-20f23d6.json)
+
+2026-11-26 在同一台目标 MacBook Pro 上用 `6fa0dc1` 重跑双账号 kit 安装，通过 1 项。Service UID 402 在合成 Vault 内安装缺失模板，桌面 UID 501 逐字节读回模板，已有索引字节保持一致。两个账号均使用实际 UID/GID，测试同时验证桌面账号对投影写入、目录删除及 Service 私有数据库的访问限制。
+
+同一台 MacBook Pro 的 T27 准入及演练用例通过 47 项，其中包括暂存同步后、目标发布前中止以及安装重试。重试发布完整模板并逐字节保留已有用户文件。常驻 Service 补采、卸载保留和试点同步仍待实测。[目标机准入回执](evidence/t27-native-kit-6fa0dc1.json)

@@ -1,0 +1,27 @@
+{
+  "format": "patrick-t27-native-kit-v1",
+  "observedDate": "2026-11-26",
+  "commit": "6fa0dc1168e97ea686d76ed056fc18aca79d1e4a",
+  "host": { "arch": "arm64", "macOS": "27.2.1", "build": "26B131", "node": "v26.13.0" },
+  "scope": "synthetic-vault",
+  "identities": { "editorUid": 501, "serviceUid": 402 },
+  "nativeAccess": {
+    "suite": "tests/admission/T27-native-access.test.ts",
+    "passed": 1,
+    "sourceSha256": "2c000365408cdea9f1dd728a6a41a78d0f1ffdefe95b33708f05590b114b7c4f",
+    "dependenciesSha256": "d61875d145456e50b3f764e2bef9933c3767b33708225b7c106cf52ebf4cf72c",
+    "systemNodeSha256": "533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4",
+    "logSha256": "e9f0a93eee9dc3fc548abf0710c3995108489f33e831901380c909f341c1187b",
+    "missingTemplateCreatedByService": true,
+    "templateBytesReadBackByEditor": true,
+    "existingIndexPreserved": true,
+    "editorAccessRestrictionsVerified": true
+  },
+  "admission": {
+    "suites": ["tests/admission/T27.test.ts", "tests/admission/T27-rehearsal.test.ts"],
+    "passed": 47,
+    "interruptedPublicationRetryVerified": true,
+    "existingOwnerBytesPreserved": true
+  },
+  "outstanding": ["installed-service-collection", "uninstall-preservation", "pilot-sync"]
+}
