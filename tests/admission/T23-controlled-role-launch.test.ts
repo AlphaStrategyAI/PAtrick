@@ -50,6 +50,13 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       root, rootNode: await pin(root),
       serviceRole: { uid, gid, controllerOwned: true, rootNode: await pin(control), writerNode: await pin(path) },
     } satisfies Pick<GenerationEnrollment, 'root' | 'rootNode' | 'serviceRole'>;
+    const competingProcess = () => spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { DatabaseSync } from 'node:sqlite';
+      const fence = new DatabaseSync(process.argv[1], { timeout: 0 });
+      try { fence.exec('BEGIN IMMEDIATE'); }
+      catch (error) { process.exitCode = error.errcode === 5 ? 75 : 1; }
+      finally { fence.close(); }
+    `, path], { env: {}, timeout: 5000, encoding: 'utf8' });
     expect(() => reserveServiceWriter(enrollment, 'foreground')).toThrow('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
     expect(spawnSync('/usr/bin/touch', [join(control, 'other')], { uid, gid }).status).toBe(1);
     const selection = reserveServiceWriter(enrollment, 'selection');
@@ -57,12 +64,14 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       expect(selection.roleSha256).toMatch(/^[a-f0-9]{64}$/);
       selection.guard();
       expect(() => reserveServiceWriter(enrollment, 'selection')).toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+      expect(competingProcess()).toMatchObject({ status: 75, signal: null, stderr: '' });
       execFileSync('/bin/chmod', ['+a', '_mdnsresponder allow add_file,delete_child', control]);
       try { expect(() => selection.guard()).toThrow('INSTALLED_SERVICE_WRITER_FENCE_INVALID'); }
       finally { execFileSync('/bin/chmod', ['-a#', '0', control]); }
     } finally { selection.release(); }
     const next = reserveServiceWriter(enrollment, 'selection');
     next.release();
+    expect(competingProcess()).toMatchObject({ status: 0, signal: null, stderr: '' });
   },
 );
 
