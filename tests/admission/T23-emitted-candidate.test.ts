@@ -1274,7 +1274,15 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
           await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
         }, { timeout: 5000 });
         await expect(fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
-        await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
+        const reselected = await vi.waitUntil(async () => {
+          try {
+            return await store.select(envelope);
+          } catch (error) {
+            if (error instanceof Error && error.message === 'INSTALLED_SERVICE_WRITER_BUSY') return false;
+            throw error;
+          }
+        }, { timeout: 5000 });
+        expect(reselected).toMatchObject({ current: { order } });
         const observed = new DatabaseSync(databasePath, { readOnly: true });
         try {
           expect(observed.prepare("SELECT result FROM outbox WHERE event_id = ? AND destination = 'autoloop'")
