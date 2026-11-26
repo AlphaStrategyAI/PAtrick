@@ -1229,7 +1229,9 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 15_000,
       });
       expect([rejected.status, rejected.error, rejected.stdout]).toEqual([1, undefined, '']);
-      expect(await service.errors()).toContain('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
+      await vi.waitFor(async () => {
+        expect(await service.errors()).toContain('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
+      }, { timeout: 5000 });
       await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
       const role = spawn(service.controllerPath, ['run-role', 'service'], {
