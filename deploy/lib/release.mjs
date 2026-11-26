@@ -23,10 +23,12 @@ function requireCondition(condition, message) {
 function exactKeys(value, keys, label) {
   requireCondition(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...keys].sort().join(','), `invalid ${label} fields`);
 }
-export function validatePaths(paths) {
+export function validatePaths(paths, literalPaths = []) {
   const seen = new Set();
   for (const path of paths) {
-    requireCondition(typeof path === 'string' && path.length <= 512 && /^[A-Za-z0-9_.\-/]+$/.test(path) && !path.startsWith('/') && path.split('/').every(part => part && part !== '.' && part !== '..' && !part.endsWith('.')), 'unsafe artifact path');
+    requireCondition(typeof path === 'string' && path.length <= 512 &&
+      (/^[A-Za-z0-9_.\-/]+$/.test(path) || literalPaths.includes(path)) &&
+      !path.startsWith('/') && path.split('/').every(part => part && part !== '.' && part !== '..' && !part.endsWith('.')), 'unsafe artifact path');
     const folded = path.toLowerCase();
     requireCondition(!seen.has(folded), 'duplicate or ambiguous artifact path');
     seen.add(folded);

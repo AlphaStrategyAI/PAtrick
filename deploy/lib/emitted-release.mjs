@@ -8,7 +8,7 @@ import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS as limits,
 
 import { autoloopHub, hasAutoloopHub, checkDeploymentRecord, deploymentPaths, deploymentRole, releaseProfile, nativeProfile, completeProfile, servicePreflight,
   inventoryVersion, directoryPath, directoryRole, directoryIdentity, checkDirectoryTarget, checkDirectoryAuthority, directoryExports,
-  directoryCommands, nativeSources, directoryHandshake } from './deployment-templates.mjs';
+  directoryCommands, nativeSources, directoryHandshake, checkVaultKitClosure, vaultKitDirectories, vaultKitPaths } from './deployment-templates.mjs';
 
 export const paths = Object.freeze({
   inventory: 'metadata/runtime-materials.json', lock: 'provenance/package-lock.json',
@@ -62,7 +62,7 @@ function table(records) {
       prefixes.set(folded, dir);
     }
   }
-  validatePaths(records.map(r => r.path));
+  validatePaths(records.map(r => r.path), vaultKitPaths);
 }
 const versions = { 'better-sqlite3': '12.11.1', bindings: '1.5.0', 'file-uri-to-path': '1.0.0' };
 const mains = { 'better-sqlite3': 'lib/index.js', bindings: './bindings.js', 'file-uri-to-path': 'index.js' };
@@ -219,7 +219,9 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   const inv = json(raw);
   shape(inv, 'schemaVersion materialKind source tools observed packages native files' + (complete ? ' profile' : '') +
     (v3 ? ' directoryNative directoryBuildSha256' : ''), 'inventory');
-  check(inv.schemaVersion === inventoryVersion(profile) && (!complete || inv.profile === profile) && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
+  const currentInventory = inv.schemaVersion === inventoryVersion(profile);
+  check((currentInventory || inv.schemaVersion === inventoryVersion(profile, true)) &&
+    (!complete || inv.profile === profile) && inv.materialKind === 'emitted-runtime-materials', 'unsupported inventory');
   shape(inv.source, 'kind commit snapshotSha256 lockSha256', 'source');
   check(['commit','pinned-snapshot'].includes(inv.source.kind) && typeof inv.source.commit === 'string' && /^[0-9a-f]{40}$/.test(inv.source.commit) &&
     isHash(inv.source.snapshotSha256) && isHash(inv.source.lockSha256), 'invalid source identity');
@@ -236,9 +238,11 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   equal(inv.tools, { esbuild: '0.28.2', vite: '7.3.8' }, 'unsupported build tools');
   equal(inv.packages, Object.entries(versions).map(([name, version]) => ({ name, version })), 'unsupported package closure');
   table(inv.files);
-  hasAutoloopHub(inv.files.map(row => row.path));
+  const inventoryPaths = inv.files.map(row => row.path);
+  hasAutoloopHub(inventoryPaths);
+  checkVaultKitClosure(inventoryPaths, complete && currentInventory);
   if (complete) {
-    const materialPaths = new Set(inv.files.map(row => row.path));
+    const materialPaths = new Set(inventoryPaths);
     if (v3) check(materialPaths.has(addon) && materialPaths.has(directoryPath), 'missing native material');
     for (const path of Object.values(deploymentPaths)) check(materialPaths.has(path), 'missing deployment template ' + path);
   }
@@ -265,7 +269,7 @@ export function inspectBytes(files, { version, source, target, schema, inventory
   const sbom = makeSbom(files, inv, lock, version, directoryBuild);
   const materials = ordered([...inv.files, descriptor(paths.inventory, 'runtime-inventory', '100644', raw)]);
   table(materials);
-  const identity = { ...(complete ? { format: 'patrick-emitted-runtime-material-identity-v' + inventoryVersion(profile), profile } :
+  const identity = { ...(complete ? { format: 'patrick-emitted-runtime-material-identity-v' + inv.schemaVersion, profile } :
     { format: 'patrick-emitted-runtime-material-identity-v1' }), version, source: inv.source, target, schema,
     runtime: { node, modules, npm, native, ...(v3 && { napi: inv.observed.napi, directoryNative: inv.directoryNative }) },
     ...(v3 && { directoryAuthoritySha256: directoryBuild.authoritySha256 }), toolchainSha256, inventorySha256, sbomSha256: sha256(sbom), materials };
@@ -655,7 +659,7 @@ export async function readTree(lease, root, expected, budget = { bytes: 0, files
           if (!item) break;
           children++;
           const child = local ? local + '/' + item.name : item.name;
-          validatePaths([child]);
+          validatePaths([child], item.isDirectory() ? vaultKitDirectories : vaultKitPaths);
           await visit(join(path, item.name), child, depth + 1);
           lease.guard();
         }
@@ -787,7 +791,9 @@ function decodePackage(data, expected, policy) {
   const profile = releaseProfile(expected.profile);
   const complete = completeProfile(profile);
   const v3 = profile === nativeProfile;
-  check(complete ? identity?.format === 'patrick-emitted-runtime-material-identity-v' + inventoryVersion(profile) && identity.profile === profile :
+  const knownFormat = [inventoryVersion(profile), inventoryVersion(profile, true)]
+    .some(version => identity?.format === 'patrick-emitted-runtime-material-identity-v' + version);
+  check(complete ? knownFormat && identity.profile === profile :
     identity?.format === 'patrick-emitted-runtime-material-identity-v1' && !own(identity, 'profile'), 'independent release profile mismatch');
   shape(identity, 'format version source target schema runtime toolchainSha256 inventorySha256 sbomSha256 materials' + (complete ? ' profile' : '') +
     (v3 ? ' directoryAuthoritySha256' : ''), 'material identity');

@@ -29,8 +29,8 @@ export type EmittedMaterialIdentity = Readonly<{
   schema: SchemaInterval; runtime: EmittedRuntimeIdentity; toolchainSha256: string; inventorySha256: string; sbomSha256: string;
   materials: readonly EmittedRuntimeMaterial[]; materialSha256: string;
 } & ({ format: 'patrick-emitted-runtime-material-identity-v1'; profile?: never } |
-  { format: 'patrick-emitted-runtime-material-identity-v2'; profile: 'deployment-complete' } |
-  { format: 'patrick-emitted-runtime-material-identity-v3'; profile: NativeByteProfile; runtime: NativeByteRuntimeIdentity; directoryAuthoritySha256: string })>;
+  { format: 'patrick-emitted-runtime-material-identity-v2' | 'patrick-emitted-runtime-material-identity-v4'; profile: 'deployment-complete' } |
+  { format: 'patrick-emitted-runtime-material-identity-v3' | 'patrick-emitted-runtime-material-identity-v5'; profile: NativeByteProfile; runtime: NativeByteRuntimeIdentity; directoryAuthoritySha256: string })>;
 /** Provisioned by the trusted host. Writers are excluded through callback completion, including awaited use. */
 export interface ExclusiveRuntimeStaging {
   /** Optional trusted registration. Both canonical directories must exist apart from

@@ -67,6 +67,7 @@ const entries = Object.freeze({
   worker: 'deploy/runtime/worker.ts',
 });
 const hostRegistrySource = 'deploy/host/registry.ts';
+const vaultKitResolver = 'packages/integrations/vault/kit-path.ts';
 const designPath = 'docs/designs/设计资产/v2/';
 const sourceRoots = Object.freeze([
   'package.json',
@@ -152,7 +153,7 @@ function parse(command, argv) {
 }
 
 function validateMaterialPaths(paths) {
-  try { validatePaths(paths); }
+  try { validatePaths(paths, deployment.vaultKitPaths); }
   catch { fail('RUNTIME_MATERIAL_PATH_INVALID'); }
 }
 
@@ -263,11 +264,12 @@ async function captureSource(root, commit, profile) {
   }
   await physicalDirectory(root, 'RUNTIME_SOURCE_ROOT_INVALID');
   const preflight = deployment.servicePreflight;
-  const templatePaths = deployment.completeProfile(profile) ? [...Object.values(deployment.deploymentPaths), preflight.source] : [];
+  const templatePaths = deployment.completeProfile(profile)
+    ? [...Object.values(deployment.deploymentPaths), preflight.source, ...deployment.vaultKitPaths] : [];
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, hostRegistrySource, 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
-    'deploy/runtime/hub-process.ts', ...templatePaths];
+    'deploy/runtime/hub-process.ts', vaultKitResolver, ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.
   // All other source paths and the emitted inventory retain the portable path allowlist.
@@ -524,6 +526,7 @@ async function materialRecords(root, profile) {
   const paths = (await walk(root)).filter((path) => path !== inventoryFile).sort();
   validateMaterialPaths(paths);
   deployment.hasAutoloopHub(paths);
+  deployment.checkVaultKitClosure(paths, deployment.completeProfile(profile));
   if (paths.length > LIMITS.files) fail('RUNTIME_MATERIAL_LIMIT');
   const records = [];
   let total = 0;
@@ -796,6 +799,7 @@ async function buildRuntime(values, recipe) {
       format: 'esm',
       platform: 'node',
       target: ['node26.13'],
+      define: { PATRICK_BUNDLED_VAULT_KIT: String(deployment.completeProfile(profile)) },
       external: ['better-sqlite3'],
       preserveSymlinks: true,
       tsconfigRaw: { compilerOptions: {} },
@@ -816,7 +820,7 @@ async function buildRuntime(values, recipe) {
       }],
     });
     if (deployment.completeProfile(profile)) {
-      await copySelected(sourceRoot, materials, Object.values(deployment.deploymentPaths));
+      await copySelected(sourceRoot, materials, [...Object.values(deployment.deploymentPaths), ...deployment.vaultKitPaths]);
       const { source, path } = deployment.servicePreflight;
       await copyRegular(resolve(sourceRoot, source), resolve(materials, path));
       if (autoloopRoot !== undefined) await copyAutoloopHub(autoloopRoot, materials);

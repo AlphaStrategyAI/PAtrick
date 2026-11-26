@@ -46,6 +46,19 @@ export const autoloopHub = Object.freeze({
   }),
 });
 const autoloopPaths = Object.keys(autoloopHub.files).map(path => autoloopHub.root + '/' + path);
+const vaultKitRoot = 'assets/vault-kit/';
+const vaultKit = Object.freeze({
+  'manifest.json': 'b41d3eded2c8904dbd58d491899fbdc4bb726ba191ed39cfe91a9af8e9d9f943',
+  '判断案例.md': '173e720be5d5fbf641d6f76aa2bc9a0f0b0c332c66a919b3c46e47cbc5c78630',
+  '标准修订.md': '27de7e671ba70e4fa70dc542b4af5589ef0cca2e17ed4b3074c43638ed706bb7',
+  '知识笔记.md': '92bd80697992e39bd68d6b13f177bb1362fd09b28c632552022855b711eded9c',
+  '系统视图/标准.base': 'ab9a057136be69a82b72565f768e57253e9b63d7f9f1836952c5b16093868130',
+  '系统视图/知识.base': 'b6fa85a2135550edd2d2214b963db8d029ab6a150abc23f272d375a7ba112a0f',
+  '系统视图/知识关系.canvas': 'fc40dddf4780acae07a676183907c3eab6204ac476e38031c7f1d1eab2726914',
+  '系统视图/索引.md': '726aacbe3321d653708b3e4315dccea53cb18110689377e6d3f87e346fdb04aa',
+});
+export const vaultKitPaths = Object.freeze(Object.keys(vaultKit).map(path => vaultKitRoot + path));
+export const vaultKitDirectories = Object.freeze([vaultKitRoot + '系统视图']);
 const templates = new Map([
   [deploymentPaths.caddy, ['caddy-template', '915c1bba63f43d6ba86fe5b4d2c475f5e8d084a8a6e12106248878edb711abfb']],
   [deploymentPaths.service, ['service-launchd-template', '4a1abcdf6623764e61d673295935df6c495a5461af2012b177a1ca166bb3d332']],
@@ -54,6 +67,8 @@ const templates = new Map([
   [deploymentPaths.lima, ['lima-executor-template', '1e54d49f3f691d9735f837a7b9c91caae286f6822e51f5f798a93926b4f44a13']],
   [servicePreflight.path, ['service-bootstrap', servicePreflight.sha256]],
   ...Object.entries(autoloopHub.files).map(([path, digest]) => [autoloopHub.root + '/' + path, ['autoloop-hub-source', digest]]),
+  ...Object.entries(vaultKit).map(([path, digest]) =>
+    [vaultKitRoot + path, [path === 'manifest.json' ? 'vault-kit-manifest' : 'vault-kit-asset', digest]]),
 ]);
 const byDigest = new Map([...templates].map(([path, [, digest]]) => [digest, path]));
 const jobs = ['service', 'hub', 'worker'];
@@ -89,7 +104,11 @@ const hashValue = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(va
 const byteCount = value => Number.isSafeInteger(value) && value > 0 && value <= 16 * 1024 * 1024;
 function requireDirectory(value) { if (!value) throw new Error('RUNTIME_DIRECTORY_MATERIAL_INVALID'); }
 export function completeProfile(profile) { return profile === 'deployment-complete' || profile === nativeProfile; }
-export function inventoryVersion(profile) { return profile === nativeProfile ? 3 : profile === 'deployment-complete' ? 2 : 1; }
+export function inventoryVersion(profile, legacy = false) {
+  if (profile === nativeProfile) return legacy ? 3 : 5;
+  if (profile === 'deployment-complete') return legacy ? 2 : 4;
+  return 1;
+}
 
 // Only normalized relative arguments reach the private compile directory. The
 // compiler has no implicit host/system search paths. The linker sees two fixed stubs.
@@ -256,6 +275,13 @@ export function hasAutoloopHub(paths) {
     throw new Error('AUTOLOOP_HUB_SOURCE_INCOMPLETE');
   }
   return true;
+}
+export function checkVaultKitClosure(paths, required) {
+  const selected = new Set(paths.filter(path => path.startsWith(vaultKitRoot)));
+  if (required && (selected.size !== vaultKitPaths.length || !vaultKitPaths.every(path => selected.has(path)))) {
+    throw new Error('VAULT_KIT_INCOMPLETE');
+  }
+  if (!required && selected.size) throw new Error('Vault kit profile/mode/content mismatch');
 }
 export function checkDeploymentRecord(profile, path, mode, digest) {
   const template = templates.get(path);

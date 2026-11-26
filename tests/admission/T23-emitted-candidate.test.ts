@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vite
 import { applyHostRegistry, planHostRegistry } from '../../deploy/host/registry.js';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { createInstalledRootOwner, leased, publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
-import { autoloopHub, checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
+import { autoloopHub, checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates, vaultKitPaths } from '../../deploy/lib/deployment-templates.mjs';
 import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, VerifiedEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
@@ -703,7 +703,8 @@ test.skipIf(!upstreamHubSource || !process.getgid?.())('publishes service depend
   const { checked, stage, scope, installed } = await promotionHost('service-group-release', undefined, serviceGroup);
   await publishStagedDeployment(checked, stage);
   await withPublishedDeployment(checked, { ...scope, serviceGroup }, async () => {
-    for (const directory of ['.', 'runtime', 'web', 'migrations', 'metadata', 'node_modules']) {
+    for (const directory of ['.', 'runtime', 'web', 'migrations', 'metadata', 'node_modules',
+      'assets', 'assets/vault-kit', 'assets/vault-kit/系统视图']) {
       const info = await lstat(join(installed, directory));
       expect([info.gid, info.mode & 0o7777]).toEqual([serviceGroup, 0o710]);
     }
@@ -2917,7 +2918,7 @@ test('checks profile selection for build, capture, material inspection and indep
   const snapshot = (profile: string) => JSON.parse(child([build, 'snapshot', '--profile', profile, ...source]));
   const v1 = snapshot('runtime-only');
   const v2 = snapshot('deployment-complete');
-  expect(v2.files).toBe(v1.files + 6);
+  expect(v2.files).toBe(v1.files + Object.keys(deploymentPaths).length + 1 + vaultKitPaths.length);
   expect(v2.snapshotSha256).toBe(complete.expected.source.snapshotSha256);
   expect(v2.snapshotSha256).not.toBe(v1.snapshotSha256);
   expect(JSON.parse(child([build, 'verify', '--profile', 'deployment-complete', '--artifact-root', complete.artifact])).profile).toBe('deployment-complete');
@@ -3664,7 +3665,8 @@ for (const operation of ['pack','stage'] as const) {
 
 // Portable format/authority fixture. None of the material or scenario labels
 // here represent execution. Only the native suite above measures target behavior.
-async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?: 'deployment-complete') {
+async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?: 'deployment-complete',
+  kit?: 'complete' | 'partial' | 'changed' | 'unknown-path' | 'missing') {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const port: ExclusiveRuntimeStaging = {withExclusiveReadRoot: work => work(dir)};
   const tree = join(dir,'tree');
@@ -3700,6 +3702,18 @@ async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?
       await put(path, deploymentRole(path)!, await readFile(join(root, path)));
     }
   }
+  if (kit && kit !== 'missing') {
+    const prefix = 'assets/vault-kit/';
+    const manifest = await readFile(join(root, prefix, 'manifest.json'));
+    await put(prefix + 'manifest.json', 'vault-kit-manifest', manifest);
+    const { files: kitFiles } = JSON.parse(manifest.toString()) as { files: Array<{ source: string }> };
+    for (const { source } of kit === 'partial' ? kitFiles.slice(1) : kitFiles) {
+      const path = prefix + source;
+      const data = await readFile(join(root, path));
+      await put(path, 'vault-kit-asset', kit === 'changed' && source === kitFiles[0].source ? Buffer.concat([data, Buffer.from('\n')]) : data);
+    }
+    if (kit === 'unknown-path') await put(prefix + '未列出.md', 'vault-kit-asset', fixtureCode);
+  }
   const binary = Buffer.alloc(32);
   binary.writeUInt32LE(0xfeedfacf);
   binary.writeUInt32LE(arch === 'arm64' ? 0x0100000c : 0x01000007,4);
@@ -3713,7 +3727,7 @@ async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?
   const native = {path:nativePath,sha256:sha256(binary),bytes:binary.length,format:'mach-o',architecture:arch,observedArchitecture:arch,
     observedNode:observed.node,observedModules:observed.modules,observedLoad:true,sqlite:'1.0.0'};
   files.sort((left,right)=>left.path<right.path?-1:left.path>right.path?1:0);
-  const inventory = bytes({schemaVersion:profile ? 2 : 1,...(profile && { profile }),materialKind:'emitted-runtime-materials',source,tools,observed,packages,native,files});
+  const inventory = bytes({schemaVersion:profile ? kit ? 4 : 2 : 1,...(profile && { profile }),materialKind:'emitted-runtime-materials',source,tools,observed,packages,native,files});
   await mkdir(join(tree,'metadata'));
   await writeFile(join(tree,'metadata/runtime-materials.json'),inventory);
   const measure = {path:'/synthetic/tool',sha256:sha256(fixtureCode),bytes:fixtureCode.length};
@@ -3749,6 +3763,32 @@ async function offlineSignedFixture(dir: string, arch: 'arm64' | 'x64', profile?
   const policy = {keys:[{id:'fixture',publicKey}],executionReportSha256:sha256(report),requiredScenarios:logs.map(log=>({id:log.id,evidenceSha256:log.sha256}))};
   return { path, port, expected, policy };
 }
+
+runTest('signed deployment verifies and stages only the complete validated Vault kit', async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'emitted-offline-kit-'));
+  try {
+    const { path, port, expected, policy } = await offlineSignedFixture(join(dir, 'kit'), 'arm64', 'deployment-complete', 'complete');
+    const verified = await verifyEmittedRuntimeCandidate(path, { staging: port, expected, policy });
+    const records = verified.materials.filter(row => row.path.startsWith('assets/vault-kit/'));
+    expect(records).toHaveLength(8);
+    const destination = join(dir, 'kit', 'stage');
+    await stageVerifiedEmittedRuntime(verified, { staging: port, destination });
+    for (const row of records) expect(sha256(await readFile(join(destination, row.path)))).toBe(row.sha256);
+    await expect(offlineSignedFixture(join(dir, 'partial'), 'arm64', 'deployment-complete', 'partial')).rejects.toThrow(/VAULT_KIT_INCOMPLETE/);
+    await expect(offlineSignedFixture(join(dir, 'changed'), 'arm64', 'deployment-complete', 'changed')).rejects.toThrow(/content mismatch/);
+    await expect(offlineSignedFixture(join(dir, 'unknown-path'), 'arm64', 'deployment-complete', 'unknown-path')).rejects.toThrow(/unsafe artifact path/);
+    await expect(offlineSignedFixture(join(dir, 'runtime-only'), 'arm64', undefined, 'complete')).rejects.toThrow(/profile\/mode\/content mismatch/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}, 30_000);
+
+runTest('requires the entire Vault kit in the new signed deployment inventory', async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'emitted-offline-kit-required-'));
+  try {
+    await expect(offlineSignedFixture(join(dir, 'new'), 'arm64', 'deployment-complete', 'missing')).rejects.toThrow(/VAULT_KIT_INCOMPLETE/);
+    const { path, port, expected, policy } = await offlineSignedFixture(join(dir, 'legacy'), 'arm64', 'deployment-complete');
+    await expect(verifyEmittedRuntimeCandidate(path, { staging: port, expected, policy })).resolves.toMatchObject({ profile: 'deployment-complete' });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}, 30_000);
 
 runTest('verifies an offline signed format fixture and refuses copied capabilities',async () => {
   const dir = await mkdtemp(join(await realpath(tmpdir()),'emitted-offline-'));

@@ -3,15 +3,14 @@ import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, open, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { publishCreateOnly } from '../../packages/integrations/vault/create-file.ts';
 import { INDEX_PATH, SEED_PROOF_PATH, indexSeedProof, readIndexFile } from '../../packages/integrations/vault/index-proof.ts';
+import { resolveVaultKit } from '../../packages/integrations/vault/kit-path.ts';
 import { checkRoot, draftDirs, hasServiceIdentity, inside, kitDirs, readRegular, safeDirectory } from './scope.mjs';
 
 export { createMacObsidianInstaller } from './mac-install.mjs';
 export { verifyObsidianInstaller } from './dmg.mjs';
 
-const releaseKit = fileURLToPath(new URL('../../assets/vault-kit/', import.meta.url));
 const SEED_INTENT_PATH = '系统视图/.patrick-index-seed.intent.json';
 const SHA256 = /^[a-f0-9]{64}$/;
 const kitFiles = new Map([
@@ -21,6 +20,8 @@ const kitFiles = new Map([
   ...['索引.md', '知识.base', '标准.base', '知识关系.canvas'].map((name) => [`系统视图/${name}`, `系统视图/${name}`]),
 ]);
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+const releaseKit = resolveVaultKit(import.meta.url, '../../assets/vault-kit/');
 
 export function createVaultKitInstaller(options) {
   const { assetRoot = releaseKit, stageParent = tmpdir() } = options;

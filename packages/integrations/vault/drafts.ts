@@ -3,13 +3,13 @@ import { constants, lstatSync, readFileSync, realpathSync, type Stats } from 'no
 import { access, mkdir, open, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { z } from 'zod';
 import { canonicalPayload, editIntentRequestSchema, editReceiptSchema, type Json } from '@patrick/contracts';
 import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
 import { queryEvidence, withdrawEvidence, type EvidencePack, type EvidenceQuery } from '../../domain/src/evidence.js';
 import { publishCreateOnly } from './create-file.js';
 import { assertVaultWriteAllowed, confirmVault, connectVault, inspectVault, requireVault, type VaultConnection, type VaultRecord } from './connection.js';
+import { resolveVaultKit } from './kit-path.js';
 import { readVault, readVaultEdit, type VaultReadResult } from './reader.js';
 import { projectPendingAdoption, publishAdoptionProjection, retryAdoptionProjection } from './adoption-projection.js';
 import { projectVault, type ProjectionRequest, type ProjectionResult } from './projector.js';
@@ -65,8 +65,9 @@ type IntentRow = {
   relative_path: string | null;
 };
 
-const TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/知识笔记.md', import.meta.url));
-const STANDARD_TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/标准修订.md', import.meta.url));
+const releaseKit = resolveVaultKit(import.meta.url, '../../../assets/vault-kit/');
+const TEMPLATE_PATH = join(releaseKit, '知识笔记.md');
+const STANDARD_TEMPLATE_PATH = join(releaseKit, '标准修订.md');
 const MAX_DRAFT_READ_BYTES = 8 * 1024 * 1024;
 
 export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { canonicalPayload, type Json } from '@patrick/contracts';
 import { appendDomainEvent, withImmediateTransaction, type BlobStore, type SqliteDatabase } from '@patrick/storage';
+import { resolveVaultKit } from './kit-path.js';
 import { sha256 } from './projection-publication.js';
 import { isProjectionIoFailure, PROJECTION_BATCH_FILES, projectVault, type ProjectionRequest, type ProjectionResult } from './projector.js';
 
@@ -54,7 +56,8 @@ function renderCommittedView(db: SqliteDatabase, row: Adopted): Record<string, s
   const knowledge = db.prepare(`SELECT knowledge_id,title,revision,status FROM knowledge_records
     WHERE account_id=? AND data_domain=? AND status<>'withdrawn' ORDER BY knowledge_id`).all(...scope) as Json[];
   // Only committed view data; draft contents and evaluation samples (including held-out cases) never enter this export.
-  const template = (name: string) => readFileSync(new URL(`../../../assets/vault-kit/系统视图/${name}`, import.meta.url), 'utf8');
+  const kitRoot = resolveVaultKit(import.meta.url, '../../../assets/vault-kit/');
+  const template = (name: string) => readFileSync(join(kitRoot, '系统视图', name), 'utf8');
   return {
     '知识/当前.md': '# 知识\n\n' + knowledge.map(asMarkdownText).join('\n\n'),
     '生效标准/当前.md': '# 生效标准\n\n' + active.map((item) => [

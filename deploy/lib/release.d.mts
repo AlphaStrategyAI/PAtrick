@@ -23,7 +23,7 @@ export interface VerifiedReleaseCandidate {
 export const RELEASE_LIMITS: Readonly<{ packageBytes: number; artifactBytes: number; totalBytes: number; files: number; evidenceEntries: number; evidenceDepth: number }>;
 export function canonicalize(value: unknown): string;
 export function sha256(bytes: Uint8Array): string;
-export function validatePaths(paths: readonly string[]): void;
+export function validatePaths(paths: readonly string[], literalPaths?: readonly string[]): void;
 export interface ReadRootAdmission { readonly root: string; validate(): void }
 /** Physical root and ancestors must remain exclusively controlled during reads. */
 export function admitReadRoot(root: string, options?: { allowAncestorEntriesChange?: boolean }): ReadRootAdmission;

@@ -1,12 +1,16 @@
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { setTimeout as setTimer, clearTimeout as clearTimer } from 'node:timers';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { createVaultApi } from '../../packages/integrations/vault/drafts.js';
+import { requireVault } from '../../packages/integrations/vault/connection.js';
+import { createBlobStore } from '../../packages/storage/src/blob-store.js';
+import { openDatabase } from '../../packages/storage/src/database.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const buildScript = join(root, 'scripts/build-runtime.mjs');
@@ -138,6 +142,109 @@ afterAll(async () => {
 });
 
 describe('T23 installed runtime build and bootstrap', () => {
+  test('deployment-complete ships the kit used by relocated Vault setup and draft rendering', async () => {
+    const artifact = join(temporary, 'complete-vault-kit');
+    const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete'];
+    const snapshot = runNode([buildScript, 'snapshot', ...selection]);
+    expect(snapshot.status, output(snapshot)).toBe(0);
+    const build = runNode([buildScript, 'build', ...selection, '--output-root', artifact,
+      '--source-snapshot', JSON.parse(String(snapshot.stdout)).snapshotSha256]);
+    expect(build.status, output(build)).toBe(0);
+    const verification = runNode([buildScript, 'verify', '--profile', 'deployment-complete', '--artifact-root', artifact]);
+    expect(verification.status, output(verification)).toBe(0);
+
+    const kit = 'assets/vault-kit';
+    const manifest = await readFile(join(root, kit, 'manifest.json'));
+    const sourceFiles = JSON.parse(manifest.toString()).files as Array<{ source: string; path: string; sha256: string }>;
+    const inventory = JSON.parse(await readFile(join(artifact, 'metadata/runtime-materials.json'), 'utf8'));
+    const digest = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+    expect(inventory.files.filter(({ path }: { path: string }) => path.startsWith(kit + '/'))).toEqual(
+      [{ source: 'manifest.json', sha256: digest(manifest) }, ...sourceFiles]
+        .map(({ source, sha256 }) => ({ path: kit + '/' + source, mode: '100644', sha256 }))
+        .sort((left, right) => left.path < right.path ? -1 : 1)
+        .map(row => expect.objectContaining(row)),
+    );
+
+    const installed = join(temporary, 'relocated-without-checkout', 'installed-vault-kit');
+    await cp(artifact, installed, { recursive: true });
+    const dataRoot = await mkdtemp(join(temporary, 'vault-kit-data-'));
+    const vaultRoot = join(dataRoot, 'vault');
+    const databasePath = join(dataRoot, 'service.sqlite');
+    const identity = { accountId: 'owner', scopeId: 'scope', deviceId: 'fixture-device', domains: ['personal'], configRevision: '1' };
+    const secret = 'a'.repeat(48);
+    const now = new Date().toISOString();
+    await mkdir(join(vaultRoot, '知识笔记'), { recursive: true });
+    const db = openDatabase(databasePath);
+    try {
+      const api = createVaultApi(db, { blobs: createBlobStore(join(dataRoot, 'blobs')) });
+      const vaultId = 'fixture-vault';
+      await api.connectVault({ accountId: identity.accountId, deviceId: identity.deviceId, vaultId, root: vaultRoot, domain: 'personal' });
+      await api.confirmVault(identity.deviceId, vaultId);
+      await writeFile(join(vaultRoot, '知识笔记', '原文.md'),
+        '---\npatrick_id: doc-fixture\nkind: knowledge\nknowledge_id: k-fixture\n---\n\nFixture note\n');
+      await api.readVault(vaultId);
+      const vault = requireVault(db, vaultId);
+      const connection = await api.inspectVault(identity.deviceId, vaultId);
+      db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(identity.accountId, 1, 1, now);
+      db.prepare('INSERT INTO caller_scopes VALUES (?,?,?,?,NULL)').run(identity.accountId, 'web', 'personal', 'owner');
+      db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?)').run(digest(Buffer.from(secret)), identity.accountId, 'web', 1,
+        new Date(Date.now() + 60_000).toISOString(), now, 'fixture');
+      const run = runNode(['--input-type=module', '-e', `
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { mkdir, readFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { createRuntimeProvisioning } from ${JSON.stringify(pathToFileURL(join(installed, 'runtime/composition.mjs')).href)};
+          import { createInstalledService } from ${JSON.stringify(pathToFileURL(join(installed, 'runtime/service.mjs')).href)};
+          const { identity, vault, connection, secret, now, dataRoot, databasePath, captureHost, sourceFiles } = JSON.parse(process.argv[1]);
+          const serviceUid = process.geteuid();
+          const origin = 'http://localhost';
+          const hash = value => createHash('sha256').update(value).digest('hex');
+          const stageParent = join(dataRoot, 'stage');
+          await mkdir(stageParent);
+          const provisioning = createRuntimeProvisioning({
+            registration: { identity, captureHost, serviceUid, dataRoot, profile: 'test', minimumFreeBytes: 0, origin,
+              rpId: 'localhost', listener: { host: '127.0.0.1', port: 0, origin } },
+            service: { databasePath, credentialDirectory: dataRoot,
+              recoveryRuntime: { attach({ database, admission }) {
+                database.prepare('INSERT INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at) VALUES(?,?,?,?,?,?,?)')
+                  .run('personal', 'epoch', 'open', 'activation', 'witness', 'fixture', now);
+                admission.admit({ domain: 'personal', writerEpoch: 'epoch', activationId: 'activation', witnessRevision: 'witness' });
+              } },
+              bindRecoveryOperations: () => ({ root: dataRoot, targets: {},
+                authority: { keyId: 'fixture', async sign() { throw Error('unused'); }, async verify() { return false; } } }),
+            },
+          });
+          const ports = { deviceId: identity.deviceId, captureHost, serviceUid, editorUid: serviceUid, stageParent,
+            loadVault: () => vault, inspectVault: () => connection };
+          const installer = provisioning.host.runtime.createVaultKitInstaller;
+          await assert.rejects(installer({ ...ports, editorUid: serviceUid + 1 }).installVaultKit(vault.vault_id),
+            /VAULT_EDITOR_IDENTITY_UNVERIFIED/);
+          await installer(ports).installVaultKit(vault.vault_id);
+          for (const { path, sha256 } of sourceFiles) assert.equal(hash(await readFile(join(vault.root_path, path))), sha256);
+          const runtime = createInstalledService(provisioning);
+          try {
+            const headers = { origin, 'content-type': 'application/json', cookie: 'patrick_session=' + secret };
+            for (const operation of ['create_standard', 'supplement_knowledge']) {
+              const payload = operation === 'create_standard'
+                ? { draft_key: 'standard', expected_active_version: null, operation, vault_id: vault.vault_id }
+                : { draft_key: 'knowledge', expected_knowledge_revision: 1, knowledge_id: 'k-fixture', operation, vault_id: vault.vault_id };
+              const reply = await runtime.app.request(origin + '/api/v1/edits', { method: 'POST', headers,
+                body: JSON.stringify({ client_request_id: operation, expected_revision: null, payload, payload_hash: hash(JSON.stringify(payload)) }) });
+              const response = await reply.json();
+              assert.equal(reply.status, 202, JSON.stringify(response));
+              const receipt = await runtime.app.request(origin + response.receipt_url, { headers });
+              const result = await receipt.json();
+              assert.equal(receipt.status, 200, JSON.stringify(result));
+              assert.equal(result.data.file.state, 'awaiting_save', JSON.stringify(result));
+            }
+          } finally { await runtime.drain(); }
+        `, JSON.stringify({ identity, vault, connection, secret, now, dataRoot, databasePath, captureHost: hostname(), sourceFiles })],
+      { cwd: dataRoot });
+      expect(run.status, output(run)).toBe(0);
+    } finally { db.close(); }
+  }, 120_000);
+
   test('v3 requires explicit independent native build authority', () => {
     const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete-native-v3'];
     const capture = runNode([buildScript, 'snapshot', ...selection]);

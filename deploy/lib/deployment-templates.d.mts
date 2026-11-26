@@ -3,7 +3,7 @@ export type EmittedReleaseProfile = 'runtime-only' | 'deployment-complete' | 'de
 export type DeploymentJob = 'service' | 'hub' | 'worker';
 export type DeploymentKey = 'caddy' | DeploymentJob | 'lima';
 export type DeploymentRole = 'caddy-template' | 'service-launchd-template' | 'hub-launchd-template' | 'worker-launchd-template' |
-  'lima-executor-template' | 'service-bootstrap' | 'autoloop-hub-source';
+  'lima-executor-template' | 'service-bootstrap' | 'autoloop-hub-source' | 'vault-kit-manifest' | 'vault-kit-asset';
 export const nativeProfile: 'deployment-complete-native-v3';
 export const directoryPath: 'native/patrick-directory.node';
 export const directoryRole: 'directory-diagnostic-addon';
@@ -13,7 +13,7 @@ export const directoryLinkerLibraries: readonly string[];
 export const directoryExports: readonly string[];
 export const directoryHandshake: Readonly<{ format: 'patrick-directory-module'; interfaceVersion: 1; napiVersion: 8 }>;
 export function completeProfile(profile: EmittedReleaseProfile): boolean;
-export function inventoryVersion(profile: EmittedReleaseProfile): 1 | 2 | 3;
+export function inventoryVersion(profile: EmittedReleaseProfile, legacy?: boolean): 1 | 2 | 3 | 4 | 5;
 export function directoryCommands(arch: DarwinTarget['arch']): readonly Readonly<{ tool: 'compiler' | 'linker' | 'nm'; argv: readonly string[] }>[];
 export type DirectoryBuildHost = Readonly<{ os: string; processArch: string; machine: string }>;
 export function checkDirectoryTarget(target: DarwinTarget): void;
@@ -31,6 +31,9 @@ export const autoloopHub: Readonly<{
   commit: string; root: string; entry: string; initializer: 'kernel/evolve.ts'; files: Readonly<Record<string, string>>;
 }>;
 export function hasAutoloopHub(paths: readonly string[]): boolean;
+export const vaultKitPaths: readonly string[];
+export const vaultKitDirectories: readonly string[];
+export function checkVaultKitClosure(paths: readonly string[], required: boolean): void;
 export function releaseProfile(value?: EmittedReleaseProfile): EmittedReleaseProfile;
 export function deploymentRole(path: string): DeploymentRole | undefined;
 export function checkDeploymentRecord(profile: EmittedReleaseProfile, path: string, mode: string, digest: string): void;
