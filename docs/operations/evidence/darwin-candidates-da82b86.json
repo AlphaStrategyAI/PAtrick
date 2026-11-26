@@ -1,0 +1,54 @@
+{
+  "format": "patrick-hosted-candidates-v1",
+  "run": "45855678842",
+  "commit": "da82b86c2b85509430c94addbd0766abaf54b51b",
+  "url": "https://github.com/AlphaStrategyAI/PAtrick/actions/runs/45855678842",
+  "node": "v26.13.0",
+  "modules": "147",
+  "architectures": {
+    "arm64": {
+      "architecture": "arm64",
+      "commit": "da82b86c2b85509430c94addbd0766abaf54b51b",
+      "snapshotSha256": "f16f9ba9c4a6cf1ff1e474eb4a663be7688e916be484b28cc6236ef3b1f2fba2",
+      "lockSha256": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+      "node": "v26.13.0",
+      "modules": "147",
+      "npm": "11.20.0",
+      "sqlite": "3.53.2",
+      "archiveSha256": "c929b08a95636c092c81eba7f00db8b341086e58e400fa4c209da713b5646647",
+      "inventorySha256": "2d8d62cb1748a158eb92957a2378432fe63cb6027a7c35d5fbae6d15ab074974",
+      "payloadFiles": 489,
+      "nativeSha256": "cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d",
+      "nativeDescription": "Mach-O 64-bit bundle arm64",
+      "controller": {
+        "sha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+        "bytes": 38536,
+        "description": "Mach-O 64-bit executable arm64"
+      },
+      "sourceCandidateSha256": "94bb933518810db5420e0a4456cea26bb3c30394fc56a12a5b429ed39855a2fc",
+      "sourceManifestSha256": "07da1c4b92ce248faf61e2f2a9fb1a272e829875c301bb35c30bc974075e1420"
+    },
+    "x64": {
+      "architecture": "x64",
+      "commit": "da82b86c2b85509430c94addbd0766abaf54b51b",
+      "snapshotSha256": "f16f9ba9c4a6cf1ff1e474eb4a663be7688e916be484b28cc6236ef3b1f2fba2",
+      "lockSha256": "ff659fe30a50de9c78c73cc43c493e6cf010da54a3547028e2b72f61788b8f74",
+      "node": "v26.13.0",
+      "modules": "147",
+      "npm": "11.20.0",
+      "sqlite": "3.53.2",
+      "archiveSha256": "fbeafe25dea9ff60404e98050683e9c8d7989b19a34b8ed4caad120463acbef4",
+      "inventorySha256": "1e861fef9fe06e200cb5bdbd4eacff17a871148322fd8467dbbd5ed6348cb7e2",
+      "payloadFiles": 489,
+      "nativeSha256": "52ee7e68839aef1cb09a5acb1bd3d05e28b7259e8f0c18d9a760500efbf09211",
+      "nativeDescription": "Mach-O 64-bit bundle x86_64",
+      "controller": {
+        "sha256": "64e2f1263ec99826c93e1407d2d8cc03fe2b3f160ef3af6fafd6fcd58bdbae6a",
+        "bytes": 29952,
+        "description": "Mach-O 64-bit executable x86_64"
+      },
+      "sourceCandidateSha256": "abab28ed70cbadb679dacf9cc3e5c3d4ca5ccd36f7227336a05deb1b78382936",
+      "sourceManifestSha256": "dc4009c37b7d96ef951cf939dec35edcf16966914e7511d6d26acfc4a5906eaa"
+    }
+  }
+}

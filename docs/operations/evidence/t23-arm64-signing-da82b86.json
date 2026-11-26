@@ -1,0 +1,21 @@
+{
+  "format": "patrick-t23-arm64-signing-v1",
+  "observedDate": "2026-11-27",
+  "sourceCommit": "da82b86c2b85509430c94addbd0766abaf54b51b",
+  "sourceSnapshotSha256": "f16f9ba9c4a6cf1ff1e474eb4a663be7688e916be484b28cc6236ef3b1f2fba2",
+  "target": { "os": "darwin", "arch": "arm64" },
+  "hostedCandidateEvidence": "darwin-candidates-da82b86.json",
+  "matchingLocalBuilds": 2,
+  "inventorySha256": "e47bc30f76f1f17757109fdf1b7bf37bfb3278941a552ada1923234351d4ce6a",
+  "materialSha256": "9e3ebaac28aed5088827db387e81471dc051fd0499a666221cc1d5e46a6296ce",
+  "manifestSha256": "f24fd705f6dd7370c17da0dc945779f77b3f9c0ca09a9cfe029832156098eaf8",
+  "packageSha256": "ce206624c4ab727b4560fe98fa3a68afd56efd84ef45d86b54b0d3a9b6e8ef33",
+  "packageBytes": 25718678,
+  "keyId": "t23-local-01beb06c9a709df4",
+  "publicKeySha256": "01beb06c9a709df4d2f13adfe2439a7b821cf855105c8aaa84c9da755ba5dd43",
+  "executionReportSha256": "40b3bb76bd2ef9abb253bcef6121e7483820200d2552fe9ea10259a0fd6df361",
+  "verifiedFiles": 489,
+  "passedScenarios": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
+  "verifiedRejections": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
+  "outstanding": ["host-trust-enrollment", "supervised-service-startup", "owner-passkey-and-session", "host-restart", "installed-upgrade", "uninstall-preservation"]
+}
