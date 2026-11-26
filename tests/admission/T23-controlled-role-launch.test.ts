@@ -6,11 +6,13 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, 
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { constants, machine } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
+import { reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const archivedMaterials = process.env.PATRICK_T23_CONTROLLED_MATERIALS;
@@ -19,6 +21,50 @@ const localClangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc
 const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
+
+test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
+  'keeps the controller-owned service fence exclusive across independent UIDs',
+  async ({ onTestFinished }) => {
+    expect([process.platform, process.getuid!(), process.geteuid!()]).toEqual(['darwin', 0, 0]);
+    const uid = Number(execFileSync('/usr/bin/id', ['-u', '_mdnsresponder'], { encoding: 'utf8' }).trim());
+    const gid = Number(execFileSync('/usr/bin/id', ['-g', '_mdnsresponder'], { encoding: 'utf8' }).trim());
+    expect(uid).toBeGreaterThan(0);
+    expect(gid).toBeGreaterThan(0);
+    const root = await mkdtemp('/private/tmp/patrick-system-writer-');
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const runtime = join(root, 'runtime');
+    const control = join(runtime, 'service-control');
+    const path = join(control, 'writer.sqlite');
+    await chmod(root, 0o711);
+    await mkdir(runtime, { mode: 0o711 });
+    await mkdir(control, { mode: 0o700 });
+    await writeFile(path, '', { mode: 0o600, flag: 'wx' });
+    const writer = new DatabaseSync(path);
+    try { writer.exec('PRAGMA journal_mode = DELETE; PRAGMA user_version = 1'); }
+    finally { writer.close(); }
+    const pin = async (target: string) => {
+      const node = await stat(target, { bigint: true });
+      return { device: String(node.dev), inode: String(node.ino), birthtimeNs: String(node.birthtimeNs) };
+    };
+    const enrollment = {
+      root, rootNode: await pin(root),
+      serviceRole: { uid, gid, controllerOwned: true, rootNode: await pin(control), writerNode: await pin(path) },
+    } satisfies Pick<GenerationEnrollment, 'root' | 'rootNode' | 'serviceRole'>;
+    expect(() => reserveServiceWriter(enrollment, 'foreground')).toThrow('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
+    expect(spawnSync('/usr/bin/touch', [join(control, 'other')], { uid, gid }).status).toBe(1);
+    const selection = reserveServiceWriter(enrollment, 'selection');
+    try {
+      expect(selection.roleSha256).toMatch(/^[a-f0-9]{64}$/);
+      selection.guard();
+      expect(() => reserveServiceWriter(enrollment, 'selection')).toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+      execFileSync('/bin/chmod', ['+a', '_mdnsresponder allow add_file,delete_child', control]);
+      try { expect(() => selection.guard()).toThrow('INSTALLED_SERVICE_WRITER_FENCE_INVALID'); }
+      finally { execFileSync('/bin/chmod', ['-a#', '0', control]); }
+    } finally { selection.release(); }
+    const next = reserveServiceWriter(enrollment, 'selection');
+    next.release();
+  },
+);
 
 test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
   { role: 'hub', socketKey: 'HubControl' },

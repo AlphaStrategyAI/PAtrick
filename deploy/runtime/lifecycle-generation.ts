@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync,
   realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
@@ -39,9 +40,7 @@ export type GenerationEnrollment = {
   ownerLockNode?: GenerationNode;
   hubOwner?: Readonly<{ uid: number; gid: number }>;
   hubRole?: Readonly<{ rootNode: GenerationNode; lockNode: GenerationNode; writerNode: GenerationNode }>;
-  /** Same-UID, test-profile startup only. Production requires a controller-owned control directory
-   * and Darwin ACL validation that prevents the service UID from replacing the lock or its ancestors. */
-  serviceRole?: Readonly<{ uid: number; gid: number; rootNode: GenerationNode; writerNode: GenerationNode }>;
+  serviceRole?: Readonly<{ uid: number; gid: number; rootNode: GenerationNode; writerNode: GenerationNode; controllerOwned?: true }>;
   publicKey: string;
   releases: { expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy }[];
   generations: InstalledGeneration[];
@@ -132,8 +131,10 @@ function checkNode(path: string, expected: GenerationNode, directory: boolean, o
 
 function serviceRoleDigest(role: GenerationEnrollment['serviceRole']) {
   if (role === undefined) return undefined;
-  requireValue(role && Object.keys(role).sort().join(' ') === 'gid rootNode uid writerNode' &&
+  const fields = role?.controllerOwned === true ? 'controllerOwned gid rootNode uid writerNode' : 'gid rootNode uid writerNode';
+  requireValue(role && Object.keys(role).sort().join(' ') === fields &&
     [role.uid, role.gid].every(value => Number.isInteger(value) && value >= 0 && value <= 0x7fffffff));
+  if (role.controllerOwned) requireValue(role.uid > 0 && role.gid > 0);
   for (const node of [role.rootNode, role.writerNode]) {
     requireValue(node && Object.keys(node).sort().join(' ') === 'birthtimeNs device inode' &&
       Object.values(node).every(value => typeof value === 'string' && /^\d{1,32}$/.test(value)));
@@ -141,7 +142,29 @@ function serviceRoleDigest(role: GenerationEnrollment['serviceRole']) {
   return digest(role);
 }
 
-export function reserveServiceWriter(enrollment: GenerationEnrollment, purpose: 'selection' | 'foreground' | 'other') {
+function checkControllerWriterPath(root: string, control: string, writer: string) {
+  const paths = [writer, control];
+  for (let parent = dirname(control); ; parent = dirname(parent)) {
+    const info = stat(parent);
+    requireValue(info.isDirectory() && info.uid === 0n && realpathSync.native(parent) === parent &&
+      ((info.mode & 0o022n) === 0n || (parent !== root && !parent.startsWith(root + sep) && (info.mode & 0o1000n) !== 0n)));
+    paths.push(parent);
+    if (parent === sep) break;
+  }
+  requireValue(paths.every(path => Array.from(path).every(character => {
+    const code = character.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  })));
+  const permissions = execFileSync('/bin/ls', ['-ldneq', ...paths], {
+    env: { LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000, maxBuffer: 64 * 1024,
+  }).trimEnd().split('\n');
+  const entries = permissions.filter(line => /^[d-][rwxStTs-]{9}[@+]? +\d+ /.test(line));
+  requireValue(entries.length === paths.length && permissions.every(line => entries.includes(line) ||
+    /^ +\d+: [a-zA-Z0-9:_-]+ (inherited )?deny [a-z_,]+$/.test(line)));
+}
+
+export function reserveServiceWriter(enrollment: Pick<GenerationEnrollment, 'root' | 'rootNode' | 'serviceRole'>,
+  purpose: 'selection' | 'foreground' | 'other') {
   const binding = bindRegistration(() => enrollment);
   const { root, rootNode, serviceRole: role } = binding.value;
   const roleSha256 = serviceRoleDigest(role);
@@ -156,21 +179,30 @@ export function reserveServiceWriter(enrollment: GenerationEnrollment, purpose: 
     guard();
     return { roleSha256, guard, release() {} };
   }
-  if (purpose === 'other') throw new Error('INSTALLED_SERVICE_FOREGROUND_REQUIRED');
-  if (process.geteuid!() !== role.uid) throw new Error('INSTALLED_SERVICE_CROSS_UID_UNSUPPORTED');
-  if (purpose === 'foreground' && process.getegid!() !== role.gid) {
-    throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+  const controllerOwned = role.controllerOwned === true;
+  const uid = controllerOwned ? 0 : role.uid;
+  const gid = controllerOwned ? 0 : role.gid;
+  if (controllerOwned) {
+    if (purpose !== 'selection' || process.platform !== 'darwin' ||
+        process.getuid!() !== 0 || process.geteuid!() !== 0) {
+      throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
+    }
+  } else {
+    if (purpose === 'other') throw new Error('INSTALLED_SERVICE_FOREGROUND_REQUIRED');
+    if (process.geteuid!() !== uid) throw new Error('INSTALLED_SERVICE_CROSS_UID_UNSUPPORTED');
+    if (purpose === 'foreground' && process.getegid!() !== gid) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
   }
   const checkPath = () => {
     binding.validate();
-    checkNode(root, rootNode, true, role.uid);
+    checkNode(root, rootNode, true, uid);
     const parent = stat(runtime);
     requireValue(realpathSync.native(runtime) === runtime && parent.isDirectory() &&
-      parent.uid === BigInt(role.uid) && (parent.mode & 0o022n) === 0n);
-    const dir = checkNode(control, role.rootNode, true, role.uid);
+      parent.uid === BigInt(uid) && (parent.mode & 0o022n) === 0n);
+    const dir = checkNode(control, role.rootNode, true, uid);
     requireValue((dir.mode & 0o7777n) === 0o700n);
-    const writer = checkNode(path, role.writerNode, false, role.uid);
-    requireValue(writer.gid === BigInt(role.gid) && (writer.mode & 0o7777n) === 0o600n);
+    const writer = checkNode(path, role.writerNode, false, uid);
+    requireValue(writer.gid === BigInt(gid) && (writer.mode & 0o7777n) === 0o600n);
+    if (controllerOwned) checkControllerWriterPath(root, control, path);
   };
   let database: DatabaseSync | undefined;
   try {
