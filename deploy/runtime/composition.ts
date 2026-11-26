@@ -8,17 +8,19 @@ import {
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 export {
   runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runInstalledServiceSupervisor,
-  runSelectedServiceSupervisor, runSupervisedHubRole, serveInstalledHubRole,
+  runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, serveInstalledHubRole,
   startSelectedHubRole, startSelectedRuntimeRole,
 } from './role-launch.js';
 import type { SelectedRuntimePaths } from './role-launch.js';
+import { admitSupervisedServiceSelection, type SupervisedServiceRegistration } from './service-handoff.js';
+export type { ServiceHandoffAuthority, SupervisedServiceRegistration } from './service-handoff.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPatrickCli, type CliResult } from '../cli/patrick.mjs';
 import { bindRegistration, sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doctor.mjs';
 import { createObsidianDoctor } from '../obsidian/doctor.mjs';
@@ -956,11 +958,28 @@ export function createRuntimeProvisioning(input: RuntimeProvisioningInput): Runt
 
 export function createSelectedRuntimeProvisioning(input: RuntimeProvisioningInput, paths: SelectedRuntimePaths): RuntimeProvisioning {
   const registration = bindRegistration(() => input.registration).value;
-  const service = { ...input.service };
-  const { operationalRecoveryHub } = input;
   if (registration.profile !== 'test' || input.maintenance) {
     throw new Error('INSTALLED_ROLE_CONTROLLER_REQUIRED');
   }
+  return provisionSelectedRuntime(input, registration, paths);
+}
+
+export function createControllerSelectedServiceProvisioning(input: RuntimeProvisioningInput, host: SupervisedServiceRegistration,
+  challenge: string, signedSelection: unknown): RuntimeProvisioning {
+  const { paths, releaseRoot } = admitSupervisedServiceSelection(host, challenge, signedSelection);
+  const registration = bindRegistration(() => input.registration).value;
+  if (realpathSync.native(dirname(fileURLToPath(import.meta.url))) !== join(releaseRoot, 'runtime') ||
+      registration.profile === 'test' || registration.serviceUid !== host.uid ||
+      registration.captureHost !== host.captureHost || input.maintenance || input.worker) {
+    throw new Error('INSTALLED_ROLE_CONTROLLER_REQUIRED');
+  }
+  return provisionSelectedRuntime(input, registration, paths);
+}
+
+function provisionSelectedRuntime(input: RuntimeProvisioningInput, registration: RuntimeRegistration,
+  paths: SelectedRuntimePaths): RuntimeProvisioning {
+  const service = { ...input.service };
+  const { operationalRecoveryHub } = input;
   if (!sameIdentity(registration.identity, paths.identity) || registration.dataRoot !== paths.dataRoot ||
       service.databasePath !== paths.databasePath || service.credentialDirectory !== paths.credentialDirectory ||
       (operationalRecoveryHub && operationalRecoveryHub.physicalPath !== paths.operationalHubPath)) {

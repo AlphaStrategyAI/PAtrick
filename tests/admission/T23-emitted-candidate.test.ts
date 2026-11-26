@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
+import { applyHostRegistry, planHostRegistry } from '../../deploy/host/registry.js';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
 import { createInstalledRootOwner, leased, publishStagedDeployment, readEmittedWriteOutcome, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate, withPublishedDeployment, withStagedDeployment, withStagedEmittedRuntime } from '../../deploy/lib/emitted-release.mjs';
 import { autoloopHub, checkDirectoryAuthority, checkDirectoryDefinition, directoryCommands, deploymentPaths, deploymentRole, directoryIdentity, releaseProfile, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
@@ -717,6 +718,60 @@ async function prepareOwnerLock(root: string, pin: (path: string) => Promise<Gen
   return pin(lockPath);
 }
 
+async function startSystemService(input: {
+  root: string;
+  hubOwner: { uid: number; gid: number };
+  serviceOwner: { uid: number; gid: number };
+  serviceEntry: string;
+  supervisorEntry(endpoint: string, program: { path: string; sha256: string }): string;
+}) {
+  const registry = join(input.root, 'registry');
+  const controllerPath = join(input.root, 'controller');
+  const endpoint = join(registry, 'service', 'supervisor.sock');
+  const header = join(input.root, 'controller-test.h');
+  await writeFile(header, ['#define PATRICK_NATIVE_REGISTRY_TEST 1',
+    `constexpr char registry_root[] = ${JSON.stringify(registry)};`,
+    'constexpr auto registry_owner = 0U;'].join('\n'), { mode: 0o600, flag: 'wx' });
+  child(['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', '-include', header,
+    join(root, 'deploy/host-controller/main.cc'), '-o', controllerPath], input.root, '/usr/bin/xcrun');
+  await chmod(controllerPath, 0o555);
+  const program = { path: controllerPath, sha256: sha256(await readFile(controllerPath)) };
+  const plan = planHostRegistry({
+    registryRoot: registry,
+    node: { path: process.execPath, sha256: sha256(await readFile(process.execPath)) },
+    roles: {
+      service: { ...input.serviceOwner, entry: input.serviceEntry },
+      hub: { ...input.hubOwner, entry: 'process.exit(76);' },
+      worker: { uid: 60001, gid: input.hubOwner.gid, entry: 'process.exit(76);' },
+    },
+    supervisor: { entry: 'process.exit(76);' },
+    serviceSupervisor: { entry: input.supervisorEntry(endpoint, program) },
+  });
+  await applyHostRegistry(plan);
+  const label = `com.patrick.admission.service-runtime.${randomBytes(8).toString('hex')}`;
+  const job = 'system/' + label;
+  const plist = join(input.root, 'supervisor.plist');
+  const errors = join(input.root, 'supervisor.stderr');
+  await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>${controllerPath}</string><string>run-supervisor</string><string>service</string></array>
+<key>StandardErrorPath</key><string>${errors}</string>
+<key>Sockets</key><dict><key>ServiceControl</key><dict>
+<key>SockPathName</key><string>${endpoint}</string>
+<key>SockPathOwner</key><integer>0</integer>
+<key>SockPathGroup</key><integer>${input.serviceOwner.gid}</integer>
+<key>SockPathMode</key><integer>432</integer>
+</dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
+  const launchctl = (...args: string[]) => child(args, input.root, '/bin/launchctl');
+  launchctl('bootstrap', 'system', plist);
+  return { endpoint, controllerPath,
+    signal() { launchctl('kill', 'SIGTERM', job); },
+    stop() { launchctl('bootout', job); },
+    errors: () => readFile(errors, 'utf8').catch(() => ''),
+  };
+}
+
 async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void,
   hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>,
   serviceOwner?: NonNullable<InstallPreviewEnrollment['serviceOwner']>) {
@@ -979,6 +1034,113 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     const order = store.order('select-service', null, generation.id);
     const envelope = canonicalize({ order, signature: sign(null, bytes(order), key.privateKey).toString('base64') });
     expect(await store.select(envelope)).toMatchObject({ current: { order } });
+
+    const socketProbe = createHttpServer();
+    socketProbe.listen(0, '127.0.0.1');
+    await once(socketProbe, 'listening');
+    const listenerAddress = socketProbe.address();
+    socketProbe.close();
+    await once(socketProbe, 'close');
+    if (!listenerAddress || typeof listenerAddress === 'string') throw new Error('fixture endpoint missing');
+    const origin = enrollment.deployment.origin;
+    const listener = { host: '127.0.0.1', port: listenerAddress.port, origin };
+    const handoffKey = generateKeyPairSync('ed25519');
+    const handoffPublicKey = handoffKey.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const signingKeyPath = join(control, 'selection-signing.pem');
+    await writeFile(signingKeyPath, handoffKey.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600, flag: 'wx' });
+    const compositionPath = pathToFileURL(join(published, 'runtime', 'composition.mjs')).href;
+    const serviceRegistration = {
+      root: selected.root, rootNode: selected.rootNode, installationId: selected.installationId, hostId: selected.hostId,
+      identity, captureHost: enrollment.hostname, ...serviceOwner, publicKey: handoffPublicKey,
+    };
+    const service = await startSystemService({
+      root: instanceRoot, hubOwner, serviceOwner,
+      serviceEntry: `
+        import { runSupervisedServiceRole } from ${JSON.stringify(compositionPath)};
+        const enrolled = ${JSON.stringify(serviceRegistration)};
+        const listener = ${JSON.stringify(listener)};
+        await runSupervisedServiceRole(enrolled, paths => ({
+          registration: {
+            identity: enrolled.identity, captureHost: enrolled.captureHost, serviceUid: enrolled.uid,
+            profile: 'local', dataRoot: paths.dataRoot, minimumFreeBytes: 0,
+            origin: listener.origin, rpId: ${JSON.stringify(enrollment.tls.rpId)}, listener,
+          },
+          service: {
+            databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
+            recoveryRuntime: { attach() {} },
+            bindRecoveryOperations() {
+              return { root: paths.dataRoot, targets: {}, authority: {
+                keyId: 'fixture', async sign() { throw new Error('unexpected recovery signature'); },
+                async verify() { return false; },
+              } };
+            },
+          },
+        }), () => console.log(JSON.stringify({ event: 'ready', uid: process.getuid(), gid: process.getgid() })));
+      `,
+      supervisorEntry(endpoint, program) {
+        return `
+          import { createPrivateKey, sign } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { runSelectedServiceSupervisor } from ${JSON.stringify(compositionPath)};
+          const privateKey = createPrivateKey(readFileSync(${JSON.stringify(signingKeyPath)}));
+          let rejectNext = true;
+          await runSelectedServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)},
+            ${JSON.stringify(selected)}, undefined, { publicKey: ${JSON.stringify(handoffPublicKey)},
+              signSelection(bytes) {
+                if (rejectNext) {
+                  rejectNext = false;
+                  throw new Error('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
+                }
+                return sign(null, bytes, privateKey).toString('base64');
+              } });
+        `;
+      },
+    });
+    try {
+      await vi.waitFor(async () => expect((await lstat(service.endpoint)).isSocket()).toBe(true), { timeout: 5000 });
+      const rejected = spawnSync(service.controllerPath, ['run-role', 'service'], {
+        ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 15_000,
+      });
+      expect([rejected.status, rejected.error, rejected.stdout]).toEqual([1, undefined, '']);
+      expect(await service.errors()).toContain('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
+      await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
+      const role = spawn(service.controllerPath, ['run-role', 'service'], {
+        ...serviceOwner, cwd: instanceRoot, env: {}, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const closed = once(role, 'close');
+      const stdout = createInterface({ input: role.stdout });
+      let roleError = '';
+      role.stderr.setEncoding('utf8').on('data', (chunk: string) => { roleError += chunk; });
+      const serviceUrl = `http://127.0.0.1:${listener.port}`;
+      try {
+        const [report] = await Promise.race([
+          once(stdout, 'line', { signal: AbortSignal.timeout(120_000) }),
+          closed.then(() => { throw new Error('service exited before readiness: ' + roleError); }),
+        ]);
+        expect(JSON.parse(report)).toEqual({ event: 'ready', ...serviceOwner });
+        expect((await fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
+        expect((await fetch(`${serviceUrl}/`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
+        await expect(store.select(envelope)).rejects.toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+        service.signal();
+        await expect(Promise.race([closed, delay(35_000, 'timed out', { ref: false })])).resolves.toEqual([0, null]);
+        await vi.waitFor(async () => {
+          await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+        }, { timeout: 5000 });
+        await expect(fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
+        await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
+      } finally {
+        stdout.close();
+        if (role.exitCode === null && role.signalCode === null) {
+          role.kill('SIGKILL');
+          await closed;
+        }
+      }
+    } catch (error) {
+      throw new Error([String(error), await service.errors()].filter(Boolean).join('\n'), { cause: error });
+    } finally {
+      service.stop();
+    }
   }, darwinInstallTimeoutMs,
 );
 
@@ -2539,6 +2701,9 @@ test('refuses unbound published deployment receipts, locations and material befo
 
   const template = join(installed, deploymentPaths.caddy);
   const original = await readFile(template);
+  child(['+a', 'everyone allow readattr', template], dir, '/bin/chmod');
+  try { await expect(open(scope.releasesRoot)).rejects.toThrow('unexpected runtime ACL'); }
+  finally { child(['-N', template], dir, '/bin/chmod'); }
   await chmod(template, 0o755);
   await expect(open(scope.releasesRoot)).rejects.toThrow();
   await chmod(template, 0o644);

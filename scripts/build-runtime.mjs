@@ -90,6 +90,7 @@ const sourceRoots = Object.freeze([
   'deploy/runtime/lifecycle-journal.ts',
   'deploy/runtime/install-preview.ts',
   'deploy/runtime/role-launch.ts',
+  'deploy/runtime/service-handoff.ts',
   'deploy/runtime/hub-process.ts',
   'deploy/runtime/vault-init.ts',
   'deploy/runtime/vault-init-cli.ts',
@@ -265,7 +266,8 @@ async function captureSource(root, commit, profile) {
   const templatePaths = deployment.completeProfile(profile) ? [...Object.values(deployment.deploymentPaths), preflight.source] : [];
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, hostRegistrySource, 'deploy/lib/deployment-templates.d.mts',
-    'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/hub-process.ts', ...templatePaths];
+    'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
+    'deploy/runtime/hub-process.ts', ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.
   // All other source paths and the emitted inventory retain the portable path allowlist.

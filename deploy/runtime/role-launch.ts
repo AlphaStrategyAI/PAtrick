@@ -9,12 +9,17 @@ import { pathToFileURL } from 'node:url';
 import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
-import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
+import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
 import { startHubProcess, type HubProcess } from './hub-process.js';
 import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, generationServiceData, hubControlRoot,
   hubWriterFencePath, reserveControllerServiceSession, reserveServiceWriter, withConfirmedGeneration,
   type GenerationEnrollment, type InstalledGeneration } from './lifecycle-generation.js';
+import {
+  admitSupervisedServiceSelection, matchesServiceStatus, serviceChallenge, serviceFrame, serviceHandoffError,
+  serviceHandoffKey, serviceIdentityDigest, serviceReady, serviceSelectionBytes, serviceStatus, validateSupervisedServiceAccount,
+  verifyServiceSelection, type ServiceHandoffAuthority, type ServiceSelection, type SupervisedServiceRegistration,
+} from './service-handoff.js';
 
 export type SelectedRuntimePaths = Readonly<{
   role: 'service' | 'worker';
@@ -489,12 +494,86 @@ type SelectedServiceSession = Readonly<{
   signal: AbortSignal;
   assertCurrent(): void;
 }>;
+type ServeSelectedService = (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>;
+const serviceHandshakeMs = 10_000;
+const serviceStopReplyMs = 30_000;
+
+async function serveSelectedService(socket: Socket, admission: SelectedServiceSession, enrollment: GenerationEnrollment,
+  generation: InstalledGeneration, authority: ServiceHandoffAuthority, key: ReturnType<typeof serviceHandoffKey>,
+  arm: () => () => void): Promise<() => void> {
+  const channel = serviceFrame(socket);
+  const expiresAt = performance.now() + serviceHandshakeMs;
+  const deadline = new AbortController();
+  const signal = AbortSignal.any([deadline.signal, admission.signal]);
+  const timer = setTimeout(() => deadline.abort(serviceHandoffError()), serviceHandshakeMs);
+  let rejectHandshake!: (reason: unknown) => void;
+  const aborted = new Promise<never>((_resolve, reject) => { rejectHandshake = reject; });
+  function cancelHandshake() { rejectHandshake(signal.reason); }
+  function checkHandshake() {
+    signal.throwIfAborted();
+    if (performance.now() >= expiresAt) throw serviceHandoffError();
+  }
+  async function signedSelection() {
+    const challenge = serviceChallenge(await channel.read());
+    checkHandshake();
+    const { installationId, hostId, rootNode, serviceRole } = enrollment;
+    const selection: ServiceSelection = {
+      format: 'patrick-service-selection-v1', challenge, session: admission.session, installationId, hostId,
+      rootNode, uid: serviceRole!.uid, gid: serviceRole!.gid, identitySha256: serviceIdentityDigest(enrollment.identity),
+      selectionSha256: admission.paths.selectionSha256, generation,
+    };
+    const signature = await authority.signSelection(serviceSelectionBytes(selection));
+    checkHandshake();
+    return verifyServiceSelection({ version: 1, type: 'selection', selection, signature }, key);
+  }
+  signal.addEventListener('abort', cancelHandshake, { once: true });
+  let signed: Awaited<ReturnType<typeof signedSelection>>;
+  try {
+    checkHandshake();
+    admission.assertCurrent();
+    channel.write(serviceReady);
+    signed = await Promise.race([aborted, signedSelection()]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', cancelHandshake);
+  }
+
+  let stopping = false;
+  function stop() {
+    if (stopping || socket.destroyed) return;
+    stopping = true;
+    socket.end();
+  }
+  checkHandshake();
+  if (socket.destroyed || socket.writableEnded || socket.readableEnded) {
+    throw serviceHandoffError();
+  }
+  admission.signal.addEventListener('abort', stop, { once: true });
+  try {
+    const confirmDrain = arm();
+    channel.write(signed);
+    const { selection } = signed;
+    let response = await channel.read();
+    if (matchesServiceStatus(response, 'stop', selection)) {
+      stop();
+      response = await channel.read();
+    }
+    if (!stopping || !matchesServiceStatus(response, 'drained', selection)) throw serviceHandoffError();
+    await channel.expectEnd();
+    return confirmDrain;
+  } finally {
+    admission.signal.removeEventListener('abort', stop);
+  }
+}
 
 export async function runSelectedServiceSupervisor(program: SupervisorProgram, endpoint: string,
   enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
-  serve: (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>) {
+  handoff: ServiceHandoffAuthority | ServeSelectedService) {
   const binding = bindRegistration(() => enrollment);
   if (binding.value.serviceRole?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
+  const authority = typeof handoff === 'function' ? undefined : bindRegistration(() => handoff);
+  const key = authority && serviceHandoffKey(authority.value.publicKey);
+  if (authority && typeof authority.value.signSelection !== 'function') throw serviceHandoffError();
   await runInstalledServiceSupervisor(program, endpoint, async (socket, shutdown) => {
     const disconnected = new AbortController();
     const signal = AbortSignal.any([shutdown, disconnected.signal]);
@@ -514,20 +593,143 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
         if (current.order.serviceRoleSha256 !== fence.roleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
         if (!current.order.generation.roles.service) throw new Error('INSTALLED_SERVICE_DATA_LAYOUT_REQUIRED');
         return { paths: selectedRuntimePaths(binding.value, 'service', current.order.generation,
-          current.sha256, deployment.packageSha256), deployment };
+          current.sha256, deployment.packageSha256), deployment, generation: current.order.generation };
       }, signal);
       assertCurrent();
       const session = randomBytes(16).toString('hex');
-      const confirmDrain = fence.authorize(selection.paths.selectionSha256, session);
-      if (await serve(socket, Object.freeze({ ...selection, session, signal, assertCurrent })) !== 'drained') {
-        throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
+      const admission = Object.freeze({ paths: selection.paths, deployment: selection.deployment, session, signal, assertCurrent });
+      function arm() {
+        assertCurrent();
+        authority?.validate();
+        return fence.authorize(selection.paths.selectionSha256, session);
       }
+      let confirmDrain: () => void;
+      if (typeof handoff === 'function') {
+        confirmDrain = arm();
+        if (await handoff(socket, admission) !== 'drained') throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
+      } else {
+        authority!.validate();
+        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm);
+      }
+      authority?.validate();
+      binding.validate();
       confirmDrain();
     } finally {
       socket.off('close', stop);
       fence.release();
     }
   });
+}
+
+export async function runSupervisedServiceRole(registration: SupervisedServiceRegistration, provision: RoleProvision,
+  onReady?: (started: Extract<StartedRole, { role: 'service' }>) => void): Promise<void> {
+  const binding = bindRegistration(() => registration);
+  validateSupervisedServiceAccount(binding.value);
+  serviceHandoffKey(binding.value.publicKey);
+  if (process.env.PATRICK_SUPERVISOR_FD !== '3' || !fstatSync(3).isSocket()) throw serviceHandoffError();
+  const fd = openSync('/dev/fd/3', constants.O_RDWR);
+  closeSync(3);
+  const socket = new Socket({ fd, readable: true, writable: true, allowHalfOpen: true });
+  const channel = serviceFrame(socket);
+  const stopping = new AbortController();
+  const requestedStop = new Error('INSTALLED_SERVICE_STOP_REQUESTED');
+  const drainOptions = { timeoutMs: 2_147_483_647 };
+  const deadline = setTimeout(() => socket.destroy(), serviceHandshakeMs);
+  let admitted: ReturnType<typeof admitSupervisedServiceSelection> | undefined;
+  let runtime: Service | undefined;
+  let parentStopped = false;
+  let protocolFailure = false;
+  let startupAttempted = false;
+  let startupFailure: unknown;
+  let parentEnd: Promise<void> | undefined;
+  let stopDeadline: NodeJS.Timeout | undefined;
+  function stop() {
+    if (stopping.signal.aborted) return;
+    stopping.abort(requestedStop);
+    runtime?.stop();
+  }
+  function requestStop() {
+    stop();
+    if (!admitted || socket.destroyed) {
+      socket.destroy();
+      return;
+    }
+    if (parentStopped || stopDeadline) return;
+    try { channel.write(serviceStatus('stop', admitted.signed.selection)); }
+    catch { protocolFailure = true; socket.destroy(); return; }
+    stopDeadline = setTimeout(() => socket.destroy(), serviceStopReplyMs);
+  }
+  process.on('SIGTERM', requestStop);
+  process.on('SIGINT', requestStop);
+  socket.on('error', stop);
+  socket.once('close', stop);
+  try {
+    if (canonicalize(await channel.read()) !== canonicalize(serviceReady)) throw serviceHandoffError();
+    const challenge = randomBytes(32).toString('hex');
+    channel.write({ version: 1, type: 'hello', challenge });
+    const frame = await channel.read();
+    binding.validate();
+    const selection = admitSupervisedServiceSelection(binding.value, challenge, frame);
+    admitted = selection;
+    clearTimeout(deadline);
+    parentEnd = channel.expectEnd().then(() => {
+      clearTimeout(stopDeadline);
+      parentStopped = true;
+      stop();
+    }, () => {
+      protocolFailure = true;
+      socket.destroy();
+      stop();
+    });
+    function assertSelected() {
+      stopping.signal.throwIfAborted();
+      binding.validate();
+      selection.assertCurrent();
+    }
+    try {
+      assertSelected();
+      const runtimeRoot = join(selection.releaseRoot, 'runtime');
+      const composition: typeof import('./composition.js') = await import(pathToFileURL(join(runtimeRoot, 'composition.mjs')).href);
+      assertSelected();
+      if (typeof composition.createControllerSelectedServiceProvisioning !== 'function') throw new Error('INSTALLED_ROLE_ENTRYPOINT_REQUIRED');
+      const input = await provision(selection.paths);
+      assertSelected();
+      const provisioning = composition.createControllerSelectedServiceProvisioning(input, binding.value, challenge, frame);
+      const entry: typeof import('./service.js') = await import(pathToFileURL(join(runtimeRoot, 'service.mjs')).href);
+      assertSelected();
+      startupAttempted = true;
+      runtime = await entry.runInstalledService(provisioning, assertSelected, { manageSignals: false });
+      if (stopping.signal.aborted) runtime.stop();
+      else if (running(runtime.read())) onReady?.({ role: 'service', runtime });
+      while (!stopping.signal.aborted && running(runtime.read())) await delay(250);
+      if (!stopping.signal.aborted) throw new Error('INSTALLED_ROLE_EXITED_UNEXPECTEDLY');
+    } catch (error) {
+      startupFailure = error;
+      if (!stopping.signal.aborted) requestStop();
+    }
+    const cleanupConfirmed = runtime ? closed(await runtime.drain(drainOptions)) :
+      hasCleanup(startupFailure) ? closed(startupFailure.readCleanup()) || closed(await startupFailure.drainCleanup(drainOptions)) :
+      !startupAttempted || startupFailure === requestedStop;
+    if (!cleanupConfirmed) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE', { cause: startupFailure });
+    await parentEnd;
+    if (protocolFailure || !parentStopped || socket.destroyed) throw serviceHandoffError();
+    channel.write(serviceStatus('drained', selection.signed.selection));
+    await new Promise<void>((resolveFinished, reject) => {
+      const error = () => reject(serviceHandoffError());
+      socket.once('close', error);
+      socket.end(() => {
+        socket.off('close', error);
+        resolveFinished();
+      });
+    });
+    if (startupFailure && !wasCanceledStartup(startupFailure, requestedStop)) throw startupFailure;
+  } finally {
+    clearTimeout(deadline);
+    clearTimeout(stopDeadline);
+    process.off('SIGTERM', requestStop);
+    process.off('SIGINT', requestStop);
+    socket.destroy();
+  }
 }
 
 export async function runSupervisedHubRole(onReady?: () => void): Promise<void> {

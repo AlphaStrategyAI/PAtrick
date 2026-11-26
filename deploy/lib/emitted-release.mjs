@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createPublicKey, randomUUID, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, renameSync } from 'node:fs';
 import { chmod, chown, link, mkdir, open, opendir, rmdir, unlink } from 'node:fs/promises';
@@ -344,6 +345,25 @@ function ancestry(path, ownerRoot) {
 }
 function recheck(capture, fingerprint = physical) {
   for (const [path, identity] of capture) check(fingerprint(stat(path)) === identity, 'physical identity changed ' + path);
+}
+function checkRuntimeAcl(paths) {
+  if (process.platform !== 'darwin') return;
+  check(paths.every(path => Array.from(path).every(character => {
+    const code = character.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  })), 'invalid runtime ACL path');
+  for (let offset = 0; offset < paths.length; offset += 64) {
+    const batch = paths.slice(offset, offset + 64);
+    const entries = execFileSync('/bin/ls', ['-ldneq', ...batch], {
+      env: { LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000, maxBuffer: 256 * 1024,
+    }).trimEnd().split('\n');
+    let found = 0;
+    for (const entry of entries) {
+      if (/^[d-][rwxStTs-]{9}[@+]? +\d+ /.test(entry)) found++;
+      else check(/^ +\d+: [a-zA-Z0-9:_-]+ (inherited )?deny [a-z_,]+$/.test(entry), 'unexpected runtime ACL');
+    }
+    check(found === batch.length, 'incomplete runtime ACL readback');
+  }
 }
 export function inside(root, path) {
   check(typeof path === 'string' && resolve(path) === path, 'absolute normalized path required');
@@ -1114,7 +1134,15 @@ async function useVerifiedTree(lease, record, receipt, root, use, stageCapture, 
     const capture = await verifiedTreeCapture(lease, record, receipt, root, expected);
     lease.guard();
     // On case-insensitive volumes the digest slot must still use its enrolled spelling.
-    if (!stageCapture) check(realpathSync.native(root) === root, 'noncanonical published release path');
+    if (!stageCapture) {
+      check(realpathSync.native(root) === root, 'noncanonical published release path');
+      const parents = [...capture.boundary.keys()].filter(path =>
+        path !== root && (path === lease.root || path.startsWith(lease.root + sep)));
+      checkRuntimeAcl([...parents, ...capture.nodes.keys()]);
+      lease.guard();
+      recheck(capture.boundary);
+      recheck(capture.nodes, stable);
+    }
     if (directoryAccess) checkRuntimeDirectoryAccess(lease, root, capture.nodes, directoryAccess);
     return capture;
   };
