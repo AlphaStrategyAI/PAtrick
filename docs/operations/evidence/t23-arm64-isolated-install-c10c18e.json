@@ -1,0 +1,52 @@
+{
+  "format": "patrick-t23-isolated-install-v1",
+  "date": "2026-11-26",
+  "source": {
+    "commit": "c10c18ec76b1c3a7c938d5e915b2a697f15f1d20",
+    "build": "local",
+    "profile": "deployment-complete"
+  },
+  "host": {
+    "model": "MacBook Pro",
+    "chip": "Apple M1",
+    "os": "macOS 27.2.1",
+    "build": "26B131",
+    "architecture": "arm64"
+  },
+  "release": {
+    "signatureAlgorithm": "Ed25519",
+    "signerScope": "isolated-acceptance",
+    "keyId": "t23-local-48ce60f091b6d612",
+    "publicKeySha256": "48ce60f091b6d612c3c93e76b70783f25dd3bdefb9cfaf9bf71f675ec516aba0",
+    "packageSha256": "93f3fc751f96dcee6dff66cc34e6305aef82b96155a0b5f16b22cf12180d84de",
+    "controllerSha256": "5fe805d1293845c9236288c46d9b8d36feda671c6f526196dd22e4eaa1b00dd1",
+    "inventorySha256": "2ac0c6792c510dfc067b095cdf4a4963ab259efdc1cb133cd72f29c12ebb4509",
+    "verifiedInstalledMaterials": 481,
+    "scenarios": [
+      "relocated-node-import",
+      "service-cli-drain",
+      "sqlite-migrate-reopen",
+      "worker-role-readback"
+    ],
+    "rejectedInputs": [
+      "wrong-signer",
+      "wrong-package-sha256",
+      "wrong-architecture"
+    ]
+  },
+  "installation": {
+    "scope": "isolated-current-user",
+    "planSha256": "f7b90ce2e6c3e7c9660abb6be9550f0c26e7b363c77234cc79c0c61a8d120d0a",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED",
+    "databaseIntegrity": {
+      "service.sqlite": "ok",
+      "answers.sqlite": "ok",
+      "hub/hub.db": "ok"
+    },
+    "currentSelected": false,
+    "localReceiptSha256": "f101046ebeff3ed7ea3d06434bf061c251b76ca1b0da1c11ca0b333f8de4fbc0"
+  }
+}
