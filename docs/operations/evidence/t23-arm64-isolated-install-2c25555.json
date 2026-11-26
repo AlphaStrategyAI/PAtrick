@@ -55,5 +55,36 @@
     },
     "currentSelected": false,
     "localReceiptSha256": "0bbfd25ee48b7dbee551c62a5a8567d4782e317526cf6904ab3e54ee5695b089"
+  },
+  "hostedCandidate": {
+    "build": "45791673004",
+    "arm64ArchiveSha256": "cb05f9884bf8977dc3562af626bb96ffcb826bf12c684f24109462502ea47220",
+    "matchingLocalBuilds": 2,
+    "nativeSha256": "cd436871f37c9db23609f1c52d1ac134d4b0243834139b97e7d7f5d10097ab0d",
+    "keyId": "t23-local-c333fb5d8b76dcf8",
+    "publicKeySha256": "c333fb5d8b76dcf8efa158b9feff33bf3bad4f40b939bab5035114b87e6af9dd",
+    "packageSha256": "6cbc6385159b653e787cdcd0a765cfb63a5c624568ddb1467beac72e991bea2f",
+    "manifestSha256": "f14b29fbbe93e26f55ac0f1df5f931414a8510d6f80761a9364ef409942b97c4",
+    "materialSha256": "827175131477aade1b76110321d743a3716b0f0cd736ae4f9f7dd9535b76a342",
+    "controllerSha256": "3ba969e349e91614501695fcf82e7e0f663cb0cbee9ba2a7339756e36278c854",
+    "inventorySha256": "a2403a045034a37100fe2cffdf5add41fd16ce7167a71ca6e4f264fa432db006",
+    "executionReportSha256": "4bbeaaac7346b9e10e618a5c4ce9d2be2011fd82c752c3c7ad724509aef685aa",
+    "trustedPinsSha256": "e0362c479105349ebdc296dcde3601745e04ce76f10b90708e4de7563fd6c22b",
+    "scope": "isolated-current-user",
+    "planSha256": "212c0a5abc47e4ee4d73ff2c17c64ff97bbf0e2ecd58a6d76de3cac1e6426935",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED",
+    "generationReadback": "INSTALL_GENERATION_PREPARED",
+    "verifiedInstalledMaterials": 489,
+    "serviceMigrationsMatched": 24,
+    "databaseIntegrity": {
+      "service.sqlite": "ok",
+      "answers.sqlite": "ok",
+      "hub/hub.db": "ok"
+    },
+    "currentSelected": false,
+    "localReceiptSha256": "541fb6936af2015c794f4aafb4c1a4601ed41c4d3f7debb8aaf7ec0c84b09ee2"
   }
 }
