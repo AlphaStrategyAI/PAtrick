@@ -11,7 +11,7 @@ import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
 import { startHubProcess, type HubProcess } from './hub-process.js';
 import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, hubControlRoot,
-  hubWriterFencePath, withConfirmedGeneration,
+  hubWriterFencePath, reserveServiceWriter, withConfirmedGeneration,
   type GenerationEnrollment } from './lifecycle-generation.js';
 
 export type SelectedRuntimePaths = Readonly<{
@@ -32,7 +32,14 @@ type Service = Awaited<ReturnType<typeof import('./service.js').runInstalledServ
 type Worker = Awaited<ReturnType<typeof import('./worker.js').runInstalledWorker>>;
 type StartedRole = { role: 'service'; runtime: Service } | { role: 'worker'; runtime: Worker };
 type RoleProvision = (paths: SelectedRuntimePaths) => RuntimeProvisioningInput | Promise<RuntimeProvisioningInput>;
-type RoleLifecycle = { signal: AbortSignal; onStarted(role: StartedRole): void };
+type RoleLifecycle = {
+  signal: AbortSignal;
+  onStarting(): void;
+  onStarted(role: StartedRole): void;
+  onClosed(): void;
+};
+type ServiceFence = ReturnType<typeof reserveServiceWriter>;
+const undrainedServiceFences = new Set<ServiceFence>();
 type CleanupResult = ReturnType<Service['read']> | ReturnType<Worker['read']>;
 type StartupCleanup = {
   readCleanup(): CleanupResult;
@@ -397,7 +404,8 @@ export async function startSelectedRuntimeRole(
   role: SelectedRuntimePaths['role'],
   provision: RoleProvision,
 ): Promise<StartedRole> {
-  return launchSelectedRuntimeRole(enrollment, owner, role, provision);
+  const fence = reserveServiceWriter(enrollment, 'other');
+  return launchSelectedRuntimeRole(enrollment, owner, role, provision, fence);
 }
 
 async function launchSelectedRuntimeRole(
@@ -405,6 +413,7 @@ async function launchSelectedRuntimeRole(
   owner: ExclusiveRuntimeStaging | undefined,
   role: SelectedRuntimePaths['role'],
   provision: RoleProvision,
+  fence: ServiceFence,
   lifecycle?: RoleLifecycle,
 ): Promise<StartedRole> {
   if (role !== 'service' && role !== 'worker') throw new Error('INSTALLED_ROLE_INVALID');
@@ -421,7 +430,9 @@ async function launchSelectedRuntimeRole(
   try {
     lifecycle?.signal.throwIfAborted();
     return await withConfirmedGeneration(enrollment, owner, async (selected, deployment, guard) => {
+      if (selected.order.serviceRoleSha256 !== fence.roleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
       function assertSelected() {
+        fence.guard();
         guard();
         lifecycle?.signal.throwIfAborted();
       }
@@ -444,6 +455,7 @@ async function launchSelectedRuntimeRole(
       if (role === 'service') {
         const entry: typeof import('./service.js') = await import(pathToFileURL(deployment.entrypoints.service).href);
         assertSelected();
+        lifecycle?.onStarting();
         started = { role, runtime: await entry.runInstalledService(provisioning, assertSelected, options).catch(captureStartupFailure) };
       } else {
         const entry: typeof import('./worker.js') = await import(pathToFileURL(deployment.entrypoints.worker).href);
@@ -451,13 +463,17 @@ async function launchSelectedRuntimeRole(
         started = { role, runtime: await entry.runInstalledWorker(provisioning, assertSelected, options).catch(captureStartupFailure) };
       }
       lifecycle?.onStarted(started);
+      assertSelected();
       return started;
     });
   } catch (error) {
-    if (hasCleanup(startupFailure) && !closed(startupFailure.readCleanup())) {
-      const failures = error === startupFailure ? [error] : [error, startupFailure];
-      throw Object.assign(new AggregateError(failures, 'INSTALLED_ROLE_CLEANUP_UNCONFIRMED', { cause: startupFailure }),
-        { role, readCleanup: startupFailure.readCleanup, drainCleanup: startupFailure.drainCleanup });
+    if (hasCleanup(startupFailure)) {
+      if (closed(startupFailure.readCleanup())) lifecycle?.onClosed();
+      else {
+        const failures = error === startupFailure ? [error] : [error, startupFailure];
+        throw Object.assign(new AggregateError(failures, 'INSTALLED_ROLE_CLEANUP_UNCONFIRMED', { cause: startupFailure }),
+          { role, readCleanup: startupFailure.readCleanup, drainCleanup: startupFailure.drainCleanup });
+      }
     }
     if (started) {
       const { runtime } = started;
@@ -465,6 +481,7 @@ async function launchSelectedRuntimeRole(
       try {
         runtime.stop();
         if (!closed(await drainCleanup())) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE', { cause: error });
+        lifecycle?.onClosed();
       } catch (cleanup) {
         throw Object.assign(new AggregateError([error, cleanup], 'INSTALLED_ROLE_CLEANUP_UNCONFIRMED', { cause: cleanup }),
           { role, readCleanup: runtime.read, drainCleanup });
@@ -490,35 +507,52 @@ export async function runInstalledRuntimeRole(
     runtimeStop?.();
   }
   const drainOptions = { timeoutMs: 2_147_483_647 };
+  let fence: ServiceFence | undefined;
+  let cleanupConfirmed = true;
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   try {
+    fence = reserveServiceWriter(enrollment, role === 'service' ? 'foreground' : 'other');
     let started: StartedRole;
     try {
-      started = await launchSelectedRuntimeRole(enrollment, owner, role, provision, {
+      started = await launchSelectedRuntimeRole(enrollment, owner, role, provision, fence, {
         signal: stopping.signal,
+        onStarting() { cleanupConfirmed = false; },
         onStarted({ runtime }) {
           runtimeStop = runtime.stop;
           if (stopping.signal.aborted) runtimeStop();
         },
+        onClosed() { cleanupConfirmed = true; },
       });
     } catch (error) {
-      if (hasCleanup(error) && !closed(error.readCleanup()) && !closed(await error.drainCleanup(drainOptions))) throw error;
+      if (hasCleanup(error)) {
+        cleanupConfirmed = false;
+        cleanupConfirmed = closed(error.readCleanup()) || closed(await error.drainCleanup(drainOptions));
+        if (!cleanupConfirmed) throw error;
+      }
       if (wasCanceledStartup(error, requestedStop)) return;
       throw error;
     }
     const { runtime } = started;
-    let result: CleanupResult;
+    cleanupConfirmed = false;
     try {
+      fence.guard();
       if (!stopping.signal.aborted && running(runtime.read())) onReady?.(started);
-      while (!stopping.signal.aborted && running(runtime.read())) await delay(250);
+      while (!stopping.signal.aborted && running(runtime.read())) {
+        fence.guard();
+        await delay(250);
+      }
       if (!stopping.signal.aborted) throw new Error('INSTALLED_ROLE_EXITED_UNEXPECTEDLY');
     } finally {
-      result = await runtime.drain(drainOptions);
+      cleanupConfirmed = closed(await runtime.drain(drainOptions));
     }
-    if (!closed(result)) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE');
+    if (!cleanupConfirmed) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE');
   } finally {
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
+    if (fence?.roleSha256 !== undefined) {
+      if (cleanupConfirmed) fence.release();
+      else undrainedServiceFences.add(fence);
+    }
   }
 }

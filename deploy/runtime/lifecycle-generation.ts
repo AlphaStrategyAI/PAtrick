@@ -39,13 +39,16 @@ export type GenerationEnrollment = {
   ownerLockNode?: GenerationNode;
   hubOwner?: Readonly<{ uid: number; gid: number }>;
   hubRole?: Readonly<{ rootNode: GenerationNode; lockNode: GenerationNode; writerNode: GenerationNode }>;
+  /** Same-UID, test-profile startup only. Production requires a controller-owned control directory
+   * and Darwin ACL validation that prevents the service UID from replacing the lock or its ancestors. */
+  serviceRole?: Readonly<{ uid: number; gid: number; rootNode: GenerationNode; writerNode: GenerationNode }>;
   publicKey: string;
   releases: { expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy }[];
   generations: InstalledGeneration[];
 };
 export type GenerationOrder = {
   format: typeof format; installationSha256: string; operationId: string;
-  previous: string | null; generation: InstalledGeneration; hubRoleSha256?: string;
+  previous: string | null; generation: InstalledGeneration; hubRoleSha256?: string; serviceRoleSha256?: string;
 };
 export type SignedGenerationOrder = { order: GenerationOrder; signature: string };
 export type GenerationRecordSigner = { signRecord(bytes: Uint8Array): Promise<string> };
@@ -126,6 +129,71 @@ function checkNode(path: string, expected: GenerationNode, directory: boolean, o
     canonicalize(pin(info)) === canonicalize(expected));
   return info;
 }
+
+function serviceRoleDigest(role: GenerationEnrollment['serviceRole']) {
+  if (role === undefined) return undefined;
+  requireValue(role && Object.keys(role).sort().join(' ') === 'gid rootNode uid writerNode' &&
+    [role.uid, role.gid].every(value => Number.isInteger(value) && value >= 0 && value <= 0x7fffffff));
+  for (const node of [role.rootNode, role.writerNode]) {
+    requireValue(node && Object.keys(node).sort().join(' ') === 'birthtimeNs device inode' &&
+      Object.values(node).every(value => typeof value === 'string' && /^\d{1,32}$/.test(value)));
+  }
+  return digest(role);
+}
+
+export function reserveServiceWriter(enrollment: GenerationEnrollment, purpose: 'selection' | 'foreground' | 'other') {
+  const binding = bindRegistration(() => enrollment);
+  const { root, rootNode, serviceRole: role } = binding.value;
+  const roleSha256 = serviceRoleDigest(role);
+  const runtime = join(root, 'runtime');
+  const control = join(runtime, 'service-control');
+  const path = join(control, 'writer.sqlite');
+  if (!role) {
+    const guard = () => {
+      binding.validate();
+      if (lstatSync(control, { throwIfNoEntry: false })) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+    };
+    guard();
+    return { roleSha256, guard, release() {} };
+  }
+  if (purpose === 'other') throw new Error('INSTALLED_SERVICE_FOREGROUND_REQUIRED');
+  if (process.geteuid!() !== role.uid) throw new Error('INSTALLED_SERVICE_CROSS_UID_UNSUPPORTED');
+  if (purpose === 'foreground' && process.getegid!() !== role.gid) {
+    throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+  }
+  const checkPath = () => {
+    binding.validate();
+    checkNode(root, rootNode, true, role.uid);
+    const parent = stat(runtime);
+    requireValue(realpathSync.native(runtime) === runtime && parent.isDirectory() &&
+      parent.uid === BigInt(role.uid) && (parent.mode & 0o022n) === 0n);
+    const dir = checkNode(control, role.rootNode, true, role.uid);
+    requireValue((dir.mode & 0o7777n) === 0o700n);
+    const writer = checkNode(path, role.writerNode, false, role.uid);
+    requireValue(writer.gid === BigInt(role.gid) && (writer.mode & 0o7777n) === 0o600n);
+  };
+  let database: DatabaseSync | undefined;
+  try {
+    checkPath();
+    database = new DatabaseSync(path, { timeout: 0 });
+    checkPath();
+    database.exec('BEGIN IMMEDIATE');
+    requireValue(database.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
+      database.prepare('PRAGMA user_version').get()?.user_version === 1);
+    checkPath();
+  } catch (error) {
+    database?.close();
+    const code = (error as { errcode?: number }).errcode;
+    throw new Error(code !== undefined && [5, 6].includes(code & 0xff) ?
+      'INSTALLED_SERVICE_WRITER_BUSY' : 'INSTALLED_SERVICE_WRITER_FENCE_INVALID', { cause: error });
+  }
+  const fence = database;
+  return { roleSha256, guard() {
+    try { checkPath(); requireValue(fence.isTransaction); }
+    catch (error) { throw new Error('INSTALLED_SERVICE_WRITER_FENCE_INVALID', { cause: error }); }
+  }, release() { fence.close(); } };
+}
+
 function syncDirectory(path: string, expected: GenerationNode) {
   const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
@@ -171,6 +239,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   }
   const hubRoleOwner = e.hubRole && createInstalledHubRoleOwner(e.root, e.hubRole);
   const hubRoleSha256 = generationHubRoleDigest(e);
+  const serviceRoleSha256 = serviceRoleDigest(e.serviceRole);
   const identity = projectIdentity(e.identity);
   requireValue(canonicalize(identity) === canonicalize(e.identity) && e.target.os === 'darwin' && ['arm64', 'x64'].includes(e.target.arch));
   const installationSha256 = digest({ format, installationId: e.installationId, hostId: e.hostId, identity,
@@ -197,18 +266,21 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }
   }
 
-  function buildOrder(operationId: string, previous: string | null, generationId: string, roleSha256: string | undefined): GenerationOrder {
+  function buildOrder(operationId: string, previous: string | null, generationId: string,
+    hubDigest: string | undefined, serviceDigest: string | undefined): GenerationOrder {
     enrolled();
     token(operationId);
     if (previous !== null) hash(previous);
     const generation = generations.get(generationId);
     requireValue(generation);
-    if (roleSha256 !== undefined) hash(roleSha256);
+    if (hubDigest !== undefined) hash(hubDigest);
+    if (serviceDigest !== undefined) hash(serviceDigest);
     return { format, installationSha256, operationId, previous, generation: structuredClone(generation),
-      ...(roleSha256 === undefined ? {} : { hubRoleSha256: roleSha256 }) };
+      ...(hubDigest === undefined ? {} : { hubRoleSha256: hubDigest }),
+      ...(serviceDigest === undefined ? {} : { serviceRoleSha256: serviceDigest }) };
   }
   function order(operationId: string, previous: string | null, generationId: string) {
-    return buildOrder(operationId, previous, generationId, hubRoleSha256);
+    return buildOrder(operationId, previous, generationId, hubRoleSha256, serviceRoleSha256);
   }
   function signatureValid(payload: Buffer, signature: string) {
     return typeof signature === 'string' && /^[A-Za-z0-9+/]{86}==$/.test(signature) &&
@@ -216,7 +288,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   }
   function authenticate(signed: SignedGenerationOrder): Entry {
     const { operationId, previous, generation } = signed.order;
-    const exact = buildOrder(operationId, previous, generation.id, signed.order.hubRoleSha256);
+    const exact = buildOrder(operationId, previous, generation.id, signed.order.hubRoleSha256, signed.order.serviceRoleSha256);
     const payload = bytes(exact);
     requireValue(canonicalize(signed.order) === payload.toString() && signatureValid(payload, signed.signature) &&
       canonicalize(signed) === canonicalize({ order: exact, signature: signed.signature }) && bytes(signed).length <= recordLimit);
@@ -464,6 +536,12 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         const currentRoleSha256 = state.current?.order.hubRoleSha256;
         if ((currentRoleSha256 !== undefined && currentRoleSha256 !== hubRoleSha256) ||
             next.order.hubRoleSha256 !== hubRoleSha256) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
+        const currentServiceRoleSha256 = state.current?.order.serviceRoleSha256;
+        if (state.current && currentServiceRoleSha256 === undefined && serviceRoleSha256 !== undefined) {
+          throw new Error('INSTALLED_SERVICE_FENCE_REQUIRES_FRESH_INSTALL');
+        }
+        if ((currentServiceRoleSha256 !== undefined && currentServiceRoleSha256 !== serviceRoleSha256) ||
+            next.order.serviceRoleSha256 !== serviceRoleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
         requireValue(selectionHistory().filter(name => name.endsWith('.json')).length < maxRecords);
         if (state.current) { await withGeneration(lease, state.current.order.generation, async () => {}); checkSelection(lease); }
         return withGeneration(lease, next.order.generation, async () => {
@@ -526,10 +604,11 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       throw error;
     }
   }
-  async function select(envelope: string) {
+  async function selectWithHubFence(envelope: string, checkService: () => void) {
     if (!hubRoleOwner) {
       if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
       return selectReserved(envelope, () => {
+        checkService();
         if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
       });
     }
@@ -555,9 +634,15 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         }
         requireValue(fence.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
           fence.prepare('PRAGMA user_version').get()?.user_version === 1);
-        return await selectReserved(envelope, () => { checkWriter(); requireValue(fence.isTransaction); });
+        return await selectReserved(envelope, () => { checkService(); checkWriter(); requireValue(fence.isTransaction); });
       } finally { fence.close(); }
     }, true, enrolled);
+  }
+  async function select(envelope: string) {
+    enrolled();
+    const service = reserveServiceWriter(e, 'selection');
+    try { return await selectWithHubFence(envelope, service.guard); }
+    finally { service.release(); }
   }
   return Object.freeze({ order, observe, select, useConfirmed });
 }

@@ -21,7 +21,7 @@ import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedRe
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createFirstInstallCli, createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning, prepareFirstInstallGeneration, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
+import { createRuntimeProvisioning, prepareFirstInstallGeneration, runInstalledRuntimeRole, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 import { startHubProcess, type HubProcess } from '../../deploy/runtime/hub-process.js';
@@ -1821,8 +1821,8 @@ test('starts installed roles from the confirmed generation and fails closed when
     await mkdir(path, { mode: 0o700 });
   }
   await cp(archive, join(packages, expected.packageSha256 + '.json'));
-  async function createGeneration(id: string): Promise<InstalledGeneration> {
-    const generationRoot = join(data, id);
+  async function createGeneration(id: string, parent = data, release = installed): Promise<InstalledGeneration> {
+    const generationRoot = join(parent, id);
     const files = ['service.sqlite', 'hub/hub.db', 'answers.sqlite'];
     const directories = ['credentials', 'blobs', 'projections', 'hub'];
     await mkdir(generationRoot, { mode: 0o700 });
@@ -1830,7 +1830,7 @@ test('starts installed roles from the confirmed generation and fails closed when
     for (const name of files) await writeFile(join(generationRoot, name), '', { mode: 0o600 });
     return {
       id, schema: expected.activeSchema, packageSha256: expected.packageSha256,
-      releaseRoot: await pin(installed), dataRoot: await pin(generationRoot),
+      releaseRoot: await pin(release), dataRoot: await pin(generationRoot),
       roles: Object.fromEntries(await Promise.all([...files, ...directories]
         .map(async name => [name, await pin(join(generationRoot, name))]))) as InstalledGeneration['roles'],
     };
@@ -1924,15 +1924,16 @@ test('starts installed roles from the confirmed generation and fails closed when
     import { createServer } from 'node:http';
     import { setTimeout as delay } from 'node:timers/promises';
     import { pathToFileURL } from 'node:url';
-    const { runInstalledRuntimeRole } = await import(pathToFileURL(${JSON.stringify(join(installed, 'runtime', 'composition.mjs'))}).href);
-    const enrollment = ${JSON.stringify(pinnedEnrollment)};
+    const [role, mode, fresh] = process.argv.slice(2);
+    const fixture = fresh ? JSON.parse(fresh) : undefined;
+    const { runInstalledRuntimeRole } = await import(pathToFileURL(fixture?.entry ?? ${JSON.stringify(join(installed, 'runtime', 'composition.mjs'))}).href);
+    const enrollment = fixture?.enrollment ?? ${JSON.stringify(pinnedEnrollment)};
     const registration = ${JSON.stringify(provisioning.registration)};
-    const [role, mode] = process.argv.slice(2);
     const databases = [];
     const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
     let hub;
     try {
-      let owner;
+      let owner = fixture ? { async withExclusiveReadRoot(use) { return use(enrollment.root); } } : undefined;
       if (mode === 'before-ack') {
         delete enrollment.ownerLockNode;
         owner = { async withExclusiveReadRoot(use) {
@@ -1966,12 +1967,12 @@ test('starts installed roles from the confirmed generation and fails closed when
           } finally { clearTimeout(timeout); }
         }
         return {
-          registration,
+          registration: { ...registration, dataRoot: paths.dataRoot },
           worker,
           service: {
             databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
             recoveryRuntime: { attach({ database }) { databases.push(database); } },
-            bindRecoveryOperations() { return { root: ${JSON.stringify(recoveryRoot)}, authority: {
+            bindRecoveryOperations() { return { root: paths.dataRoot + '/recovery', authority: {
               keyId: 'fixture', async sign() { throw Error('unused'); }, async verify() { return false; },
             }, targets: {} }; },
           },
@@ -1985,8 +1986,11 @@ test('starts installed roles from the confirmed generation and fails closed when
       hub?.close();
     }
   `);
-  async function checkForeground(role: 'service' | 'worker', mode: 'before-open' | 'before-ack' | 'running') {
-    const foreground = spawn(process.execPath, [foregroundEntry, role, mode], { stdio: ['ignore', 'pipe', 'ignore'] });
+  async function checkForeground(role: 'service' | 'worker', mode: 'before-open' | 'before-ack' | 'running',
+    fenced?: { fixture: { entry: string; enrollment: GenerationEnrollment }; whileRunning(): Promise<void> }) {
+    const args = [foregroundEntry, role, mode];
+    if (fenced) args.push(JSON.stringify(fenced.fixture));
+    const foreground = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     const lines = createInterface({ input: foreground.stdout });
     const completed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve =>
       foreground.once('close', (code, signal) => resolve({ code, signal })));
@@ -2003,6 +2007,7 @@ test('starts installed roles from the confirmed generation and fails closed when
       if (mode === 'running') expect(report.role).toBe(role);
       if (mode === 'before-ack') expect(report.databaseOpen).toBe(true);
       if (report.url) expect((await fetch(report.url)).status).toBe(200);
+      await fenced?.whileRunning();
       expect(foreground.kill(mode === 'before-open' ? 'SIGINT' : 'SIGTERM')).toBe(true);
       await expect(Promise.race([completed, delay(10000).then(() => 'timed out')])).resolves.toEqual({ code: 0, signal: null });
       expect(reports.slice(1)).toEqual([{ phase: 'stopped', databases: mode === 'before-open' ? [] : [false] }]);
@@ -2016,6 +2021,108 @@ test('starts installed roles from the confirmed generation and fails closed when
   await checkForeground('service', 'before-open');
   await checkForeground('service', 'running');
   await checkForeground('worker', 'running');
+  async function enrollServiceWriter(root: string) {
+    const control = join(root, 'runtime', 'service-control');
+    const path = join(control, 'writer.sqlite');
+    const gid = process.getegid!();
+    await mkdir(control, { recursive: true, mode: 0o700 });
+    await writeFile(path, '', { mode: 0o600, flag: 'wx' });
+    await chown(path, uid, gid);
+    const fence = new DatabaseSync(path);
+    try { fence.exec('PRAGMA user_version = 1'); } finally { fence.close(); }
+    const role = { uid, gid, rootNode: await pin(control), writerNode: await pin(path) };
+    return { control, path, role };
+  }
+  const authorize = (order: ReturnType<typeof installedStore.order>) =>
+    canonicalize({ order, signature: sign(null, bytes(order), signer.privateKey).toString('base64') });
+  const legacyFence = await enrollServiceWriter(instance);
+  const upgradeStore = createGenerationStore({ ...pinnedEnrollment, serviceRole: legacyFence.role }, undefined, signing);
+  const legacy = await upgradeStore.observe();
+  expect(legacy.current?.order).toEqual(order);
+  const upgrade = upgradeStore.order('fenced-upgrade', legacy.current!.sha256, successor.id);
+  const legacyHistory = await readdir(history);
+  await expect(upgradeStore.select(authorize(upgrade))).rejects.toThrow('INSTALLED_SERVICE_FENCE_REQUIRES_FRESH_INSTALL');
+  expect(await readdir(history)).toEqual(legacyHistory);
+  expect((await upgradeStore.observe()).current?.sha256).toBe(legacy.current!.sha256);
+  await rename(legacyFence.control, legacyFence.control + '.retained');
+
+  const fresh = await promotionHost('fresh-fenced-role');
+  await publishStagedDeployment(fresh.checked, fresh.stage);
+  authorizedRuntimePrefix = pathToFileURL(fresh.installed).href + '/';
+  const freshRoot = dirname(fresh.archive);
+  const freshPackages = join(freshRoot, 'packages');
+  const freshData = join(freshRoot, 'data');
+  const freshHistory = join(freshRoot, 'history');
+  for (const path of [freshPackages, freshData, freshHistory]) await mkdir(path, { mode: 0o700 });
+  await cp(fresh.archive, join(freshPackages, expected.packageSha256 + '.json'));
+  const freshGeneration = await createGeneration('first', freshData, fresh.installed);
+  const freshSuccessor = await createGeneration('second', freshData, fresh.installed);
+  const freshDataRoot = join(freshData, freshGeneration.id);
+  const freshRecovery = join(freshDataRoot, 'recovery');
+  await mkdir(freshRecovery, { mode: 0o700 });
+  const serviceFence = await enrollServiceWriter(freshRoot);
+  const freshEnrollment: GenerationEnrollment = {
+    ...enrollment, root: freshRoot, rootNode: await pin(freshRoot), installationId: 'fresh-fixture-install',
+    stores: { packages: await pin(freshPackages), releases: await pin(dirname(fresh.installed)),
+      history: await pin(freshHistory), data: await pin(freshData) },
+    generations: [freshGeneration, freshSuccessor],
+  };
+  const fencedEnrollment = { ...freshEnrollment, serviceRole: serviceFence.role };
+  const fencedStore = createGenerationStore(fencedEnrollment, fresh.port, signing);
+  const fencedOrder = fencedStore.order('select-fenced', null, freshGeneration.id);
+  const { serviceRoleSha256, ...unbound } = fencedOrder;
+  expect(serviceRoleSha256).toMatch(/^[a-f0-9]{64}$/);
+  const crossUidStore = createGenerationStore({ ...freshEnrollment, serviceRole: { ...serviceFence.role, uid: uid === 0 ? 1 : 0 } }, fresh.port, signing);
+  await expect(crossUidStore.select(authorize(crossUidStore.order('foreign-uid', null, freshGeneration.id))))
+    .rejects.toThrow('INSTALLED_SERVICE_CROSS_UID_UNSUPPORTED');
+  await expect(fencedStore.select(authorize(unbound))).rejects.toThrow('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+  await expect(createGenerationStore(freshEnrollment, fresh.port, signing).select(authorize(fencedOrder)))
+    .rejects.toThrow('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+  expect(await readdir(freshHistory)).toEqual([]);
+  const fencedSelection = await fencedStore.select(authorize(fencedOrder));
+  await expect(startSelectedRuntimeRole(fencedEnrollment, fresh.port, 'service', () => provisioning))
+    .rejects.toThrow('INSTALLED_SERVICE_FOREGROUND_REQUIRED');
+  await expect(runInstalledRuntimeRole(fencedEnrollment, fresh.port, 'service', () =>
+    ({ ...provisioning, registration: { ...provisioning.registration, profile: 'production' } })))
+    .rejects.toThrow('INSTALLED_ROLE_CONTROLLER_REQUIRED');
+  const failedOwner: ExclusiveRuntimeStaging = { withExclusiveReadRoot(use) {
+    return fresh.port.withExclusiveReadRoot(async path => {
+      try { return await use(path); }
+      catch { throw new Error('fixture outer lease failed'); }
+    });
+  } };
+  let failedDatabase: { open: boolean } | undefined;
+  await expect(runInstalledRuntimeRole(fencedEnrollment, failedOwner, 'service', paths => ({
+    registration: { ...provisioning.registration, dataRoot: paths.dataRoot },
+    service: {
+      databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
+      recoveryRuntime: { attach({ database }) { failedDatabase = database; throw new Error('fixture attach failed'); } },
+      bindRecoveryOperations: provisioning.service.bindRecoveryOperations,
+    },
+  }))).rejects.toThrow('fixture outer lease failed');
+  expect(failedDatabase?.open).toBe(false);
+  const releasedFence = new DatabaseSync(serviceFence.path, { timeout: 0 });
+  try { expect(() => releasedFence.exec('BEGIN IMMEDIATE')).not.toThrow(); } finally { releasedFence.close(); }
+  const next = authorize(fencedStore.order('fenced-successor', fencedSelection.current!.sha256, freshSuccessor.id));
+  await checkForeground('service', 'running', { fixture: {
+    entry: join(fresh.installed, 'runtime', 'composition.mjs'), enrollment: fencedEnrollment,
+  }, async whileRunning() {
+    expect((await fencedStore.observe()).current?.sha256).toBe(fencedSelection.current!.sha256);
+    await expect(fencedStore.select(next)).rejects.toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+    await expect(runInstalledRuntimeRole(fencedEnrollment, fresh.port, 'service', () => provisioning))
+      .rejects.toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+    expect((await fencedStore.observe('fenced-successor')).historical).toBeNull();
+  } });
+  await rename(serviceFence.path, serviceFence.path + '.retained');
+  await expect(fencedStore.select(next)).rejects.toThrow('INSTALLED_SERVICE_WRITER_FENCE_INVALID');
+  await expect(runInstalledRuntimeRole(fencedEnrollment, fresh.port, 'service', () => provisioning))
+    .rejects.toThrow('INSTALLED_SERVICE_WRITER_FENCE_INVALID');
+  await rename(serviceFence.path + '.retained', serviceFence.path);
+  await expect(fencedStore.select(next)).resolves.toMatchObject({ current: { order: { operationId: 'fenced-successor' } } });
+  await rename(serviceFence.control, serviceFence.control + '.retained');
+  await expect(runInstalledRuntimeRole(freshEnrollment, fresh.port, 'service', () => provisioning))
+    .rejects.toThrow('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+  authorizedRuntimePrefix = pathToFileURL(installed).href + '/';
   const retained = join(dir, 'pinned-role-selection');
   await mkdir(retained, { mode: 0o700 });
   await rename(join(instance, 'current'), join(retained, 'current'));
