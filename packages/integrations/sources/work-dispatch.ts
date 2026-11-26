@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ackOutbox, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { ackOutbox, assertRecoveryWriteAllowed, recoveryWriteAllowed, withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
 import { createStandardsApi } from '../../domain/src/standards.js';
 import { publishHubEvent, type HubPublisher } from '../autoloop/client.js';
 
@@ -196,6 +196,7 @@ function prepareWork(db: SqliteDatabase, eventId: string, now: string): Prepared
 
   const workId = sourceWorkId(sourceId, objectId);
   return withImmediateTransaction(db, () => {
+    if (!recoveryWriteAllowed(db, source.data_domain)) return { ok: false, reason: 'RECOVERY_WRITE_BLOCKED' };
     const existing = db.prepare(`SELECT work_id, root_event_id, cause_event_id, generation, revision
       FROM work_refs WHERE work_id = ?`).get(workId) as {
       work_id: string;
@@ -309,16 +310,25 @@ export async function dispatchSourceWork(
       deferred.push({ event_id: eventId, reason });
       continue;
     }
-    const result = await publishHubEvent(db, hub, {
-      event_id: eventId,
-      root: prepared.root,
-      cause: prepared.cause,
-      generation: prepared.generation,
-      hops: prepared.hops,
-      kind: 'work.requested',
-    }, stamped);
-    ackOutbox(db, eventId, 'source-work', result);
-    dispatched.push({ work_id: prepared.work_id, generation: prepared.generation, event_id: eventId, result });
+    const assertWritable = () => assertRecoveryWriteAllowed(db, source.data_domain);
+    try {
+      const result = await publishHubEvent(db, hub, {
+        event_id: eventId,
+        root: prepared.root,
+        cause: prepared.cause,
+        generation: prepared.generation,
+        hops: prepared.hops,
+        kind: 'work.requested',
+      }, stamped, assertWritable);
+      withImmediateTransaction(db, () => {
+        assertWritable();
+        ackOutbox(db, eventId, 'source-work', result);
+      });
+      dispatched.push({ work_id: prepared.work_id, generation: prepared.generation, event_id: eventId, result });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'RECOVERY_WRITE_BLOCKED') throw error;
+      deferred.push({ event_id: eventId, reason: error.message });
+    }
   }
   return { dispatched, deferred };
 }

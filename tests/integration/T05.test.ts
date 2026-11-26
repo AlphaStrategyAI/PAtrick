@@ -823,6 +823,39 @@ test('replaying the dispatch keeps one work and one generation', async () => {
   }
 });
 
+test.each([false, true])('a fenced source work outbox is unchanged with a frozen basis already present: %s', async replay => {
+  const fx = temporaryDatabase();
+  try {
+    seedMandate(fx.db);
+    seedExternalMethodPolicy(fx.db);
+    const notes = join(fx.dir, 'notes');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'idea.md'), '# idea\n');
+    const registry = createSourceRegistry(fx.db, { blobs: fx.blobs, now: () => NOW });
+    const source = await registry.enableSource(PRINCIPAL, directoryDraft(notes));
+    await registry.collectSource(source.sourceId, 1);
+    if (replay) {
+      await expect(dispatchSourceWork(fx.db, {
+        async postEvent() { throw new Error('fixture Hub unavailable'); },
+      }, { now: () => new Date(NOW) })).rejects.toThrow('fixture Hub unavailable');
+      expect(countRows(fx.db, 'judgment_bases')).toBe(1);
+    }
+    fx.db.prepare(`INSERT INTO recovery_domain_gates
+      (data_domain,writer_epoch,status,reason,updated_at) VALUES ('personal','epoch','blocked','fixture',?)`).run(NOW);
+    const changes = () => fx.db.prepare('SELECT total_changes()').pluck().get();
+    const before = changes();
+    const hub = recordingHub();
+    expect(await dispatchSourceWork(fx.db, hub, { now: () => new Date(NOW) })).toEqual({
+      dispatched: [], deferred: [{ event_id: expect.any(String), reason: 'RECOVERY_WRITE_BLOCKED' }],
+    });
+    expect(changes()).toBe(before);
+    expect(hub.published).toEqual([]);
+    expect(fx.db.prepare("SELECT result FROM outbox WHERE destination = 'source-work'").all()).toEqual([{ result: null }]);
+  } finally {
+    fx.close();
+  }
+});
+
 test('a trigger without an active delegation scope defers instead of dispatching', async () => {
   const fx = temporaryDatabase();
   try {

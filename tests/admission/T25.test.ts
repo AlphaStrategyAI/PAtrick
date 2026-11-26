@@ -1,15 +1,51 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
+import { createRuntimeProvisioning, requireRuntimeProvisioning, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { assertPilotTraceConsistency, type PilotEvidence, type PilotTrace } from '../support/pilot-trace.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+
+test('installed composition passes enrolled source and dispatch ports to the service', () => {
+  const root = realpathSync(tmpdir());
+  const origin = 'https://rehearsal.patrick.test';
+  const registration: RuntimeProvisioningInput['registration'] = {
+    identity: { accountId: 'owner', scopeId: 'pilot', deviceId: 'host', domains: ['personal'], configRevision: 'r1' },
+    profile: 'Headless', captureHost: hostname(), serviceUid: process.geteuid!(), dataRoot: root, minimumFreeBytes: 0,
+    origin, rpId: 'rehearsal.patrick.test', listener: { host: '127.0.0.1', port: 43123, origin },
+  };
+  const baseService = {
+    databasePath: join(root, 't25-service.sqlite'), credentialDirectory: join(root, 't25-credentials'),
+    recoveryRuntime: { attach() { throw new Error('expected provisioning only'); } },
+    bindRecoveryOperations() { throw new Error('expected provisioning only'); },
+  };
+  const githubApi = {
+    async listTree() { return []; },
+    async readBlob() { return new Uint8Array(); },
+  };
+  const sourceCredentialStore = {
+    put() { throw new Error('expected provisioning only'); },
+    resolve() { return null; },
+  };
+  const sourceWorkDispatch = {
+    hub: { async postEvent() { throw new Error('expected provisioning only'); } },
+  };
+  const service = { ...baseService, githubApi, sourceCredentialStore, sourceWorkDispatch };
+  const enrolled = requireRuntimeProvisioning(createRuntimeProvisioning({ registration, service })).serviceOptions;
+  expect(enrolled.githubApi).toBe(githubApi);
+  expect(enrolled.sourceCredentialStore).toBe(sourceCredentialStore);
+  expect(enrolled.sourceWorkDispatch).toBe(sourceWorkDispatch);
+  const unconfigured = requireRuntimeProvisioning(createRuntimeProvisioning({ registration, service: baseService })).serviceOptions;
+  expect(unconfigured.githubApi).toBeUndefined();
+  expect(unconfigured.sourceCredentialStore).toBeUndefined();
+  expect(unconfigured.sourceWorkDispatch).toBeUndefined();
+});
 
 function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t25-traces-'));

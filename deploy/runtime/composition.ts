@@ -77,7 +77,7 @@ export type RuntimeProvisioningInput = Readonly<{
     'databasePath' | 'credentialDirectory' | 'recoveryRuntime' | 'bindRecoveryOperations' |
     'networkRepair' | 'feishuCredentials' | 'feishuTestOutbound' | 'httpSources' |
     'settingsHandlers' | 'prDeliveryWorker' | 'productViewHub' | 'notificationMaintenance' |
-    'workStopSupervisor' | 'httpSourceWorker'>>;
+    'workStopSupervisor' | 'httpSourceWorker' | 'githubApi' | 'sourceCredentialStore' | 'sourceWorkDispatch'>>;
   worker?: Readonly<{
     keys: Readonly<HubKeys>;
     backend?: NonNullable<CreateAppOptions['consultationWorker']>['backend'];
@@ -1057,6 +1057,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     databasePath, credentialDirectory, recoveryRuntime, bindRecoveryOperations, networkRepair,
     feishuCredentials, feishuTestOutbound, httpSources, settingsHandlers, prDeliveryWorker,
     productViewHub, notificationMaintenance, workStopSupervisor, httpSourceWorker,
+    githubApi, sourceCredentialStore, sourceWorkDispatch,
   } = service;
   let maintenance: ReturnType<typeof createMaintenanceOwner> | undefined;
   if (input.maintenance) {
@@ -1078,6 +1079,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     assertStartupAllowed: maintenance && (() => maintenance.assertStartupAllowed('service')),
     networkRepair: networkRepair && Object.freeze({ ...networkRepair }), feishuCredentials, feishuTestOutbound,
     httpSources, httpSourceWorker, settingsHandlers, prDeliveryWorker, productViewHub, notificationMaintenance, workStopSupervisor,
+    githubApi, sourceCredentialStore, sourceWorkDispatch,
     bindRecoveryOperations(resources) {
       maintenance?.bindAnswers(resources);
       const operations = bindRecoveryOperations(resources);

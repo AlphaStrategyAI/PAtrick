@@ -728,7 +728,7 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T22 记录有序交接实测 RPO/RTO | 可独立部署的 mTLS 见证已接通持久撤回日志。实测需要在独立主机上部署见证和日志并取得真实写者隔离证据。本地备份可用于此演练 | `T22/recovery-set-and-restore` 的 passed 记录来自本地隔离测试 |
 | T23 在目标机下载并安装候选包 | 构建 `45540619208` 的双架构候选和原生控制器已下载复验。2026-11-26 在获准的 MacBook Pro（Apple M1，`arm64`）用本次安装批准的公钥验证签名包，在独立目录完成发布和三个数据库的初始化。独立读回核对全部 481 个载荷文件、24 条服务库迁移和签名回执。[初装证据](../operations/evidence/t23-arm64-first-install-2026-11-26.json)。固定源 TLS、所有者通行密钥、已认证会话、生产服务启动、重启、升级和卸载保留待验收 | `T23/darwin-hosted-dual-architecture-candidates` passed，`T23/empty-host-install-and-upgrade` blocked |
 | T27 真实 Obsidian 往返与退出后处理 | 获准验收的 MacBook Pro 已安装 Obsidian，PAtrick 已完成独立目录初装。待登记并启动实际服务身份，再以该身份验证隔离 Vault 往返、桌面退出后的补采和卸载后的数据保留 | `T27/production-service-identity-round-trip` blocked |
-| T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空；演练仓库和三条真实工作路线仍未接入 | `T25/provider-backed-work-routes` pending |
+| T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空。2026-11-26 只读核对了私有演练库，GitHub 分支规则集接口返回 HTTP 403。真实 PR 路线需要在支持规则集的演练库登记专用 GitHub App | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点并发布 | 发布作业已接入草稿和发布后的双架构验签。还缺有分母的真实试点观察、维护与恢复计时，以及经 T25 验收的签名包 | `T26/observed-pilot-results` pending |
 
 设计复核的六项已经全部落地：工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层、整理中／核验中／空／失败／离线的句子，以及咨询生成中流式显示且状态保持「正在回答」。

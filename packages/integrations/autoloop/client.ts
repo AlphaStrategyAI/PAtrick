@@ -195,9 +195,12 @@ export async function publishHubEvent(
   hub: HubPublisher,
   event: PublishableHubEvent,
   now = new Date().toISOString(),
+  assertWritable?: () => void,
 ): Promise<'accepted' | 'duplicate'> {
+  assertWritable?.();
   const ack = await hub.postEvent(toHubEventBody(event));
   const inserted = withImmediateTransaction(db, () => {
+    assertWritable?.();
     const result = db.prepare(`INSERT INTO hub_events (
       event_id, root, cause, generation, hops, kind, request_id, stage_key, hub_event, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
