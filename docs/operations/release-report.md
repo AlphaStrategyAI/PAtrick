@@ -188,7 +188,7 @@ Darwin 控制器的 `run-role service`、`run-role hub` 和 `run-role worker` �
 
 Darwin 候选工作流为每种架构编译生产配置的 `patrick-host-controller`。构建作业运行一次无参数调用检查退出码，将可执行文件、SHA-256 和字节数加入运行时材料工件。验收控制器交付时运行 `node scripts/verify-hosted-candidates.mjs <run-id> --require-controller`，独立核对下载字节、回执和 Mach-O 架构，并输出供宿主登记核对的控制器摘要。原命令继续支持历史构建。宿主在发布验签和登记时使用经可信渠道审核的摘要。
 
-控制器逐级检查登记目录的 root 属主、权限及扩展 ACL，核对调用进程的真实与有效 UID/GID。通过后以角色登记目录为工作目录执行对应入口，并清理继承的环境和额外文件描述符。角色入口可从自己的登记设置工作目录和专用 `HOME`。
+控制器以目录搜索权限逐级打开宿主登记路径，检查 root 属主、权限及扩展 ACL，并核对调用进程的真实与有效 UID/GID。宿主登记的父目录可使用 `0711`，角色无需列出其中的内容。通过后以角色登记目录为工作目录执行对应入口，并清理继承的环境和额外文件描述符。角色入口可从自己的登记设置工作目录和专用 `HOME`。
 
 角色目录登记受保护的 `supervisor-required` 文件后，控制器在执行入口前连接同目录的 `supervisor.sock`。它校验套接字的属主和物理节点，并通过 Darwin 内核核对监听端的有效 UID。连接以 fd 3 交给角色入口，环境中的 `PATRICK_SUPERVISOR_FD=3` 由控制器设置。套接字缺失、不可用或身份核验失败时，启动返回 `EX_CONFIG`。
 

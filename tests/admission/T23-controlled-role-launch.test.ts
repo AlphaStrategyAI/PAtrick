@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_pr
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, createReadStream, openSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { constants, machine } from 'node:os';
 import { join } from 'node:path';
@@ -564,6 +564,20 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     }
     expect(runRegisteredRole('editor').status).toBe(64);
     expect(runRegisteredRole('../service').status).toBe(64);
+  });
+
+  test('the native registry can launch an enrolled role through a search-only parent', async () => {
+    const { directory } = await enrolledRole('service');
+    try {
+      await chmod(registryRoot, 0o111);
+      await expect(readdir(registryRoot)).rejects.toMatchObject({ code: 'EACCES' });
+      const result = runRegisteredRole('service');
+      expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ role: 'service', cwd: directory });
+    } finally {
+      await chmod(registryRoot, 0o755);
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test('the native registry rejects roles that share a UID even with different GIDs', async ({ onTestFinished }) => {

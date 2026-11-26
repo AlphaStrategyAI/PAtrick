@@ -164,8 +164,7 @@ bool no_extended_acl(int fd) {
 }
 
 int open_protected(int parent, const char* name, bool directory, mode_t mode = 0) {
-  const int fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK |
-                        (directory ? O_DIRECTORY : 0));
+  const int fd = openat(parent, name, (directory ? O_SEARCH : O_RDONLY) | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (fd < 0) return -1;
   struct stat metadata {};
   if (fstat(fd, &metadata) == 0 && metadata.st_uid == registry_owner &&
