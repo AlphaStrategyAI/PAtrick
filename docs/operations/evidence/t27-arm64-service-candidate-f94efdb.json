@@ -4,6 +4,14 @@
   "sourceCommit": "f94efdb69aa80724f46f561b314c795975703707",
   "sourceSnapshotSha256": "20fbd58f497c6bebecd50d1b1d328f08791917f1aa4366fcf7f1a66da938976d",
   "architecture": "arm64",
+  "hostedMaterials": {
+    "runId": "45842812980",
+    "archiveSha256": "fcf6926e2485dd87f9bd6c303efb3fc94f10e62bdf8ce3a24bef77b834319253",
+    "controllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+    "inventorySha256": "50dc27effbb681274d7408ba4523578d6cb7bc17fe4183950fcc8fc441c5b784",
+    "verifiedFiles": 488,
+    "targetMacAdmissionPassed": 4
+  },
   "localCandidate": {
     "matchingLocalBuilds": 2,
     "inventorySha256": "c1cf9755723726d50eeb96a0da011f51a7e244ad96bdcae23afee72467ad0d88",
@@ -25,6 +33,11 @@
     "archiveSha256": "c9374e4d75ff977426dea7dde55ccf288c1a296b002db3cf07534ea6aa769563",
     "projectionRevision": 1,
     "drain": "closed"
+  },
+  "isolatedGenerationRegression": {
+    "previousPackageSha256": "3c04b3c9d487bd551e6bd52c8c61e68a3093d6e0d8e886955c3fe2782ecb0df5",
+    "passed": 34,
+    "failed": 0
   },
   "outstanding": ["host-trust-enrollment", "supervised-service-uid-acceptance", "uninstall-preservation", "pilot-sync"]
 }
