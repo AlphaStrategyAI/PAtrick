@@ -1,0 +1,51 @@
+{
+  "format": "patrick-t23-first-install-evidence-v1",
+  "date": "2026-11-26",
+  "target": {
+    "device": "MacBook Pro (Apple M1)",
+    "os": "darwin",
+    "arch": "arm64",
+    "node": "v26.13.0",
+    "modules": "147"
+  },
+  "source": {
+    "commit": "df814e269b994a626e9f567dfc68c0a8b1b80f27",
+    "githubActionsRun": "45540619208"
+  },
+  "release": {
+    "id": "t23-df814e2-arm64",
+    "profile": "deployment-complete",
+    "trustedKeyId": "t23-local-fb938af6ae542e78",
+    "packageSha256": "43451a42f5f0e55f5dc9b9ec00c5efd5deac888c040aa8538a3deb4f7d0ee393",
+    "controllerSha256": "bb1c6c7f459134b791f96237afe989d931fa8eeba9ad5a050e9cbeb34c540caf",
+    "installedFilesVerified": 481
+  },
+  "installation": {
+    "scope": "isolated-local-acceptance",
+    "operationId": "install-t23-df814e2",
+    "planSha256": "b25e91dd007c427aed136a16ed04b66234af678975211a69a3dd9491372c69b7",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "readbackSha256": "962125729132c690eeab8f9cd5adcf66f86f03e28c6822c263f2a213221a165f",
+    "journalRecords": 3
+  },
+  "generation": {
+    "id": "t23-initial",
+    "readback": "INSTALL_GENERATION_PREPARED",
+    "bootstrapReceiptSha256": "eff594a598ad4f6110aef14bdd488fc410a1c99550068a1e73e66f47727705fe",
+    "serviceMigrationsMatched": 24,
+    "databaseQuickCheck": {
+      "service.sqlite": "ok",
+      "hub/hub.db": "ok",
+      "answers.sqlite": "ok"
+    }
+  },
+  "outstanding": [
+    "fixed-origin-tls",
+    "owner-passkey",
+    "authenticated-session",
+    "production-service-startup",
+    "host-restart",
+    "upgrade",
+    "uninstall-data-retention"
+  ]
+}
