@@ -103,3 +103,7 @@ GUI 保存由 CUA 执行并从原生无障碍树读回，没有伪造人工确�
 本次使用桌面身份的独立进程验证文件权限。正式 `vault-init` 和 kit 安装器仍要求编辑者与 Service 共用 UID。独立 UID 下的正式 kit 安装、Obsidian 保存、补采和卸载保留仍待验收。
 
 在同一台目标 MacBook Pro 上，将 `PATRICK_T27_SERVICE_USER` 设为系统 `launchd` 登记的 Service 账号，以 UID 402 和桌面 UID 501 重跑权限用例，1 项通过。合成 Vault 中的投影读取、草稿编辑和越权拒绝均通过。正式 kit 安装、桌面应用保存和退出后的后台补采仍待实测。
+
+2026-11-26，桌面 UID 501 在 Obsidian 1.15.1 中保存由 Service UID 402 创建的合成标准草稿。Service 演练进程复核了草稿与归档 blob 的字节摘要，创建开放候选并发布投影版本 1。Obsidian 显示了该版本的生成索引。
+
+退出 Obsidian 并确认进程结束后，桌面账号向合成笔记追加标记。独立的 Service 演练进程采集了新修订，核对磁盘与归档 blob 摘要一致。版本 2 的批次目录已生成，但投影返回 `failed`，索引指针仍为 1。正式 kit 安装、常驻 Service 的补采和卸载保留仍待验收。[双账号桌面演练回执](evidence/t27-dual-uid-desktop-2026-11-26.json)

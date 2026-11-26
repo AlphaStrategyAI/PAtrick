@@ -1,0 +1,24 @@
+{
+  "format": "patrick-t27-dual-uid-desktop-v1",
+  "observedDate": "2026-11-26",
+  "scope": "synthetic-vault",
+  "editor": { "application": "Obsidian", "version": "1.15.1", "uid": 501 },
+  "collector": { "uid": 402, "mode": "standalone-rehearsal-process" },
+  "guiSave": {
+    "draftSha256": "1f668115c5fc375fe6c85390270cc33b6bb1adf2489635159fae148ba0d6fa5f",
+    "archivedBytesMatched": true,
+    "candidateId": "cand_5cc8b46c0e3280a85b376850",
+    "candidateStatus": "open",
+    "projectionRevision": 1,
+    "indexDisplayedInObsidian": true
+  },
+  "afterEditorExit": {
+    "noteSha256": "141a9b96236ec1f2454adbee98808c993265b3e011007ffcdd5e8e443764aab1",
+    "archivedBytesMatched": true,
+    "requestedProjectionRevision": 2,
+    "batchDirectoryPresent": true,
+    "projection": { "applied": false, "pointer": 1, "state": "failed" },
+    "observedIndexSha256": "5d82e79155b7c8358ffa8dca0a2a1270b7a3e77d4790465a16fde99cc7e6b38b"
+  },
+  "outstanding": ["projection-retry", "formal-kit-install", "installed-service-collection", "uninstall-preservation", "pilot-sync"]
+}
