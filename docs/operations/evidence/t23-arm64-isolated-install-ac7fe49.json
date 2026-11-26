@@ -67,5 +67,22 @@
     "untrustedCertificate": "rejected",
     "drain": "closed",
     "localReceiptSha256": "b8340dfcad41071a1bab91a9e6d6d166f36ecc202cc61975160f3aea4b5e0059"
+  },
+  "systemDomain": {
+    "scope": "temporary-system-domain-synthetic-data",
+    "installDriverIncludes": "14ac2bb",
+    "signedPayloadUnchanged": true,
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatGenerationPreparation": "INSTALL_GENERATION_PREPARED",
+    "serviceAndHubDataOwners": "registered-independent-uids",
+    "mismatchedWorkerGroup": "rejected",
+    "serviceTraversalDeniedByAcl": "rejected",
+    "serviceReleaseWrites": "denied",
+    "serviceHealth": 200,
+    "workerOutboxReadback": "accepted",
+    "selectionWhileWriterActive": "blocked",
+    "selectionAfterDrain": "accepted",
+    "hostRegistration": "temporary-fixture",
+    "localLogSha256": "59d75261ccf096514426d5efc2c74f99a6d4ddc4a6fca2569504f4270dbeef64"
   }
 }
