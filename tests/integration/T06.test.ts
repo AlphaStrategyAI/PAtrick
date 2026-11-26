@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -648,6 +648,43 @@ test('a real staging I/O error leaves the index and pointer unchanged', async ()
     expect(existsSync(join(root, '系统视图', '索引.md'))).toBe(false);
   } finally {
     fx.close();
+  }
+});
+
+test.skipIf(process.geteuid?.() === 0)('retries projection after isolation is provisioned under a read-only parent', async () => {
+  const fixture = temporaryDatabase();
+  const vaultParent = join(fixture.dir, 'workspace');
+  const root = join(vaultParent, 'vault');
+  const isolation = join(vaultParent, 'isolation');
+  const index = join(root, '系统视图', '索引.md');
+  const oldContent = '# 本人留在旧批次的内容\n';
+  mkdirSync(root, { recursive: true });
+  try {
+    const api = apiFor(fixture);
+    const vaultId = await connect(api, root);
+    const files = Object.fromEntries(PROJECTION_BATCH_FILES.map(path => [path, `# ${path}\n`]));
+    const request = { vaultId, viewKind: 'knowledge', files, revision: 1 };
+    expect(await api.project(request)).toEqual({ applied: true, pointer: 1, state: 'current' });
+    const indexBefore = readFileSync(index);
+    const oldFile = join(root, '系统视图', '批次', '1', '知识', '当前.md');
+    writeFileSync(oldFile, oldContent);
+
+    chmodSync(vaultParent, 0o500);
+    const next = { ...request, revision: 2 };
+    expect(await api.project(next)).toEqual({ applied: false, pointer: 1, state: 'failed' });
+    expect(readFileSync(index)).toEqual(indexBefore);
+    expect(readFileSync(oldFile, 'utf8')).toBe(oldContent);
+    expect(existsSync(isolation)).toBe(false);
+
+    chmodSync(vaultParent, 0o700);
+    mkdirSync(isolation, { mode: 0o700 });
+    chmodSync(vaultParent, 0o500);
+    expect(await api.project(next)).toEqual({ applied: true, pointer: 2, state: 'current' });
+    expect(readFileSync(index, 'utf8')).toContain('projection_revision: 2');
+    expect(readFileSync(join(isolation, vaultId, '1', '知识', '当前.md'), 'utf8')).toBe(oldContent);
+  } finally {
+    chmodSync(vaultParent, 0o700);
+    fixture.close();
   }
 });
 
