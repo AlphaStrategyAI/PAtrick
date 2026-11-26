@@ -45,5 +45,17 @@
     "databaseIntegrity": { "service.sqlite": "ok", "answers.sqlite": "ok", "hub/hub.db": "ok" },
     "currentSelected": false
   },
+  "isolatedSelectedService": {
+    "scope": "target-mac-current-user-loopback",
+    "receiptSha256": "5e1054bfe66f75469e71aed312805439f179bb952a23dc0e6ac016438bb16b9f",
+    "generationId": "first-generation",
+    "selectionSha256": "dc107caab07b2867fa080330ba96f43fca7fc49a4bd1eaaf84b5c0357a78d197",
+    "startAfterMs": 1806,
+    "observations": { "/": 200, "/healthz": 200, "/api/v1/session": 401 },
+    "listenerAfterDrain": "closed",
+    "runtimeAfterDrain": "closed",
+    "activeRequestsAfterDrain": 0,
+    "openConnectionsAfterDrain": 0
+  },
   "systemInstalled": false
 }
