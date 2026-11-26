@@ -340,7 +340,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
   reportStage('LAYOUT');
   layout(e, lease.root, options.empty, options.history);
   reportStage('HOST');
-  const nodeRoot = admitReadRoot(dirname(e.node.path));
+  const nodeRoot = admitReadRoot(dirname(e.node.path), { allowAncestorEntriesChange: true });
   const binary = stat(e.node.path);
   requireFact(binary.isFile() && (binary.mode & 0o111n) !== 0n && (binary.mode & 0o022n) === 0n);
   const nodeBytes = await readRegularFile(e.node.path, 256 * 1024 * 1024,

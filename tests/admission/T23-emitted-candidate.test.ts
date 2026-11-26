@@ -32,9 +32,15 @@ import { hubRules, PINNED_HUB_COMMIT } from '../../packages/integrations/autoloo
 import { openDatabase } from '../../packages/storage/src/database.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
+const nodeAncestorChange = vi.hoisted(() => ({ path: '', reads: 0 }));
 vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>();
-  return { ...fs, statfsSync(path: string, options?: { bigint?: boolean }) {
+  return { ...fs, lstatSync(path: string, options?: { bigint?: boolean }) {
+    const observed = fs.lstatSync(path, options);
+    if (path === nodeAncestorChange.path && !options && observed && typeof observed.ctimeMs === 'number' &&
+      ++nodeAncestorChange.reads > 1) observed.ctimeMs += 1;
+    return observed;
+  }, statfsSync(path: string, options?: { bigint?: boolean }) {
     const observed = fs.statfsSync(path, options);
     return path === lowSpace.path && options?.bigint ? { ...observed, bavail: 0n } : observed;
   } };
@@ -222,6 +228,7 @@ const directoryPath = 'native/patrick-directory.node';
 const directoryScenario = 'directory-module-info-relocated';
 const upstreamHubSource = process.env.PATRICK_T23_AUTOLOOP_SOURCE;
 const archivedHubMaterials = process.env.PATRICK_T23_AUTOLOOP_MATERIALS;
+const systemSignedInput = process.env.PATRICK_T23_SYSTEM_SIGNED_INPUT;
 const darwinInstallTimeoutMs = 480_000;
 const roleReportTimeoutMs = 120_000;
 async function buildSignedFixture(temporary: string, profile?: 'deployment-complete') {
@@ -785,7 +792,8 @@ async function startSystemService(input: {
 
 async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void,
   hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>,
-  serviceOwner?: NonNullable<InstallPreviewEnrollment['serviceOwner']>) {
+  serviceOwner?: NonNullable<InstallPreviewEnrollment['serviceOwner']>,
+  release: { packagePath: string; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy } = complete) {
   const instanceRoot = hubOwner || serviceOwner ? await mkdtemp('/private/tmp/patrick-independent-role-') : join(dir, name);
   if (hubOwner || serviceOwner) {
     onTestFinished(() => rm(instanceRoot, { recursive: true, force: true }));
@@ -809,8 +817,8 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
     if (serviceOwner && (name === 'data' || name === 'releases')) await chmod(path, 0o711);
     return [name, await pin(path)];
   }));
-  const { expected, policy } = complete;
-  await cp(complete.packagePath, join(instanceRoot, 'packages', expected.packageSha256 + '.json'));
+  const { expected, policy } = release;
+  await cp(release.packagePath, join(instanceRoot, 'packages', expected.packageSha256 + '.json'));
   const identity = { accountId: 'owner', scopeId: 'workspace', deviceId: 'darwin', domains: ['personal'], configRevision: 'r1' };
   const certificate = join(dir, name + '-session.pem');
   const privateKey = join(dir, name + '-session.key');
@@ -898,6 +906,19 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
     dropAcknowledgement() { loseAck = true; }, requestCount: () => requests };
 }
 
+test('keeps a verified Node binary admitted when an ancestor gains an unrelated entry', async ({ onTestFinished }) => {
+  const { enrollment } = await firstInstallFixture('node-ancestor-entry', onTestFinished);
+  nodeAncestorChange.path = dirname(dirname(enrollment.node.path));
+  nodeAncestorChange.reads = 0;
+  try {
+    expect(await previewFirstInstall(() => enrollment, 'release')).toMatchObject({ status: 'preview' });
+    expect(nodeAncestorChange.reads).toBeGreaterThan(1);
+  } finally {
+    nodeAncestorChange.path = '';
+    nodeAncestorChange.reads = 0;
+  }
+}, darwinInstallTimeoutMs);
+
 test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed package', async ({ onTestFinished }) => {
   const { args, operation, operationId, installOperations, signer, approve, planSha256, instanceRoot, enrollment } =
     await firstInstallFixture('first-install-packaged-hub', onTestFinished);
@@ -959,9 +980,19 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     });
     const hubOwner = account('_www');
     const serviceOwner = account('_mdnsresponder');
+    let release;
+    if (systemSignedInput) {
+      const { archive, pins } = JSON.parse(systemSignedInput) as { archive: string; pins: string };
+      const { expected, policy } = JSON.parse(await readFile(pins, 'utf8')) as {
+        expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
+      };
+      expect(expected.packageSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(sha256(await readFile(archive))).toBe(expected.packageSha256);
+      release = { packagePath: archive, expected, policy };
+    }
     const { instanceRoot, enrollment, expected, policy, identity, pin, published, run, operation, operationId, installOperations,
       signer, approve, planSha256 } =
-      await firstInstallFixture('first-install-independent-service', onTestFinished, hubOwner, serviceOwner);
+      await firstInstallFixture('first-install-independent-service', onTestFinished, hubOwner, serviceOwner, release);
     const invalid = { ...enrollment, serviceOwner: { ...serviceOwner, uid: hubOwner.uid } };
     expect(await previewFirstInstall(() => invalid, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
     const workerOwner = account('_networkd');
