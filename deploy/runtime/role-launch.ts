@@ -434,7 +434,10 @@ export async function listenVerifiedServiceControl(options: ListenOptions | { fd
   }
 }
 
-type ServeSupervisorConnection = (socket: Socket, shutdown: AbortSignal) => Promise<void>;
+type SupervisorSessionPhase = 'VERIFY_PEER' | 'SERVE' | 'RESERVE_WRITER' | 'VERIFY_GENERATION' |
+  'SEND_READY' | 'READ_HELLO' | 'SIGN_SELECTION' | 'VERIFY_SIGNATURE' | 'AUTHORIZE_WRITER' | 'DRAIN';
+type SetSupervisorSessionPhase = (phase: SupervisorSessionPhase) => void;
+type ServeSupervisorConnection = (socket: Socket, shutdown: AbortSignal, setPhase: SetSupervisorSessionPhase) => Promise<void>;
 
 export function runInstalledServiceSupervisor(program: SupervisorProgram, endpoint: string, serve: ServeSupervisorConnection) {
   return runInstalledRoleSupervisor('service', program, endpoint, serve);
@@ -547,14 +550,23 @@ async function runInstalledRoleSupervisor(role: 'service' | 'worker', program: S
     server = await listenVerifiedServiceControl({ fd: descriptor }, endpoint, socket => {
       if (stopping.signal.aborted || active || sessions.size >= 8) return socket.destroy();
       socket.on('error', () => socket.destroy());
+      let phase: SupervisorSessionPhase = 'VERIFY_PEER';
+      const startedAt = performance.now();
       const finished = verifyRolePeer(socket, fixedProgram, role).then(() => {
         if (!socket.destroyed && !stopping.signal.aborted && !active) {
           active = socket;
-          return serve(socket, stopping.signal);
+          phase = 'SERVE';
+          return serve(socket, stopping.signal, next => { phase = next; });
         }
       }).catch(error => {
-        const code = error instanceof Error && /^[A-Z][A-Z_]{1,95}$/.test(error.message) ? error.message : 'UNKNOWN';
-        console.error(`INSTALLED_${name}_SUPERVISOR_SESSION_FAILED`, code);
+        let code = 'UNKNOWN';
+        if (error instanceof Error) {
+          const nodeCode = (error as NodeJS.ErrnoException).code;
+          if (/^[A-Z][A-Z_]{1,95}$/.test(error.message)) code = error.message;
+          else if (typeof nodeCode === 'string' &&
+            /^(EACCES|EPERM|ENOENT|ETIMEDOUT|ECONNRESET|EPIPE|ERR_STREAM_PREMATURE_CLOSE)$/.test(nodeCode)) code = nodeCode;
+        }
+        console.error(`INSTALLED_${name}_SUPERVISOR_SESSION_FAILED`, phase, `${Math.round(performance.now() - startedAt)}ms`, code);
       }).finally(() => {
         socket.destroy();
         if (active === socket) active = undefined;
@@ -589,7 +601,7 @@ const serviceStopReplyMs = 30_000;
 
 async function serveSelectedService(socket: Socket, admission: SelectedServiceSession, enrollment: GenerationEnrollment,
   generation: InstalledGeneration, authority: ServiceHandoffAuthority, key: ReturnType<typeof serviceHandoffKey>,
-  arm: () => () => void, offerTick?: (tick: WorkerTick | undefined) => void): Promise<() => void> {
+  arm: () => () => void, setPhase: SetSupervisorSessionPhase, offerTick?: (tick: WorkerTick | undefined) => void): Promise<() => void> {
   const channel = serviceFrame(socket);
   const expiresAt = performance.now() + serviceHandshakeMs;
   const deadline = new AbortController();
@@ -603,6 +615,7 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
     if (performance.now() >= expiresAt) throw serviceHandoffError();
   }
   async function signedSelection() {
+    setPhase('READ_HELLO');
     const challenge = serviceChallenge(await channel.read());
     checkHandshake();
     const { installationId, hostId, rootNode, serviceRole } = enrollment;
@@ -611,13 +624,16 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
       rootNode, uid: serviceRole!.uid, gid: serviceRole!.gid, identitySha256: serviceIdentityDigest(enrollment.identity),
       selectionSha256: admission.paths.selectionSha256, generation,
     };
+    setPhase('SIGN_SELECTION');
     const signature = await authority.signSelection(serviceSelectionBytes(selection));
     checkHandshake();
+    setPhase('VERIFY_SIGNATURE');
     return verifyServiceSelection({ version: 1, type: 'selection', selection, signature }, key);
   }
   signal.addEventListener('abort', cancelHandshake, { once: true });
   let signed: Awaited<ReturnType<typeof signedSelection>>;
   try {
+    setPhase('SEND_READY');
     checkHandshake();
     admission.assertCurrent();
     channel.write(serviceReady);
@@ -645,8 +661,10 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
   }
   admission.signal.addEventListener('abort', stop, { once: true });
   try {
+    setPhase('AUTHORIZE_WRITER');
     const confirmDrain = arm();
     channel.write(signed);
+    setPhase('DRAIN');
     const { selection } = signed;
     offerTick?.(() => {
       if (stopping || socket.destroyed || admission.signal.aborted) return Promise.resolve(false);
@@ -703,10 +721,11 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
   }
   let activeTick: WorkerTick | undefined;
   const offerTick = hasWorker ? (tick?: WorkerTick) => { activeTick = tick; } : undefined;
-  const serve: ServeSupervisorConnection = async (socket, shutdown) => {
+  const serve: ServeSupervisorConnection = async (socket, shutdown, setPhase) => {
     const disconnected = new AbortController();
     const signal = AbortSignal.any([shutdown, disconnected.signal]);
     function stop() { disconnected.abort(new Error('INSTALLED_SERVICE_CONNECTION_LOST')); }
+    setPhase('RESERVE_WRITER');
     const fence = reserveControllerServiceSession(binding.value);
     function assertCurrent() {
       binding.validate();
@@ -716,6 +735,7 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
     socket.once('close', stop);
     try {
       if (socket.destroyed) stop();
+      setPhase('VERIFY_GENERATION');
       const selection = await withConfirmedGeneration(binding.value, owner, async (current, deployment, guard) => {
         assertCurrent();
         guard();
@@ -734,11 +754,13 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
       }
       let confirmDrain: () => void;
       if (typeof handoff === 'function') {
+        setPhase('AUTHORIZE_WRITER');
         confirmDrain = arm();
+        setPhase('DRAIN');
         if (await handoff(socket, admission) !== 'drained') throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
       } else {
         authority!.validate();
-        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm, offerTick);
+        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm, setPhase, offerTick);
       }
       authority?.validate();
       binding.validate();
@@ -774,7 +796,8 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
   const stopping = new AbortController();
   const requestedStop = new Error('INSTALLED_SERVICE_STOP_REQUESTED');
   const drainOptions = { timeoutMs: 2_147_483_647 };
-  const deadline = setTimeout(() => socket.destroy(), serviceHandshakeMs);
+  let timeoutCode = 'INSTALLED_SERVICE_SUPERVISOR_READY_TIMEOUT';
+  const deadline = setTimeout(() => socket.destroy(new Error(timeoutCode)), serviceHandshakeMs);
   let admitted: ReturnType<typeof admitSupervisedServiceSelection> | undefined;
   let runtime: Service | undefined;
   let parentStopped = false;
@@ -805,6 +828,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
   socket.once('close', stop);
   try {
     if (canonicalize(await channel.read()) !== canonicalize(serviceReady)) throw serviceHandoffError();
+    timeoutCode = 'INSTALLED_SERVICE_SUPERVISOR_SELECTION_TIMEOUT';
     const challenge = randomBytes(32).toString('hex');
     channel.write({ version: 1, type: 'hello', challenge });
     const frame = await channel.read();

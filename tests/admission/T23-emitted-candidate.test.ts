@@ -1225,12 +1225,21 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     try {
       await vi.waitFor(async () => expect((await lstat(service.endpoint)).isSocket()).toBe(true), { timeout: 5000 });
       expect((await lstat(service.workerEndpoint)).gid).toBe(workerOwner.gid);
+      const rejectedStartedAt = performance.now();
       const rejected = spawnSync(service.controllerPath, ['run-role', 'service'], {
         ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 15_000,
       });
-      expect([rejected.status, rejected.error, rejected.stdout]).toEqual([1, undefined, '']);
+      const rejectedDuration = Math.round(performance.now() - rejectedStartedAt);
+      const rejectedCodes = (rejected.stderr ?? '').match(/\b(?:PATRICK_ROLE|INSTALLED_SERVICE)_[A-Z_]+\b/g);
+      const rejectedDiagnostic = `Service rejection after ${rejectedDuration}ms: ${rejectedCodes?.join(', ') || 'no role diagnostic'}`;
+      expect([rejected.status, rejected.error, rejected.stdout], rejectedDiagnostic).toEqual([1, undefined, '']);
       await vi.waitFor(async () => {
-        expect(await service.errors()).toContain('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
+        const failures = (await service.errors()).split('\n')
+          .filter(line => line.startsWith('INSTALLED_SERVICE_SUPERVISOR_SESSION_FAILED '));
+        expect(failures, rejectedDiagnostic).toHaveLength(1);
+        expect(failures[0], rejectedDiagnostic).toMatch(
+          /^INSTALLED_SERVICE_SUPERVISOR_SESSION_FAILED SIGN_SELECTION \d+ms FIXTURE_SELECTION_SIGNING_UNAVAILABLE$/,
+        );
       }, { timeout: 5000 });
       await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
