@@ -1,0 +1,59 @@
+{
+  "format": "patrick-t23-isolated-install-v1",
+  "source": {
+    "commit": "2c25555b1df10b795b6e12ec5558baff164856d6",
+    "profile": "deployment-complete",
+    "materialInventoryVersion": 4,
+    "matchingLocalBuilds": 2
+  },
+  "host": {
+    "model": "MacBook Pro",
+    "chip": "Apple M1",
+    "os": "macOS 27.2.1",
+    "build": "26B131",
+    "architecture": "arm64"
+  },
+  "release": {
+    "signatureAlgorithm": "Ed25519",
+    "signerScope": "isolated-acceptance",
+    "keyId": "t23-local-9dedf1bfa78ae32d",
+    "publicKeySha256": "9dedf1bfa78ae32de0455817e46c8da4967ae493fbb4e8dede2504435722b9ab",
+    "packageSha256": "095e7f602145770bbaf15bbe53b6cdb8b6ef9630070c7dd545503b34402f9b55",
+    "manifestSha256": "67496f09010a9a51c3f9ef53b483283027f3a1b2a56fc5eda03bf8feb13507b3",
+    "materialSha256": "050b02594fb5cc7468d760846e47a1c9525cdac0aa2ec0dc2cc784eae09375bf",
+    "controllerSha256": "67b636276a66cc3a3ae5c9494738752f0ba651ae9f187311c81c00d1e30f00b8",
+    "inventorySha256": "a85d5f44101b685bd91352a35e48b0efae3d963e8fd1bb2bd5eb778f606a8d91",
+    "executionReportSha256": "5282c18800b1a3d2af2fd80460a6a481d7eb81e2e7c0cb68b6a66a3f6a633199",
+    "trustedPinsSha256": "a3cbeca5e9ce7c7ce52f078ef29b85f05120825af587fac988d245708068f2e5",
+    "verifiedInstalledMaterials": 489,
+    "vaultKitMaterials": 8,
+    "scenarios": [
+      "relocated-node-import",
+      "service-cli-drain",
+      "sqlite-migrate-reopen",
+      "worker-role-readback"
+    ],
+    "rejectedInputs": [
+      "wrong-signer",
+      "wrong-package-sha256",
+      "wrong-architecture"
+    ]
+  },
+  "installation": {
+    "scope": "isolated-current-user",
+    "planSha256": "91e289dba0816b78e2449b99eb8db719b56dceffd397c6e563f50bea84a9f7f8",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED",
+    "generationReadback": "INSTALL_GENERATION_PREPARED",
+    "serviceMigrationsMatched": 24,
+    "databaseIntegrity": {
+      "service.sqlite": "ok",
+      "answers.sqlite": "ok",
+      "hub/hub.db": "ok"
+    },
+    "currentSelected": false,
+    "localReceiptSha256": "0bbfd25ee48b7dbee551c62a5a8567d4782e317526cf6904ab3e54ee5695b089"
+  }
+}
