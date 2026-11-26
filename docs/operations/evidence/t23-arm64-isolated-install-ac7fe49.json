@@ -1,0 +1,59 @@
+{
+  "format": "patrick-t23-isolated-install-v1",
+  "source": {
+    "commit": "ac7fe49d45cce315fb9c60b938397b574a596fa3",
+    "build": "45776562179",
+    "profile": "deployment-complete",
+    "arm64ArchiveSha256": "cfbc5f20e8835f3f10b81aade1fef133f34cbf1cbc41ce5815a0409e989caa03",
+    "matchingLocalBuilds": 2
+  },
+  "host": {
+    "model": "MacBook Pro",
+    "chip": "Apple M1",
+    "os": "macOS 27.2.1",
+    "build": "26B131",
+    "architecture": "arm64"
+  },
+  "release": {
+    "signatureAlgorithm": "Ed25519",
+    "signerScope": "isolated-acceptance",
+    "keyId": "t23-local-d8751cbbf473cbfb",
+    "publicKeySha256": "d8751cbbf473cbfb88b8c16374a81479dd8e824a7fcd9612f72f186fa80afdcf",
+    "packageSha256": "868b58173d69b6f90e9c8908cf1ea97a27e886c86cf89b3476d331f951240750",
+    "manifestSha256": "d2c3a422c0d0b08bac59b7d49f5c34c8abb109a1cef10cddcf722e9d41892130",
+    "materialSha256": "84bb21e7b2c8dd8e7090fff10d415e2dbdae85d910da1de2fd6c1075c85fd445",
+    "controllerSha256": "3ba969e349e91614501695fcf82e7e0f663cb0cbee9ba2a7339756e36278c854",
+    "inventorySha256": "eba62f0d1cdfb207f03807e686dbe084b3c396ea3f4b2a2934fd902b1dbb950c",
+    "executionReportSha256": "f8f31bd5e1ca10cad0782a466fa0863727641321149b55b0a2592e96367750a5",
+    "trustedPinsSha256": "cc29c36decf7d89108a0ada60d446e916654a26d1a964c34b8121f6d6d6b3048",
+    "verifiedInstalledMaterials": 481,
+    "scenarios": [
+      "relocated-node-import",
+      "service-cli-drain",
+      "sqlite-migrate-reopen",
+      "worker-role-readback"
+    ],
+    "rejectedInputs": [
+      "wrong-signer",
+      "wrong-package-sha256",
+      "wrong-architecture"
+    ]
+  },
+  "installation": {
+    "scope": "isolated-current-user",
+    "planSha256": "609c3cc767b5b2f742bd8e03171c89558ec79746d21affaab00061ccf368f724",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED",
+    "generationReadback": "INSTALL_GENERATION_PREPARED",
+    "serviceMigrationsMatched": 24,
+    "databaseIntegrity": {
+      "service.sqlite": "ok",
+      "answers.sqlite": "ok",
+      "hub/hub.db": "ok"
+    },
+    "currentSelected": false,
+    "localReceiptSha256": "ddf9f7a9c8a51d4253b59805ffbdf8da359628024a754b564f8556b123813e65"
+  }
+}
