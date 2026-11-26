@@ -331,7 +331,10 @@ export function renderDeploymentTemplates(sources, registration) {
     { role: 'service', job: 'serviceSupervisor', field: 'serviceSupervisorGid', label: 'com.patrick.service-supervisor', socket: 'ServiceControl' },
   ].filter(({ field }) => registration != null && Object.hasOwn(registration, field));
   registrationFields.push(...supervisors.map(({ field }) => field));
+  const localCaddy = registration != null && Object.hasOwn(registration, 'caddyListen');
+  if (localCaddy) registrationFields.push('caddyListen');
   fields(registration, registrationFields);
+  if (localCaddy && registration.caddyListen !== 'loopback') throw new Error('invalid deployment Caddy listener');
   const { accounts, listener, origin, controllerPath, controllerSha256, certificatePath, keyPath } = registration;
   for (const { field, role } of supervisors) {
     const gid = registration[field];
@@ -360,11 +363,11 @@ export function renderDeploymentTemplates(sources, registration) {
   if (!['127.0.0.1', '::1'].includes(listener.host) || !Number.isInteger(listener.port) || listener.port < 1 || listener.port > 65535) {
     throw new Error('invalid deployment loopback endpoint');
   }
-  // Caddy binds the public port on all interfaces, including both loopback families.
   if (Number(url.port || 443) === listener.port) throw new Error('deployment listener ports overlap');
   const base = root + '/caddy';
-  const caddy = render('caddy', sources.caddy, { ORIGIN: origin, AUTHORITY: url.host, CERT: certificatePath, KEY: keyPath, STORAGE: base + '/data',
+  const caddyTemplate = render('caddy', sources.caddy, { ORIGIN: origin, AUTHORITY: url.host, CERT: certificatePath, KEY: keyPath, STORAGE: base + '/data',
     UPSTREAM: (listener.host === '::1' ? '[::1]' : listener.host) + ':' + listener.port });
+  const caddy = localCaddy ? caddyTemplate.replace(`${origin} {\n`, '$&\tbind 127.0.0.1 ::1\n') : caddyTemplate;
   const plists = {};
   for (const job of jobs) {
     const work = root + '/runtime/' + job;

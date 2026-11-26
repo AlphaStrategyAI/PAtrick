@@ -37,6 +37,7 @@ export function checkDeploymentRecord(profile: EmittedReleaseProfile, path: stri
 export type DeploymentRegistration = Readonly<{
   instanceRoot: string; controllerPath: string; controllerSha256: string; accounts: Readonly<Record<'caddy' | DeploymentJob, string>>;
   origin: string; listener: Readonly<{ host: '127.0.0.1' | '::1'; port: number }>; certificatePath: string; keyPath: string;
+  caddyListen?: 'loopback';
   hubSupervisorGid?: number;
   serviceSupervisorGid?: number;
 }>;

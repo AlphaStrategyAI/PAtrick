@@ -40,6 +40,26 @@ test('renders the service supervisor socket only for an enrolled service group',
   expect(() => renderDeploymentTemplates(sources, { ...registration, serviceSupervisorGid: 0 })).toThrow();
 });
 
+test('honors an enrolled loopback-only Caddy listener without altering previous previews', () => {
+  const template = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url));
+  const sources = { caddy: template(deploymentPaths.caddy), service: template(deploymentPaths.service),
+    hub: template(deploymentPaths.hub), worker: template(deploymentPaths.worker) };
+  const controllerSha256 = 'a'.repeat(64);
+  const instanceRoot = '/Library/Application Support/PAtrick/instance';
+  const registration = { instanceRoot, controllerSha256,
+    controllerPath: `/Library/Application Support/PAtrick/controllers/${controllerSha256}/patrick-host-controller`,
+    accounts: { caddy: '_proxy', service: '_service', hub: '_hub', worker: '_worker' },
+    origin: 'https://localhost:18443', listener: { host: '127.0.0.1' as const, port: 18444 },
+    certificatePath: `${instanceRoot}/caddy/trust/cert.pem`, keyPath: `${instanceRoot}/caddy/trust/key.pem` };
+  const previous = renderDeploymentTemplates(sources, registration);
+  expect(previous.caddy).not.toMatch(/^\s*bind /m);
+  const local = renderDeploymentTemplates(sources, { ...registration, caddyListen: 'loopback' as const });
+  expect(local.caddy).toContain('https://localhost:18443 {\n\tbind 127.0.0.1 ::1\n');
+  expect(local.caddy.replace('\tbind 127.0.0.1 ::1\n', '')).toBe(previous.caddy);
+  const invalid = { ...registration, caddyListen: 'wildcard\n' as 'loopback' };
+  expect(() => renderDeploymentTemplates(sources, invalid)).toThrow('invalid deployment Caddy listener');
+});
+
 function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t23-'));
   temporary.push(root);
