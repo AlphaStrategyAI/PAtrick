@@ -20,18 +20,30 @@ const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
 
-test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
-  'authenticates the registered Hub across system launchd and independent UIDs', async ({ onTestFinished }) => {
+test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
+  { role: 'hub', socketKey: 'HubControl' },
+  { role: 'service', socketKey: 'ServiceControl' },
+] as const)(
+  'authenticates the registered $role across system launchd and independent UIDs', { timeout: 60_000 },
+  async ({ role, socketKey }, { onTestFinished }) => {
     expect([process.platform, process.getuid!(), process.geteuid!()]).toEqual(['darwin', 0, 0]);
-    const hubUid = Number(execFileSync('/usr/bin/id', ['-u', '_www'], { encoding: 'utf8' }).trim());
-    const hubGid = Number(execFileSync('/usr/bin/id', ['-g', '_www'], { encoding: 'utf8' }).trim());
-    expect(hubUid).toBeGreaterThan(0);
-    expect(hubGid).toBeGreaterThan(0);
+    const account = (name: string) => ({
+      uid: Number(execFileSync('/usr/bin/id', ['-u', name], { encoding: 'utf8' }).trim()),
+      gid: Number(execFileSync('/usr/bin/id', ['-g', name], { encoding: 'utf8' }).trim()),
+    });
+    const hub = account('_www');
+    const service = account('_mdnsresponder');
+    const worker = { uid: hub.uid + 2, gid: hub.gid };
+    for (const { uid, gid } of [hub, service, worker]) {
+      expect(uid).toBeGreaterThan(0);
+      expect(gid).toBeGreaterThan(0);
+    }
+    expect(new Set([hub.uid, service.uid, worker.uid]).size).toBe(3);
+    const { uid, gid } = role === 'hub' ? hub : service;
     const root = await mkdtemp('/private/tmp/patrick-system-role-');
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     await chmod(root, 0o755);
     const registry = join(root, 'registry');
-    const hub = join(registry, 'hub');
     const controller = join(root, 'controller');
     const header = join(root, 'registry.h');
     await writeFile(header, [
@@ -42,7 +54,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
     execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
       '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
     await chmod(controller, 0o555);
-    const hubEntry = `
+    const roleEntry = `
       import { closeSync, constants, openSync } from 'node:fs';
       import { Socket } from 'node:net';
       if (process.env.PATRICK_SUPERVISOR_FD !== '3') process.exit(76);
@@ -61,13 +73,15 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       const fd = openSync('/dev/fd/3', constants.O_RDWR);
       closeSync(3);
       createServer({ pauseOnConnect: true }, connection => {
-        const check = spawn(${JSON.stringify(controller)}, ['check-role-peer', 'hub'], {
+        const check = spawn(${JSON.stringify(controller)}, ['check-role-peer', ${JSON.stringify(role)}], {
           env: {}, stdio: ['ignore', 'ignore', 'ignore', connection], timeout: 5000,
         });
         check.once('error', () => connection.destroy());
         check.once('close', status => {
           connection.resume();
-          connection.end(status === 0 ? 'enrolled\\n' : 'rejected\\n');
+          if (status === 0) connection.end('enrolled\\n');
+          else if (status === 78) connection.end('rejected\\n');
+          else connection.destroy();
         });
       }).listen({ fd });
     `;
@@ -75,38 +89,39 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       registryRoot: registry,
       node: { path: process.execPath, sha256: await digest(process.execPath) },
       roles: {
-        service: { uid: hubUid + 1, gid: hubGid, entry: 'process.exit(76);' },
-        hub: { uid: hubUid, gid: hubGid, entry: hubEntry },
-        worker: { uid: hubUid + 2, gid: hubGid, entry: 'process.exit(76);' },
+        service: { ...service, entry: role === 'service' ? roleEntry : 'process.exit(76);' },
+        hub: { ...hub, entry: role === 'hub' ? roleEntry : 'process.exit(76);' },
+        worker: { ...worker, entry: 'process.exit(76);' },
       },
       supervisor: { entry: supervisorEntry },
+      ...(role === 'service' ? { serviceSupervisor: { entry: supervisorEntry } } : {}),
       cli: { entry: 'console.log(JSON.stringify({ uid: process.getuid(), args: process.argv.slice(2) }));' },
     });
     await applyHostRegistry(plan);
     expect(await readHostRegistry(plan)).toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
     const cliArgs = ['doctor', '--vault', 'test-vault'];
     const refusedCli = spawnSync(controller, ['run-cli', ...cliArgs], {
-      uid: hubUid, gid: hubGid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
+      uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
     });
     expect([refusedCli.status, refusedCli.error, refusedCli.stdout]).toEqual([78, undefined, '']);
     const ownerCli = spawnSync(controller, ['run-cli', ...cliArgs], { env: {}, cwd: root, encoding: 'utf8', timeout: 8000 });
     expect([ownerCli.status, ownerCli.error, ownerCli.stderr]).toEqual([0, undefined, '']);
     expect(JSON.parse(ownerCli.stdout)).toEqual({ uid: 0, args: cliArgs });
-    const label = 'com.patrick.admission.system-hub.' + randomBytes(8).toString('hex');
+    const label = `com.patrick.admission.system-${role}.` + randomBytes(8).toString('hex');
     const job = 'system/' + label;
-    const endpoint = join(hub, 'supervisor.sock');
+    const endpoint = join(registry, role, 'supervisor.sock');
     const plist = join(root, label + '.plist');
     const stderr = join(root, 'launchd.stderr');
     await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>${label}</string>
-<key>ProgramArguments</key><array><string>${controller}</string><string>run-supervisor</string><string>hub</string></array>
+<key>ProgramArguments</key><array><string>${controller}</string><string>run-supervisor</string><string>${role}</string></array>
 <key>UserName</key><string>root</string>
 <key>StandardErrorPath</key><string>${stderr}</string>
-<key>Sockets</key><dict><key>HubControl</key><dict>
+<key>Sockets</key><dict><key>${socketKey}</key><dict>
 <key>SockPathName</key><string>${endpoint}</string>
 <key>SockPathOwner</key><integer>0</integer>
-<key>SockPathGroup</key><integer>${hubGid}</integer>
+<key>SockPathGroup</key><integer>${gid}</integer>
 <key>SockPathMode</key><integer>432</integer>
 </dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
     const launchctl = (...args: string[]) => execFileSync('/bin/launchctl', args, { cwd: root, encoding: 'utf8', timeout: 5000 });
@@ -115,13 +130,13 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
       await vi.waitFor(async () => {
         const endpointInfo = await stat(endpoint);
         expect([endpointInfo.isSocket(), endpointInfo.uid, endpointInfo.gid, endpointInfo.mode & 0o777])
-          .toEqual([true, 0, hubGid, 0o660]);
+          .toEqual([true, 0, gid, 0o660]);
       }, { timeout: 5000 });
-      const admitted = spawnSync(controller, ['run-role', 'hub'], {
-        uid: hubUid, gid: hubGid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
+      const admitted = spawnSync(controller, ['run-role', role], {
+        uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
       });
       expect([admitted.status, admitted.error, admitted.stderr]).toEqual([0, undefined, '']);
-      expect(JSON.parse(admitted.stdout)).toEqual({ uid: hubUid, gid: hubGid, response: 'enrolled\n' });
+      expect(JSON.parse(admitted.stdout)).toEqual({ uid, gid, response: 'enrolled\n' });
       const wrongPeer = createConnection(endpoint);
       wrongPeer.setTimeout(5000, () => wrongPeer.destroy(new Error('wrong peer did not receive a reply')));
       try {
@@ -135,7 +150,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
     } finally {
       launchctl('bootout', job);
     }
-  }, 60_000,
+  },
 );
 
 async function digest(path: string) {
