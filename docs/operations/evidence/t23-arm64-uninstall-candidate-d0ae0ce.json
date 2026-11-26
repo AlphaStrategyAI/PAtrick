@@ -4,6 +4,16 @@
   "architecture": "arm64",
   "sourceCommit": "d0ae0ce59d20897412831a5a3080c7a8e3c78e6e",
   "sourceSnapshotSha256": "1e4819b093d86ceff6d10d5b651d5164f42617157f49279e87b7cc01ad4ef902",
+  "hosted": {
+    "runId": "45852239825",
+    "arm64": "passed",
+    "arm64ArchiveSha256": "4fda53fba27296bb5ed061cb5d7f934b4cf6877392ec72dcbeaab67910b2a6b3",
+    "arm64ControllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+    "arm64InventorySha256": "1d3e50a1312d48e05e7f87c84735ba33dc4d915d6bf4078f4700d34bf5b8aa96",
+    "arm64VerifiedFiles": 488,
+    "x64": "failed",
+    "x64Failure": "INSTALLED_SERVICE_SUPERVISOR_SESSION_FAILED UNKNOWN"
+  },
   "candidate": {
     "matchingLocalBuilds": 2,
     "inventorySha256": "fdbaaf9705c5d3b9fca77c275141101528c9acc9fc0b5eb88c8f541e75436ab9",
@@ -21,6 +31,11 @@
     "passed": 45,
     "failed": 0,
     "skipped": 0
+  },
+  "targetMacReadOnlyPreview": {
+    "code": "UNINSTALL_PREVIEW",
+    "verifiedPhysicalLaunchdFiles": 6,
+    "journal": "isolated-preview"
   },
   "outstanding": ["host-trust-enrollment", "supervised-service-startup", "owner-passkey-and-session", "host-restart", "installed-upgrade", "uninstall-preservation"]
 }
