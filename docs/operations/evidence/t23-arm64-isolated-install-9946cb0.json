@@ -1,0 +1,46 @@
+{
+  "format": "patrick-t23-isolated-install-v1",
+  "date": "2026-11-26",
+  "source": {
+    "commit": "9946cb0b9177b153cac20249392480f47d3580a1",
+    "build": "local",
+    "profile": "deployment-complete"
+  },
+  "host": {
+    "model": "MacBook Pro",
+    "chip": "Apple M1",
+    "os": "macOS 27.2.1",
+    "build": "26B131",
+    "architecture": "arm64"
+  },
+  "release": {
+    "signatureAlgorithm": "Ed25519",
+    "signerScope": "isolated-acceptance",
+    "keyId": "t23-local-ce06e9ca1c0fde10",
+    "publicKeySha256": "ce06e9ca1c0fde106c3aa3a6e1efc666e8d4d94964d1fcfd5649049ad2417843",
+    "packageSha256": "85dd5d726a8128783246195bc8e27895d96d4ecd2c8872c631ea43f4a5300eee",
+    "controllerSha256": "7f94ebbeeb4012a8a8376c19ef952006cde69815bfc8aedc9e0beedfb9f0b749",
+    "inventorySha256": "1ce0069738a8c0bece8241be271ba32a86d39b8b6236b87125b29339e932b09d",
+    "verifiedInstalledMaterials": 481,
+    "scenarios": [
+      "relocated-node-import",
+      "service-cli-drain",
+      "sqlite-migrate-reopen",
+      "worker-role-readback"
+    ]
+  },
+  "installation": {
+    "scope": "isolated-current-user",
+    "planSha256": "55d60af4709342f55db7f550836dc595b19ccbd0b08580234dd1efb782bf068b",
+    "publish": "INSTALL_RELEASE_PUBLISHED",
+    "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED",
+    "databaseIntegrity": {
+      "service.sqlite": "ok",
+      "answers.sqlite": "ok",
+      "hub/hub.db": "ok"
+    },
+    "currentSelected": false
+  }
+}
