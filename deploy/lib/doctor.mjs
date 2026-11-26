@@ -5,6 +5,7 @@ import { isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 const states = new Set(['ready', 'blocked', 'unavailable', 'unknown']);
+const vaultPermissionStates = new Set(['allowed', 'denied', 'missing', 'unsafe', 'unknown']);
 const identityName = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 export function projectIdentity(identity) {
   const { accountId, scopeId, domains, deviceId, configRevision } = identity ?? {};
@@ -366,8 +367,14 @@ export async function doctor(host, vaultId) {
         || report.connection.scope_hash !== vault.scopeHash || report.connection.vault_id !== vaultId)) throw new Error('mismatch');
       checks.obsidian_app = check(report.editor.application.status === 'ready' ? 'ready' : 'blocked', 'editor',
         { application: report.editor.application.status, uri: report.editor.uri, process: report.editor.process }, 'Open the verified Obsidian application on the registered editing device.');
+      const editorAccess = report.editorAccess;
       checks.vault = check(report.connection?.status === 'connected' && Object.values(report.permissions).every((value) => value === 'allowed') ? 'ready' : 'blocked', 'task',
-        { connection: report.connection?.status ?? 'unknown', permissions: report.permissions, configRevision: vault.configRevision }, 'Confirm the registered Vault roles with the actual service identity.');
+        {
+          connection: report.connection?.status ?? 'unknown',
+          permissions: report.permissions,
+          editorAccess: vaultPermissionStates.has(editorAccess) ? editorAccess : 'unknown',
+          configRevision: vault.configRevision,
+        }, 'Confirm the registered Vault roles with the actual service identity.');
       checks.vault_activity = check(report.recent?.collection && report.recent?.projection ? 'ready' : 'unknown', 'task',
         { collection: Boolean(report.recent?.collection), projection: Boolean(report.recent?.projection) }, 'Verify recent background collection and projection readback.');
       checks.vault_sync = check(report.sync === 'single_device' ? 'ready' : 'unknown', 'task', { mode: report.sync }, 'Keep single-device operation until the selected sync mechanism passes acceptance.');

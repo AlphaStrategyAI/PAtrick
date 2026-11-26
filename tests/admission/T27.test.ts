@@ -13,6 +13,7 @@ import { PROJECTION_BATCH_FILES } from '../../packages/integrations/vault/projec
 import { createBlobStore } from '../../packages/storage/src/blob-store.js';
 import { openDatabase } from '../../packages/storage/src/database.js';
 import { confirmVault, connectVault, inspectVault, requireVault } from '../../packages/integrations/vault/connection.js';
+import { doctor as deploymentDoctor } from '../../deploy/lib/doctor.mjs';
 import { createObsidianDoctor, createObsidianInspector, createVaultActivityReader, obsidianEditTarget } from '../../deploy/obsidian/doctor.mjs';
 import { createMacObsidianInstaller, createVaultKitInstaller, verifyObsidianInstaller } from '../../deploy/obsidian/install.mjs';
 
@@ -262,6 +263,42 @@ test('doctor reports app, installer and URI independently, and stopped editor le
       .toEqual({ kind: 'relative_path', relativePath: uriPath });
     expect(obsidianEditTarget(ready.editor, { vaultId, deviceId, alias: '个人 Vault', mappingRevision: 1 },
       { vaultId, relativePath: '../original.md', mappingRevision: 1 })).toEqual({ kind: 'unavailable' });
+  } finally {
+    await fx.disconnect();
+  }
+});
+
+test.each([
+  { editorUid: getUid(), editorAccess: 'allowed' },
+  { editorUid: getUid() + 1, editorAccess: 'unknown' },
+])('deployment doctor preserves $editorAccess editor access alongside ready Service permissions', async ({ editorUid, editorAccess }) => {
+  const fx = await fixture();
+  try {
+    await confirmVault(fx.db, deviceId, vaultId, now);
+    await createVaultKitInstaller(fx.options).installVaultKit(vaultId);
+    const record = requireVault(fx.db, vaultId);
+    const identity = {
+      accountId: record.account_id, domains: [record.data_domain], scopeId: 'test-scope', deviceId, configRevision: '1',
+    };
+    const inspectObsidian = createObsidianInspector({
+      localDeviceId: deviceId, lockedVersion: null, installerHash: null, readMacState: async () => null,
+    });
+    const report = await deploymentDoctor({
+      identity, captureHost, serviceUid: getUid(), profile: fx.dir, dataRoot: fx.dir, minimumFreeBytes: 1,
+      runtime: { createObsidianDoctor },
+      vaults: { [vaultId]: {
+        identity, configRevision: record.config_revision, scopeHash: record.scope_hash,
+        options: { ...fx.options, editorUid, inspectObsidian },
+      } },
+    }, vaultId);
+    expect(report.checks.vault).toMatchObject({
+      status: 'ready',
+      evidence: {
+        connection: 'connected',
+        permissions: { reader: 'allowed', draftWriter: 'allowed', projector: 'allowed' },
+        editorAccess,
+      },
+    });
   } finally {
     await fx.disconnect();
   }
