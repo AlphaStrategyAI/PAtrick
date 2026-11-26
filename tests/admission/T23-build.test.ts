@@ -420,7 +420,8 @@ describe('T23 installed runtime build and bootstrap', () => {
 
     const registration = runNode(['--input-type=module', '--eval', `
       const cli = await import(${JSON.stringify(pathToFileURL(join(relocated, 'runtime/cli.mjs')).href)});
-      if (['planHostRegistry', 'applyHostRegistry', 'readHostRegistry'].some(name => typeof cli[name] !== 'function')) process.exit(1);
+      if (['planHostRegistry', 'applyHostRegistry', 'readHostRegistry', 'uninstallPlanSha256']
+        .some(name => typeof cli[name] !== 'function')) process.exit(1);
     `], { cwd: temporary });
     expect(registration.status, output(registration)).toBe(0);
 

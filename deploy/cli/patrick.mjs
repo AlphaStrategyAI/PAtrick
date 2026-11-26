@@ -208,17 +208,20 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     const installOperations = request.command === 'install' && ['execute', 'readback', 'prepare-generation'].includes(request.action)
       ? host?.installOperations : undefined;
     const installSelected = installOperations && Object.hasOwn(installOperations, request.operation);
+    const uninstallOperations = request.command === 'uninstall' && request.operation ? host?.uninstallOperations : undefined;
+    const uninstallSelected = uninstallOperations && Object.hasOwn(uninstallOperations, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
     const lifecycle = legacyVaultReadback ? legacyVaultReadback.registration
-      : lifecycleReadbacks && !vaultInit && !installSelected && Object.hasOwn(lifecycleReadbacks, request.operation)
+      : lifecycleReadbacks && !vaultInit && !installSelected && !uninstallSelected && Object.hasOwn(lifecycleReadbacks, request.operation)
         ? typedInit ? Object.getOwnPropertyDescriptor(lifecycleReadbacks, request.operation)?.value
           : lifecycleReadbacks[request.operation] : undefined;
     const lifecycleTarget = lifecycle?.plan?.targetId;
     const requestedTarget = request.command === 'init' ? request.vault
       : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
     const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
-    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead && !(installSelected && request.action === 'readback')) {
+    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead &&
+      !((installSelected || uninstallSelected) && request.action === 'readback')) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
     }
@@ -230,6 +233,36 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     const context = { identity: projectIdentity(identity) };
     if (request.command !== 'doctor' && (host.serviceUid !== process.geteuid?.() || host.captureHost !== hostname())) {
       return response(request, 'blocked', 'HOST_SERVICE_IDENTITY_MISMATCH', 'Run the trusted controller under the registered service UID and capture host.', context);
+    }
+    if (uninstallSelected) {
+      const read = () => {
+        if (host.uninstallOperations !== uninstallOperations) throw new Error('HOST_IDENTITY_MISMATCH');
+        const descriptor = Object.getOwnPropertyDescriptor(uninstallOperations, request.operation);
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+        return descriptor.value;
+      };
+      const enrollment = bindRegistration(read);
+      const validate = () => { hostBinding.validate(); enrollment.validate(); };
+      const selected = { ...context, operationId: request.operation };
+      try {
+        const run = firstInstall?.runUninstall;
+        if (typeof run !== 'function') throw new Error('UNINSTALL_ADMISSION_FAILED');
+        validate();
+        const result = await run(enrollment.value, identity, request.operation, request.action, validate);
+        validate();
+        if (result.status === 'preview') return response(request, 'preview', 'UNINSTALL_PREVIEW',
+          'Review the registered launchd entries and confirm removal through the trusted host controller.',
+          { ...selected, uninstallPreview: { labels: result.labels } });
+        if (result.status === 'unavailable') return response(request, 'unavailable', 'UNINSTALL_RUNTIME_REQUIRED',
+          'Provision the registered writer stop and durable removal authority.', selected);
+        if (result.status === 'completed') return response(request, 'completed', 'UNINSTALL_COMPLETED',
+          'Retain the signed removal receipt and application data.', { ...selected, lifecycleReceipt: result.receipt });
+        return projectLifecycle(request, selected, result);
+      } catch (error) {
+        const code = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value === 'HOST_IDENTITY_MISMATCH'
+          ? 'HOST_IDENTITY_MISMATCH' : 'UNINSTALL_ADMISSION_FAILED';
+        return response(request, 'blocked', code, 'Inspect the registered launchd inventory and signed operation records.', selected);
+      }
     }
     if (vaultInit) {
       let result;

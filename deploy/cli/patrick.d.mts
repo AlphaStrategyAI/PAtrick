@@ -2,6 +2,7 @@ import type { VaultInitCliPreview } from '../runtime/vault-init-cli.js';
 import type { InstallPreviewResult } from '../runtime/install-preview.js';
 import type * as FirstInstall from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
+import type { runUninstall } from '../host/uninstall.js';
 import type { UpgradePreview } from '../runtime/lifecycle-generation.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
@@ -20,6 +21,7 @@ export type CliResult = {
   upgradePreview?: UpgradePreview;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
+  uninstallPreview?: { labels: readonly string[] };
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };
 export function parseArguments(argv: readonly string[]): CliRequest;
@@ -28,7 +30,8 @@ export function captureReleaseData<T>(input: T, options?: { plainRecords?: boole
 export function createPatrickCli(
   host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined,
   firstInstall?: Pick<typeof FirstInstall, 'bindInstallPreviewEnrollment' | 'installBootstrapRequirements' |
-    'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'>,
+    'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'> &
+    { runUninstall?: typeof runUninstall },
   previewUpgrade?: (packageSha256: string) => Promise<UpgradePreview | undefined>,
 ): {
   run(argv: readonly string[]): Promise<CliResult>;

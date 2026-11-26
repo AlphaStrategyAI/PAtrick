@@ -16,6 +16,7 @@ import type { SelectedRuntimePaths } from './role-launch.js';
 import { admitSupervisedServiceSelection, type SupervisedServiceRegistration } from './service-handoff.js';
 export type { ServiceHandoffAuthority, SupervisedServiceRegistration } from './service-handoff.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
+import { runUninstall } from '../host/uninstall.js';
 import { createInstalledUpgradePreview, type GenerationEnrollment, type UpgradePreview } from './lifecycle-generation.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -111,7 +112,7 @@ type ProvisionedPorts = Readonly<{
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
 const firstInstall = Object.freeze({
   bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
-  prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
+  prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease, runUninstall,
 });
 
 export function requireRuntimeProvisioning(provisioning: RuntimeProvisioning): ProvisionedPorts {
@@ -1077,6 +1078,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     ...hostCapabilities,
     get installPreviews() { return hostCapabilities.installPreviews; },
     get installOperations() { return ownCapability(hostCapabilities, 'installOperations'); },
+    get uninstallOperations() { return ownCapability(hostCapabilities, 'uninstallOperations'); },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
     identity,
     captureHost: registrationData.captureHost,
@@ -1175,7 +1177,8 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const publicVaultInit = hasVaultInitReadback(host);
   if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
   if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 &&
-    Object.getOwnPropertyNames(host.installOperations ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
+    Object.getOwnPropertyNames(host.installOperations ?? {}).length === 0 &&
+    Object.getOwnPropertyNames(host.uninstallOperations ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
     try {
       if (publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
@@ -1192,7 +1195,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
 
 type FirstInstallCliRegistration = Readonly<Pick<RegisteredHost,
   'identity' | 'captureHost' | 'serviceUid' | 'profile' | 'dataRoot' | 'minimumFreeBytes' |
-  'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations'>>;
+  'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations' | 'uninstallOperations'>>;
 
 export function createFirstInstallCli(registration: FirstInstallCliRegistration) {
   const { identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies } = registration;
@@ -1200,6 +1203,7 @@ export function createFirstInstallCli(registration: FirstInstallCliRegistration)
     identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies,
     get installPreviews() { return ownCapability(registration, 'installPreviews'); },
     get installOperations() { return ownCapability(registration, 'installOperations'); },
+    get uninstallOperations() { return ownCapability(registration, 'uninstallOperations'); },
     runtime: firstInstall,
   });
   return createPatrickCli(host, undefined, firstInstall);

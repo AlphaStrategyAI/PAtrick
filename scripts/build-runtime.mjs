@@ -267,7 +267,7 @@ async function captureSource(root, commit, profile) {
   const templatePaths = deployment.completeProfile(profile)
     ? [...Object.values(deployment.deploymentPaths), preflight.source, ...deployment.vaultKitPaths] : [];
   const committed = sourceTree(root, commit, templatePaths);
-  const allowedAdditions = [...Object.values(entries), ...recipePaths, hostRegistrySource, 'deploy/lib/deployment-templates.d.mts',
+  const allowedAdditions = [...Object.values(entries), ...recipePaths, hostRegistrySource, 'deploy/host/uninstall.ts', 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
     'deploy/runtime/hub-process.ts', vaultKitResolver, ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
