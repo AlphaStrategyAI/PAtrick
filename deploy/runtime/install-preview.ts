@@ -17,7 +17,7 @@ import {
   createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
   type AdmittedDeployment, type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
 } from '../lib/emitted-release.mjs';
-import { admitReadRoot, canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
+import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS, sha256 } from '../lib/release.mjs';
 import { createLifecycleJournal, createLifecycleJournalReader, lifecycleRecordName,
   type LifecycleRegistration, type LifecycleRequest, type LifecycleStatus } from './lifecycle-journal.ts';
 
@@ -358,6 +358,41 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
   const source = (role: keyof typeof e.templates) => Buffer.from(e.templates[role]);
   const rendered = renderDeploymentTemplates({ caddy: source('caddy'), service: source('service'),
     hub: source('hub'), worker: source('worker') }, e.deployment);
+  const { controllerPath, controllerSha256 } = e.deployment;
+  const controllerRoot = admitReadRoot(dirname(controllerPath), { allowAncestorEntriesChange: true });
+  const owner = BigInt(e.uid);
+  const launchPath = [controllerPath];
+  for (let path = controllerRoot.root; ; path = dirname(path)) {
+    const directory = stat(path);
+    requireFact(directory.isDirectory() && (directory.uid === owner || directory.uid === 0n) &&
+      ((directory.mode & 0o022n) === 0n || (directory.uid === 0n && (directory.mode & 0o1000n) !== 0n)));
+    launchPath.push(path);
+    if (path === '/') break;
+  }
+  const controller = stat(controllerPath);
+  requireFact(controller.isFile() && controller.nlink === 1n && controller.uid === owner &&
+    ((controller.mode & 0o7777n) === 0o555n || (controller.mode & 0o7777n) === 0o755n));
+  const confirmController = () => {
+    guard();
+    controllerRoot.validate();
+    const current = stat(controllerPath);
+    requireFact(current.dev === controller.dev && current.ino === controller.ino && current.ctimeNs === controller.ctimeNs);
+  };
+  function confirmLaunchPath() {
+    confirmController();
+    const permissions = execFileSync('/bin/ls', ['-ldneq', ...launchPath], {
+      env: { LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000, maxBuffer: 64 * 1024,
+    }).trimEnd().split('\n');
+    const entries = permissions.filter(line => /^[d-][rwxStTs-]{9}[@+]? +\d+ /.test(line));
+    requireFact(entries.length === launchPath.length && permissions.every(line => entries.includes(line) ||
+      /^ +\d+: [a-zA-Z0-9:_-]+ (inherited )?deny [a-z_,]+$/.test(line)));
+    confirmController();
+  }
+  confirmLaunchPath();
+  const controllerBytes = await readRegularFile(controllerPath, RELEASE_LIMITS.artifactBytes,
+    { root: controllerRoot.root, validate: confirmController });
+  requireFact(sha256(controllerBytes) === controllerSha256);
+  confirmController();
   verifyHubOwner(e);
   const descriptors = Object.values(deploymentPaths).map(path => {
     const row = receipt.materials.find(file => file.path === path);
@@ -387,6 +422,8 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     requireFact(checked.dev === artifact.dev && checked.ino === artifact.ino && checked.ctimeNs === artifact.ctimeNs);
     const now = stat(e.node.path);
     requireFact(now.dev === binary.dev && now.ino === binary.ino && now.ctimeNs === binary.ctimeNs);
+    reportStage('DEPLOYMENT');
+    confirmLaunchPath();
     reportStage('CAPACITY');
     capacity(e, materialBytes, options.checkAvailable ?? true);
     reportStage('LEASE');
@@ -397,7 +434,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     activeSchema: e.expected.activeSchema, targetSchema: e.targetSchema, volumes,
     ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId }),
     activationAuthorized: false, delegationAuthorized: false };
-  return { local, staging, receipt, confirm };
+  return { local, staging, receipt, confirm, confirmLaunchPath };
 }
 
 export function installReleaseApproval(input: Pick<LocalPlan, 'installationId' | 'releaseId' | 'planSha256'>, operationId: string) {
@@ -469,9 +506,9 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
         evidence: { version: 'install-release-v1', async observe(subject, expectedId) {
           guard();
           requireFact(expectedId === evidenceId);
-          const { receipt, staging } = material ??= await inspect(false);
+          const { receipt, staging, confirmLaunchPath } = material ??= await inspect(false);
           return await withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup }, async () => {
-            guard();
+            confirmLaunchPath();
             if (reconciling) {
               requireFact(!lstatSync(destination, { throwIfNoEntry: false }));
               exactDirectory(releasesRoot, [receipt.packageSha256]);
@@ -510,12 +547,12 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       const claim = await journal.claim(req);
       if (claim.status !== 'claimed') return claim;
       material = await inspect(true, [reservation, lifecycleRecordName(operationId, 'claim')]);
-      const { receipt, staging, confirm } = material;
+      const { receipt, staging, confirm, confirmLaunchPath } = material;
       await journal.readOwnedClaim(claim.token);
       confirm();
       const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup });
       await journal.readOwnedClaim(claim.token);
-      await publishStagedDeployment(receipt, stage);
+      await publishStagedDeployment(receipt, stage, confirmLaunchPath);
       return await journal.markCompleted(claim.token, evidenceId);
     });
   } catch (error) {

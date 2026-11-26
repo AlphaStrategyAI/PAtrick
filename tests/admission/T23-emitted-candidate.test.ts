@@ -466,11 +466,25 @@ describe.skipIf(!process.env.PATRICK_T25_TEST_RECIPE)('independently configured 
 describe('signed deployment material', () => {
 let dir: string;
 let complete: Awaited<ReturnType<typeof buildSignedFixture>>;
+let installController: Promise<{ controllerPath: string; controllerSha256: string }> | undefined;
 beforeAll(async () => {
   dir = join(temporary, 'complete');
   await mkdir(dir);
   complete = await buildSignedFixture(dir, 'deployment-complete');
 }, 120_000);
+
+async function buildInstallController() {
+  const binary = join(dir, 'install-controller');
+  child(['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2',
+    join(root, 'deploy/host-controller/main.cc'), '-o', binary], dir, '/usr/bin/xcrun');
+  const controllerSha256 = sha256(await readFile(binary));
+  const folder = join(dir, controllerSha256);
+  await mkdir(folder, { mode: 0o700 });
+  const controllerPath = join(folder, 'patrick-host-controller');
+  await rename(binary, controllerPath);
+  await chmod(controllerPath, 0o555);
+  return { controllerPath, controllerSha256 };
+}
 
 test.skipIf(!upstreamHubSource)('signed deployment includes the pinned Hub source and refuses an altered closure', async () => {
   const prefix = 'runtime/autoloop-hub/';
@@ -742,7 +756,8 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
     rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
     expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
     ...(hubOwner ? { hubOwner } : {}),
-    deployment: { ...registration, instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
+    deployment: { ...registration, ...(await (installController ??= buildInstallController())),
+      instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
       ...(hubOwner ? { accounts: { ...registration.accounts, hub: '_www' }, hubSupervisorGid: hubOwner.gid } : {}),
       certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
       keyPath: join(instanceRoot, 'caddy/trust', 'key.ref') },
@@ -801,6 +816,25 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
     origin: enrollment.deployment.origin, rpId: enrollment.tls.rpId,
     installPreviews: { release: enrollment }, installOperations,
   });
+  const alteredFolder = join(dir, '0'.repeat(64));
+  await mkdir(alteredFolder, { mode: 0o700 });
+  const alteredPath = join(alteredFolder, 'patrick-host-controller');
+  await cp(enrollment.deployment.controllerPath, alteredPath);
+  const altered = { ...enrollment, deployment: { ...enrollment.deployment, controllerPath: alteredPath, controllerSha256: '0'.repeat(64) } };
+  expect(await previewFirstInstall(() => altered, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+  const controllerDirectory = dirname(enrollment.deployment.controllerPath);
+  await chmod(controllerDirectory, 0o770);
+  try {
+    expect(await previewFirstInstall(() => enrollment, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+  } finally {
+    await chmod(controllerDirectory, 0o700);
+  }
+  child(['+a', 'everyone allow write', enrollment.deployment.controllerPath], dir, '/bin/chmod');
+  try {
+    expect(await previewFirstInstall(() => enrollment, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+  } finally {
+    child(['-N', enrollment.deployment.controllerPath], dir, '/bin/chmod');
+  }
   expect(await readdir(join(instanceRoot, 'data'))).toEqual([]);
   expect(await cli.run(args)).toMatchObject({
     code: 'INSTALL_BOOTSTRAP_PREVIEW', installPreview: { planSha256 },

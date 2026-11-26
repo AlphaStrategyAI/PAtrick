@@ -1147,7 +1147,7 @@ function syncDirectory(path, id, fingerprint = physical) {
   } finally { closeSync(fd); }
 }
 
-export async function publishStagedDeployment(receipt, token) {
+export async function publishStagedDeployment(receipt, token, confirmPublication) {
   const record = verified.get(receipt);
   const stage = staged.get(token);
   check(record?.publication && stage?.receipt === receipt && receipt.profile === 'deployment-complete',
@@ -1181,6 +1181,7 @@ export async function publishStagedDeployment(receipt, token) {
       recheck(capture.nodes, stable);
       check(realpathSync.native(source) === source, 'noncanonical stage');
       check(!namedInfo(path), 'occupied release slot');
+      confirmPublication?.();
       // Node has no Darwin RENAME_EXCL. Only the registered host's exclusion
       // of all competing writers makes the absence check and rename no-clobber.
       stage.claimed = true;
@@ -1203,6 +1204,7 @@ export async function publishStagedDeployment(receipt, token) {
       checkPublication(lease, record);
       recheck(parents);
       check(!namedInfo(source), 'stage name reappeared');
+      confirmPublication?.();
     }, true);
     return result;
   } catch (error) {

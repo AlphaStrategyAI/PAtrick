@@ -126,5 +126,5 @@ export type EmittedPublicationUncertain = Readonly<Error & {
  * Requires a same-volume, exclusively controlled store. Once rename is attempted,
  * any failure (including lease completion loss) is EmittedPublicationUncertain.
  * Reconcile read-only with withPublishedDeployment before any later lifecycle decision. */
-export function publishStagedDeployment(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime):
+export function publishStagedDeployment(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime, confirmPublication?: () => void):
   Promise<Readonly<{ path: string; packageSha256: string }>>;

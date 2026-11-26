@@ -112,7 +112,15 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
     if (!address || typeof address === 'string') throw new Error('fixture listener');
     const template = (name: keyof typeof deploymentPaths) => readFile(join(repo, deploymentPaths[name]), 'utf8');
     const node = await realpath(process.execPath);
-    const controllerSha256 = 'a'.repeat(64);
+    const builtController = join(temporary, 'install-controller');
+    execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2',
+      join(repo, 'deploy/host-controller/main.cc'), '-o', builtController], { cwd: temporary, timeout: 30_000 });
+    const controllerSha256 = sha256(await readFile(builtController));
+    const controllerDirectory = join(temporary, controllerSha256);
+    const controllerPath = join(controllerDirectory, 'patrick-host-controller');
+    await mkdir(controllerDirectory, { mode: 0o700 });
+    await rename(builtController, controllerPath);
+    await chmod(controllerPath, 0o555);
     let held = false;
     e = { installationId: 'installation', releaseId: 'release', expected, policy, uid: process.geteuid!(), hostname: hostname(),
       identity: { accountId: 'owner', scopeId: 'workspace', deviceId: 'device', domains: ['personal'], configRevision: 'r1' },
@@ -125,7 +133,7 @@ describe.skipIf(!fixturePath)('independently registered signed Darwin installati
         held = true; trace.push('acquire');
         try { return await read(root); } finally { held = false; trace.push('release'); }
       } },
-      deployment: { instanceRoot: root, controllerSha256, controllerPath: join(temporary, controllerSha256, 'patrick-host-controller'),
+      deployment: { instanceRoot: root, controllerSha256, controllerPath,
         accounts: { caddy: '_proxy', service: '_service', hub: '_hub', worker: '_worker' },
         origin: 'https://127.0.0.1:' + address.port, listener: { host: '127.0.0.1', port: address.port === 43123 ? 43124 : 43123 },
         certificatePath: root + '/caddy/trust/origin.pem', keyPath: root + '/caddy/trust/key.ref' },
