@@ -167,9 +167,15 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       import { fstatSync } from 'node:fs';
       import { Socket } from 'node:net';
       if (process.env.PATRICK_SUPERVISOR_FD !== '3' || !fstatSync(3).isSocket()) process.exit(76);
-      const connection = new Socket({ fd: 3, readable: true, writable: true });
+      const connection = new Socket({ fd: 3, readable: true, writable: true, allowHalfOpen: ${role === 'service'} });
       let response = '';
-      for await (const part of connection) response += part.toString();
+      for await (const part of connection) {
+        response += part.toString();
+        if (${JSON.stringify(role)} === 'service') {
+          if (response === 'enrolled\\n') connection.write('stop\\n');
+          if (response === 'enrolled\\nstopping\\n') connection.end('drained\\n');
+        }
+      }
       console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid(), response }));
     `;
     const supervisorEntry = `
@@ -204,11 +210,20 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       const program = { path: controller, sha256: await digest(controller) };
       serviceSupervisorEntry = `
         import { runInstalledServiceSupervisor } from ${JSON.stringify(supervisorModule)};
-        await runInstalledServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)}, socket =>
+        await runInstalledServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)}, (socket, shutdown) =>
           new Promise(resolve => {
             socket.once('close', resolve);
+            socket.once('data', request => {
+              if (request.toString() !== 'stop\\n') return socket.destroy();
+              socket.once('data', drained => {
+                if (drained.toString() !== 'drained\\n') return socket.destroy();
+                socket.end('stopped\\n');
+              });
+              process.kill(process.pid, 'SIGTERM');
+            });
+            shutdown.addEventListener('abort', () => socket.write('stopping\\n'), { once: true });
             socket.resume();
-            socket.end('enrolled\\n');
+            socket.write('enrolled\\n');
           }));
       `;
     }
@@ -258,11 +273,6 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         expect([endpointInfo.isSocket(), endpointInfo.uid, endpointInfo.gid, endpointInfo.mode & 0o777])
           .toEqual([true, 0, gid, 0o660]);
       }, { timeout: 5000 });
-      const admitted = spawnSync(controller, ['run-role', role], {
-        uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
-      });
-      expect([admitted.status, admitted.error, admitted.stderr]).toEqual([0, undefined, '']);
-      expect(JSON.parse(admitted.stdout)).toEqual({ uid, gid, response: 'enrolled\n' });
       const wrongPeer = createConnection(endpoint);
       wrongPeer.setTimeout(5000, () => wrongPeer.destroy(new Error('wrong peer did not receive a reply')));
       try {
@@ -270,6 +280,13 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         for await (const part of wrongPeer) response += part.toString();
         expect(response).toBe(role === 'hub' ? 'rejected\n' : '');
       } finally { wrongPeer.destroy(); }
+      const admitted = spawnSync(controller, ['run-role', role], {
+        uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
+      });
+      expect([admitted.status, admitted.error, admitted.stderr]).toEqual([0, undefined, '']);
+      expect(JSON.parse(admitted.stdout)).toEqual({
+        uid, gid, response: role === 'service' ? 'enrolled\nstopping\nstopped\n' : 'enrolled\n',
+      });
     } catch (error) {
       const output = await readFile(stderr, 'utf8').catch(() => '');
       throw new Error([String(error), output].filter(Boolean).join('\n'), { cause: error });

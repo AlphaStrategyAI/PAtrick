@@ -429,7 +429,7 @@ export async function listenVerifiedServiceControl(options: ListenOptions | { fd
 }
 
 export async function runInstalledServiceSupervisor(program: SupervisorProgram, endpoint: string,
-  serve: (socket: Socket) => Promise<void>) {
+  serve: (socket: Socket, shutdown: AbortSignal) => Promise<void>) {
   if (process.platform !== 'darwin' || process.getuid?.() !== 0 || process.geteuid?.() !== 0 ||
       process.env.PATRICK_SUPERVISOR_LISTENER_FD !== '3' || !fstatSync(3).isSocket() || resolve(endpoint) !== endpoint) {
     throw new Error('INSTALLED_SERVICE_SUPERVISOR_LISTENER_REQUIRED');
@@ -442,9 +442,11 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
   const sessions = new Map<Socket, Promise<void>>();
   let server: Server | undefined;
   function stop() {
-    stopping.abort();
+    stopping.abort(new Error('INSTALLED_SERVICE_SUPERVISOR_STOP_REQUESTED'));
     server?.close();
-    for (const socket of sessions.keys()) socket.destroy();
+    for (const socket of sessions.keys()) {
+      if (socket !== active) socket.destroy();
+    }
   }
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
@@ -455,7 +457,7 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
       const finished = verifyRolePeer(socket, fixedProgram, 'service').then(() => {
         if (!socket.destroyed && !stopping.signal.aborted && !active) {
           active = socket;
-          return serve(socket);
+          return serve(socket, stopping.signal);
         }
       }).catch(error => {
         const code = error instanceof Error && /^[A-Z][A-Z_]{1,95}$/.test(error.message) ? error.message : 'UNKNOWN';
@@ -472,6 +474,7 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
     await closed;
   } finally {
     stop();
+    active?.destroy();
     await Promise.all(sessions.values());
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
@@ -491,14 +494,15 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
   serve: (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>) {
   const binding = bindRegistration(() => enrollment);
   if (binding.value.serviceRole?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
-  await runInstalledServiceSupervisor(program, endpoint, async socket => {
-    const stopping = new AbortController();
-    function stop() { stopping.abort(new Error('INSTALLED_SERVICE_CONNECTION_LOST')); }
+  await runInstalledServiceSupervisor(program, endpoint, async (socket, shutdown) => {
+    const disconnected = new AbortController();
+    const signal = AbortSignal.any([shutdown, disconnected.signal]);
+    function stop() { disconnected.abort(new Error('INSTALLED_SERVICE_CONNECTION_LOST')); }
     const fence = reserveControllerServiceSession(binding.value);
     function assertCurrent() {
       binding.validate();
       fence.guard();
-      stopping.signal.throwIfAborted();
+      signal.throwIfAborted();
     }
     socket.once('close', stop);
     try {
@@ -509,11 +513,11 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
         if (current.order.serviceRoleSha256 !== fence.roleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
         return { paths: selectedRuntimePaths(binding.value, 'service', current.order.generation,
           current.sha256, deployment.packageSha256), deployment };
-      }, stopping.signal);
+      }, signal);
       assertCurrent();
       const session = randomBytes(16).toString('hex');
       const confirmDrain = fence.authorize(selection.paths.selectionSha256, session);
-      if (await serve(socket, Object.freeze({ ...selection, session, signal: stopping.signal, assertCurrent })) !== 'drained') {
+      if (await serve(socket, Object.freeze({ ...selection, session, signal, assertCurrent })) !== 'drained') {
         throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
       }
       confirmDrain();
