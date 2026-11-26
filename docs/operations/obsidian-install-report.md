@@ -101,3 +101,5 @@ GUI 保存由 CUA 执行并从原生无障碍树读回，没有伪造人工确�
 在获准的 Apple M1 MacBook Pro（macOS 27.2.1，`26B131`）上，使用 `ac7fe49` 的运行时代码与 Node `v26.13.0`，以管理员权限执行 `tests/admission/T27-native-access.test.ts`，通过 1 项。合成 Vault 位于独立临时目录。测试中独立 Service UID 65 使用实际 Vault API 发布索引和批次，并以仅新建方式发布标准草稿。桌面 UID 501 通过 Darwin ACL 读取全部投影文件并就地编辑草稿。投影写入和删除、草稿删除、暂存目录访问与私有 SQLite 库读取均被拒绝。测试日志 SHA-256 为 `10625c99486c1ef211d99afbd035c522cc959833bb19920e010879425845171e`。
 
 本次使用桌面身份的独立进程验证文件权限。正式 `vault-init` 和 kit 安装器仍要求编辑者与 Service 共用 UID。独立 UID 下的正式 kit 安装、Obsidian 保存、补采和卸载保留仍待验收。
+
+在同一台目标 MacBook Pro 上，将 `PATRICK_T27_SERVICE_USER` 设为系统 `launchd` 登记的 Service 账号，以 UID 402 和桌面 UID 501 重跑权限用例，1 项通过。合成 Vault 中的投影读取、草稿编辑和越权拒绝均通过。正式 kit 安装、桌面应用保存和退出后的后台补采仍待实测。

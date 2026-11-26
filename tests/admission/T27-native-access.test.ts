@@ -8,7 +8,6 @@ import { expect, test } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(import.meta.url);
-const serviceName = '_mdnsresponder';
 const dropAndRun = `
   import { spawnSync } from 'node:child_process';
   const [uid, gid, timeoutMs, execPath, ...args] = process.argv.slice(1);
@@ -199,7 +198,9 @@ test.skipIf(process.env.PATRICK_T27_NATIVE_ACCESS !== '1')(
   async ({ onTestFinished }) => {
   expect([process.platform, process.getuid?.(), process.geteuid?.()]).toEqual(['darwin', 0, 0]);
   const editorName = process.env.PATRICK_T27_DESKTOP_USER ?? '';
+  const serviceName = process.env.PATRICK_T27_SERVICE_USER ?? '_mdnsresponder';
   expect(editorName, 'set PATRICK_T27_DESKTOP_USER to the approved local desktop short name').toMatch(/^[a-zA-Z_][a-zA-Z0-9_-]*$/);
+  expect(serviceName, 'set PATRICK_T27_SERVICE_USER to the approved local service short name').toMatch(/^[a-zA-Z_][a-zA-Z0-9_-]*$/);
   const editor = localAccount(editorName);
   const service = localAccount(serviceName);
   expect(editor.uid).not.toBe(service.uid);
