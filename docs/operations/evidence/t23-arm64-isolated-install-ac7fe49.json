@@ -55,5 +55,17 @@
     },
     "currentSelected": false,
     "localReceiptSha256": "ddf9f7a9c8a51d4253b59805ffbdf8da359628024a754b564f8556b123813e65"
+  },
+  "https": {
+    "scope": "isolated-current-user",
+    "data": "copy_of_prepared_first_generation",
+    "origin": "https://localhost:18443",
+    "ipv4Health": 200,
+    "ipv6Web": 200,
+    "anonymousSession": 401,
+    "wrongAuthority": 421,
+    "untrustedCertificate": "rejected",
+    "drain": "closed",
+    "localReceiptSha256": "b8340dfcad41071a1bab91a9e6d6d166f36ecc202cc61975160f3aea4b5e0059"
   }
 }
