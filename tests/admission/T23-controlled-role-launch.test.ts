@@ -9,10 +9,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import { build } from 'esbuild';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 import { reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
+import { listenVerifiedServiceControl } from '../../deploy/runtime/role-launch.js';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const archivedMaterials = process.env.PATRICK_T23_CONTROLLED_MATERIALS;
@@ -21,6 +23,41 @@ const localClangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc
 const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
+
+test('proves the service listener serves the registered endpoint before admitting a role', async ({ onTestFinished }) => {
+  const root = await mkdtemp('/private/tmp/patrick-svc-listener-');
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const endpoint = join(root, 'expected.sock');
+  const unrelated = join(root, 'other.sock');
+  const decoy = createServer(socket => socket.pipe(socket));
+  decoy.listen(endpoint);
+  await once(decoy, 'listening');
+  const messages: string[] = [];
+  const admit = (socket: Socket) => {
+    messages.push('admitted');
+    socket.resume();
+    socket.end('ready\n');
+  };
+  try {
+    await expect(listenVerifiedServiceControl({ path: unrelated }, endpoint, admit, AbortSignal.timeout(1000)))
+      .rejects.toThrow('INSTALLED_SERVICE_LISTENER_UNVERIFIED');
+  } finally {
+    decoy.close();
+    await once(decoy, 'close');
+  }
+  expect(messages).toEqual([]);
+  const server = await listenVerifiedServiceControl({ path: endpoint }, endpoint, admit, AbortSignal.timeout(5000));
+  try {
+    const role = createConnection(endpoint);
+    let response = '';
+    for await (const bytes of role) response += bytes.toString();
+    expect(response).toBe('ready\n');
+    expect(messages).toEqual(['admitted']);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
 
 test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
   'keeps the controller-owned service fence exclusive across independent UIDs',
@@ -99,6 +136,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     await chmod(root, 0o755);
     const registry = join(root, 'registry');
+    const endpoint = join(registry, role, 'supervisor.sock');
     const controller = join(root, 'controller');
     const header = join(root, 'registry.h');
     await writeFile(header, [
@@ -139,6 +177,25 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         });
       }).listen({ fd });
     `;
+    let serviceSupervisorEntry: string | undefined;
+    if (role === 'service') {
+      const supervisorModule = join(root, 'service-supervision.mjs');
+      await build({
+        stdin: { contents: "export { runInstalledServiceSupervisor } from './deploy/runtime/role-launch.js';", resolveDir: project },
+        outfile: supervisorModule, bundle: true, format: 'esm', platform: 'node',
+        external: ['./composition.js', './service.js', './worker.js'],
+      });
+      const program = { path: controller, sha256: await digest(controller) };
+      serviceSupervisorEntry = `
+        import { runInstalledServiceSupervisor } from ${JSON.stringify(supervisorModule)};
+        await runInstalledServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)}, socket =>
+          new Promise(resolve => {
+            socket.once('close', resolve);
+            socket.resume();
+            socket.end('enrolled\\n');
+          }));
+      `;
+    }
     const plan = planHostRegistry({
       registryRoot: registry,
       node: { path: process.execPath, sha256: await digest(process.execPath) },
@@ -148,7 +205,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         worker: { ...worker, entry: 'process.exit(76);' },
       },
       supervisor: { entry: supervisorEntry },
-      ...(role === 'service' ? { serviceSupervisor: { entry: supervisorEntry } } : {}),
+      ...(serviceSupervisorEntry ? { serviceSupervisor: { entry: serviceSupervisorEntry } } : {}),
       cli: { entry: 'console.log(JSON.stringify({ uid: process.getuid(), args: process.argv.slice(2) }));' },
     });
     await applyHostRegistry(plan);
@@ -163,7 +220,6 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
     expect(JSON.parse(ownerCli.stdout)).toEqual({ uid: 0, args: cliArgs });
     const label = `com.patrick.admission.system-${role}.` + randomBytes(8).toString('hex');
     const job = 'system/' + label;
-    const endpoint = join(registry, role, 'supervisor.sock');
     const plist = join(root, label + '.plist');
     const stderr = join(root, 'launchd.stderr');
     await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
@@ -196,7 +252,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       try {
         let response = '';
         for await (const part of wrongPeer) response += part.toString();
-        expect(response).toBe('rejected\n');
+        expect(response).toBe(role === 'hub' ? 'rejected\n' : '');
       } finally { wrongPeer.destroy(); }
     } catch (error) {
       const output = await readFile(stderr, 'utf8').catch(() => '');

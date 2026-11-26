@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { close, closeSync, constants, fstatSync, lstatSync, openSync } from 'node:fs';
-import { createServer, Socket } from 'node:net';
+import { createConnection, createServer, Socket, type ListenOptions, type Server } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -244,9 +245,9 @@ type SupervisorProgram = Readonly<{ path: string; sha256: string }>;
 const hubReady = 'READY 1 hub\n';
 const hubStopped = 'STOPPED 1 hub\n';
 
-async function verifyHubPeer(socket: Socket, program: SupervisorProgram) {
+async function verifyRolePeer(socket: Socket, program: SupervisorProgram, role: 'hub' | 'service') {
   const { path, sha256: expected } = program;
-  const denied = new Error('INSTALLED_HUB_SUPERVISOR_PEER_INVALID');
+  const denied = new Error(`INSTALLED_${role.toUpperCase()}_SUPERVISOR_PEER_INVALID`);
   if (resolve(path) !== path || !/^[a-f0-9]{64}$/.test(expected)) throw denied;
   const root = admitReadRoot(dirname(path), { allowAncestorEntriesChange: true });
   const initial = lstatSync(path);
@@ -260,7 +261,7 @@ async function verifyHubPeer(socket: Socket, program: SupervisorProgram) {
   if (sha256(await readRegularFile(path, 1024 * 1024, { root: root.root, validate })) !== expected) throw denied;
   validate();
   if (socket.destroyed) throw denied;
-  const child = spawn(path, ['check-role-peer', 'hub'], {
+  const child = spawn(path, ['check-role-peer', role], {
     env: {}, stdio: ['ignore', 'ignore', 'ignore', socket], timeout: 5000, killSignal: 'SIGKILL',
   });
   const [code, signal] = await once(child, 'close');
@@ -280,7 +281,7 @@ export async function serveInstalledHubRole(socket: Socket, program: SupervisorP
   let invalid = false;
   let completed = false;
   try {
-    await verifyHubPeer(socket, program);
+    await verifyRolePeer(socket, program, 'hub');
     socket.on('data', () => { invalid = true; stop(); });
     socket.resume();
     if (!stopping.signal.aborted) {
@@ -343,6 +344,120 @@ export async function runInstalledHubSupervisor(program: SupervisorProgram, enro
     await active?.finished;
     if (failure) throw failure;
   } finally {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  }
+}
+
+export async function listenVerifiedServiceControl(options: ListenOptions | { fd: number }, endpoint: string,
+  admit: (socket: Socket) => void, signal: AbortSignal) {
+  const challenge = randomBytes(32);
+  let verified = false;
+  const pending = new Map<Socket, (bytes: Buffer) => void>();
+  function discardUnverified(this: Socket) { this.destroy(); }
+  const server = createServer({ allowHalfOpen: true, pauseOnConnect: true }, socket => {
+    if (verified) return admit(socket);
+    if (pending.size >= 32) return socket.destroy();
+    let length = 0;
+    function check(bytes: Buffer) {
+      if (length + bytes.length > challenge.length ||
+          !bytes.equals(challenge.subarray(length, length + bytes.length))) return socket.destroy();
+      length += bytes.length;
+      if (length === challenge.length) {
+        server.emit('verified-service-control');
+        socket.destroy();
+      }
+    }
+    pending.set(socket, check);
+    socket.on('error', () => socket.destroy());
+    socket.once('close', () => pending.delete(socket));
+    socket.once('end', discardUnverified);
+    socket.on('data', check);
+    socket.resume();
+  });
+  let probe: Socket | undefined;
+  try {
+    try {
+      signal.throwIfAborted();
+      server.listen(options);
+    } catch (error) {
+      if ('fd' in options) close(options.fd, () => undefined);
+      throw error;
+    }
+    await once(server, 'listening', { signal });
+    const confirmation = once(server, 'verified-service-control', { signal });
+    probe = createConnection(endpoint);
+    probe.on('error', () => probe?.destroy());
+    probe.once('connect', () => probe?.end(challenge));
+    probe.resume();
+    await Promise.race([
+      confirmation,
+      once(probe, 'close', { signal }).then(() => { throw new Error('probe disconnected'); }),
+    ]);
+    signal.throwIfAborted();
+    verified = true;
+    for (const [socket, check] of pending) {
+      socket.pause();
+      socket.off('data', check);
+      socket.off('end', discardUnverified);
+      if (!socket.destroyed) admit(socket);
+    }
+    pending.clear();
+    return server;
+  } catch (cause) {
+    for (const socket of pending.keys()) socket.destroy();
+    await new Promise<void>(resolveClosed => server.close(() => resolveClosed()));
+    throw new Error('INSTALLED_SERVICE_LISTENER_UNVERIFIED', { cause });
+  } finally {
+    probe?.destroy();
+  }
+}
+
+export async function runInstalledServiceSupervisor(program: SupervisorProgram, endpoint: string,
+  serve: (socket: Socket) => Promise<void>) {
+  if (process.platform !== 'darwin' || process.getuid?.() !== 0 || process.geteuid?.() !== 0 ||
+      process.env.PATRICK_SUPERVISOR_LISTENER_FD !== '3' || !fstatSync(3).isSocket() || resolve(endpoint) !== endpoint) {
+    throw new Error('INSTALLED_SERVICE_SUPERVISOR_LISTENER_REQUIRED');
+  }
+  const fixedProgram = bindRegistration(() => program).value;
+  const descriptor = openSync('/dev/fd/3', constants.O_RDWR);
+  closeSync(3);
+  const stopping = new AbortController();
+  let active: Socket | undefined;
+  const sessions = new Map<Socket, Promise<void>>();
+  let server: Server | undefined;
+  function stop() {
+    stopping.abort();
+    server?.close();
+    for (const socket of sessions.keys()) socket.destroy();
+  }
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  try {
+    server = await listenVerifiedServiceControl({ fd: descriptor }, endpoint, socket => {
+      if (stopping.signal.aborted || active || sessions.size >= 8) return socket.destroy();
+      socket.on('error', () => socket.destroy());
+      const finished = verifyRolePeer(socket, fixedProgram, 'service').then(() => {
+        if (!socket.destroyed && !stopping.signal.aborted && !active) {
+          active = socket;
+          return serve(socket);
+        }
+      }).catch(error => {
+        const code = error instanceof Error && /^[A-Z][A-Z_]{1,95}$/.test(error.message) ? error.message : 'UNKNOWN';
+        console.error('INSTALLED_SERVICE_SUPERVISOR_SESSION_FAILED', code);
+      }).finally(() => {
+        socket.destroy();
+        if (active === socket) active = undefined;
+        sessions.delete(socket);
+      });
+      sessions.set(socket, finished);
+    }, AbortSignal.any([stopping.signal, AbortSignal.timeout(5000)]));
+    const closed = once(server, 'close');
+    if (stopping.signal.aborted) stop();
+    await closed;
+  } finally {
+    stop();
+    await Promise.all(sessions.values());
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
   }
