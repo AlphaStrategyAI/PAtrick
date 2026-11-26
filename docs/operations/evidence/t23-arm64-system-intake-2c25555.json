@@ -1,0 +1,22 @@
+{
+  "format": "patrick-t23-system-intake-v1",
+  "observedAt": "2026-11-26T17:54:27+08:00",
+  "sourceCommit": "2c25555b1df10b795b6e12ec5558baff164856d6",
+  "hostedBuild": "45791673004",
+  "architecture": "arm64",
+  "installationId": "t23-macbook-arm64",
+  "releaseId": "acceptance-2c25555",
+  "packageSha256": "6cbc6385159b653e787cdcd0a765cfb63a5c624568ddb1467beac72e991bea2f",
+  "publicKeySha256": "c333fb5d8b76dcf8efa158b9feff33bf3bad4f40b939bab5035114b87e6af9dd",
+  "planSha256": "6f910f171280f991334a1ff092fb9f027ba9dff88946aaf74993bef8996078c4",
+  "localReceiptSha256": "10cc32a62b41668703d6ee5186ad792378ca4a26baff778c89d75f33ce80009a",
+  "origin": "https://localhost:18443",
+  "rolesUseDistinctLocalIdentities": true,
+  "publish": "INSTALL_RELEASE_PUBLISHED",
+  "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+  "readback": "INSTALL_RELEASE_PUBLISHED",
+  "generation": "INSTALL_GENERATION_PREPARED",
+  "generationReadback": "INSTALL_GENERATION_PREPARED",
+  "currentSelected": false,
+  "outstanding": ["service-activation", "tls-and-owner-session", "reboot", "installed-upgrade", "uninstall-preserves-data"]
+}
