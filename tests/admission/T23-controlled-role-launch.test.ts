@@ -131,6 +131,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
 test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
   { role: 'hub', socketKey: 'HubControl' },
   { role: 'service', socketKey: 'ServiceControl' },
+  { role: 'worker', socketKey: 'WorkerControl' },
 ] as const)(
   'authenticates the registered $role across system launchd and independent UIDs', { timeout: 60_000 },
   async ({ role, socketKey }, { onTestFinished }) => {
@@ -147,7 +148,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       expect(gid).toBeGreaterThan(0);
     }
     expect(new Set([hub.uid, service.uid, worker.uid]).size).toBe(3);
-    const { uid, gid } = role === 'hub' ? hub : service;
+    const { uid, gid } = { hub, service, worker }[role];
     const root = await mkdtemp('/private/tmp/patrick-system-role-');
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     await chmod(root, 0o755);
@@ -233,10 +234,11 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       roles: {
         service: { ...service, entry: role === 'service' ? roleEntry : 'process.exit(76);' },
         hub: { ...hub, entry: role === 'hub' ? roleEntry : 'process.exit(76);' },
-        worker: { ...worker, entry: 'process.exit(76);' },
+        worker: { ...worker, entry: role === 'worker' ? roleEntry : 'process.exit(76);' },
       },
       supervisor: { entry: supervisorEntry },
       ...(serviceSupervisorEntry ? { serviceSupervisor: { entry: serviceSupervisorEntry } } : {}),
+      ...(role === 'worker' ? { workerSupervisor: { entry: supervisorEntry } } : {}),
       cli: { entry: 'console.log(JSON.stringify({ uid: process.getuid(), args: process.argv.slice(2) }));' },
     });
     await applyHostRegistry(plan);
@@ -278,7 +280,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       try {
         let response = '';
         for await (const part of wrongPeer) response += part.toString();
-        expect(response).toBe(role === 'hub' ? 'rejected\n' : '');
+        expect(response).toBe(role === 'service' ? '' : 'rejected\n');
       } finally { wrongPeer.destroy(); }
       const admitted = spawnSync(controller, ['run-role', role], {
         uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,
@@ -424,7 +426,8 @@ describe.skipIf(!enabled)('fixed synthetic role launch', { concurrent: false }, 
     ['wrong role', true, ['run-role', 'editor'], 64],
     ['extra argument', true, ['run-role', 'service', 'other'], 64],
     ['absent registration', false, ['run-role', 'service'], 78],
-    ['wrong supervised role', false, ['run-supervisor', 'worker'], 64],
+    ['wrong supervised role', false, ['run-supervisor', 'editor'], 64],
+    ['absent worker supervisor registration', false, ['run-supervisor', 'worker'], 78],
   ] as const)('%s exits before connecting', (_reason, registered, argv, code) => {
     const result = spawnSync(registered ? controller : unregistered, argv, {
       env: {}, cwd: root, timeout: 5000, encoding: 'utf8',

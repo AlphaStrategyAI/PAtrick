@@ -8,8 +8,10 @@ import { promisify } from 'node:util';
 export const hostRegistryRoot = '/Library/Application Support/PAtrick/controller-v1';
 export const hostRegistryRoles = Object.freeze(['service', 'hub', 'worker'] as const);
 export const hostRegistrySupervisor = 'hub-supervisor';
-const serviceSupervisorDirectory = 'service-supervisor';
-const serviceSupervisorMarker = 'service/supervisor-required';
+const optionalSupervisors = [
+  { role: 'service', field: 'serviceSupervisor', directory: 'service-supervisor' },
+  { role: 'worker', field: 'workerSupervisor', directory: 'worker-supervisor' },
+] as const;
 
 const directoryMode = 0o755;
 const nodeMode = 0o555;
@@ -24,6 +26,7 @@ export type HostRegistryRegistration = Readonly<{
   roles: Readonly<Record<'service' | 'hub' | 'worker', HostRoleAccount>>;
   supervisor: Readonly<{ entry: string }>;
   serviceSupervisor?: Readonly<{ entry: string }>;
+  workerSupervisor?: Readonly<{ entry: string }>;
   cli?: Readonly<{ entry: string }>;
 }>;
 
@@ -87,8 +90,8 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
   const supervisor = registration.supervisor;
   if (!supervisor || typeof supervisor !== 'object') throw new Error('HOST_REGISTRY_ENTRY_INVALID');
   const supervisorEntry = entry((supervisor as { entry?: unknown }).entry);
-  const serviceSupervisorEntry = registration.serviceSupervisor === undefined
-    ? undefined : entry(registration.serviceSupervisor?.entry);
+  const registeredSupervisors = optionalSupervisors.flatMap(config =>
+    registration[config.field] === undefined ? [] : [{ ...config, content: entry(registration[config.field]?.entry) }]);
 
   const directories = [
     { path: root, mode: directoryMode },
@@ -107,7 +110,7 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
     const entryBytes = Buffer.from(identity.entry, 'utf8');
     files.push({ path: join(directory, 'entry.mjs'), mode: entryMode, sha256: digest(entryBytes), bytes: entryBytes.length,
       source: { kind: 'bytes', bytes: entryBytes } });
-    if (role === 'hub' || (role === 'service' && serviceSupervisorEntry !== undefined)) {
+    if (role === 'hub' || registeredSupervisors.some(config => config.role === role)) {
       files.push({ path: join(directory, 'supervisor-required'), mode: entryMode, sha256: digest(''), bytes: 0,
         source: { kind: 'bytes', bytes: Buffer.alloc(0) } });
     }
@@ -115,9 +118,9 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
   const supervisorBytes = Buffer.from(supervisorEntry, 'utf8');
   files.push({ path: join(root, hostRegistrySupervisor, 'entry.mjs'), mode: entryMode, sha256: digest(supervisorBytes),
     bytes: supervisorBytes.length, source: { kind: 'bytes', bytes: supervisorBytes } });
-  if (serviceSupervisorEntry !== undefined) {
-    const supervisorRoot = join(root, serviceSupervisorDirectory);
-    const bytes = Buffer.from(serviceSupervisorEntry, 'utf8');
+  for (const config of registeredSupervisors) {
+    const supervisorRoot = join(root, config.directory);
+    const bytes = Buffer.from(config.content, 'utf8');
     directories.push({ path: supervisorRoot, mode: directoryMode });
     files.push({ path: join(supervisorRoot, 'entry.mjs'), mode: entryMode, sha256: digest(bytes),
       bytes: bytes.length, source: { kind: 'bytes', bytes } });
@@ -156,8 +159,9 @@ async function requireNoAcl(path: string, code: string) {
 async function validateLaunchPaths(root: string, plan: HostRegistryPlan, owner: number) {
   const { registryRoot } = plan;
   const cli = plan.directories.some(directory => directory.path === join(registryRoot, 'cli'));
-  const service = plan.directories.some(directory => directory.path === join(registryRoot, serviceSupervisorDirectory));
-  if (!cli && !service) return;
+  const supervisors = optionalSupervisors.filter(config =>
+    plan.directories.some(directory => directory.path === join(registryRoot, config.directory)));
+  if (!cli && !supervisors.length) return;
   if (registryRoot === hostRegistryRoot) {
     const parent = dirname(registryRoot);
     const support = dirname(parent);
@@ -166,10 +170,10 @@ async function validateLaunchPaths(root: string, plan: HostRegistryPlan, owner: 
       await requireNoAcl(directory, 'HOST_REGISTRY_DIRECTORY_INVALID');
     }
   }
-  const directories = ['', ...(cli ? ['cli'] : []), ...(service ? ['service', serviceSupervisorDirectory] : [])];
-  const files = ['node', ...(cli ? ['cli/entry.mjs'] : []), ...(service ? [
-    'service/account', 'service/entry.mjs', serviceSupervisorMarker, join(serviceSupervisorDirectory, 'entry.mjs'),
-  ] : [])];
+  const directories = ['', ...(cli ? ['cli'] : []), ...supervisors.flatMap(({ role, directory }) => [role, directory])];
+  const files = ['node', ...(cli ? ['cli/entry.mjs'] : []), ...supervisors.flatMap(({ role, directory }) => [
+    join(role, 'account'), join(role, 'entry.mjs'), join(role, 'supervisor-required'), join(directory, 'entry.mjs'),
+  ])];
   for (const relativePath of directories) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_DIRECTORY_INVALID');
   for (const relativePath of files) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_FILE_CONFLICT');
 }
@@ -259,9 +263,10 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
 /** Reads the applied tree back and reports the observed digests. */
 export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly Readonly<{ path: string; sha256: string }>[]> {
   const owner = registryOwner(plan);
-  for (const [relativePath, entries] of [
-    ['cli', plan.directories], [serviceSupervisorDirectory, plan.directories], [serviceSupervisorMarker, plan.files],
-  ] as const) {
+  const controlledPaths = optionalSupervisors.flatMap(({ role, directory }) => [
+    [directory, plan.directories] as const, [join(role, 'supervisor-required'), plan.files] as const,
+  ]);
+  for (const [relativePath, entries] of [['cli', plan.directories] as const, ...controlledPaths]) {
     const path = join(plan.registryRoot, relativePath);
     if (entries.some(entry => entry.path === path)) continue;
     const actual = await lstat(path).catch((error: NodeJS.ErrnoException) => {

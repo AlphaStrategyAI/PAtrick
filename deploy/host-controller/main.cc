@@ -249,6 +249,7 @@ struct Supervisor {
 
 constexpr Supervisor hub_supervisor {"hub", "hub-supervisor", "HubControl", "HUB", false};
 constexpr Supervisor service_supervisor {"service", "service-supervisor", "ServiceControl", "SERVICE", true};
+constexpr Supervisor worker_supervisor {"worker", "worker-supervisor", "WorkerControl", "WORKER", true};
 
 bool listener_matches_endpoint(const sockaddr_un& bound, const std::string& path, const struct stat& endpoint) {
   sockaddr_un target {};
@@ -465,8 +466,7 @@ int main(int argc, char** argv) {
   const bool cli = argc >= 2 && strcmp(argv[1], "run-cli") == 0;
   if (!cli && (argc != 3 ||
       (strcmp(argv[1], "run-role") && strcmp(argv[1], "check-role-peer") && strcmp(argv[1], "run-supervisor")) ||
-      (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker")) ||
-      (strcmp(argv[1], "run-supervisor") == 0 && strcmp(argv[2], "hub") && strcmp(argv[2], "service")))) return EX_USAGE;
+      (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker")))) return EX_USAGE;
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
   if (cli || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
@@ -474,7 +474,9 @@ int main(int argc, char** argv) {
 #else
   if (cli) return launch_registered_cli(argc, argv);
   if (strcmp(argv[1], "run-supervisor") == 0) {
-    return launch_supervisor(strcmp(argv[2], "hub") == 0 ? hub_supervisor : service_supervisor);
+    if (strcmp(argv[2], "hub") == 0) return launch_supervisor(hub_supervisor);
+    if (strcmp(argv[2], "service") == 0) return launch_supervisor(service_supervisor);
+    return launch_supervisor(worker_supervisor);
   }
   if (strcmp(argv[1], "check-role-peer") == 0) return check_role_peer(argv[2]);
   return launch_registered_role(argv[2]);

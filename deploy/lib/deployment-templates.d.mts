@@ -40,8 +40,9 @@ export type DeploymentRegistration = Readonly<{
   caddyListen?: 'loopback';
   hubSupervisorGid?: number;
   serviceSupervisorGid?: number;
+  workerSupervisorGid?: number;
 }>;
 export function renderDeploymentTemplates(sources: Readonly<Record<'caddy' | DeploymentJob, Uint8Array>>, registration: DeploymentRegistration): Readonly<{
-  caddy: string; plists: Readonly<Record<DeploymentJob, string> & { hubSupervisor?: string; serviceSupervisor?: string }>;
+  caddy: string; plists: Readonly<Record<DeploymentJob, string> & { hubSupervisor?: string; serviceSupervisor?: string; workerSupervisor?: string }>;
   caddyProcess: Readonly<{ account: string; configPath: string; workingDirectory: string; environment: Readonly<Record<'HOME' | 'XDG_CONFIG_HOME' | 'XDG_DATA_HOME', string>> }>;
 }>;

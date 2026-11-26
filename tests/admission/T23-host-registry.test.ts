@@ -121,17 +121,20 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
     await expect(readHostRegistry(plan)).resolves.toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
   });
 
-  test('indexes the service supervisor and marker only when enrolled', async () => {
-    const serviceRoot = join(root, 'service-enrollment');
-    const supervisorRoot = join(serviceRoot, 'service-supervisor');
+  test.for([
+    { role: 'service', field: 'serviceSupervisor' },
+    { role: 'worker', field: 'workerSupervisor' },
+  ] as const)('indexes the $role supervisor and marker only when enrolled', async ({ role, field }) => {
+    const roleRoot = join(root, `${role}-enrollment`);
+    const supervisorRoot = join(roleRoot, `${role}-supervisor`);
     const supervisorEntry = join(supervisorRoot, 'entry.mjs');
-    const marker = join(serviceRoot, 'service', 'supervisor-required');
-    const base = registration({ registryRoot: serviceRoot });
+    const marker = join(roleRoot, role, 'supervisor-required');
+    const base = registration({ registryRoot: roleRoot });
     const legacy = planHostRegistry(base);
     expect(legacy.directories.map(directory => directory.path)).not.toContain(supervisorRoot);
     expect(legacy.files.map(file => file.path)).not.toContain(marker);
-    expect(() => planHostRegistry({ ...base, serviceSupervisor: { entry: '' } })).toThrow('HOST_REGISTRY_ENTRY_INVALID');
-    const plan = planHostRegistry({ ...base, serviceSupervisor: { entry: roleEntry } });
+    expect(() => planHostRegistry({ ...base, [field]: { entry: '' } })).toThrow('HOST_REGISTRY_ENTRY_INVALID');
+    const plan = planHostRegistry({ ...base, [field]: { entry: roleEntry } });
     expect(plan.directories).toContainEqual({ path: supervisorRoot, mode: 0o755 });
     expect(plan.files.find(file => file.path === supervisorEntry)?.mode).toBe(0o444);
     expect(plan.files.find(file => file.path === marker)?.mode).toBe(0o444);

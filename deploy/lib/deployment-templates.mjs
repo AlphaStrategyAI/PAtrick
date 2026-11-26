@@ -329,6 +329,7 @@ export function renderDeploymentTemplates(sources, registration) {
   const supervisors = [
     { role: 'hub', job: 'hubSupervisor', field: 'hubSupervisorGid', label: 'com.patrick.autoloop-hub-supervisor', socket: 'HubControl' },
     { role: 'service', job: 'serviceSupervisor', field: 'serviceSupervisorGid', label: 'com.patrick.service-supervisor', socket: 'ServiceControl' },
+    { role: 'worker', job: 'workerSupervisor', field: 'workerSupervisorGid', label: 'com.patrick.autoloop-worker-supervisor', socket: 'WorkerControl' },
   ].filter(({ field }) => registration != null && Object.hasOwn(registration, field));
   registrationFields.push(...supervisors.map(({ field }) => field));
   const localCaddy = registration != null && Object.hasOwn(registration, 'caddyListen');
@@ -339,7 +340,7 @@ export function renderDeploymentTemplates(sources, registration) {
   for (const { field, role } of supervisors) {
     const gid = registration[field];
     if (!Number.isInteger(gid) || gid < 1 || gid > 0x7fffffff) {
-      throw new Error(role === 'hub' ? 'invalid deployment Hub group' : 'invalid deployment service group');
+      throw new Error(`invalid deployment ${role === 'hub' ? 'Hub' : role} group`);
     }
   }
   fields(accounts, ['caddy', ...jobs]);
