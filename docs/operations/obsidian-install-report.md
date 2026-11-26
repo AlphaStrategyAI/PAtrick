@@ -111,3 +111,5 @@ GUI 保存由 CUA 执行并从原生无障碍树读回，没有伪造人工确�
 演练现场的 Vault 父目录由桌面用户持有，Service 仅可穿越，同级 `isolation` 目录缺失。本机集成测试复现了这种目录条件。版本 2 保留版本 1 的指针和旧批次字节。预建归档目录后，在父目录仍不可写的情况下重试同一请求，指针推进到 2，旧批次字节在归档中完整读回。`doctor` 将归档位置纳入 Projector 权限检查，报告实际 Service 身份能否创建归档或写入已有归档目录。双账号现场仍需要回放验证。
 
 使用不同的桌面和 Service 账号时，宿主控制器先在登记的桌面 UID 下复核实际权限，再用本次安装的登记审批密钥签署 `vaultEditorAccessApproval` 返回的字节。将 base64 签名作为 `editorAccessSignature` 随 `vault-init` 操作登记。预览和安装核对同一操作、设备、两个 UID、Vault 物理根、配置范围和客户端映射版本。Service 仍按预览范围补齐模板，并读回已安装文件。`doctor` 使用自己的权限检查报告当前访问状态。
+
+构建 `45819488368` 在 Apple Silicon 和 Intel 上各通过 1 项 `T27-native-access` 测试。用例以独立 Service 账号安装合成 Vault 的 kit，并从桌面账号读回模板。另行下载的两份候选归档各核对 489 个载荷文件、原生 SQLite 扩展和控制器。目标 Mac 的正式 kit 安装、常驻 Service 补采与卸载保留待实测。[双架构下载回执](evidence/darwin-candidates-20f23d6.json)
