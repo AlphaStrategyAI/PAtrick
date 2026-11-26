@@ -511,7 +511,7 @@ test.each(['success', 'untrusted', 'bad-version', 'failed-detach'] as const)('Ma
 
 const indexRelative = '系统视图/索引.md';
 
-async function killAtIndexPublication(code: string, target: string) {
+async function killAtIndexPublication(code: string, target: string, timing: 'before' | 'after' = 'after') {
   const child = spawn(process.execPath, ['--input-type=module', '-e', `
     import fs from 'node:fs';
     import { registerHooks, syncBuiltinESMExports } from 'node:module';
@@ -530,6 +530,7 @@ async function killAtIndexPublication(code: string, target: string) {
     for (const name of ['link', 'rename']) {
       const publish = fs.promises[name];
       fs.promises[name] = async (source, destination) => {
+        if (destination === ${JSON.stringify(target)} && ${JSON.stringify(timing)} === 'before') process.kill(process.pid, 'SIGKILL');
         await publish(source, destination);
         if (destination === ${JSON.stringify(target)}) process.kill(process.pid, 'SIGKILL');
       };
@@ -604,6 +605,46 @@ test.each(['exact', 'exact without seed', 'owner changed index', 'owner replaced
     }
   },
 );
+
+test('restarts Vault kit installation after the synced index is staged but before it is published', async () => {
+  const fx = await fixture();
+  try {
+    await confirmVault(fx.db, deviceId, vaultId, now);
+    const owner = Buffer.from([0xef, 0xbb, 0xbf, 35, 32, 65, 13, 10]);
+    for (const relative of [ownerTemplate, uriPath]) {
+      await mkdir(dirname(join(fx.root, relative)), { recursive: true });
+      await writeFile(join(fx.root, relative), owner);
+    }
+    const { loadVault, inspectVault: inspect, ...options } = fx.options;
+    const record = loadVault(vaultId);
+    const connection = await inspect(deviceId, vaultId);
+    const target = join(fx.root, indexRelative);
+    await killAtIndexPublication(`
+      const { createVaultKitInstaller } = await import(${JSON.stringify(entry)});
+      await createVaultKitInstaller({
+        ...${JSON.stringify(options)},
+        loadVault: () => (${JSON.stringify(record)}),
+        inspectVault: () => (${JSON.stringify(connection)}),
+      }).installVaultKit(${JSON.stringify(vaultId)});
+    `, target, 'before');
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    const staging = join(dirname(target), '.patrick-staging');
+    const staged = await readdir(staging);
+    expect(staged).toHaveLength(1);
+    const index = await readFile(join(assets, indexRelative));
+    expect(await readFile(join(staging, staged[0]!))).toEqual(index);
+
+    const installer = createVaultKitInstaller(fx.options);
+    const receipt = await installer.installVaultKit(vaultId);
+    expect(receipt.files).toContainEqual({ path: indexRelative, state: 'created', sha256: hash(index) });
+    expect(receipt.files).toContainEqual({ path: ownerTemplate, state: 'preserved', sha256: hash(owner) });
+    for (const file of receipt.files) expect(hash(await readFile(join(fx.root, file.path)))).toBe(file.sha256);
+    expect(await readFile(join(fx.root, uriPath))).toEqual(owner);
+    expect((await installer.installVaultKit(vaultId)).files.every(({ state }) => state === 'preserved')).toBe(true);
+  } finally {
+    await fx.disconnect();
+  }
+});
 
 test('Vault kit surfaces repair-required if a process dies after writing its seed but before attestation', async () => {
   const fx = await fixture();
