@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync,
-  realpathSync, renameSync, writeFileSync } from 'node:fs';
+  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
@@ -163,14 +163,28 @@ function checkControllerWriterPath(root: string, control: string, writer: string
     /^ +\d+: [a-zA-Z0-9:_-]+ (inherited )?deny [a-z_,]+$/.test(line)));
 }
 
-export function reserveServiceWriter(enrollment: Pick<GenerationEnrollment, 'root' | 'rootNode' | 'serviceRole'>,
-  purpose: 'selection' | 'foreground' | 'other') {
+type ServiceWriterEnrollment = Pick<GenerationEnrollment, 'root' | 'rootNode' | 'serviceRole'>;
+type ServiceWriterPurpose = 'selection' | 'foreground' | 'other';
+
+export function reserveServiceWriter(enrollment: ServiceWriterEnrollment, purpose: ServiceWriterPurpose) {
+  return openServiceWriter(enrollment, purpose);
+}
+
+export function reserveControllerServiceSession(enrollment: ServiceWriterEnrollment) {
+  const fence = openServiceWriter(enrollment, 'supervisor');
+  if (!fence.authorize) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
+  return { ...fence, authorize: fence.authorize };
+}
+
+function openServiceWriter(enrollment: ServiceWriterEnrollment, purpose: ServiceWriterPurpose | 'supervisor') {
   const binding = bindRegistration(() => enrollment);
   const { root, rootNode, serviceRole: role } = binding.value;
   const roleSha256 = serviceRoleDigest(role);
   const runtime = join(root, 'runtime');
   const control = join(runtime, 'service-control');
   const path = join(control, 'writer.sqlite');
+  const activePath = join(control, 'active-session.json');
+  if (purpose === 'supervisor' && role?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
   if (!role) {
     const guard = () => {
       binding.validate();
@@ -183,7 +197,7 @@ export function reserveServiceWriter(enrollment: Pick<GenerationEnrollment, 'roo
   const uid = controllerOwned ? 0 : role.uid;
   const gid = controllerOwned ? 0 : role.gid;
   if (controllerOwned) {
-    if (purpose !== 'selection' || process.platform !== 'darwin' ||
+    if ((purpose !== 'selection' && purpose !== 'supervisor') || process.platform !== 'darwin' ||
         process.getuid!() !== 0 || process.geteuid!() !== 0) {
       throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
     }
@@ -204,6 +218,18 @@ export function reserveServiceWriter(enrollment: Pick<GenerationEnrollment, 'roo
     requireValue(writer.gid === BigInt(gid) && (writer.mode & 0o7777n) === 0o600n);
     if (controllerOwned) checkControllerWriterPath(root, control, path);
   };
+  let active: { node: GenerationNode; contents: Buffer } | undefined;
+  let issued = false;
+  function checkActive() {
+    if (!controllerOwned) return;
+    if (!active) {
+      if (lstatSync(activePath, { throwIfNoEntry: false })) throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
+      return;
+    }
+    const info = checkNode(activePath, active.node, false, 0);
+    requireValue((info.mode & 0o7777n) === 0o600n && info.size === BigInt(active.contents.length));
+    requireValue(readFileSync(activePath).equals(active.contents));
+  }
   let database: DatabaseSync | undefined;
   try {
     checkPath();
@@ -213,17 +239,43 @@ export function reserveServiceWriter(enrollment: Pick<GenerationEnrollment, 'roo
     requireValue(database.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
       database.prepare('PRAGMA user_version').get()?.user_version === 1);
     checkPath();
+    checkActive();
   } catch (error) {
     database?.close();
+    if (error instanceof Error && error.message === 'INSTALLED_SERVICE_DRAIN_REQUIRED') throw error;
     const code = (error as { errcode?: number }).errcode;
     throw new Error(code !== undefined && [5, 6].includes(code & 0xff) ?
       'INSTALLED_SERVICE_WRITER_BUSY' : 'INSTALLED_SERVICE_WRITER_FENCE_INVALID', { cause: error });
   }
   const fence = database;
-  return { roleSha256, guard() {
-    try { checkPath(); requireValue(fence.isTransaction); }
+  function guard() {
+    try { checkPath(); checkActive(); requireValue(fence.isTransaction); }
     catch (error) { throw new Error('INSTALLED_SERVICE_WRITER_FENCE_INVALID', { cause: error }); }
-  }, release() { fence.close(); } };
+  }
+  function authorize(selectionSha256: string, session: string) {
+    guard();
+    requireValue(!issued && /^[a-f0-9]{32}$/.test(session));
+    hash(selectionSha256);
+    issued = true;
+    const contents = bytes({ format: 'patrick-service-session-v1', selectionSha256, session });
+    const descriptor = openSync(activePath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try {
+      writeFileSync(descriptor, contents);
+      fsyncSync(descriptor);
+      active = { contents, node: pin(fstatSync(descriptor, { bigint: true })) };
+    } finally { closeSync(descriptor); }
+    syncDirectory(control, role!.rootNode);
+    guard();
+    return () => {
+      requireValue(active);
+      guard();
+      unlinkSync(activePath);
+      active = undefined;
+      syncDirectory(control, role!.rootNode);
+      guard();
+    };
+  }
+  return { roleSha256, guard, release() { fence.close(); }, ...(purpose === 'supervisor' ? { authorize } : {}) };
 }
 
 function syncDirectory(path: string, expected: GenerationNode) {

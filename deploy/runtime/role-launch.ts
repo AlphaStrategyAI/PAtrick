@@ -7,13 +7,14 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
+import type { AdmittedDeployment } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
 import { startHubProcess, type HubProcess } from './hub-process.js';
 import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, hubControlRoot,
-  hubWriterFencePath, reserveServiceWriter, withConfirmedGeneration,
-  type GenerationEnrollment } from './lifecycle-generation.js';
+  hubWriterFencePath, reserveControllerServiceSession, reserveServiceWriter, withConfirmedGeneration,
+  type GenerationEnrollment, type InstalledGeneration } from './lifecycle-generation.js';
 
 export type SelectedRuntimePaths = Readonly<{
   role: 'service' | 'worker';
@@ -33,6 +34,20 @@ type Service = Awaited<ReturnType<typeof import('./service.js').runInstalledServ
 type Worker = Awaited<ReturnType<typeof import('./worker.js').runInstalledWorker>>;
 type StartedRole = { role: 'service'; runtime: Service } | { role: 'worker'; runtime: Worker };
 type RoleProvision = (paths: SelectedRuntimePaths) => RuntimeProvisioningInput | Promise<RuntimeProvisioningInput>;
+function selectedRuntimePaths(enrollment: GenerationEnrollment, role: SelectedRuntimePaths['role'],
+  generation: InstalledGeneration, selectionSha256: string, packageSha256: string): SelectedRuntimePaths {
+  const { root, installationId } = enrollment;
+  const identity = projectIdentity(enrollment.identity);
+  Object.freeze(identity.domains);
+  Object.freeze(identity);
+  const dataRoot = join(root, 'data', generation.id);
+  return Object.freeze({
+    role, identity, installationId, generationId: generation.id, selectionSha256, packageSha256, dataRoot,
+    databasePath: join(dataRoot, 'service.sqlite'), localAnswersPath: join(dataRoot, 'answers.sqlite'),
+    operationalHubPath: join(dataRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
+  });
+}
+
 type RoleLifecycle = {
   signal: AbortSignal;
   onStarting(): void;
@@ -463,6 +478,52 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
   }
 }
 
+type SelectedServiceSession = Readonly<{
+  paths: SelectedRuntimePaths;
+  deployment: AdmittedDeployment;
+  session: string;
+  signal: AbortSignal;
+  assertCurrent(): void;
+}>;
+
+export async function runSelectedServiceSupervisor(program: SupervisorProgram, endpoint: string,
+  enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
+  serve: (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>) {
+  const binding = bindRegistration(() => enrollment);
+  if (binding.value.serviceRole?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
+  await runInstalledServiceSupervisor(program, endpoint, async socket => {
+    const stopping = new AbortController();
+    function stop() { stopping.abort(new Error('INSTALLED_SERVICE_CONNECTION_LOST')); }
+    const fence = reserveControllerServiceSession(binding.value);
+    function assertCurrent() {
+      binding.validate();
+      fence.guard();
+      stopping.signal.throwIfAborted();
+    }
+    socket.once('close', stop);
+    try {
+      if (socket.destroyed) stop();
+      const selection = await withConfirmedGeneration(binding.value, owner, async (current, deployment, guard) => {
+        assertCurrent();
+        guard();
+        if (current.order.serviceRoleSha256 !== fence.roleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+        return { paths: selectedRuntimePaths(binding.value, 'service', current.order.generation,
+          current.sha256, deployment.packageSha256), deployment };
+      }, stopping.signal);
+      assertCurrent();
+      const session = randomBytes(16).toString('hex');
+      const confirmDrain = fence.authorize(selection.paths.selectionSha256, session);
+      if (await serve(socket, Object.freeze({ ...selection, session, signal: stopping.signal, assertCurrent })) !== 'drained') {
+        throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
+      }
+      confirmDrain();
+    } finally {
+      socket.off('close', stop);
+      fence.release();
+    }
+  });
+}
+
 export async function runSupervisedHubRole(onReady?: () => void): Promise<void> {
   const failure = new Error('INSTALLED_HUB_SUPERVISOR_PROTOCOL_INVALID');
   if (process.env.PATRICK_SUPERVISOR_FD !== '3') throw failure;
@@ -532,10 +593,6 @@ async function launchSelectedRuntimeRole(
   lifecycle?: RoleLifecycle,
 ): Promise<StartedRole> {
   if (role !== 'service' && role !== 'worker') throw new Error('INSTALLED_ROLE_INVALID');
-  const { root, installationId } = enrollment;
-  const identity = projectIdentity(enrollment.identity);
-  Object.freeze(identity.domains);
-  Object.freeze(identity);
   let started: StartedRole | undefined;
   let startupFailure: unknown;
   function captureStartupFailure(error: unknown): never {
@@ -551,14 +608,7 @@ async function launchSelectedRuntimeRole(
         guard();
         lifecycle?.signal.throwIfAborted();
       }
-      const generation = selected.order.generation;
-      const dataRoot = join(root, 'data', generation.id);
-      const paths = Object.freeze({
-        role, identity, installationId, generationId: generation.id,
-        selectionSha256: selected.sha256, packageSha256: deployment.packageSha256,
-        dataRoot, databasePath: join(dataRoot, 'service.sqlite'), localAnswersPath: join(dataRoot, 'answers.sqlite'),
-        operationalHubPath: join(dataRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
-      });
+      const paths = selectedRuntimePaths(enrollment, role, selected.order.generation, selected.sha256, deployment.packageSha256);
       assertSelected();
       const composition: typeof import('./composition.js') = await import(pathToFileURL(deployment.entrypoints.composition).href);
       assertSelected();

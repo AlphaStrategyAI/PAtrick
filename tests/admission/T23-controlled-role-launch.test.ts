@@ -13,7 +13,7 @@ import { build } from 'esbuild';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
-import { reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
+import { reserveControllerServiceSession, reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
 import { listenVerifiedServiceControl } from '../../deploy/runtime/role-launch.js';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
@@ -109,6 +109,22 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1')(
     const next = reserveServiceWriter(enrollment, 'selection');
     next.release();
     expect(competingProcess()).toMatchObject({ status: 0, signal: null, stderr: '' });
+
+    const armed = reserveControllerServiceSession(enrollment);
+    try {
+      const confirmDrain = armed.authorize('a'.repeat(64), 'a'.repeat(32));
+      expect(() => armed.authorize('a'.repeat(64), 'b'.repeat(32))).toThrow();
+      expect(() => reserveServiceWriter(enrollment, 'selection')).toThrow('INSTALLED_SERVICE_WRITER_BUSY');
+      confirmDrain();
+    } finally { armed.release(); }
+    reserveServiceWriter(enrollment, 'selection').release();
+
+    const undrained = reserveControllerServiceSession(enrollment);
+    try { undrained.authorize('a'.repeat(64), 'c'.repeat(32)); }
+    finally { undrained.release(); }
+    expect(competingProcess()).toMatchObject({ status: 0, signal: null, stderr: '' });
+    expect(() => reserveServiceWriter(enrollment, 'selection')).toThrow('INSTALLED_SERVICE_DRAIN_REQUIRED');
+    expect(() => reserveControllerServiceSession(enrollment)).toThrow('INSTALLED_SERVICE_DRAIN_REQUIRED');
   },
 );
 
