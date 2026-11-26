@@ -25,7 +25,7 @@ import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntim
 import { createFirstInstallCli, createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createRuntimeProvisioning, prepareFirstInstallGeneration, runInstalledRuntimeRole, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
-import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
+import { createGenerationStore, reserveServiceWriter, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 import { startHubProcess, type HubProcess } from '../../deploy/runtime/hub-process.js';
 import { createConsultationApi } from '../../packages/domain/src/consultations.js';
 import { hubRules, PINNED_HUB_COMMIT } from '../../packages/integrations/autoloop/client.js';
@@ -1274,15 +1274,17 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
           await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
         }, { timeout: 5000 });
         await expect(fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
-        const reselected = await vi.waitUntil(async () => {
+        await vi.waitUntil(() => {
           try {
-            return await store.select(envelope);
+            const writer = reserveServiceWriter(selected, 'selection');
+            writer.release();
+            return true;
           } catch (error) {
             if (error instanceof Error && error.message === 'INSTALLED_SERVICE_WRITER_BUSY') return false;
             throw error;
           }
-        }, { timeout: 5000 });
-        expect(reselected).toMatchObject({ current: { order } });
+        }, { timeout: 5000, message: 'Service writer lock remains held after drain' });
+        await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
         const observed = new DatabaseSync(databasePath, { readOnly: true });
         try {
           expect(observed.prepare("SELECT result FROM outbox WHERE event_id = ? AND destination = 'autoloop'")
