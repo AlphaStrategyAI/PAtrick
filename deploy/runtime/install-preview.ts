@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
 import { openDatabase } from '@patrick/storage';
-import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase,
+import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase, serviceDataDirectory,
   type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { autoloopHub, renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
@@ -26,7 +26,7 @@ const budgets = ['releases', 'data', 'lima'] as const;
 type Store = typeof stores[number];
 type Budget = typeof budgets[number];
 type Stage = 'REGISTRATION' | 'HOST' | 'LAYOUT' | 'PACKAGE' | 'CAPACITY' | 'DEPLOYMENT' | 'SESSION' | 'LEASE';
-type HubOwner = Readonly<{ uid: number; gid: number }>;
+type RoleOwner = Readonly<{ uid: number; gid: number }>;
 
 /** Installed-controller input. The owner excludes changes to the registered installation and
  * its ancestry until the awaited callback ends. Session credentials are selected independently
@@ -39,7 +39,8 @@ export type InstallPreviewEnrollment = {
   node: { path: string; sha256: string }; expected: EmittedReleaseExpectation; policy: EmittedReleaseTrustPolicy;
   targetSchema: number; reserveBytes: Record<Budget, number>;
   firstGenerationId?: string;
-  hubOwner?: HubOwner;
+  hubOwner?: RoleOwner;
+  serviceOwner?: RoleOwner;
   deployment: DeploymentRegistration; templates: Record<'caddy' | 'service' | 'hub' | 'worker', string>;
   tls: { rpId: string; caSha256: string };
   session?: { bootstrapPlanSha256: string; ca: string; callerId: string; authEpoch: number; credentialRevision: string;
@@ -251,6 +252,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     'stores', 'node', 'expected', 'policy', 'targetSchema', 'reserveBytes', 'deployment', 'templates', 'tls']);
   const firstGenerationId = field(original, 'firstGenerationId', true);
   const hubOwner = copy(field(original, 'hubOwner', true));
+  const serviceOwner = copy(field(original, 'serviceOwner', true));
   const ownerLockNode = copy(field(original, 'ownerLockNode', true)) as GenerationNode | undefined;
   const suppliedOwner = field(original, 'owner', true) as ExclusiveRuntimeStaging | undefined;
   requireFact((suppliedOwner === undefined) !== (ownerLockNode === undefined));
@@ -268,7 +270,7 @@ export function bindInstallPreviewEnrollment(current: Registry) {
     requireFact(typeof readBearer === 'function');
     credential = { ...metadata, readBearer: signal => Reflect.apply(readBearer, session, [signal]) };
   }
-  const value = { ...data, firstGenerationId, hubOwner, session: credential, owner, ownerLockNode };
+  const value = { ...data, firstGenerationId, hubOwner, serviceOwner, session: credential, owner, ownerLockNode };
   function validate() {
     requireFact(current() === original);
     for (const check of checks) check();
@@ -393,7 +395,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     { root: controllerRoot.root, validate: confirmController });
   requireFact(sha256(controllerBytes) === controllerSha256);
   confirmController();
-  verifyHubOwner(e);
+  verifyRoleOwners(e);
   const descriptors = Object.values(deploymentPaths).map(path => {
     const row = receipt.materials.find(file => file.path === path);
     requireFact(row);
@@ -411,6 +413,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     required: bootstrapRequirements, tls: e.tls,
     ...(e.ownerLockNode === undefined ? {} : { ownerLockNode: e.ownerLockNode }),
     ...(e.hubOwner === undefined ? {} : { hubOwner: e.hubOwner }),
+    ...(e.serviceOwner === undefined ? {} : { serviceOwner: e.serviceOwner }),
     ...(e.firstGenerationId === undefined ? {} : { firstGenerationId: e.firstGenerationId, autoloopKernelSha256 }) });
   const confirm = () => {
     reportStage('LAYOUT');
@@ -424,6 +427,7 @@ async function inspectLeasedInstall(e: InstallPreviewEnrollment, lease: RuntimeL
     requireFact(now.dev === binary.dev && now.ino === binary.ino && now.ctimeNs === binary.ctimeNs);
     reportStage('DEPLOYMENT');
     confirmLaunchPath();
+    verifyRoleOwners(e);
     reportStage('CAPACITY');
     capacity(e, materialBytes, options.checkAvailable ?? true);
     reportStage('LEASE');
@@ -564,20 +568,36 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
 const autoloopKernelSha256 = autoloopHub.files[autoloopHub.initializer];
 const firstDatabases = ['service.sqlite', autoloopHubDatabase, 'answers.sqlite'] as const;
 const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
+const firstServiceEntries = ['service.sqlite', 'answers.sqlite', ...firstDirectories] as const;
 const generationReceiptName = '.patrick-bootstrap.json';
 const interruptedGeneration = 'INSTALL_GENERATION_INTERRUPTED';
 
-function verifyHubOwner(enrollment: InstallPreviewEnrollment) {
-  const owner = enrollment.hubOwner;
+function verifyRoleOwner(enrollment: InstallPreviewEnrollment, role: 'hub' | 'service', owner?: RoleOwner) {
   if (owner === undefined) return;
+  const group = role === 'hub' ? enrollment.deployment.hubSupervisorGid : enrollment.deployment.serviceSupervisorGid;
   requireFact(owner && canonicalize(Object.keys(owner).sort()) === '["gid","uid"]' && enrollment.uid === 0 &&
     [owner.uid, owner.gid].every(value => Number.isInteger(value) && value > 0 && value <= 0x7fffffff) &&
-    enrollment.deployment.hubSupervisorGid === owner.gid);
+    group === owner.gid);
   for (const [flag, value] of [['-u', owner.uid], ['-g', owner.gid]] as const) {
-    const account = execFileSync('/usr/bin/id', [flag, enrollment.deployment.accounts.hub], {
+    const account = execFileSync('/usr/bin/id', [flag, enrollment.deployment.accounts[role]], {
       encoding: 'utf8', timeout: 2000, env: { LC_ALL: 'C' },
     });
     requireFact(account.trim() === String(value));
+  }
+}
+
+function verifyRoleOwners(enrollment: InstallPreviewEnrollment) {
+  const { hubOwner, serviceOwner, root } = enrollment;
+  verifyRoleOwner(enrollment, 'hub', hubOwner);
+  verifyRoleOwner(enrollment, 'service', serviceOwner);
+  if (serviceOwner) {
+    requireFact(serviceOwner.uid !== hubOwner?.uid);
+    for (const directory of [root, join(root, 'data')]) {
+      requireFact((stat(directory).mode & 0o007n) === 0o001n);
+    }
+    execFileSync('/usr/bin/sudo', ['-n', '-u', enrollment.deployment.accounts.service, '--', '/bin/test', '-x', join(root, 'data')], {
+      env: { LC_ALL: 'C' }, timeout: 2000, stdio: 'ignore',
+    });
   }
 }
 
@@ -631,10 +651,12 @@ function verifyInitialSchemas(root: string, migrationsDir: string, uid: number) 
   }
 }
 
-async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void, hubOwner?: HubOwner) {
+async function observeGenerationFiles(root: string, uid: number, existing: boolean, guard: () => void,
+  hubOwner?: RoleOwner, serviceOwner?: RoleOwner) {
   const roles = {} as InstalledGeneration['roles'];
   const databaseSha256: Record<string, string> = {};
   const hubPath = join(root, autoloopHubDirectory);
+  const servicePath = serviceOwner ? join(root, serviceDataDirectory) : root;
   let hubDatabase: typeof autoloopHubDatabase | typeof flatAutoloopHubDatabase | typeof legacyHubDatabase = autoloopHubDatabase;
   if (existing && !lstatSync(hubPath, { throwIfNoEntry: false })) {
     hubDatabase = lstatSync(join(root, flatAutoloopHubDatabase), { throwIfNoEntry: false })
@@ -642,8 +664,13 @@ async function observeGenerationFiles(root: string, uid: number, existing: boole
   }
   const nested = hubDatabase === autoloopHubDatabase;
   requireFact(nested || !hubOwner);
-  exactDirectory(root, ['service.sqlite', 'answers.sqlite', nested ? autoloopHubDirectory : hubDatabase,
-    ...firstDirectories, ...(existing ? [generationReceiptName] : [])]);
+  exactDirectory(root, [...(serviceOwner ? [serviceDataDirectory] : firstServiceEntries),
+    nested ? autoloopHubDirectory : hubDatabase, ...(existing ? [generationReceiptName] : [])]);
+  if (serviceOwner) {
+    roles.service = initialNode(servicePath, serviceOwner.uid, true, serviceOwner.gid);
+    exactDirectory(servicePath, firstServiceEntries);
+    syncStore(servicePath, roles.service, serviceOwner.uid);
+  }
   if (nested) {
     roles[autoloopHubDirectory] = initialNode(hubPath, hubOwner?.uid ?? uid, true, hubOwner?.gid);
     exactDirectory(hubPath, [flatAutoloopHubDatabase]);
@@ -651,16 +678,16 @@ async function observeGenerationFiles(root: string, uid: number, existing: boole
   }
   const databases = ['service.sqlite', 'answers.sqlite', hubDatabase] as const;
   for (const name of databases) {
-    const path = join(root, name);
-    const owner = name === autoloopHubDatabase ? hubOwner : undefined;
+    const path = join(name === hubDatabase ? root : servicePath, name);
+    const owner = name === hubDatabase ? hubOwner : serviceOwner;
     roles[name] = initialNode(path, owner?.uid ?? uid, false, owner?.gid);
     databaseSha256[name] = sha256(await readRegularFile(path, 64 * 1024 * 1024, { root, validate: guard }));
   }
   for (const name of firstDirectories) {
-    const path = join(root, name);
-    roles[name] = initialNode(path, uid, true);
+    const path = join(servicePath, name);
+    roles[name] = initialNode(path, serviceOwner?.uid ?? uid, true, serviceOwner?.gid);
     exactDirectory(path, []);
-    syncStore(path, roles[name], uid);
+    syncStore(path, roles[name], serviceOwner?.uid ?? uid);
   }
   return { roles, databaseSha256 };
 }
@@ -715,17 +742,28 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
           for (const name of [...firstDirectories, autoloopHubDirectory]) mkdirSync(join(stage, name), { mode: 0o700 });
           configureInitialDatabases(stage, migrations, initialize);
           verifyInitialSchemas(stage, migrations, e.uid);
+          verifyRoleOwners(e);
           if (e.hubOwner) {
             const { uid, gid } = e.hubOwner;
-            verifyHubOwner(e);
             chownSync(join(stage, autoloopHubDatabase), uid, gid);
             chownSync(join(stage, autoloopHubDirectory), uid, gid);
             chownSync(stage, e.uid, gid);
           }
+          if (e.serviceOwner) {
+            const { uid, gid } = e.serviceOwner;
+            const servicePath = join(stage, serviceDataDirectory);
+            mkdirSync(servicePath, { mode: 0o700 });
+            for (const name of firstServiceEntries) {
+              renameSync(join(stage, name), join(servicePath, name));
+              chownSync(join(servicePath, name), uid, gid);
+            }
+            chownSync(servicePath, uid, gid);
+          }
         }
-        const hubTraversalEnabled = e.hubOwner && existing && (existing.mode & 0o7777) === 0o710;
-        const dataRoot = initialNode(stage, e.uid, true, e.hubOwner?.gid, hubTraversalEnabled ? 0o710n : 0o700n);
-        const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard, e.hubOwner);
+        const traversalMode = e.serviceOwner ? 0o711 : e.hubOwner ? 0o710 : 0o700;
+        const traversalEnabled = existing && (existing.mode & 0o7777) === traversalMode;
+        const dataRoot = initialNode(stage, e.uid, true, e.hubOwner?.gid, traversalEnabled ? BigInt(traversalMode) : 0o700n);
+        const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard, e.hubOwner, e.serviceOwner);
         const generation: InstalledGeneration = { id: generationId, schema: e.targetSchema, packageSha256: release.packageSha256,
           dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true, e.hubOwner?.gid, e.hubOwner ? 0o710n : 0o700n) };
         const body = { format: 'patrick-first-generation-v1', operationId, planSha256: operation.planSha256, generation, databaseSha256 };
@@ -748,10 +786,10 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
         }
         syncStore(stage, dataRoot, e.uid);
         guard();
-        verifyHubOwner(e);
+        verifyRoleOwners(e);
         if (!existing) renameSync(stage, path);
-        if (e.hubOwner && !hubTraversalEnabled) {
-          chmodSync(path, 0o710);
+        if (traversalMode !== 0o700 && !traversalEnabled) {
+          chmodSync(path, traversalMode);
           syncStore(path, dataRoot, e.uid);
         }
         syncStore(data, e.stores.data, e.uid);

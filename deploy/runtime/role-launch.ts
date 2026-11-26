@@ -12,7 +12,7 @@ import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doc
 import { admitReadRoot, readRegularFile, sha256 } from '../lib/release.mjs';
 import type { RuntimeProvisioningInput } from './composition.js';
 import { startHubProcess, type HubProcess } from './hub-process.js';
-import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, hubControlRoot,
+import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, generationServiceData, hubControlRoot,
   hubWriterFencePath, reserveControllerServiceSession, reserveServiceWriter, withConfirmedGeneration,
   type GenerationEnrollment, type InstalledGeneration } from './lifecycle-generation.js';
 
@@ -40,11 +40,12 @@ function selectedRuntimePaths(enrollment: GenerationEnrollment, role: SelectedRu
   const identity = projectIdentity(enrollment.identity);
   Object.freeze(identity.domains);
   Object.freeze(identity);
-  const dataRoot = join(root, 'data', generation.id);
+  const generationRoot = join(root, 'data', generation.id);
+  const dataRoot = generationServiceData(generationRoot, generation.roles);
   return Object.freeze({
     role, identity, installationId, generationId: generation.id, selectionSha256, packageSha256, dataRoot,
     databasePath: join(dataRoot, 'service.sqlite'), localAnswersPath: join(dataRoot, 'answers.sqlite'),
-    operationalHubPath: join(dataRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
+    operationalHubPath: join(generationRoot, generationHubDatabase(generation.roles)), credentialDirectory: join(dataRoot, 'credentials'),
   });
 }
 
@@ -511,6 +512,7 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
         assertCurrent();
         guard();
         if (current.order.serviceRoleSha256 !== fence.roleSha256) throw new Error('INSTALLED_SERVICE_REGISTRATION_REQUIRED');
+        if (!current.order.generation.roles.service) throw new Error('INSTALLED_SERVICE_DATA_LAYOUT_REQUIRED');
         return { paths: selectedRuntimePaths(binding.value, 'service', current.order.generation,
           current.sha256, deployment.packageSha256), deployment };
       }, signal);

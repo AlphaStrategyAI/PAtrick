@@ -698,12 +698,13 @@ async function prepareOwnerLock(root: string, pin: (path: string) => Promise<Gen
 }
 
 async function firstInstallFixture(name: string, onTestFinished: (cleanup: () => Promise<void>) => void,
-  hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>) {
-  const instanceRoot = hubOwner ? await mkdtemp('/private/tmp/patrick-independent-hub-') : join(dir, name);
-  if (hubOwner) {
+  hubOwner?: NonNullable<InstallPreviewEnrollment['hubOwner']>,
+  serviceOwner?: NonNullable<InstallPreviewEnrollment['serviceOwner']>) {
+  const instanceRoot = hubOwner || serviceOwner ? await mkdtemp('/private/tmp/patrick-independent-role-') : join(dir, name);
+  if (hubOwner || serviceOwner) {
     onTestFinished(() => rm(instanceRoot, { recursive: true, force: true }));
-    await chown(instanceRoot, 0, hubOwner.gid);
-    await chmod(instanceRoot, 0o710);
+    if (hubOwner) await chown(instanceRoot, 0, hubOwner.gid);
+    await chmod(instanceRoot, serviceOwner ? 0o711 : 0o710);
   } else {
     await mkdir(instanceRoot, { mode: 0o700 });
   }
@@ -719,6 +720,7 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
       await chown(path, 0, hubOwner.gid);
       await chmod(path, 0o710);
     }
+    if (serviceOwner && name === 'data') await chmod(path, 0o711);
     return [name, await pin(path)];
   }));
   const { expected, policy } = complete;
@@ -756,9 +758,12 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
     rootNode: await pin(instanceRoot), stores: Object.fromEntries(storePins), node: { path: node, sha256: sha256(await readFile(node)) },
     expected, policy, targetSchema: expected.activeSchema, reserveBytes: { releases: 1000, data: 1000, lima: 1000 },
     ...(hubOwner ? { hubOwner } : {}),
+    ...(serviceOwner ? { serviceOwner } : {}),
     deployment: { ...registration, ...(await (installController ??= buildInstallController())),
       instanceRoot, origin, listener: { ...registration.listener, port: address.port === 43123 ? 43124 : 43123 },
       ...(hubOwner ? { accounts: { ...registration.accounts, hub: '_www' }, hubSupervisorGid: hubOwner.gid } : {}),
+      ...(serviceOwner ? { accounts: { ...registration.accounts, ...(hubOwner ? { hub: '_www' } : {}),
+        service: '_mdnsresponder' }, serviceSupervisorGid: serviceOwner.gid } : {}),
       certificatePath: join(instanceRoot, 'caddy/trust', 'cert.pem'),
       keyPath: join(instanceRoot, 'caddy/trust', 'key.ref') },
     templates: Object.fromEntries(await Promise.all(Object.entries(deploymentPaths).map(async ([role, path]) => [role, await readFile(join(root, path), 'utf8')]))),
@@ -843,6 +848,9 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
   const invalid = { ...enrollment, hubOwner: { uid: 0, gid: 1 } };
   expect(await previewFirstInstall(() => invalid, 'release'))
     .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+  const invalidService = { ...enrollment, serviceOwner: { uid: 0, gid: 1 } };
+  expect(await previewFirstInstall(() => invalidService, 'release'))
+    .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
   installOperations[operationId] = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
   expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
   expect(await run('readback')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
@@ -856,6 +864,85 @@ test.skipIf(!upstreamHubSource)('first install initializes Hub from the signed p
       ['facts', 'projection_meta', 'projection_pending', 'projection_refs', 'projections'].map(name => ({ name })));
   } finally { hub.close(); }
 }, darwinInstallTimeoutMs);
+
+test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
+  'first install assigns the Service data to the registered independent UID', async ({ onTestFinished }) => {
+    const account = (name: string) => ({
+      uid: Number(child(['-u', name], dir, '/usr/bin/id').trim()),
+      gid: Number(child(['-g', name], dir, '/usr/bin/id').trim()),
+    });
+    const hubOwner = account('_www');
+    const serviceOwner = account('_mdnsresponder');
+    const { instanceRoot, enrollment, expected, policy, identity, pin, run, operation, operationId, installOperations,
+      signer, approve, planSha256 } =
+      await firstInstallFixture('first-install-independent-service', onTestFinished, hubOwner, serviceOwner);
+    const invalid = { ...enrollment, serviceOwner: { ...serviceOwner, uid: hubOwner.uid } };
+    expect(await previewFirstInstall(() => invalid, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+    child(['+a', '_mdnsresponder deny search', instanceRoot], dir, '/bin/chmod');
+    try {
+      expect(await previewFirstInstall(() => enrollment, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+    } finally {
+      child(['-N', instanceRoot], dir, '/bin/chmod');
+    }
+    const approved = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
+    installOperations[operationId] = approved;
+    expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+    const generation = await prepareFirstInstallGeneration(() => enrollment, 'release', operationId, approved, () => {});
+    expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
+    const prepared = join(instanceRoot, 'data', generation.id);
+    const serviceData = join(prepared, 'service');
+    const entries = ['.', 'service', 'service/service.sqlite', 'service/answers.sqlite', 'hub', 'hub/hub.db'];
+    const nodes = await Promise.all(entries.map(path => lstat(join(prepared, path))));
+    expect(nodes.map(info => [info.uid, info.mode & 0o7777])).toEqual([
+      [0, 0o711], [serviceOwner.uid, 0o700], [serviceOwner.uid, 0o600], [serviceOwner.uid, 0o600],
+      [hubOwner.uid, 0o700], [hubOwner.uid, 0o600],
+    ]);
+    expect(generation.roles.service).toEqual(await pin(serviceData));
+    const probe = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { DatabaseSync } from 'node:sqlite';
+      import { accessSync, constants } from 'node:fs';
+      for (const path of ['service.sqlite', 'answers.sqlite']) {
+        const database = new DatabaseSync(path);
+        try { database.exec('PRAGMA journal_mode=WAL; BEGIN IMMEDIATE; ROLLBACK'); }
+        finally { database.close(); }
+      }
+      for (const path of ['..', '../hub', '../../..']) {
+        try { accessSync(path, constants.W_OK); process.exitCode = 1; }
+        catch (error) { if (error.code !== 'EACCES') throw error; }
+      }
+    `], { ...serviceOwner, cwd: serviceData, env: {}, encoding: 'utf8', timeout: 5000 });
+    expect([probe.status, probe.error, probe.stderr]).toEqual([0, undefined, '']);
+
+    const control = join(instanceRoot, 'runtime', 'service-control');
+    await mkdir(control, { recursive: true, mode: 0o700 });
+    const writerPath = join(control, 'writer.sqlite');
+    await writeFile(writerPath, '', { mode: 0o600, flag: 'wx' });
+    const fence = new DatabaseSync(writerPath);
+    try { fence.exec('PRAGMA user_version = 1'); } finally { fence.close(); }
+    const hubControl = join(instanceRoot, 'runtime', 'hub-control');
+    await mkdir(hubControl, { mode: 0o700 });
+    const hubWriter = join(hubControl, 'writer.sqlite');
+    await writeFile(hubWriter, '', { mode: 0o600, flag: 'wx' });
+    const hubFence = new DatabaseSync(hubWriter);
+    try { hubFence.exec('PRAGMA user_version = 1'); } finally { hubFence.close(); }
+    await chown(hubWriter, hubOwner.uid, hubOwner.gid);
+    const key = generateKeyPairSync('ed25519');
+    const selected: GenerationEnrollment = {
+      installationId: enrollment.installationId, hostId: 'fixture-host', identity, root: instanceRoot,
+      target: expected.target, publicKey: key.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      rootNode: enrollment.rootNode, stores: enrollment.stores, ownerLockNode: await prepareOwnerLock(instanceRoot, pin),
+      hubOwner, releases: [{ expected, policy }], generations: [generation],
+      hubRole: { rootNode: await pin(hubControl), lockNode: await prepareOwnerLock(hubControl, pin), writerNode: await pin(hubWriter) },
+      serviceRole: { ...serviceOwner, controllerOwned: true, rootNode: await pin(control), writerNode: await pin(writerPath) },
+    };
+    const store = createGenerationStore(selected, undefined, {
+      async signRecord(payload) { return sign(null, payload, key.privateKey).toString('base64'); },
+    });
+    const order = store.order('select-service', null, generation.id);
+    const envelope = canonicalize({ order, signature: sign(null, bytes(order), key.privateKey).toString('base64') });
+    expect(await store.select(envelope)).toMatchObject({ current: { order } });
+  }, darwinInstallTimeoutMs,
+);
 
 test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
   'first install assigns the Hub database to the registered independent UID', async ({ onTestFinished }) => {

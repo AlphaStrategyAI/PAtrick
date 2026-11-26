@@ -17,6 +17,7 @@ const maxRecords = 4096;
 const maxInstallJournalFiles = 3;
 const recordLimit = 8 * 1024;
 const dataFiles = ['service.sqlite', 'answers.sqlite'] as const;
+export const serviceDataDirectory = 'service';
 export const autoloopHubDirectory = 'hub';
 export const autoloopHubDatabase = 'hub/hub.db';
 export const flatAutoloopHubDatabase = 'hub.db';
@@ -32,7 +33,8 @@ export type GenerationNode = { device: string; inode: string; birthtimeNs: strin
 export type InstalledGeneration = {
   id: string; schema: number; packageSha256: string;
   releaseRoot: GenerationNode; dataRoot: GenerationNode;
-  roles: Record<DataRole, GenerationNode> & Partial<Record<HubDatabaseRole | typeof autoloopHubDirectory, GenerationNode>>;
+  roles: Record<DataRole, GenerationNode> & Partial<Record<HubDatabaseRole | typeof autoloopHubDirectory |
+    typeof serviceDataDirectory, GenerationNode>>;
 };
 export type GenerationEnrollment = {
   installationId: string; hostId: string; identity: HostIdentity; target: DarwinTarget;
@@ -65,6 +67,9 @@ function requireValue(value: unknown): asserts value {
 export function generationHubDatabase(roles: InstalledGeneration['roles']): HubDatabaseRole {
   if (Object.hasOwn(roles, autoloopHubDatabase)) return autoloopHubDatabase;
   return Object.hasOwn(roles, flatAutoloopHubDatabase) ? flatAutoloopHubDatabase : legacyHubDatabase;
+}
+export function generationServiceData(path: string, roles: InstalledGeneration['roles']) {
+  return Object.hasOwn(roles, serviceDataDirectory) ? join(path, serviceDataDirectory) : path;
 }
 export function hubControlRoot(root: string) {
   return join(root, 'runtime', 'hub-control');
@@ -324,6 +329,8 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   const hubRoleOwner = e.hubRole && createInstalledHubRoleOwner(e.root, e.hubRole);
   const hubRoleSha256 = generationHubRoleDigest(e);
   const serviceRoleSha256 = serviceRoleDigest(e.serviceRole);
+  const serviceOwner = e.serviceRole?.controllerOwned ? e.serviceRole : undefined;
+  if (serviceOwner) requireValue(serviceOwner.uid !== e.hubOwner?.uid);
   const identity = projectIdentity(e.identity);
   requireValue(canonicalize(identity) === canonicalize(e.identity) && e.target.os === 'darwin' && ['arm64', 'x64'].includes(e.target.arch));
   const installationSha256 = digest({ format, installationId: e.installationId, hostId: e.hostId, identity,
@@ -342,7 +349,10 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       Number.isSafeInteger(g.schema) && g.schema >= r.schema.min && g.schema <= r.schema.max);
     const hubName = generationHubDatabase(g.roles);
     const directories = hubName === autoloopHubDatabase ? [...dataDirectories, autoloopHubDirectory] : dataDirectories;
-    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize([...dataFiles, hubName, ...directories].sort()));
+    const nestedService = Object.hasOwn(g.roles, serviceDataDirectory);
+    requireValue(!nestedService || serviceOwner);
+    const roles = [...dataFiles, hubName, ...directories, ...(nestedService ? [serviceDataDirectory] : [])];
+    requireValue(canonicalize(Object.keys(g.roles).sort()) === canonicalize(roles.sort()));
     for (const node of [g.dataRoot, ...Object.values(g.roles)]) {
       const id = canonicalize(node);
       requireValue(!dataNodes.has(id));
@@ -389,7 +399,14 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   function physical(g: InstalledGeneration) {
     checkNode(join(e.root, 'releases', g.packageSha256), g.releaseRoot, true);
     const path = join(e.root, 'data', g.id);
-    checkNode(path, g.dataRoot, true);
+    const dataRoot = checkNode(path, g.dataRoot, true);
+    const servicePath = generationServiceData(path, g.roles);
+    const dataOwner = servicePath === path ? undefined : serviceOwner;
+    if (dataOwner) {
+      requireValue((dataRoot.mode & 0o7777n) === 0o711n);
+      const serviceDirectory = checkNode(servicePath, g.roles.service!, true, dataOwner.uid);
+      requireValue(serviceDirectory.gid === BigInt(dataOwner.gid) && (serviceDirectory.mode & 0o7777n) === 0o700n);
+    } else requireValue(!lstatSync(join(path, serviceDataDirectory), { throwIfNoEntry: false }));
     const hubName = generationHubDatabase(g.roles);
     const hubEntry = hubName === autoloopHubDatabase ? autoloopHubDirectory : hubName;
     for (const entry of [autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase]) {
@@ -404,8 +421,14 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     } else {
       checkNode(join(path, hubName), g.roles[hubName]!, false);
     }
-    for (const name of dataFiles) checkNode(join(path, name), g.roles[name], false);
-    for (const name of dataDirectories) checkNode(join(path, name), g.roles[name], true);
+    for (const name of [...dataFiles, ...dataDirectories]) {
+      const directory = name !== 'service.sqlite' && name !== 'answers.sqlite';
+      const node = checkNode(join(servicePath, name), g.roles[name], directory, dataOwner?.uid);
+      if (dataOwner) {
+        requireValue(node.gid === BigInt(dataOwner.gid) && (node.mode & 0o7777n) === (directory ? 0o700n : 0o600n) &&
+          !lstatSync(join(path, name), { throwIfNoEntry: false }));
+      }
+    }
   }
   async function withGeneration<T>(lease: Lease, g: InstalledGeneration, use: (deployment: AdmittedDeployment) => Promise<T>,
     signal?: AbortSignal) {

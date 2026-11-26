@@ -224,7 +224,7 @@ jobs:
               cd "$controller_checkout"
               sudo -n /usr/bin/env TMPDIR=/private/tmp PATRICK_T23_AUTOLOOP_SOURCE="$work/autoloop" \
                 "$controller_runtime/node" node_modules/vitest/vitest.mjs run tests/admission/T23-emitted-candidate.test.ts \
-                --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the Hub database'
+                --root "$controller_checkout" --pool forks --maxWorkers 1 --testNamePattern 'first install assigns the (Hub database|Service data)'
             )
           fi
           admission_tmp=$(mktemp -d "$work/admission.XXXXXXXX")
