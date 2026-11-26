@@ -39,6 +39,15 @@
       "answers.sqlite": "ok"
     }
   },
+  "ownerConfirmation": {
+    "date": "2026-11-26",
+    "scope": "this-acceptance-only",
+    "trustedKeyId": "t23-local-fb938af6ae542e78",
+    "publicKeySha256": "fb938af6ae542e78cce1124482b6063029599711e01a50718c3474b5cd062a3b",
+    "packageSha256": "43451a42f5f0e55f5dc9b9ec00c5efd5deac888c040aa8538a3deb4f7d0ee393",
+    "readback": "INSTALL_RELEASE_PUBLISHED",
+    "generation": "INSTALL_GENERATION_PREPARED"
+  },
   "outstanding": [
     "fixed-origin-tls",
     "owner-passkey",
