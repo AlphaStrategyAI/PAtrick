@@ -9,7 +9,7 @@ import type { TLSSocket } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import Database from 'better-sqlite3';
-import { openDatabase } from '@patrick/storage';
+import { createRecoveryRuntimeGate, openDatabase, recoveryWriteAllowed } from '@patrick/storage';
 import { createRecoveryBackup } from '../../packages/host/src/recovery/backup.js';
 import { createRecoveryRestorer } from '../../packages/host/src/recovery/restore.js';
 import { createRecoveryWitness, withdrawalEntryHash, type RecoveryWitnessRecord } from '../../packages/host/src/recovery/witness.js';
@@ -63,10 +63,11 @@ async function close(server: Server) {
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 }
 
-function start(store: ReturnType<typeof openRecoveryWitnessStore>, withdrawalStore?: ReturnType<typeof openRecoveryWithdrawalStore>) {
+function start(store: ReturnType<typeof openRecoveryWitnessStore>, withdrawalStore?: ReturnType<typeof openRecoveryWithdrawalStore>,
+  { allowCandidateBWithdrawals = false } = {}) {
   const clients = ['primary', 'candidate-a', 'candidate-b', 'read-only'].map(name => ({
     fingerprint: credentials.get(name)!.fingerprint, domains: ['personal'], ...(name === 'read-only' ? {} : { writerId: name }),
-    ...(withdrawalStore && name !== 'candidate-b' ? { withdrawals: true as const } : {}),
+    ...(withdrawalStore && (name !== 'candidate-b' || allowCandidateBWithdrawals) ? { withdrawals: true as const } : {}),
   }));
   return createRecoveryWitnessServer({ ...serverTls, ca, authorityId: 'independent-fixture', clients, store, withdrawalStore });
 }
@@ -295,6 +296,191 @@ test('mTLS witness chooses one recovery writer, survives authority restart and r
     } finally { await close(restarted); reopened.close(); }
   } finally { if (server.listening) { await close(server); store.close(); } }
 });
+
+test('mTLS recovery activation admits only the CAS winner after a lost commit response', async () => {
+  const { domain, writerEpoch } = initial;
+  const setId = 'ordered-handoff';
+  const recoveryRoot = join(root, `${setId}-sets`);
+  const versionLocks = { application: 'fixture' };
+  const recoveryPointAt = '2026-11-24T23:59:00.000Z';
+  const interruptedAt = '2026-11-25T00:01:00.000Z';
+  const startedAt = '2026-11-25T00:02:00.000Z';
+  const admittedAt = '2026-11-25T00:05:00.000Z';
+  const keys = generateKeyPairSync('ed25519');
+  const authority = {
+    keyId: setId,
+    sign: async (bytes: Uint8Array) => sign(null, bytes, keys.privateKey).toString('base64'),
+    verify: async (bytes: Uint8Array, signature: string, keyId: string) =>
+      keyId === setId && verify(null, bytes, keys.publicKey, Buffer.from(signature, 'base64')),
+  };
+  const store = openRecoveryWitnessStore(join(root, `${setId}-witness.sqlite`), { create: true });
+  let log: ReturnType<typeof openRecoveryWithdrawalStore> | undefined;
+  let server: Server | undefined;
+  const runtimeDatabases: Database.Database[] = [];
+  try {
+    log = openRecoveryWithdrawalStore(join(root, `${setId}-log.sqlite`), { create: true });
+    store.initialize(initial);
+    server = start(store, log, { allowCandidateBWithdrawals: true });
+    const origin = await listen(server);
+    const primaryPort = connect(origin, 'primary');
+    const postCut = entry(1, emptyHash);
+    const verifySealedProof = async (record: RecoveryWitnessRecord) =>
+      record.certificate?.id === certificate.id && record.certificate.fenceProof === certificate.fenceProof;
+    const primary = createRecoveryWitness({ writerId: 'primary', port: primaryPort, verifySealedProof });
+    const captured = await (async () => {
+      const service = openDatabase(join(root, `${setId}-service.sqlite`));
+      let hub: ReturnType<typeof openDatabase> | undefined;
+      try {
+        hub = openDatabase(join(root, `${setId}-hub.sqlite`));
+        for (const database of [service, hub]) {
+          database.prepare("INSERT INTO hub_snapshots VALUES ('hub', 1, '{}', ?)").run(recoveryPointAt);
+        }
+        service.prepare("INSERT INTO accounts VALUES ('owner', 1, 1, ?)").run(recoveryPointAt);
+        service.prepare(`INSERT INTO channel_connections VALUES (
+          'feishu', 'owner', 'personal', 'app', 'tenant', 'fixture-ref', 1, 1, 4, 2, 3,
+          NULL, NULL, 'old-owner', 'old-chat', 'ready', 'active', NULL, NULL, '1.0', ?, ?)`).run(recoveryPointAt, recoveryPointAt);
+        service.prepare(`INSERT INTO knowledge_records VALUES
+          (?, ?, 'owner', ?, 1, 'available', 'Fixture note', 'Fixture content', '1.0', ?, ?)`)
+          .run(postCut.event.targetId, postCut.event.targetId, domain, recoveryPointAt, recoveryPointAt);
+        const backup = createRecoveryBackup({
+          databases: { service, hub }, root: recoveryRoot, authority, now: () => new Date(recoveryPointAt),
+          freeze: { async acquire() {
+            return { cutId: certificate.cutId, ingressFrozen: true, claimsFrozen: true, receiptsFrozen: true,
+              effectsFrozen: true, executionTreesStopped: true, uncertainCallsJournaled: true,
+              durableHandoff: true, async release() {} };
+          } },
+        });
+        const set = await backup.captureRecoverySet({ setId, domains: [{ domain, writerEpoch, withdrawal }], versionLocks, resources: [] });
+        expect(set.manifest.completeness).toEqual({ recoverable: true, gaps: [] });
+        const { event } = postCut;
+        service.prepare('INSERT INTO withdrawal_events VALUES (?,?,?,?,?,?,?,?)')
+          .run(event.eventId, domain, event.targetKind, event.targetId, event.targetVersion, event.epoch, event.reason, event.createdAt);
+        const journal = createRecoveryWithdrawalJournal({ database: service, witness: primary, log: logPort(origin, 'primary') });
+        expect(await journal.protectPending(domain, writerEpoch)).toBe('protected');
+        return set;
+      } finally { try { service.close(); } finally { hub?.close(); } }
+    })();
+
+    const head = { seq: postCut.seq, hash: postCut.hash };
+    const beforeSeal = await primaryPort.readAuthoritative(domain);
+    expect(beforeSeal.withdrawal).toEqual(head);
+    const timedCertificate = { ...certificate, timing: { interruptedAt, recoveryPointAt, manifestSha256: captured.manifestHash } };
+    expect(await primary.sealRecoveryWriter(domain, beforeSeal.revision, timedCertificate, head)).toBe(true);
+    const sealed = await primaryPort.readAuthoritative(domain);
+    expect(sealed).toMatchObject({ certificate: timedCertificate, state: 'sealed', withdrawal: head });
+
+    const contenders = ['candidate-a', 'candidate-b'];
+    const bothReady = new AbortController();
+    const attempts = new Map<string, { domain: string; revision: string; next: Omit<RecoveryWitnessRecord, 'revision'> }>();
+    const outcomes = new Map<string, boolean>();
+    const claimReadbacks = new Map<string, RecoveryWitnessRecord>();
+    const admissions: Array<{ writerId: string; domain: string; directory: string; writerEpoch: string; activationId: string; witnessRevision: string }> = [];
+    const results = await Promise.allSettled(contenders.map(async writerId => {
+      const port = connect(origin, writerId);
+      const witness = createRecoveryWitness({ writerId, verifySealedProof, port: {
+        ...port,
+        async readAuthoritative(claimDomain) {
+          const record = await port.readAuthoritative(claimDomain);
+          if (outcomes.has(writerId) && !claimReadbacks.has(writerId)) claimReadbacks.set(writerId, record);
+          return record;
+        },
+        async compareAndSwap(claimDomain, revision, next) {
+          attempts.set(writerId, { domain: claimDomain, revision, next });
+          if (attempts.size === contenders.length) bothReady.abort();
+          if (!bothReady.signal.aborted) await once(bothReady.signal, 'abort', { signal: AbortSignal.timeout(5000) });
+          const applied = await port.compareAndSwap(claimDomain, revision, next);
+          outcomes.set(writerId, applied);
+          if (applied) throw new Error('FIXTURE_COMMIT_RESPONSE_LOST');
+          return applied;
+        },
+      } });
+      let wallClock = startedAt;
+      const receipt = await createRecoveryRestorer({
+        authority, recoveryRoot, isolationRoot: join(root, `${setId}-${writerId}`), versionLocks,
+        witness, withdrawalLog: logPort(origin, writerId), now: () => new Date(wallClock),
+        fence: { async verify() { return { stopped: true, credentialsRevoked: true, proof: certificate.fenceProof }; } },
+        replay: {
+          externalAccess: 'read_only',
+          async reconcileHub(context) {
+            return { confirmed: context.externalAccess === 'read_only'
+              && context.hub.prepare("SELECT hub_seq FROM hub_snapshots WHERE cursor_name='hub'").pluck().get() === 1 };
+          },
+          async recoverPendingIngest() { return { confirmed: true }; },
+          async rebuildProjections() { return { confirmed: true }; },
+        },
+        activation: { async enableDomain(input) {
+          admissions.push({ writerId, ...input });
+          const database = new Database(join(input.directory, 'databases/service.sqlite'), { readonly: true });
+          runtimeDatabases.push(database);
+          createRecoveryRuntimeGate(database).admit({
+            domain: input.domain, writerEpoch: input.writerEpoch, activationId: input.activationId, witnessRevision: input.witnessRevision,
+          });
+          wallClock = admittedAt;
+          return { epochInstalled: true, credentialsScoped: true, runtimeGateVerified: !recoveryWriteAllowed(database, input.domain) };
+        } },
+      }).restoreRecoverySet(setId, 'activate', captured.manifestHash);
+      return { writerId, receipt };
+    }));
+    const restored = results.map(result => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
+
+    const committed = await connect(origin, 'read-only').readAuthoritative(domain);
+    expect([...attempts.keys()].sort()).toEqual(contenders);
+    expect([...outcomes.keys()].sort()).toEqual(contenders);
+    expect([...outcomes].filter(([, applied]) => applied)).toEqual([[committed.writerId, true]]);
+    expect(claimReadbacks).toEqual(new Map(contenders.map(writerId => [writerId, committed])));
+    expect(committed.revision).not.toBe(sealed.revision);
+    expect(committed.writerEpoch).not.toBe(sealed.writerEpoch);
+    expect(committed).toEqual({ ...attempts.get(committed.writerId)!.next, revision: committed.revision });
+    expect(admissions).toHaveLength(1);
+    expect(recoveryWriteAllowed(runtimeDatabases[0], domain)).toBe(true);
+    expect(restored[0].receipt.directory).not.toBe(restored[1].receipt.directory);
+    for (const { writerId, receipt } of restored) {
+      const won = writerId === committed.writerId;
+      const activationId = `${receipt.receiptId}:${domain}`;
+      expect(attempts.get(writerId)).toMatchObject({
+        domain, revision: sealed.revision,
+        next: { writerId, state: 'open', activationId, parentSealedRevision: sealed.revision, withdrawal: head, certificate: timedCertificate },
+      });
+      expect(receipt).toMatchObject({
+        setId, manifestHash: captured.manifestHash, mode: 'activate', orderlyHandoff: won, external_writes: 0,
+        startedAt, finishedAt: won ? admittedAt : startedAt, rpoMs: won ? 120_000 : null, rtoMs: won ? 240_000 : null,
+        channels: { feishu: 'requires_reauthorization' },
+        data_domains: { [domain]: { status: won ? 'open' : 'blocked', activationId,
+          writerEpoch: won ? committed.writerEpoch : null, reasons: won ? [] : ['writer_claim_lost'] } },
+      });
+      if (won) expect(admissions).toEqual([{
+        writerId, domain, directory: receipt.directory, writerEpoch: committed.writerEpoch, activationId, witnessRevision: committed.revision,
+      }]);
+      const database = new Database(join(receipt.directory, 'databases/service.sqlite'), { readonly: true });
+      try {
+        expect(database.pragma('integrity_check', { simple: true })).toBe('ok');
+        expect(database.prepare(`SELECT status,writer_epoch,activation_id,witness_revision,receipt_id
+          FROM recovery_domain_gates WHERE data_domain=?`).get(domain)).toEqual({
+          status: won ? 'open' : 'protection_pending', writer_epoch: won ? committed.writerEpoch : writerEpoch,
+          activation_id: won ? activationId : null, witness_revision: won ? committed.revision : null, receipt_id: receipt.receiptId,
+        });
+        expect(recoveryWriteAllowed(database, domain)).toBe(false);
+        expect(database.prepare('SELECT sequence,previous_hash,entry_hash,protection FROM recovery_withdrawal_log WHERE data_domain=?').all(domain))
+          .toEqual([{ sequence: postCut.seq, previous_hash: postCut.previousHash, entry_hash: postCut.hash, protection: 'protected' }]);
+        expect(database.prepare('SELECT COUNT(*) FROM recovery_withdrawal_pending').pluck().get()).toBe(0);
+        expect(database.prepare('SELECT status FROM knowledge_records WHERE knowledge_id=?').pluck().get(postCut.event.targetId)).toBe('withdrawn');
+        expect(database.prepare('SELECT status,transport_mode,owner_open_id,chat_id FROM channel_connections').get()).toEqual({
+          status: 'requires_reauthorization', transport_mode: 'disabled', owner_open_id: null, chat_id: null,
+        });
+        const durable = database.prepare('SELECT receipt_json FROM recovery_receipts WHERE receipt_id=?').pluck().get(receipt.receiptId) as string;
+        expect(JSON.parse(durable)).toEqual(receipt);
+      } finally { database.close(); }
+    }
+  } finally {
+    try {
+      for (const database of runtimeDatabases) database.close();
+      if (server?.listening) await close(server);
+    } finally { try { store.close(); } finally { log?.close(); } }
+  }
+}, 120_000);
 
 test('authority enforces enrolled peers, read-only roles, writer fencing and exact revision', async () => {
   const store = openRecoveryWitnessStore(join(root, 'scope.sqlite'), { create: true });
