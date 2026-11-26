@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { access, lstat, open, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const readerDirs = ['知识笔记', '判断案例', '标准修订', '附件'];
 export const draftDirs = ['知识笔记', '标准修订'];
@@ -94,6 +94,12 @@ export function samePath(left, right) {
   return left.normalize('NFC') === right.normalize('NFC');
 }
 
+function permissionFailure(error) {
+  if (['EACCES', 'EPERM', 'EROFS'].includes(error.code)) return 'denied';
+  if (error.message === 'VAULT_UNSAFE_PATH') return 'unsafe';
+  return 'unknown';
+}
+
 export async function permission(root, dirs, requested) {
   try {
     for (const dir of dirs) {
@@ -104,8 +110,29 @@ export async function permission(root, dirs, requested) {
     }
     return 'allowed';
   } catch (error) {
-    if (['EACCES', 'EPERM', 'EROFS'].includes(error.code)) return 'denied';
-    if (error.message === 'VAULT_UNSAFE_PATH') return 'unsafe';
-    return 'unknown';
+    return permissionFailure(error);
+  }
+}
+
+export async function projectorPermission(vault) {
+  const generated = await permission(vault.root_path, ['系统视图'], constants.W_OK);
+  if (generated !== 'allowed') return generated;
+  try {
+    const vaultId = vault.vault_id;
+    if (!vaultId || vaultId === '.' || vaultId === '..' || /[/\\\p{Cc}]/u.test(vaultId)) return 'unsafe';
+    const parent = await realpath(dirname(vault.isolation_root));
+    const isolation = join(parent, basename(vault.isolation_root));
+    const archive = join(isolation, vaultId);
+    const root = vault.root_path;
+    if (samePath(isolation, root) || inside(root, isolation) ||
+        samePath(archive, root) || inside(archive, root)) return 'unsafe';
+    let writable = parent;
+    if (await safeDirectory(isolation, parent)) {
+      writable = await safeDirectory(archive, isolation) ? archive : isolation;
+    }
+    await access(writable, constants.W_OK | constants.X_OK);
+    return 'allowed';
+  } catch (error) {
+    return permissionFailure(error);
   }
 }

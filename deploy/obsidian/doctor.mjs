@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { obsidianFileUri } from '../../packages/integrations/vault/uri.ts';
 import { obsidianSigningRequirement } from './mac-install.mjs';
-import { checkRoot, draftDirs, hasServiceIdentity, optionalStat, permission, readerDirs, samePath } from './scope.mjs';
+import { checkRoot, draftDirs, hasServiceIdentity, optionalStat, permission, projectorPermission, readerDirs, samePath } from './scope.mjs';
 
 const exec = promisify(execFile);
 const workbench = new URL('../../upstream.lock.json', import.meta.url);
@@ -92,7 +92,7 @@ export function createObsidianDoctor(options) {
         const [reader, draftWriter, projector, disk] = await Promise.all([
           permission(root, readerDirs, constants.R_OK),
           permission(root, draftDirs, constants.W_OK),
-          permission(root, ['系统视图'], constants.W_OK),
+          projectorPermission(vault),
           statfs(root, { bigint: true }),
         ]);
         Object.assign(permissions, { reader, draftWriter, projector });

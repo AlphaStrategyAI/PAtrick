@@ -349,7 +349,7 @@ export async function doctor(host, vaultId) {
         if (selectedId !== vaultId || record.account_id !== identity.accountId || !identity.domains.includes(record.data_domain)
           || record.vault_id !== vaultId || record.capture_host !== hostBinding.value.captureHost
           || record.config_revision !== vault.configRevision || record.scope_hash !== vault.scopeHash) throw new Error('HOST_IDENTITY_MISMATCH');
-        const fields = ['source_id', 'data_domain', 'root_identity', 'physical_root', 'root_path', 'connection_epoch'];
+        const fields = ['source_id', 'data_domain', 'root_identity', 'physical_root', 'root_path', 'isolation_root', 'connection_epoch'];
         if (initialRecord && fields.some((field) => record[field] !== initialRecord[field])) throw new Error('HOST_IDENTITY_MISMATCH');
         initialRecord ??= structuredClone(record);
         return record;

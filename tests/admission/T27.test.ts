@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -264,6 +264,36 @@ test('doctor reports app, installer and URI independently, and stopped editor le
     expect(obsidianEditTarget(ready.editor, { vaultId, deviceId, alias: '个人 Vault', mappingRevision: 1 },
       { vaultId, relativePath: '../original.md', mappingRevision: 1 })).toEqual({ kind: 'unavailable' });
   } finally {
+    await fx.disconnect();
+  }
+});
+
+test.skipIf(getUid() === 0)('doctor checks the registered projector isolation path without creating it', async () => {
+  const fx = await fixture();
+  const isolation = requireVault(fx.db, vaultId).isolation_root;
+  try {
+    await confirmVault(fx.db, deviceId, vaultId, now);
+    await createVaultKitInstaller(fx.options).installVaultKit(vaultId);
+    const inspectObsidian = createObsidianInspector({
+      localDeviceId: deviceId, lockedVersion: null, installerHash: null, readMacState: async () => null,
+    });
+    const doctor = createObsidianDoctor({ ...fx.options, inspectObsidian });
+    const permissions = async () => (await doctor.inspect(deviceId, vaultId)).permissions;
+
+    await chmod(fx.dir, 0o500);
+    expect(await permissions()).toEqual({ reader: 'allowed', draftWriter: 'allowed', projector: 'denied' });
+    await expect(lstat(isolation)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await chmod(fx.dir, 0o700);
+    await mkdir(isolation, { mode: 0o700 });
+    await chmod(fx.dir, 0o500);
+    expect(await permissions()).toMatchObject({ projector: 'allowed' });
+    await expect(lstat(join(isolation, vaultId))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await symlink(fx.root, join(isolation, vaultId));
+    expect(await permissions()).toMatchObject({ projector: 'unsafe' });
+  } finally {
+    await chmod(fx.dir, 0o700);
     await fx.disconnect();
   }
 });
