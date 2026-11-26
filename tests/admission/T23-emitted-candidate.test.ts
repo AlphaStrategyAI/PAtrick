@@ -1155,7 +1155,12 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
           },
           service: {
             databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
-            recoveryRuntime: { attach() {} },
+            recoveryRuntime: { attach({ database, admission }) {
+              const writer = { domain: 'personal', writerEpoch: 'fixture-epoch', activationId: 'fixture-activation', witnessRevision: 'fixture-witness' };
+              database.prepare('INSERT INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at) VALUES(?,?,?,?,?,?,?)')
+                .run(writer.domain, writer.writerEpoch, 'open', writer.activationId, writer.witnessRevision, 'fixture', new Date().toISOString());
+              admission.admit(writer);
+            } },
             bindRecoveryOperations() {
               return { root: paths.dataRoot, targets: {}, authority: {
                 keyId: 'fixture', async sign() { throw new Error('unexpected recovery signature'); },
