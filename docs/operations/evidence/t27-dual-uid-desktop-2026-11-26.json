@@ -20,5 +20,21 @@
     "projection": { "applied": false, "pointer": 1, "state": "failed" },
     "observedIndexSha256": "5d82e79155b7c8358ffa8dca0a2a1270b7a3e77d4790465a16fde99cc7e6b38b"
   },
-  "outstanding": ["projection-retry", "formal-kit-install", "installed-service-collection", "uninstall-preservation", "pilot-sync"]
+  "projectionRetry": {
+    "observedAt": "2026-11-26T21:11:03+08:00",
+    "obsidianExited": true,
+    "archiveOwnerUid": 402,
+    "archiveOwnerGid": 402,
+    "archiveMode": "0700",
+    "noteRevision": 2,
+    "noteSha256": "141a9b96236ec1f2454adbee98808c993265b3e011007ffcdd5e8e443764aab1",
+    "archivedNoteBytesMatched": true,
+    "candidateStatus": "open",
+    "projectionRevision": 2,
+    "observedIndexSha256": "be011d51c4fde9a444b89d2ea47949e6944ad814f8a73940c8484b96d88aad39",
+    "preservedBatchRevision": 1,
+    "preservedBatchMatchingFiles": 7,
+    "replayLogSha256": "a88ff74ba14dde2fbd58327f25c147bfecb2b38f730ffd823a9e5b4435e3e424"
+  },
+  "outstanding": ["formal-kit-install", "installed-service-collection", "uninstall-preservation", "pilot-sync"]
 }
