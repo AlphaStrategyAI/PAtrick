@@ -731,6 +731,8 @@ PR CI运行静态、单元、合同、本地集成与关键UI路线；夜间跑�
 | T25 真实三执行器与三条工作路线 | 隔离执行器已在来宾内通过准入。T10 已在真实飞书连接上完成竞答与排空。2026-11-26 只读核对了私有演练库，GitHub 分支规则集接口返回 HTTP 403。真实 PR 路线需要在支持规则集的演练库登记专用 GitHub App | `T25/provider-backed-work-routes` pending |
 | T26 运行一轮试点并发布 | 发布作业已接入草稿和发布后的双架构验签。还缺有分母的真实试点观察、维护与恢复计时，以及经 T25 验收的签名包 | `T26/observed-pilot-results` pending |
 
+T23 的 `2c25555` 托管候选已在目标 MacBook Pro 的系统目录完成验签、重复安装和首代次读回。系统已登记四个独立公用程序账号。代次激活、三服务启动、所有者通行密钥、重启和数据保留仍需实测。[系统目录初装回执](../operations/evidence/t23-arm64-system-intake-2c25555.json)
+
 设计复核的六项已经全部落地：工作列表的阶段句（不使用百分比）、知识与标准和委托的空状态各有一句和一个下一步、2px `#087B96` 的焦点环、决定页的第一层到第三层分层、整理中／核验中／空／失败／离线的句子，以及咨询生成中流式显示且状态保持「正在回答」。
 
 逐场景的命令、退出码、版本和证据 hash 记录在 `release-evidence/impl-2026-11-19/`，`manifest.json` 关联产品条款、任务、frame/fixture 和测试；`scripts/check-release-evidence.mjs` 校验该清单，CI 在每次合并前复核。缺真实能力时标 blocked 或 pending，不写 passed。
