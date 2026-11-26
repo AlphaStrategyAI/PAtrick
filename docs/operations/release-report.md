@@ -27,6 +27,19 @@ node scripts/pack-release.mjs . FULL_COMMIT VERSION x64 SCHEMA_MIN SCHEMA_MAX /p
 
 源码候选首次增加签名后，envelope 摘要会改变。T25 验收与 T26 发布必须锁定最终已签名 envelope 的精确摘要，并发布同一字节；不能用未签名候选的摘要代替，也不能验收后重建。
 
+### 生成 Darwin 签名候选
+
+双架构原生作业各构建两次，对同一份归档读回的材料执行模块加载、服务及 CLI 排空、SQLite 迁移重开和 Worker 回执四项场景。作业上传 `unsigned-signing-input`，并在日志中记录对应的清单摘要。
+
+在签名主机独立复验托管构建，下载同一运行的材料归档与签名输入。将解包目录和签名输入放到同一个受控工作目录中。复核任务、提交、架构、清单摘要和执行记录后，用该架构获准的提交和清单摘要调用签名入口。
+
+```sh
+node scripts/sign-runtime-candidate.mjs "$work" "$materials" "$signing_input" \
+  "$approved_commit" "$approved_manifest" "$key_id" "$private_key_file"
+```
+
+私钥文件由签名账户持有，权限为 `0600` 或 `0400`。命令重算清单后签名并独立验签，在工作目录的 `signed-arm64` 或 `signed-x64` 下留下签名包和 `pins.json`。安装端需单独登记获准的公钥。
+
 ### 复验已签名的 Darwin 资产
 
 将 T25 接受的 `deployment-complete` 包的 `expected` 和 `policy` 分别保存到可信目录下的 `trusted-pins.json`。文件顶层含 `arm64` 和 `x64`，每个架构对应一组 `expected` 和 `policy`。两组预期绑定同一提交的源码身份、版本和 schema 范围。`expected` 包含最终签名 envelope 的 `packageSha256`，`policy` 包含可信 Ed25519 公钥、执行报告和必验记录的 SHA-256。

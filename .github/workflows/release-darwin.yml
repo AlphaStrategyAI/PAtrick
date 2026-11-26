@@ -16,6 +16,8 @@ on:
       - 'docs/designs/设计资产/v2/**'
       - 'scripts/build-runtime.mjs'
       - 'scripts/observe-darwin-toolchain.mjs'
+      - 'scripts/observe-runtime-execution.mjs'
+      - 'scripts/runtime-execution-scenario.mjs'
       - 'scripts/pack-release.mjs'
       - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'tests/admission/T23-emitted-candidate.test.ts'
@@ -34,6 +36,8 @@ on:
       - 'docs/designs/设计资产/v2/**'
       - 'scripts/build-runtime.mjs'
       - 'scripts/observe-darwin-toolchain.mjs'
+      - 'scripts/observe-runtime-execution.mjs'
+      - 'scripts/runtime-execution-scenario.mjs'
       - 'scripts/pack-release.mjs'
       - 'tests/admission/T23-controlled-role-launch.test.ts'
       - 'tests/admission/T23-emitted-candidate.test.ts'
@@ -208,6 +212,12 @@ jobs:
           /usr/bin/tar -xpf "$upload/runtime-materials.tar" -C "$work/readback"
           node scripts/build-runtime.mjs verify --profile deployment-complete \
             --artifact-root "$work/readback" > "$work/readback.json"
+          node scripts/build-runtime.mjs build --profile deployment-complete \
+            --source-root "$source_root" --source-commit "$commit" --output-root "$work/repeat-materials" \
+            --autoloop-root "$work/autoloop" > "$work/repeat-build.json"
+          node scripts/observe-runtime-execution.mjs "$work" "$work/readback" "$work/repeat-materials" \
+            "$RUNNER_TEMP/candidate/patrick-darwin-$TARGET_ARCH.candidate.json"
+          mv "$work/signing-input" "$RUNNER_TEMP/patrick-unsigned-signing-input"
           PATRICK_T23_CONTROLLED_LAUNCH=1 PATRICK_T23_CONTROLLED_MATERIALS="$work/readback" \
             node node_modules/vitest/vitest.mjs run tests/admission/T23-controlled-role-launch.test.ts \
               tests/admission/T23-host-registry.test.ts --maxWorkers 1
@@ -282,6 +292,12 @@ jobs:
             ${{ runner.temp }}/patrick-native-material-upload/patrick-host-controller
             ${{ runner.temp }}/patrick-native-material-upload/SHA256SUMS
             ${{ runner.temp }}/patrick-native-material-upload/readback-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patrick-darwin-${{ matrix.arch }}-unsigned-signing-input
+          path: ${{ runner.temp }}/patrick-unsigned-signing-input/
           if-no-files-found: error
           retention-days: 90
 
