@@ -745,13 +745,13 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       throw error;
     }
   }
-  async function selectWithHubFence(envelope: string, checkService: () => void) {
+  async function withStoppedHubWriter<T>(use: (guard: () => void) => Promise<T>): Promise<T> {
     if (!hubRoleOwner) {
-      if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
-      return selectReserved(envelope, () => {
-        checkService();
+      const guard = () => {
         if (lstatSync(hubControlRoot(e.root), { throwIfNoEntry: false })) throw new Error('INSTALLED_HUB_REGISTRATION_REQUIRED');
-      });
+      };
+      guard();
+      return use(guard);
     }
     return leased(hubRoleOwner, async lease => {
       const path = hubWriterFencePath(e.root);
@@ -775,17 +775,22 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         }
         requireValue(fence.prepare('PRAGMA journal_mode').get()?.journal_mode === 'delete' &&
           fence.prepare('PRAGMA user_version').get()?.user_version === 1);
-        return await selectReserved(envelope, () => { checkService(); checkWriter(); requireValue(fence.isTransaction); });
+        return await use(() => { checkWriter(); requireValue(fence.isTransaction); });
       } finally { fence.close(); }
     }, true, enrolled);
   }
-  async function select(envelope: string) {
+  async function withStoppedWriters<T>(use: (guard: () => void) => Promise<T>): Promise<T> {
     enrolled();
     const service = reserveServiceWriter(e, 'selection');
-    try { return await selectWithHubFence(envelope, service.guard); }
+    try {
+      return await withStoppedHubWriter(checkHub => use(() => { service.guard(); checkHub(); }));
+    }
     finally { service.release(); }
   }
-  return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade };
+  function select(envelope: string) {
+    return withStoppedWriters(guard => selectReserved(envelope, guard));
+  }
+  return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade, withStoppedWriters };
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {
@@ -802,6 +807,11 @@ export function createGenerationReader(registration: GenerationEnrollment, owner
 export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
   use: UseConfirmation<T>, signal?: AbortSignal): Promise<T> {
   return generationStorage(registration, owner).store.useConfirmed(use, signal);
+}
+
+export function withStoppedGenerationWriters<T>(registration: GenerationEnrollment, use: (guard: () => void) => Promise<T>,
+  owner?: ExclusiveRuntimeStaging): Promise<T> {
+  return generationStorage(registration, owner).withStoppedWriters(use);
 }
 
 export function createInstalledUpgradePreview(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,

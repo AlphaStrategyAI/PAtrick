@@ -4,8 +4,8 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { createFirstInstallCli } from '../../deploy/runtime/composition.js';
-import { uninstallPlanSha256, type UninstallEnrollment } from '../../deploy/host/uninstall.js';
-import { canonical, digest } from '../../packages/host/src/recovery/files.js';
+import { createUninstallRemovalEvidence, uninstallPlanSha256, type UninstallEnrollment } from '../../deploy/host/uninstall.js';
+import { digest } from '../../packages/host/src/recovery/files.js';
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -38,31 +38,26 @@ async function fixture() {
   const authority = { keyId: 'journal', async verify(bytes: Uint8Array, signature: string, keyId: string) {
     return keyId === 'journal' && verify(null, bytes, key.publicKey, Buffer.from(signature, 'base64'));
   } };
-  const signer = { async sign(bytes: Uint8Array) { return sign(null, bytes, key.privateKey).toString('base64'); } };
-  const evidencePath = join(journalRoot, 'uninstall-evidence.json');
+  const signer = { sign: vi.fn(async (bytes: Uint8Array) => sign(null, bytes, key.privateKey).toString('base64')) };
+  const evidenceRoot = await directory(journalRoot);
+  const removal = createUninstallRemovalEvidence(evidenceRoot);
   const withStoppedWriters = vi.fn(async (use: () => Promise<void>) => { await use(); });
   const absent = vi.fn(async () => true);
-  const recordRemoved = vi.fn<NonNullable<UninstallEnrollment['controller']>['recordRemoved']>(async (subject, evidenceId) => {
-    await writeFile(evidencePath, canonical({ subject, evidenceId }), { flag: 'wx' });
-  });
+  const recordRemoved = vi.fn(removal.recordRemoved);
   const enrollment: UninstallEnrollment = {
     operationId: 'remove-one', launchDaemons: location, jobs, signer,
     controller: { withStoppedWriters, absent, recordRemoved },
-    journal: { root: await directory(journalRoot), identity, authority,
+    journal: { root: evidenceRoot, identity, authority,
       plan: { command: 'uninstall', targetId: identity.installationId, expectedGeneration: 'generation-one',
         nextGeneration: null, releaseSha256: null, planSha256: uninstallPlanSha256(identity, 'generation-one', location, jobs) },
-      evidence: { version: 'uninstall-fixture', async observe(subject, evidenceId) {
-        const bytes = await readFile(evidencePath);
-        if (bytes.toString() !== canonical({ subject, evidenceId })) throw new Error('bad evidence');
-        return { evidenceId, claimSha256: subject.claimSha256, evidenceSha256: digest(bytes) };
-      } },
+      evidence: removal.evidence,
     },
   };
   const cli = () => createFirstInstallCli({ identity, captureHost: hostname(), serviceUid: process.geteuid!(),
     profile: 'test', dataRoot, minimumFreeBytes: 0, uninstallOperations: { [enrollment.operationId]: enrollment } });
   const run = (action: 'preview' | 'execute' | 'readback', operationId = enrollment.operationId) =>
     cli().run(['uninstall', '--' + action, '--operation', operationId]);
-  return { run, enrollment, afterStop, unrelated, retained, withStoppedWriters, absent, recordRemoved };
+  return { run, enrollment, afterStop, unrelated, retained, withStoppedWriters, absent, recordRemoved, signer };
 }
 
 test('uninstall removes only the enrolled launchd entries under verified stop and replays its receipt', async () => {
@@ -135,4 +130,19 @@ test('uninstall preserves an uncertain claim if the removal receipt is lost', as
   await expect(stat(fx.afterStop)).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(fx.run('execute')).resolves.toMatchObject({ code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
   expect(fx.withStoppedWriters).toHaveBeenCalledTimes(1);
+});
+
+test('uninstall completes from the persisted proof after losing the terminal signature without stopping jobs again', async () => {
+  const fx = await fixture();
+  const writeEvidence = fx.recordRemoved.getMockImplementation()!;
+  fx.recordRemoved.mockImplementationOnce(async (subject, evidenceId) => {
+    await writeEvidence(subject, evidenceId);
+    fx.signer.sign.mockRejectedValueOnce(new Error('terminal signature temporarily unavailable'));
+  });
+  await expect(fx.run('execute')).resolves.toMatchObject({ code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
+  await expect(fx.run('readback')).resolves.toMatchObject({ code: 'LIFECYCLE_OUTCOME_UNCERTAIN' });
+  await expect(fx.run('execute')).resolves.toMatchObject({ code: 'UNINSTALL_COMPLETED' });
+  await expect(fx.run('readback')).resolves.toMatchObject({ code: 'UNINSTALL_COMPLETED' });
+  expect(fx.withStoppedWriters).toHaveBeenCalledTimes(1);
+  expect(fx.recordRemoved).toHaveBeenCalledTimes(1);
 });

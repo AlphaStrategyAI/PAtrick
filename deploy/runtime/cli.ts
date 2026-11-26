@@ -7,7 +7,7 @@ import {
 } from './composition.js';
 
 export { applyHostRegistry, createFirstInstallCli, hostRegistryRoot, planHostRegistry, readHostRegistry } from './composition.js';
-export { uninstallPlanSha256, type UninstallEnrollment } from '../host/uninstall.js';
+export { createDarwinUninstallEnrollment, uninstallPlanSha256, type UninstallEnrollment } from '../host/uninstall.js';
 
 export function createInstalledCli(provisioning: RuntimeProvisioning) {
   return createRuntimeCli(provisioning);
