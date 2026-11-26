@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { access, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, lstatSync, readFileSync, realpathSync, type Stats } from 'node:fs';
+import { access, mkdir, open, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { z } from 'zod';
 import { canonicalPayload, editIntentRequestSchema, editReceiptSchema, type Json } from '@patrick/contracts';
@@ -68,6 +67,7 @@ type IntentRow = {
 
 const TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/知识笔记.md', import.meta.url));
 const STANDARD_TEMPLATE_PATH = fileURLToPath(new URL('../../../assets/vault-kit/标准修订.md', import.meta.url));
+const MAX_DRAFT_READ_BYTES = 8 * 1024 * 1024;
 
 export function createVaultApi(db: SqliteDatabase, options: VaultApiOptions) {
   const now = () => (options.now ?? (() => new Date()))().toISOString();
@@ -249,7 +249,7 @@ async function createEdit(
   });
   if (!plan.writes || !plan.bytes) return receipt(db, editId);
   options.beforeDraftWrite?.(editId);
-  const outcome = await placeDraft(vault.root_path, plan.relativePath, plan.bytes, () => assertVaultWriteAllowed(db, vault));
+  const outcome = await placeDraft(vault, plan.relativePath, plan.bytes, () => assertVaultWriteAllowed(db, vault));
   if (outcome === 'created') options.afterDraftWrite?.(editId);
   const observed = now();
   withImmediateTransaction(db, () => {
@@ -291,12 +291,13 @@ async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow,
   if (!intent.relative_path || intent.operation === 'edit_original' || current.file.state !== 'preparing') return current;
   assertVaultWriteAllowed(db, vault);
   const destination = resolveInside(vault.root_path, intent.relative_path);
-  if (!(await fileExists(destination))) {
+  let observed = await readDraftProof(vault, destination);
+  if (!observed) {
     const draft = db.prepare('SELECT write_state FROM draft_intents WHERE edit_id = ?').get(intent.edit_id) as { write_state: string } | undefined;
     if (draft && draft.write_state !== 'pending') return current;
     const bytes = plannedBytes(intent);
     if (!bytes) return current;
-    const outcome = await placeDraft(vault.root_path, intent.relative_path, bytes, () => assertVaultWriteAllowed(db, vault));
+    const outcome = await placeDraft(vault, intent.relative_path, bytes, () => assertVaultWriteAllowed(db, vault));
     if (outcome === 'created') {
       const proof = sha256(bytes);
       const stamped = now();
@@ -323,17 +324,21 @@ async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow,
       });
       return receipt(db, intent.edit_id);
     }
+    observed = await readDraftProof(vault, destination);
+    if (!observed) return current;
   }
-  if (!(await fileExists(destination))) return current;
-  const observed = sha256(await readFile(destination));
+  const { hash, sample } = observed;
   const stamped = now();
   withImmediateTransaction(db, () => {
     assertVaultWriteAllowed(db, vault);
+    assertDraftDirectories(vault, dirname(destination));
+    const live = lstatSync(destination, { throwIfNoEntry: false });
+    if (!live || !sameDraftFile(sample, live)) throw new Error('CONFLICT');
     insertReceipt(db, {
       editId: intent.edit_id,
       revision: current.receipt_revision + 1,
       fileState: 'awaiting_save',
-      proof: observed,
+      proof: hash,
       business: current.business.state,
       projection: current.projection.state,
       intentId: current.projection.intent_id,
@@ -341,7 +346,7 @@ async function reopen(db: SqliteDatabase, vault: VaultRecord, intent: IntentRow,
       supersededBy: current.projection.superseded_by,
       now: stamped,
     });
-    db.prepare(`UPDATE draft_intents SET write_state = 'written', proof_hash = ?, updated_at = ? WHERE edit_id = ?`).run(observed, stamped, intent.edit_id);
+    db.prepare(`UPDATE draft_intents SET write_state = 'written', proof_hash = ?, updated_at = ? WHERE edit_id = ?`).run(hash, stamped, intent.edit_id);
   });
   return receipt(db, intent.edit_id);
 }
@@ -564,28 +569,54 @@ function receipt(db: SqliteDatabase, editId: string): EditReceipt {
   };
 }
 
-async function placeDraft(root: string, relativePath: string, bytes: Buffer, authorize: () => void): Promise<'created' | 'exists'> {
-  authorize();
-  const staged = join(root, '.patrick-staging', `${randomUUID()}.md`);
-  await mkdir(dirname(staged), { recursive: true });
-  const handle = await open(staged, 'w', 0o644);
+async function placeDraft(vault: VaultRecord, relativePath: string, bytes: Buffer, authorize: () => void): Promise<'created' | 'exists'> {
+  const destination = resolveInside(vault.root_path, relativePath);
+  const stageDirectory = join(vault.root_path, '.patrick-staging');
+  const publishStageDirectory = join(dirname(destination), '.patrick-staging');
+  const assertPlacement = () => {
+    authorize();
+    assertDraftDirectories(vault, publishStageDirectory, stageDirectory);
+  };
+  assertPlacement();
+  await mkdir(stageDirectory, { recursive: true });
+  assertPlacement();
+  const staged = join(stageDirectory, `${randomUUID()}.md`);
+  const handle = await open(staged, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
   try {
-    await handle.writeFile(bytes);
-    await handle.sync();
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    return await publishCreateOnly(staged, destination, assertPlacement);
   } finally {
-    await handle.close();
-  }
-  try {
-    return await publishCreateOnly(staged, resolveInside(root, relativePath), authorize);
-  } finally {
+    assertDraftDirectories(vault, stageDirectory);
     await rm(staged, { force: true });
+  }
+}
+
+function assertDraftDirectories(vault: VaultRecord, ...directories: string[]): void {
+  const root = vault.root_path;
+  const rootInfo = lstatSync(root, { throwIfNoEntry: false });
+  if (!rootInfo?.isDirectory() || `${rootInfo.dev}:${rootInfo.ino}` !== vault.root_identity ||
+      realpathSync(root).normalize('NFC') !== vault.physical_root.normalize('NFC')) throw new Error('CONFLICT');
+  for (const directory of directories) {
+    let path = root;
+    for (const part of relative(root, directory).split(sep)) {
+      if (!part) continue;
+      path = join(path, part);
+      const info = lstatSync(path, { throwIfNoEntry: false });
+      if (!info) break;
+      if (!info.isDirectory() || realpathSync(path).normalize('NFC') !== path.normalize('NFC')) throw new Error('CONFLICT');
+    }
   }
 }
 
 function resolveInside(root: string, relativePath: string): string {
   const target = resolve(root, ...relativePath.split('/'));
   const prefix = root.endsWith(sep) ? root : root + sep;
-  if (target !== root && !target.startsWith(prefix)) throw new Error('UNPROCESSABLE');
+  if (target === root || !target.startsWith(prefix)) throw new Error('UNPROCESSABLE');
   return target;
 }
 
@@ -635,12 +666,31 @@ function sha256(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function readDraftProof(vault: VaultRecord, path: string): Promise<{ hash: string; sample: Stats } | undefined> {
+  assertDraftDirectories(vault, dirname(path));
+  const named = lstatSync(path, { throwIfNoEntry: false });
+  if (!named) return;
+  if (!named.isFile() || named.size > MAX_DRAFT_READ_BYTES) throw new Error('CONFLICT');
+
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code ?? '')) throw new Error('CONFLICT', { cause: error });
+      throw error;
+    });
   try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'ENOENT') return false;
-    throw error;
+    const before = await file.stat();
+    if (!sameDraftFile(named, before)) throw new Error('CONFLICT');
+    const bytes = Buffer.alloc(before.size);
+    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+    const after = await file.stat();
+    if (bytesRead !== before.size || !sameDraftFile(before, after)) throw new Error('CONFLICT');
+    return { hash: sha256(bytes), sample: after };
+  } finally {
+    await file.close();
   }
+}
+
+function sameDraftFile(expected: Stats, actual: Stats): boolean {
+  return actual.isFile() && actual.dev === expected.dev && actual.ino === expected.ino &&
+    actual.size === expected.size && actual.mtimeMs === expected.mtimeMs && actual.ctimeMs === expected.ctimeMs;
 }

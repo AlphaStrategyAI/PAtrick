@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,17 @@ import { createApp } from '../../apps/service/src/app.js';
 import { issueBootstrapTicket, issueCallerSession, ORIGIN } from '../../apps/service/src/auth.js';
 import { createCredentialStore } from '../../packages/host/src/credentials.js';
 import { expectedMigrationManifest } from '../support/migration-manifest.js';
+
+const draftIo = vi.hoisted(() => ({ afterOpen: undefined as ((path: string) => void) | undefined }));
+vi.mock('node:fs/promises', async (load) => {
+  const fs = await load<typeof import('node:fs/promises')>();
+  return { ...fs, async open(...args: Parameters<typeof fs.open>) {
+    const handle = await fs.open(...args);
+    try { draftIo.afterOpen?.(String(args[0])); }
+    catch (error) { await handle.close(); throw error; }
+    return handle;
+  } };
+});
 
 // Test-only bypass for legacy state-machine assertions; this is not an admitted production reader.
 vi.mock('../../packages/integrations/sources/directory-capability.js', async (load) => {
@@ -192,6 +203,40 @@ test('a crash after the intent row and before the draft file resumes the planned
   }
 });
 
+test.each(['dangling symlink', 'directory', 'replaced regular file'] as const)(
+  'a preparing draft refuses a %s and keeps its receipt pending', async (kind) => {
+    const fx = temporaryDatabase();
+    const root = join(realpathSync(fx.dir), 'vault');
+    const parent = join(root, '标准修订');
+    const draft = join(parent, 'retry.md');
+    mkdirSync(parent, { recursive: true });
+    try {
+      const api = apiFor(fx, { beforeDraftWrite() { throw new Error('CRASH_BEFORE_FILE'); } });
+      await connect(api, root);
+      const request = { operation: 'create_standard' as const, draft_key: 'retry', expected_active_version: null };
+      await expect(api.createEdit(principal, request)).rejects.toThrow('CRASH_BEFORE_FILE');
+      const receipts = () => fx.db.prepare('SELECT edit_id, receipt_revision, file_state, file_proof_ref FROM edit_receipts').all();
+      const preparing = receipts();
+      expect(preparing).toEqual([expect.objectContaining({ receipt_revision: 0, file_state: 'preparing', file_proof_ref: null })]);
+      if (kind === 'dangling symlink') symlinkSync(join(parent, 'missing.md'), draft);
+      else if (kind === 'directory') mkdirSync(draft);
+      else {
+        const replacement = join(parent, 'replacement.md');
+        writeFileSync(draft, 'initial draft');
+        writeFileSync(replacement, 'replacement draft');
+        draftIo.afterOpen = (path) => { if (path === draft) renameSync(replacement, draft); };
+      }
+
+      await expect(api.createEdit(principal, request)).rejects.toThrow('CONFLICT');
+      expect(receipts()).toEqual(preparing);
+      if (kind === 'replaced regular file') expect(readFileSync(draft, 'utf8')).toBe('replacement draft');
+    } finally {
+      draftIo.afterOpen = undefined;
+      fx.close();
+    }
+  },
+);
+
 test('edit_original only registers a location and create_standard keeps each draft_key', async () => {
   const fx = temporaryDatabase();
   const root = join(fx.dir, 'vault');
@@ -256,6 +301,37 @@ test('edit_original only registers a location and create_standard keeps each dra
     expect(revised.business.state).not.toBe('adopted');
     expect(readFileSync(join(root, '标准修订', `修订-${standardId.target_id}-v1.md`), 'utf8')).toContain('base_version: 1');
     expect(fx.db.prepare(`SELECT active_version FROM authority_facts WHERE data_domain = 'personal'`).get()).toEqual({ active_version: null });
+  } finally {
+    fx.close();
+  }
+});
+
+test('a standard draft rejects a redirected managed parent before staging and can retry after repair', async () => {
+  const fx = temporaryDatabase();
+  const root = join(fx.dir, 'vault');
+  const parent = join(root, '标准修订');
+  const outside = join(fx.dir, 'outside');
+  const stagingBlocker = join(outside, '.patrick-staging');
+  mkdirSync(root);
+  try {
+    const api = apiFor(fx);
+    await connect(api, root);
+    mkdirSync(outside);
+    writeFileSync(stagingBlocker, 'outside');
+    symlinkSync(outside, parent, 'dir');
+    const request = { operation: 'create_standard' as const, draft_key: 'approved', expected_active_version: null };
+    await expect(api.createEdit(principal, request)).rejects.toThrow('CONFLICT');
+    expect(readdirSync(root)).toEqual(['标准修订']);
+    await expect(api.createEdit(principal, request)).rejects.toThrow('CONFLICT');
+    expect(readdirSync(root)).toEqual(['标准修订']);
+    expect(readdirSync(outside)).toEqual(['.patrick-staging']);
+    expect(readFileSync(stagingBlocker, 'utf8')).toBe('outside');
+
+    rmSync(parent);
+    const edit = await api.createEdit(principal, request);
+    const draft = readFileSync(join(parent, 'approved.md'));
+    expect(draft.toString('utf8')).toContain('# 适用范围');
+    expect(edit.file).toEqual({ state: 'awaiting_save', proof_ref: sha256(draft) });
   } finally {
     fx.close();
   }
