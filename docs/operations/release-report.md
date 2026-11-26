@@ -222,7 +222,7 @@ Service 监督入口启动时，通过登记端点发送随机值，并要求接
 
 Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对对端身份、已签名代次和写者锁，再对本次启动的随机挑战签名。Service 用宿主登记的公钥验签，复核实际 UID/GID 与代次文件身份，从已核验的发布目录启动。macOS 发布读回逐项检查目录和文件的 ACL，仅接受无 ACL 或只有拒绝项。监督端在发送授权前写入持久会话记录，收到同一会话的排空回执且连接结束后清除。连接意外断开后，记录继续阻止再次启动或重选代次。
 
-提交 `9946cb0` 的 Apple Silicon 托管作业实跑了 Service 与 Hub 的独立 UID 首装。Service 用例从系统域冷启动，通过签名失败后重试、健康端点读回、运行中拒绝重选及排空后恢复重选。用例使用临时系统账号和合成数据。[Apple Silicon 作业](https://github.com/AlphaStrategyAI/PAtrick/actions/runs/45768011628/job/139733535200)
+提交 `9946cb0` 的 Apple Silicon 与 Intel 托管作业均通过 Service 和 Hub 的独立 UID 首装。Service 用例从系统域冷启动，通过签名失败后重试、健康端点读回、运行中拒绝重选及排空后恢复重选。用例使用临时系统账号和合成数据。独立下载复核了各自未签名归档的 481 个载荷文件、SQLite 扩展、原生控制器及其架构。[双架构下载回执](evidence/darwin-candidates-2026-11-26-9946cb0.json)
 
 2026-11-26，在目标 MacBook Pro 上使用一次性验收公钥核验并安装 `9946cb0` 的本地 `arm64` 包。首次安装、重复执行和读回均返回 `INSTALL_RELEASE_PUBLISHED`，首代次初始化返回 `INSTALL_GENERATION_PREPARED`。读回核对了 481 个载荷文件，三个数据库的完整性检查均为 `ok`。验收范围为当前用户的临时根目录，系统域启动待实测。[本机隔离安装回执](evidence/t23-arm64-isolated-install-9946cb0.json)
 
