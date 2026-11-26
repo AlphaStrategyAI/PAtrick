@@ -708,6 +708,36 @@ function hubTraversalDirectories(receipt, hubGroup) {
     directory === '.' || directory === dirname(autoloopHub.root) ||
     directory === autoloopHub.root || directory.startsWith(autoloopHub.root + '/')));
 }
+const serviceTraversalRoots = new Set(['runtime', 'web', 'migrations', 'assets', 'metadata', 'node_modules']);
+function runtimeDirectoryAccess(receipt, hubGroup, serviceGroup) {
+  const hubDirectories = hubTraversalDirectories(receipt, hubGroup);
+  const hubAccess = { mode: 0o710, group: hubGroup, mismatch: 'installed Hub access mismatch' };
+  if (serviceGroup === undefined) return new Map([...hubDirectories].map(directory => [directory, hubAccess]));
+  check(Number.isSafeInteger(serviceGroup) && serviceGroup > 0 && serviceGroup <= 0x7fffffff, 'invalid installed Service group');
+  const serviceAccess = { mode: 0o710, group: serviceGroup, mismatch: 'installed Service access mismatch' };
+  const sharedAccess = { mode: 0o711, mismatch: 'installed shared role access mismatch' };
+  const privateAccess = { mode: 0o700, mismatch: 'installed private directory access mismatch' };
+  const access = new Map();
+  for (const directory of runtimeDirectories(receipt.materials)) {
+    const hub = hubDirectories.has(directory);
+    const inHubClosure = directory === autoloopHub.root || directory.startsWith(autoloopHub.root + '/');
+    const service = !inHubClosure && (directory === '.' || serviceTraversalRoots.has(directory.split('/')[0]));
+    if (hub && service && hubGroup !== serviceGroup) access.set(directory, sharedAccess);
+    else if (hub) access.set(directory, hubAccess);
+    else access.set(directory, service ? serviceAccess : privateAccess);
+  }
+  return access;
+}
+function checkRuntimeDirectoryAccess(lease, root, nodes, access) {
+  for (const [directory, { mode, group, mismatch }] of access) {
+    lease.guard();
+    const path = join(root, directory);
+    const info = stat(path);
+    check(info.isDirectory() && (info.mode & 0o7777n) === BigInt(mode) &&
+      (group === undefined || info.gid === BigInt(group)), mismatch);
+    check(stable(info) === nodes.get(path), 'runtime directory changed after read');
+  }
+}
 function signaturesValid(signatures, bytes, keys) {
   signatureSet(signatures);
   check(Array.isArray(keys) && keys.length > 0 && keys.length <= 64, 'trusted keys required');
@@ -1011,7 +1041,7 @@ export function publishPackage(staging, path, data, packageSha256) {
     check(actual.data.equals(data), 'package output readback mismatch');
   });
 }
-async function createTree(lease, journal, materials, files, hubDirectories, hubGroup) {
+async function createTree(lease, journal, materials, files, directoryAccess) {
   for (const dir of runtimeDirectories(materials)) {
     const path = join(journal.path, dir);
     guardOutput(lease, journal, path);
@@ -1024,21 +1054,25 @@ async function createTree(lease, journal, materials, files, hubDirectories, hubG
     requireOwnedDirectory(info);
     entry.id = objectId(info);
     journal.pending = undefined;
-    if (hubDirectories.has(dir)) {
-      await chown(path, process.geteuid(), hubGroup);
-      guardOutput(lease, journal, path);
-      await chmod(path, 0o710);
+    const access = directoryAccess.get(dir);
+    if (access) {
+      if (access.group !== undefined) {
+        await chown(path, process.geteuid(), access.group);
+        guardOutput(lease, journal, path);
+      }
+      await chmod(path, access.mode);
       guardOutput(lease, journal, path);
     }
   }
   for (const r of materials) await writeNew(lease, journal, join(journal.path, r.path), files.get(r.path), parseInt(r.mode.slice(3), 8), r.sha256);
 }
-export async function stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup }) {
+export async function stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup, serviceGroup }) {
   const record = verified.get(receipt);
   check(record && record.staging === staging, 'genuine verified receipt and bound staging required');
   check(receipt.profile !== nativeProfile, 'byte-only native candidate cannot be staged');
   check(hubGroup === undefined || record.publication, 'Hub access requires bound publication');
-  const hubDirectories = hubTraversalDirectories(receipt, hubGroup);
+  check(serviceGroup === undefined || record.publication, 'Service access requires bound publication');
+  const directoryAccess = runtimeDirectoryAccess(receipt, hubGroup, serviceGroup);
   const capture = await writeUnderLease(staging, 'stage', destination, receipt.packageSha256, async (lease, journal) => {
     if (record.publication) {
       checkPublication(lease, record);
@@ -1049,11 +1083,12 @@ export async function stageVerifiedEmittedRuntime(receipt, { staging, destinatio
     const { data } = await readLeased(lease, record.path, limits.packageBytes);
     lease.guard();
     const { files } = decodePackage(data, record.pins.expected, record.pins.policy);
-    await createTree(lease, journal, receipt.materials, files, hubDirectories, hubGroup);
+    await createTree(lease, journal, receipt.materials, files, directoryAccess);
     lease.guard();
     const tree = await readTree(lease, destination);
     lease.guard();
     compareTree(tree, receipt.materials);
+    if (serviceGroup !== undefined) checkRuntimeDirectoryAccess(lease, destination, tree.nodes, directoryAccess);
     checkLeaf(lease, record.path, record.binding);
     return { nodes: tree.nodes, boundary: tree.boundary, leaseRoot: lease.root };
   });
@@ -1074,12 +1109,13 @@ async function verifiedTreeCapture(lease, record, receipt, root, expected) {
   return { nodes: tree.nodes, boundary: tree.boundary };
 }
 
-async function useVerifiedTree(lease, record, receipt, root, use, stageCapture) {
+async function useVerifiedTree(lease, record, receipt, root, use, stageCapture, directoryAccess) {
   const readback = async expected => {
     const capture = await verifiedTreeCapture(lease, record, receipt, root, expected);
     lease.guard();
     // On case-insensitive volumes the digest slot must still use its enrolled spelling.
     if (!stageCapture) check(realpathSync.native(root) === root, 'noncanonical published release path');
+    if (directoryAccess) checkRuntimeDirectoryAccess(lease, root, capture.nodes, directoryAccess);
     return capture;
   };
   const capture = await readback(stageCapture);
@@ -1115,11 +1151,11 @@ export async function withStagedDeployment(receipt, token, use) {
   return withStagedEmittedRuntime(receipt, token, use);
 }
 
-export async function withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup }, use) {
+export async function withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup, serviceGroup }, use) {
   const record = verified.get(receipt);
   check(record && record.staging === staging && receipt.profile === 'deployment-complete' && typeof use === 'function',
     'genuine complete deployment receipt and bound staging required');
-  const hubDirectories = hubTraversalDirectories(receipt, hubGroup);
+  const directoryAccess = runtimeDirectoryAccess(receipt, hubGroup, serviceGroup);
   return leased(staging, lease => {
     check(lease.root !== sep, 'non-root physical owner required');
     inside(lease.root, releasesRoot);
@@ -1128,14 +1164,7 @@ export async function withPublishedDeployment(receipt, { staging, releasesRoot, 
       checkPublication(lease, record);
     }
     const root = join(releasesRoot, receipt.packageSha256);
-    return useVerifiedTree(lease, record, receipt, root, async deployment => {
-      for (const directory of hubDirectories) {
-        lease.guard();
-        const info = stat(join(root, directory));
-        check(info.gid === BigInt(hubGroup) && (info.mode & 0o7777n) === 0o710n, 'installed Hub access mismatch');
-      }
-      return use(deployment);
-    });
+    return useVerifiedTree(lease, record, receipt, root, use, undefined, directoryAccess);
   });
 }
 

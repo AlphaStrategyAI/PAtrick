@@ -88,12 +88,13 @@ export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntime
 export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
   use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 /**
- * The host registers the canonical releasesRoot and the same exclusive owner used
- * to verify the separate package. Both locations must be below that physical owner.
+ * Use the same exclusive owner used to verify the separate package. If publication
+ * is registered, releasesRoot must match that registration.
+ * Supply the same role group IDs used to stage the release.
  * Paths are valid during awaited use. A late rejection can follow an executed callback.
  */
 export function withPublishedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, options: {
-  staging: ExclusiveRuntimeStaging; releasesRoot: string; hubGroup?: number;
+  staging: ExclusiveRuntimeStaging; releasesRoot: string; hubGroup?: number; serviceGroup?: number;
 }, use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 export function verifyEmittedRuntimeCandidate(candidatePath: string, options: {
   staging: ExclusiveRuntimeStaging; expected: NativeByteReleaseExpectation; policy: EmittedReleaseTrustPolicy;
@@ -111,9 +112,10 @@ export type EmittedWriteOutcome = Readonly<Pick<EmittedWriteFailure, 'operation'
 )>;
 /** Read-only reconciliation of the original failure under its privately retained host lease. */
 export function readEmittedWriteOutcome(failure: unknown): Promise<EmittedWriteOutcome>;
-/** A failed lease completion can reject with EmittedWriteFailure. */
+/** A failed lease completion can reject with EmittedWriteFailure.
+ * Service group access requires bound publication and grants directory search for the signed Service runtime. */
 export function stageVerifiedEmittedRuntime(receipt: VerifiedEmittedRuntimeCandidate, options: {
-  staging: ExclusiveRuntimeStaging; destination: string; hubGroup?: number;
+  staging: ExclusiveRuntimeStaging; destination: string; hubGroup?: number; serviceGroup?: number;
 }): Promise<StagedEmittedRuntime>;
 /** Entry paths may be consumed inside the awaited callback while the host lease is held. */
 export function withStagedEmittedRuntime<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,

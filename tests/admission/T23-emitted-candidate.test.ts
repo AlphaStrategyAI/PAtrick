@@ -641,7 +641,7 @@ async function publishFixture(label: string) {
 }
 
 // The fixture host serializes every lease under its private temporary root.
-async function promotionHost(label: string, hubGroup?: number) {
+async function promotionHost(label: string, hubGroup?: number, serviceGroup?: number) {
   const owner = join(dir, label);
   await mkdir(owner, { mode: 0o700 });
   const stagingRoot = join(owner, 'staging');
@@ -665,7 +665,7 @@ async function promotionHost(label: string, hubGroup?: number) {
   const pins = { expected: complete.expected, policy: complete.policy };
   const checked = await verifyEmittedRuntimeCandidate(archive, { staging: port, ...pins });
   const destination = join(stagingRoot, 'first');
-  const stage = await stageVerifiedEmittedRuntime(checked, { staging: port, destination, hubGroup });
+  const stage = await stageVerifiedEmittedRuntime(checked, { staging: port, destination, hubGroup, serviceGroup });
   return { port, hooks, checked, stage, destination, installed: join(releasesRoot, checked.packageSha256),
     archive, stagingRoot, scope: { staging: port, releasesRoot }, pins };
 }
@@ -685,6 +685,26 @@ test.skipIf(!upstreamHubSource || !process.getgid?.())('publishes the signed Hub
   await chmod(hubHost, 0o700);
   await expect(withPublishedDeployment(checked, { ...scope, hubGroup }, async () => {}))
     .rejects.toThrow('installed Hub access mismatch');
+}, darwinInstallTimeoutMs);
+
+test.skipIf(!upstreamHubSource || !process.getgid?.())('publishes service dependencies with restricted group traversal', async () => {
+  const serviceGroup = process.getgid!();
+  const { checked, stage, scope, installed } = await promotionHost('service-group-release', undefined, serviceGroup);
+  await publishStagedDeployment(checked, stage);
+  await withPublishedDeployment(checked, { ...scope, serviceGroup }, async () => {
+    for (const directory of ['.', 'runtime', 'web', 'migrations', 'metadata', 'node_modules']) {
+      const info = await lstat(join(installed, directory));
+      expect([info.gid, info.mode & 0o7777]).toEqual([serviceGroup, 0o710]);
+    }
+    for (const directory of ['deploy', autoloopHub.root]) {
+      expect((await lstat(join(installed, directory))).mode & 0o7777).toBe(0o700);
+    }
+  });
+  await chmod(join(installed, 'web'), 0o700);
+  const use = vi.fn();
+  await expect(withPublishedDeployment(checked, { ...scope, serviceGroup }, use))
+    .rejects.toThrow('installed Service access mismatch');
+  expect(use).not.toHaveBeenCalled();
 }, darwinInstallTimeoutMs);
 
 async function prepareOwnerLock(root: string, pin: (path: string) => Promise<GenerationNode>) {
@@ -720,7 +740,7 @@ async function firstInstallFixture(name: string, onTestFinished: (cleanup: () =>
       await chown(path, 0, hubOwner.gid);
       await chmod(path, 0o710);
     }
-    if (serviceOwner && name === 'data') await chmod(path, 0o711);
+    if (serviceOwner && (name === 'data' || name === 'releases')) await chmod(path, 0o711);
     return [name, await pin(path)];
   }));
   const { expected, policy } = complete;
@@ -873,7 +893,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     });
     const hubOwner = account('_www');
     const serviceOwner = account('_mdnsresponder');
-    const { instanceRoot, enrollment, expected, policy, identity, pin, run, operation, operationId, installOperations,
+    const { instanceRoot, enrollment, expected, policy, identity, pin, published, run, operation, operationId, installOperations,
       signer, approve, planSha256 } =
       await firstInstallFixture('first-install-independent-service', onTestFinished, hubOwner, serviceOwner);
     const invalid = { ...enrollment, serviceOwner: { ...serviceOwner, uid: hubOwner.uid } };
@@ -887,6 +907,23 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     const approved = { ...operation, ...signer, approval: approve(planSha256), generation: { id: 'first-generation' } };
     installOperations[operationId] = approved;
     expect(await run('execute')).toMatchObject({ status: 'completed', code: 'INSTALL_RELEASE_PUBLISHED' });
+    const readRole = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { accessSync, constants } from 'node:fs';
+      import { join } from 'node:path';
+      import { pathToFileURL } from 'node:url';
+      const release = process.argv[1];
+      for (const path of ['runtime/service.mjs', 'web/index.html', 'migrations/manifest.json', 'metadata/runtime-materials.json']) {
+        accessSync(join(release, path), constants.R_OK);
+        assert.throws(() => accessSync(join(release, path), constants.W_OK), { code: 'EACCES' });
+      }
+      for (const path of ${JSON.stringify([join(autoloopHub.root, autoloopHub.entry), deploymentPaths.caddy])}) {
+        assert.throws(() => accessSync(join(release, path), constants.R_OK), { code: 'EACCES' });
+      }
+      const service = await import(pathToFileURL(join(release, 'runtime/service.mjs')).href);
+      assert.equal(typeof service.runInstalledService, 'function');
+    `, published], { ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 10_000 });
+    expect([readRole.status, readRole.error, readRole.stderr]).toEqual([0, undefined, '']);
     const generation = await prepareFirstInstallGeneration(() => enrollment, 'release', operationId, approved, () => {});
     expect(await run('prepare-generation')).toMatchObject({ status: 'completed', code: 'INSTALL_GENERATION_PREPARED' });
     const prepared = join(instanceRoot, 'data', generation.id);
@@ -917,6 +954,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
     await mkdir(control, { recursive: true, mode: 0o700 });
     const writerPath = join(control, 'writer.sqlite');
     await writeFile(writerPath, '', { mode: 0o600, flag: 'wx' });
+    await chown(writerPath, 0, 0);
     const fence = new DatabaseSync(writerPath);
     try { fence.exec('PRAGMA user_version = 1'); } finally { fence.close(); }
     const hubControl = join(instanceRoot, 'runtime', 'hub-control');

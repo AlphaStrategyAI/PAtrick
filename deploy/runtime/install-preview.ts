@@ -490,6 +490,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       const releasesRoot = join(e.root, 'releases');
       const publication = { stagingRoot: history, releasesRoot };
       const hubGroup = e.hubOwner?.gid;
+      const serviceGroup = e.serviceOwner?.gid;
       const req: LifecycleRequest = { operationId, command: 'install', targetId: releaseId, planSha256, expectedGeneration: null };
       const evidenceId = 'published-release';
       let material: Awaited<ReturnType<typeof inspectLeasedInstall>> | undefined;
@@ -511,7 +512,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
           guard();
           requireFact(expectedId === evidenceId);
           const { receipt, staging, confirmLaunchPath } = material ??= await inspect(false);
-          return await withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup }, async () => {
+          return await withPublishedDeployment(receipt, { staging, releasesRoot, hubGroup, serviceGroup }, async () => {
             confirmLaunchPath();
             if (reconciling) {
               requireFact(!lstatSync(destination, { throwIfNoEntry: false }));
@@ -530,7 +531,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       if (action === 'prepare-generation') {
         requireFact(previous.status === 'completed' && prepare);
         const checked = material ?? await inspect(false);
-        return withPublishedDeployment(checked.receipt, { staging: checked.staging, releasesRoot, hubGroup }, async release => {
+        return withPublishedDeployment(checked.receipt, { staging: checked.staging, releasesRoot, hubGroup, serviceGroup }, async release => {
           checked.confirm();
           return prepare(e, release, guard);
         });
@@ -554,7 +555,7 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
       const { receipt, staging, confirm, confirmLaunchPath } = material;
       await journal.readOwnedClaim(claim.token);
       confirm();
-      const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup });
+      const stage = await stageVerifiedEmittedRuntime(receipt, { staging, destination, hubGroup, serviceGroup });
       await journal.readOwnedClaim(claim.token);
       await publishStagedDeployment(receipt, stage, confirmLaunchPath);
       return await journal.markCompleted(claim.token, evidenceId);
@@ -592,12 +593,12 @@ function verifyRoleOwners(enrollment: InstallPreviewEnrollment) {
   verifyRoleOwner(enrollment, 'service', serviceOwner);
   if (serviceOwner) {
     requireFact(serviceOwner.uid !== hubOwner?.uid);
-    for (const directory of [root, join(root, 'data')]) {
+    for (const directory of [root, join(root, 'data'), join(root, 'releases')]) {
       requireFact((stat(directory).mode & 0o007n) === 0o001n);
+      execFileSync('/usr/bin/sudo', ['-n', '-u', enrollment.deployment.accounts.service, '--', '/bin/test', '-x', directory], {
+        env: { LC_ALL: 'C' }, timeout: 2000, stdio: 'ignore',
+      });
     }
-    execFileSync('/usr/bin/sudo', ['-n', '-u', enrollment.deployment.accounts.service, '--', '/bin/test', '-x', join(root, 'data')], {
-      env: { LC_ALL: 'C' }, timeout: 2000, stdio: 'ignore',
-    });
   }
 }
 
@@ -764,8 +765,11 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
         const traversalEnabled = existing && (existing.mode & 0o7777) === traversalMode;
         const dataRoot = initialNode(stage, e.uid, true, e.hubOwner?.gid, traversalEnabled ? BigInt(traversalMode) : 0o700n);
         const { roles, databaseSha256 } = await observeGenerationFiles(stage, e.uid, !!existing, guard, e.hubOwner, e.serviceOwner);
+        const groups = new Set([e.hubOwner?.gid, e.serviceOwner?.gid].filter(group => group !== undefined));
+        const releaseMode = groups.size > 1 ? 0o711n : groups.size === 1 ? 0o710n : 0o700n;
+        const releaseGroup = groups.size === 1 ? groups.values().next().value : undefined;
         const generation: InstalledGeneration = { id: generationId, schema: e.targetSchema, packageSha256: release.packageSha256,
-          dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true, e.hubOwner?.gid, e.hubOwner ? 0o710n : 0o700n) };
+          dataRoot, roles, releaseRoot: initialNode(release.root, e.uid, true, releaseGroup, releaseMode) };
         const body = { format: 'patrick-first-generation-v1', operationId, planSha256: operation.planSha256, generation, databaseSha256 };
         const payload = Buffer.from(canonicalize(body));
         const receipt = join(stage, generationReceiptName);
