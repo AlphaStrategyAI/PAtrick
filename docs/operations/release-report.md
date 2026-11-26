@@ -258,6 +258,8 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 2026-11-26，目标 MacBook Pro 在系统域安装同一份 `b70d436` 签名 `arm64` 包。初次暂存时 `umask` 将新控制器权限收为 `0500`，安装预览因此未通过。续装复验签名材料和控制器摘要，将控制器权限设为 `0555`。首次发布、重复执行、首代次准备及仅凭公钥读回均通过。新实例已准备首代次，系统作业启动、所有者登录、重启和升级待实测。[系统安装回执](evidence/t23-arm64-system-intake-b70d436.json)
 
+同日，目标 MacBook Pro 选定首代次并启动 Service、Hub、Worker、两项监督作业和 Caddy。第一次切换未等旧作业结束，重试逐项确认退出后才替换宿主登记。锁定版本的 Hub 返回健康响应，Worker 建立监督连接。以登记证书访问回环 HTTPS 时，健康端点返回 `200`，匿名会话返回 `401`。旧验收实例的代次记录通过摘要复核。所有者通行密钥、重启、升级和卸载保留待实测。[系统启动回执](evidence/t23-arm64-system-intake-b70d436.json)
+
 提交 `f3b4938` 让 Service 关停回执等待所有已登记连接关闭。Apple Silicon 与 Intel 的托管构建 `45817626033` 均通过。独立下载复验核对了每个架构的 489 个归档文件、原生 SQLite 扩展和宿主控制器。两份归档待发布签名。[双架构下载回执](evidence/darwin-candidates-f3b4938.json)
 
 2026-11-26，目标 MacBook Pro 使用所有者确认的 Ed25519 公钥，在 `/Library/Application Support/PAtrick/t23-acceptance` 安装 `2c25555` 的托管 `arm64` 签名包。首次预览拦下了一次模式为 `0500` 的控制器。复验控制器摘要并校正为 `0555` 后，发布、重试、首代次准备及公钥读回均通过。Caddy、Service、Hub 与 Worker 已分配独立本机账号。首代次选择、三服务启动和所有者登录仍待验收。[系统目录初装回执](evidence/t23-arm64-system-intake-2c25555.json)

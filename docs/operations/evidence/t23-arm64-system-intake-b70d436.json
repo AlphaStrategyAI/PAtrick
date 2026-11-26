@@ -17,5 +17,24 @@
   "generation": "INSTALL_GENERATION_PREPARED",
   "generationReadback": "INSTALL_GENERATION_PREPARED",
   "currentSelected": false,
-  "outstanding": ["service-activation", "tls-and-owner-session", "reboot", "installed-upgrade", "uninstall-preserves-data"]
+  "activation": {
+    "observedAt": "2026-11-26T21:20:13+08:00",
+    "localReceiptSha256": "72c2204d41f8f8d05758ff1bd31daad90756ad27d2033be5082b301c1561cc46",
+    "selectedGeneration": "first-generation",
+    "origin": "https://localhost:18443",
+    "jobsRunning": [
+      "com.patrick.autoloop-hub-supervisor",
+      "com.patrick.service-supervisor",
+      "com.patrick.autoloop-hub",
+      "com.patrick.service",
+      "com.patrick.autoloop-worker",
+      "com.patrick.caddy"
+    ],
+    "hubReady": true,
+    "workerContact": true,
+    "verifiedTlsStatus": 200,
+    "anonymousSessionStatus": 401,
+    "previousSelectionPreserved": true
+  },
+  "outstanding": ["owner-passkey-and-session", "reboot", "installed-upgrade", "uninstall-preserves-data"]
 }
