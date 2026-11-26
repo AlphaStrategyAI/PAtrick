@@ -33,7 +33,7 @@ export type ConsultationWorkerOptions = {
   onError?: (error: unknown) => void;
 };
 
-export function startConsultationWorker(
+function createConsultationWorkerRuntime(
   db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions, credentials: CredentialStore,
 ) {
   const stop = new AbortController();
@@ -50,7 +50,6 @@ export function startConsultationWorker(
   }
   async function join() { while (pending.size) await Promise.allSettled([...pending]); }
 
-  const interval = options.intervalMs ?? 1000;
   const heartbeatInterval = options.heartbeatIntervalMs ?? HEARTBEAT_MS;
   const hubTimeout = options.hubTimeoutMs ?? HUB_TIMEOUT_MS;
   const executionTimeout = options.executionTimeoutMs ?? EXECUTION_TIMEOUT_MS;
@@ -68,8 +67,6 @@ export function startConsultationWorker(
   };
   const routing = createConsultationRouting(db, hub, now);
   const receipts = createConsultationHubReceipts(db, credentials, hub);
-  let timeout: NodeJS.Timeout | undefined;
-  options.signal?.addEventListener('abort', () => clearTimeout(timeout), { once: true });
 
   function combinedDeadline(milliseconds: number, phase?: AbortSignal): AbortSignal {
     const signals = [AbortSignal.timeout(milliseconds)];
@@ -223,14 +220,62 @@ export function startConsultationWorker(
     else process.emitWarning('Consultation worker could not finish a polling step', { code: 'CONSULTATION_WORKER' });
   }
 
+  return {
+    runTick: () => track(tick()),
+    signal: options.signal,
+    report,
+    stop() { stop.abort(); },
+    join,
+    errors,
+    get active() { return pending.size; },
+  };
+}
+
+export function createManualConsultationWorker(
+  db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions, credentials: CredentialStore,
+) {
+  const worker = createConsultationWorkerRuntime(db, now, options, credentials);
+  let inFlight: Promise<void> | undefined;
+
+  function tick() {
+    if (inFlight) return inFlight;
+    if (worker.signal?.aborted) return Promise.resolve();
+    inFlight = Promise.resolve().then(worker.runTick).catch(worker.report).then(worker.join)
+      .finally(() => { inFlight = undefined; });
+    return inFlight;
+  }
+
+  function join() {
+    return inFlight ?? worker.join();
+  }
+
+  function drain() {
+    worker.stop();
+    return join();
+  }
+
+  return {
+    tick, stop: worker.stop, join, drain, errors: worker.errors,
+    get active() { return Math.max(worker.active, inFlight ? 1 : 0); },
+  };
+}
+
+export function startConsultationWorker(
+  db: SqliteDatabase, now: () => Date, options: ConsultationWorkerOptions, credentials: CredentialStore,
+) {
+  const worker = createConsultationWorkerRuntime(db, now, options, credentials);
+  const interval = options.intervalMs ?? 1000;
+  let timeout: NodeJS.Timeout | undefined;
+  worker.signal?.addEventListener('abort', () => clearTimeout(timeout), { once: true });
+
   function schedule(delay: number) {
-    if (options.signal?.aborted) return;
+    if (worker.signal?.aborted) return;
     timeout = setTimeout(() => {
-      void track(tick()).catch(report).finally(() => schedule(interval));
+      void worker.runTick().catch(worker.report).finally(() => schedule(interval));
     }, delay);
     timeout.unref();
   }
 
   schedule(0);
-  return { stop() { stop.abort(); }, join, errors, get active() { return pending.size; } };
+  return { stop: worker.stop, join: worker.join, errors: worker.errors, get active() { return worker.active; } };
 }

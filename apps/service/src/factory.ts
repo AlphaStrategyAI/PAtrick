@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { generateOpenApi } from '@patrick/contracts';
 import type { CredentialStore } from '@patrick/host';
 import { createCredentialStore } from '@patrick/host';
-import { startConsultationWorker, type ConsultationWorkerOptions } from '@patrick/integrations/autoloop/consultation-runtime';
+import { createManualConsultationWorker, startConsultationWorker, type ConsultationWorkerOptions } from '@patrick/integrations/autoloop/consultation-runtime';
 import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '@patrick/integrations/autoloop/answers';
 import type { FeishuTestOutbound } from '../../../packages/integrations/feishu/outbound.js';
 import { createSourceRegistry, type RegistryOptions } from '@patrick/integrations/sources/registry';
@@ -72,7 +72,7 @@ export type CreateAppOptions = {
   recoveryOperations?: RecoverySettingsConfiguration;
   credentialDirectory?: string;
   now?: () => Date;
-  consultationWorker?: ConsultationWorkerOptions;
+  consultationWorker?: ConsultationWorkerOptions & { mode?: 'manual' | 'periodic' };
   productViewHub?: ProductViewHub;
   notificationMaintenance?: NotificationMaintenanceOptions;
   networkRepair?: NetworkRepairConfiguration;
@@ -123,6 +123,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
   const lifetime = createTaskLifetime(options.signal);
   const workers: WorkerLifetime[] = [];
   const starters: Array<() => void> = [];
+  let manualConsultation: ReturnType<typeof createManualConsultationWorker> | undefined;
   let completion: Promise<void> | undefined;
   let joined: Promise<void> | undefined;
   let barrier: Promise<void> | undefined;
@@ -289,6 +290,13 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     } finally { clearTimeout(timer); }
     return read();
   }
+  function triggerConsultationTick(): Promise<void> {
+    if (!manualConsultation) return Promise.reject(new Error('CONSULTATION_TRIGGER_NOT_CONFIGURED'));
+    if (status !== 'running' || options.consultationWorker?.signal?.aborted) {
+      return Promise.reject(new Error('CONSULTATION_TRIGGER_STOPPED'));
+    }
+    return manualConsultation.tick();
+  }
   try {
     options.assertStartupAllowed?.();
     if (lifetime.signal.aborted) throw new Error('SERVICE_START_CANCELLED');
@@ -302,7 +310,14 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
     if (options.consultationWorker) {
       const { db, credentials } = context();
       const config = options.consultationWorker;
-      starters.push(() => { workers.push(startConsultationWorker(db, now, config, credentials)); });
+      starters.push(() => {
+        if (config.mode === 'manual') {
+          manualConsultation = createManualConsultationWorker(db, now, config, credentials);
+          workers.push(manualConsultation);
+        } else {
+          workers.push(startConsultationWorker(db, now, config, credentials));
+        }
+      });
     }
 
     if (options.prDeliveryWorker && options.databasePath) {
@@ -471,7 +486,7 @@ export function createServiceRuntime(options: CreateAppOptions = {}) {
       options.registerCloseHold(reserveCloseHold);
       holdEligible = true;
     }
-    return { app, stop, drain, read };
+    return { app, stop, drain, read, triggerConsultationTick };
   } catch (error) {
     stop();
     throw new ServiceStartupError(error, { stop, drain, read });

@@ -7,8 +7,8 @@ import {
 } from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 export {
-  runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runInstalledServiceSupervisor,
-  runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, serveInstalledHubRole,
+  runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runInstalledServiceSupervisor, runInstalledWorkerSupervisor,
+  runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, runSupervisedWorkerRole, serveInstalledHubRole, serveInstalledWorkerTicks,
   startSelectedHubRole, startSelectedRuntimeRole,
 } from './role-launch.js';
 import type { SelectedRuntimePaths } from './role-launch.js';
@@ -28,7 +28,7 @@ import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
 import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority } from '../../apps/service/src/auth.js';
 import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
-import { PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
+import { createHubClient, PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { assertDatabaseIntegrity, assertRecoveryBackupSource, verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
 import { assertName, canonical, containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
@@ -970,14 +970,14 @@ export function createControllerSelectedServiceProvisioning(input: RuntimeProvis
   const registration = bindRegistration(() => input.registration).value;
   if (realpathSync.native(dirname(fileURLToPath(import.meta.url))) !== join(releaseRoot, 'runtime') ||
       registration.profile === 'test' || registration.serviceUid !== host.uid ||
-      registration.captureHost !== host.captureHost || input.maintenance || input.worker) {
+      registration.captureHost !== host.captureHost || input.maintenance) {
     throw new Error('INSTALLED_ROLE_CONTROLLER_REQUIRED');
   }
-  return provisionSelectedRuntime(input, registration, paths);
+  return provisionSelectedRuntime(input, registration, paths, true);
 }
 
 function provisionSelectedRuntime(input: RuntimeProvisioningInput, registration: RuntimeRegistration,
-  paths: SelectedRuntimePaths): RuntimeProvisioning {
+  paths: SelectedRuntimePaths, controlledService = false): RuntimeProvisioning {
   const service = { ...input.service };
   const { operationalRecoveryHub } = input;
   if (!sameIdentity(registration.identity, paths.identity) || registration.dataRoot !== paths.dataRoot ||
@@ -985,10 +985,10 @@ function provisionSelectedRuntime(input: RuntimeProvisioningInput, registration:
       (operationalRecoveryHub && operationalRecoveryHub.physicalPath !== paths.operationalHubPath)) {
     throw new Error('INSTALLED_ROLE_PROVISIONING_MISMATCH');
   }
-  return provisionRuntime({ ...input, registration, service, operationalRecoveryHub }, paths.localAnswersPath);
+  return provisionRuntime({ ...input, registration, service, operationalRecoveryHub }, paths.localAnswersPath, controlledService);
 }
 
-function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?: string): RuntimeProvisioning {
+function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?: string, controlledService = false): RuntimeProvisioning {
   const { registration, hostCapabilities = {}, operationalRecoveryHub, service, worker } = input;
   if (!registration) throw new Error('HOST_REGISTRATION_REQUIRED');
   validateIdentity(registration.identity);
@@ -1100,6 +1100,13 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     networkRepair: networkRepair && Object.freeze({ ...networkRepair }), feishuCredentials, feishuTestOutbound,
     httpSources, httpSourceWorker, settingsHandlers, prDeliveryWorker, productViewHub, notificationMaintenance, workStopSupervisor,
     githubApi, sourceCredentialStore, sourceWorkDispatch,
+    ...(controlledService && worker && registrationData.operationalHub ? {
+      consultationWorker: {
+        mode: 'manual',
+        hub: createHubClient(registrationData.operationalHub.origin, Object.freeze({ ...worker.keys })),
+        backend: worker.backend,
+      },
+    } : {}),
     bindRecoveryOperations(resources) {
       maintenance?.bindAnswers(resources);
       const operations = bindRecoveryOperations(resources);
@@ -1119,7 +1126,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     storageOptions,
     serviceOptions: Object.freeze(serviceOptions),
     assertCliRecoveryCurrent,
-    ...(worker ? { worker: Object.freeze({ ...worker, keys: Object.freeze({ ...worker.keys }) }) } : {}),
+    ...(worker && !controlledService ? { worker: Object.freeze({ ...worker, keys: Object.freeze({ ...worker.keys }) }) } : {}),
   }));
   return result;
 }

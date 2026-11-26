@@ -53,23 +53,33 @@ const accountId = (value: number) => Number.isInteger(value) && value > 0 && val
 export function serviceFrame(socket: Socket) {
   const stream = socket.iterator({ destroyOnReturn: false }) as AsyncIterator<Buffer>;
   let pending = Buffer.alloc(0);
-  return {
-    async read(): Promise<unknown> {
-      for (;;) {
-        const end = pending.indexOf(10);
-        if (end >= 0) {
-          if (end > maxFrame) throw serviceHandoffError();
-          const line = pending.subarray(0, end);
-          pending = pending.subarray(end + 1);
-          const value: unknown = JSON.parse(line.toString('utf8'));
-          if (!line.equals(Buffer.from(canonicalize(value)))) throw serviceHandoffError();
-          return value;
-        }
-        if (pending.length > maxFrame) throw serviceHandoffError();
-        const next = await stream.next();
-        if (next.done || pending.length + next.value.length > 2 * (maxFrame + 1)) throw serviceHandoffError();
-        pending = Buffer.concat([pending, next.value]);
+  async function readOrEnd(): Promise<unknown> {
+    for (;;) {
+      const end = pending.indexOf(10);
+      if (end >= 0) {
+        if (end > maxFrame) throw serviceHandoffError();
+        const line = pending.subarray(0, end);
+        pending = pending.subarray(end + 1);
+        const value: unknown = JSON.parse(line.toString('utf8'));
+        if (!line.equals(Buffer.from(canonicalize(value)))) throw serviceHandoffError();
+        return value;
       }
+      if (pending.length > maxFrame) throw serviceHandoffError();
+      const next = await stream.next();
+      if (next.done) {
+        if (pending.length || !socket.readableEnded) throw serviceHandoffError();
+        return undefined;
+      }
+      if (pending.length + next.value.length > 2 * (maxFrame + 1)) throw serviceHandoffError();
+      pending = Buffer.concat([pending, next.value]);
+    }
+  }
+  return {
+    readOrEnd,
+    async read() {
+      const value = await readOrEnd();
+      if (value === undefined) throw serviceHandoffError();
+      return value;
     },
     async expectEnd() {
       if (pending.length || !(await stream.next()).done || !socket.readableEnded) throw serviceHandoffError();
@@ -93,11 +103,13 @@ export function serviceChallenge(frame: unknown): string {
   return frame.challenge;
 }
 
-export function serviceStatus(type: 'stop' | 'drained', { session, selectionSha256 }: ServiceSelection) {
+type ServiceStatus = 'stop' | 'drained' | 'worker-tick' | 'worker-tick-completed' | 'worker-tick-unavailable';
+
+export function serviceStatus(type: ServiceStatus, { session, selectionSha256 }: ServiceSelection) {
   return { version: 1, type, session, selectionSha256 };
 }
 
-export function matchesServiceStatus(frame: unknown, type: 'stop' | 'drained', selection: ServiceSelection) {
+export function matchesServiceStatus(frame: unknown, type: ServiceStatus, selection: ServiceSelection) {
   return canonicalize(frame) === canonicalize(serviceStatus(type, selection));
 }
 

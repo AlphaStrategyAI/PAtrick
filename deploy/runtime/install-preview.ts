@@ -573,24 +573,33 @@ const firstServiceEntries = ['service.sqlite', 'answers.sqlite', ...firstDirecto
 const generationReceiptName = '.patrick-bootstrap.json';
 const interruptedGeneration = 'INSTALL_GENERATION_INTERRUPTED';
 
+function roleAccountId(enrollment: InstallPreviewEnrollment, role: 'hub' | 'service' | 'worker', flag: '-u' | '-g') {
+  const observed = execFileSync('/usr/bin/id', [flag, enrollment.deployment.accounts[role]], {
+    encoding: 'utf8', timeout: 2000, env: { LC_ALL: 'C' },
+  }).trim();
+  requireFact(/^[1-9][0-9]{0,9}$/.test(observed) && Number(observed) <= 0x7fffffff);
+  return Number(observed);
+}
+
 function verifyRoleOwner(enrollment: InstallPreviewEnrollment, role: 'hub' | 'service', owner?: RoleOwner) {
   if (owner === undefined) return;
   const group = role === 'hub' ? enrollment.deployment.hubSupervisorGid : enrollment.deployment.serviceSupervisorGid;
   requireFact(owner && canonicalize(Object.keys(owner).sort()) === '["gid","uid"]' && enrollment.uid === 0 &&
     [owner.uid, owner.gid].every(value => Number.isInteger(value) && value > 0 && value <= 0x7fffffff) &&
     group === owner.gid);
-  for (const [flag, value] of [['-u', owner.uid], ['-g', owner.gid]] as const) {
-    const account = execFileSync('/usr/bin/id', [flag, enrollment.deployment.accounts[role]], {
-      encoding: 'utf8', timeout: 2000, env: { LC_ALL: 'C' },
-    });
-    requireFact(account.trim() === String(value));
-  }
+  requireFact(roleAccountId(enrollment, role, '-u') === owner.uid && roleAccountId(enrollment, role, '-g') === owner.gid);
 }
 
 function verifyRoleOwners(enrollment: InstallPreviewEnrollment) {
   const { hubOwner, serviceOwner, root } = enrollment;
   verifyRoleOwner(enrollment, 'hub', hubOwner);
   verifyRoleOwner(enrollment, 'service', serviceOwner);
+  const workerGid = enrollment.deployment.workerSupervisorGid;
+  if (workerGid !== undefined) {
+    requireFact(enrollment.uid === 0 && roleAccountId(enrollment, 'worker', '-g') === workerGid);
+    const workerUid = roleAccountId(enrollment, 'worker', '-u');
+    requireFact(workerUid !== serviceOwner?.uid && workerUid !== hubOwner?.uid);
+  }
   if (serviceOwner) {
     requireFact(serviceOwner.uid !== hubOwner?.uid);
     for (const directory of [root, join(root, 'data'), join(root, 'releases')]) {

@@ -13,6 +13,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
+import { build } from 'esbuild';
 import { afterAll, beforeAll, describe, expect, test as runTest, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry } from '../../deploy/host/registry.js';
 import { canonicalize, RELEASE_LIMITS, sha256, verifyRelease } from '../../deploy/lib/release.mjs';
@@ -26,7 +27,9 @@ import { createRuntimeProvisioning, prepareFirstInstallGeneration, runInstalledR
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 import { startHubProcess, type HubProcess } from '../../deploy/runtime/hub-process.js';
+import { createConsultationApi } from '../../packages/domain/src/consultations.js';
 import { hubRules, PINNED_HUB_COMMIT } from '../../packages/integrations/autoloop/client.js';
+import { openDatabase } from '../../packages/storage/src/database.js';
 
 const lowSpace = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async importOriginal => {
@@ -723,11 +726,13 @@ async function startSystemService(input: {
   hubOwner: { uid: number; gid: number };
   serviceOwner: { uid: number; gid: number };
   serviceEntry: string;
-  supervisorEntry(endpoint: string, program: { path: string; sha256: string }): string;
+  worker: { uid: number; gid: number; entry: string };
+  supervisorEntry(endpoint: string, program: { path: string; sha256: string }, workerEndpoint: string): string;
 }) {
   const registry = join(input.root, 'registry');
   const controllerPath = join(input.root, 'controller');
   const endpoint = join(registry, 'service', 'supervisor.sock');
+  const workerEndpoint = join(registry, 'worker', 'supervisor.sock');
   const header = join(input.root, 'controller-test.h');
   await writeFile(header, ['#define PATRICK_NATIVE_REGISTRY_TEST 1',
     `constexpr char registry_root[] = ${JSON.stringify(registry)};`,
@@ -742,10 +747,11 @@ async function startSystemService(input: {
     roles: {
       service: { ...input.serviceOwner, entry: input.serviceEntry },
       hub: { ...input.hubOwner, entry: 'process.exit(76);' },
-      worker: { uid: 60001, gid: input.hubOwner.gid, entry: 'process.exit(76);' },
+      worker: input.worker,
     },
     supervisor: { entry: 'process.exit(76);' },
-    serviceSupervisor: { entry: input.supervisorEntry(endpoint, program) },
+    serviceSupervisor: { entry: input.supervisorEntry(endpoint, program, workerEndpoint) },
+    workerSupervisor: { entry: 'process.exit(78);' },
   });
   await applyHostRegistry(plan);
   const label = `com.patrick.admission.service-runtime.${randomBytes(8).toString('hex')}`;
@@ -755,17 +761,22 @@ async function startSystemService(input: {
   await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>${label}</string>
-<key>ProgramArguments</key><array><string>${controllerPath}</string><string>run-supervisor</string><string>service</string></array>
+<key>ProgramArguments</key><array><string>${controllerPath}</string><string>run-supervisor</string><string>service-with-worker</string></array>
 <key>StandardErrorPath</key><string>${errors}</string>
 <key>Sockets</key><dict><key>ServiceControl</key><dict>
 <key>SockPathName</key><string>${endpoint}</string>
 <key>SockPathOwner</key><integer>0</integer>
 <key>SockPathGroup</key><integer>${input.serviceOwner.gid}</integer>
 <key>SockPathMode</key><integer>432</integer>
+</dict><key>WorkerControl</key><dict>
+<key>SockPathName</key><string>${workerEndpoint}</string>
+<key>SockPathOwner</key><integer>0</integer>
+<key>SockPathGroup</key><integer>${input.worker.gid}</integer>
+<key>SockPathMode</key><integer>432</integer>
 </dict></dict></dict></plist>`, { mode: 0o600, flag: 'wx' });
   const launchctl = (...args: string[]) => child(args, input.root, '/bin/launchctl');
   launchctl('bootstrap', 'system', plist);
-  return { endpoint, controllerPath,
+  return { endpoint, workerEndpoint, controllerPath,
     signal() { launchctl('kill', 'SIGTERM', job); },
     stop() { launchctl('bootout', job); },
     errors: () => readFile(errors, 'utf8').catch(() => ''),
@@ -953,6 +964,15 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
       await firstInstallFixture('first-install-independent-service', onTestFinished, hubOwner, serviceOwner);
     const invalid = { ...enrollment, serviceOwner: { ...serviceOwner, uid: hubOwner.uid } };
     expect(await previewFirstInstall(() => invalid, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+    const workerOwner = account('_networkd');
+    function withWorkerGroup(workerSupervisorGid: number) {
+      return { ...enrollment, deployment: { ...enrollment.deployment,
+        accounts: { ...enrollment.deployment.accounts, worker: '_networkd' }, workerSupervisorGid } };
+    }
+    expect(await previewFirstInstall(() => withWorkerGroup(workerOwner.gid + 1), 'release'))
+      .toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
+    expect(await previewFirstInstall(() => withWorkerGroup(workerOwner.gid), 'release'))
+      .toMatchObject({ status: 'preview' });
     child(['+a', '_mdnsresponder deny search', instanceRoot], dir, '/bin/chmod');
     try {
       expect(await previewFirstInstall(() => enrollment, 'release')).toEqual({ status: 'blocked', code: 'INSTALL_PREVIEW_DEPLOYMENT' });
@@ -1053,8 +1073,73 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
       root: selected.root, rootNode: selected.rootNode, installationId: selected.installationId, hostId: selected.hostId,
       identity, captureHost: enrollment.hostname, ...serviceOwner, publicKey: handoffPublicKey,
     };
+    const databasePath = join(serviceData, 'service.sqlite');
+    const fixtureDatabase = openDatabase(databasePath);
+    let requestId: string;
+    try {
+      const now = () => new Date();
+      fixtureDatabase.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(identity.accountId, 1, 1, now().toISOString());
+      fixtureDatabase.prepare('INSERT INTO caller_scopes VALUES (?,?,?,?,NULL)').run(identity.accountId, 'web', 'personal', 'owner');
+      const consultation = await createConsultationApi(fixtureDatabase, { now }).createConsultation({
+        account_id: identity.accountId, caller_id: 'web', auth_epoch: 1, domains: ['personal'], operations: ['owner'],
+      }, {
+        client_request_id: 'installed-worker-tick', text: 'Isolated T23 request', data_domain: 'personal', parent_work_id: null,
+      });
+      requestId = consultation.request_id;
+      fixtureDatabase.pragma('journal_mode = DELETE');
+    } finally {
+      fixtureDatabase.close();
+    }
+    const workerBootstrap = await build({
+      stdin: { resolveDir: root, contents: `
+        import { accessSync, constants } from 'node:fs';
+        import { runSupervisedWorkerRole } from './deploy/runtime/role-launch.js';
+        try {
+          accessSync(${JSON.stringify(join(serviceData, 'service.sqlite'))}, constants.R_OK);
+          process.exit(77);
+        } catch (error) {
+          if (error.code !== 'EACCES') throw error;
+        }
+        await runSupervisedWorkerRole(() => {
+          console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid() }));
+          process.kill(process.pid, 'SIGTERM');
+        });
+      ` },
+      bundle: true, write: false, format: 'esm', platform: 'node',
+      external: ['./composition.js', './service.js', './worker.js'],
+    });
+    let hubChecks = 0;
+    let reportedCommit = '0'.repeat(40);
+    const postedEvents: unknown[] = [];
+    const operationalHub = createHttpServer(async (request, response) => {
+      if (request.url === '/healthz' && !request.headers.authorization) {
+        hubChecks++;
+        return response.end(JSON.stringify({ ok: true, commit: reportedCommit }));
+      }
+      if (request.headers.authorization !== 'Bearer fixture-source') return response.writeHead(401).end();
+      if (request.url === '/v1/events' && request.method === 'POST') {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        postedEvents.push(JSON.parse(body).type);
+        return response.end(JSON.stringify({ event: 1, duplicate: false, routed: ['咨询'] }));
+      }
+      if (request.url === '/v1/events/1') {
+        return response.end(JSON.stringify({ event: 1, runs: [{ run: 1, rule: '咨询', state: 'queued' }] }));
+      }
+      return response.writeHead(404).end();
+    });
+    operationalHub.listen(0, '127.0.0.1');
+    await once(operationalHub, 'listening');
+    onTestFinished(() => new Promise<void>(done => {
+      operationalHub.close(() => done());
+      operationalHub.closeAllConnections();
+    }));
+    const hubAddress = operationalHub.address();
+    if (!hubAddress || typeof hubAddress === 'string') throw new Error('fixture Hub endpoint missing');
+    const hubOrigin = `http://127.0.0.1:${hubAddress.port}`;
     const service = await startSystemService({
       root: instanceRoot, hubOwner, serviceOwner,
+      worker: { ...workerOwner, entry: workerBootstrap.outputFiles[0].text },
       serviceEntry: `
         import { runSupervisedServiceRole } from ${JSON.stringify(compositionPath)};
         const enrolled = ${JSON.stringify(serviceRegistration)};
@@ -1064,6 +1149,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
             identity: enrolled.identity, captureHost: enrolled.captureHost, serviceUid: enrolled.uid,
             profile: 'local', dataRoot: paths.dataRoot, minimumFreeBytes: 0,
             origin: listener.origin, rpId: ${JSON.stringify(enrollment.tls.rpId)}, listener,
+            operationalHub: { origin: ${JSON.stringify(hubOrigin)}, commit: ${JSON.stringify(PINNED_HUB_COMMIT)} },
           },
           service: {
             databasePath: paths.databasePath, credentialDirectory: paths.credentialDirectory,
@@ -1075,9 +1161,10 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
               } };
             },
           },
+          worker: { keys: { owner: 'fixture-owner', worker: 'fixture-worker', source: 'fixture-source' } },
         }), () => console.log(JSON.stringify({ event: 'ready', uid: process.getuid(), gid: process.getgid() })));
       `,
-      supervisorEntry(endpoint, program) {
+      supervisorEntry(endpoint, program, workerEndpoint) {
         return `
           import { createPrivateKey, sign } from 'node:crypto';
           import { readFileSync } from 'node:fs';
@@ -1092,12 +1179,13 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
                   throw new Error('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
                 }
                 return sign(null, bytes, privateKey).toString('base64');
-              } });
+              } }, ${JSON.stringify(workerEndpoint)});
         `;
       },
     });
     try {
       await vi.waitFor(async () => expect((await lstat(service.endpoint)).isSocket()).toBe(true), { timeout: 5000 });
+      expect((await lstat(service.workerEndpoint)).gid).toBe(workerOwner.gid);
       const rejected = spawnSync(service.controllerPath, ['run-role', 'service'], {
         ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 15_000,
       });
@@ -1121,6 +1209,25 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         expect(JSON.parse(report)).toEqual({ event: 'ready', ...serviceOwner });
         expect((await fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
         expect((await fetch(`${serviceUrl}/`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
+        expect(hubChecks).toBe(0);
+        const workerRole = spawn(service.controllerPath, ['run-role', 'worker'], {
+          ...workerOwner, cwd: instanceRoot, env: {}, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let workerOutput = '';
+        let workerError = '';
+        workerRole.stdout.setEncoding('utf8').on('data', (chunk: string) => { workerOutput += chunk; });
+        workerRole.stderr.setEncoding('utf8').on('data', (chunk: string) => { workerError += chunk; });
+        try {
+          await vi.waitFor(() => expect(hubChecks).toBeGreaterThan(1), { timeout: 10_000 });
+          expect(workerOutput).toBe('');
+          expect(postedEvents).toEqual([]);
+          reportedCommit = PINNED_HUB_COMMIT;
+          expect(await once(workerRole, 'close', { signal: AbortSignal.timeout(15_000) }), workerError).toEqual([0, null]);
+          expect(JSON.parse(workerOutput)).toEqual(workerOwner);
+          expect(postedEvents).toEqual(['consultation.requested']);
+        } finally {
+          if (workerRole.exitCode === null && workerRole.signalCode === null) workerRole.kill('SIGKILL');
+        }
         await expect(store.select(envelope)).rejects.toThrow('INSTALLED_SERVICE_WRITER_BUSY');
         service.signal();
         await expect(Promise.race([closed, delay(35_000, 'timed out', { ref: false })])).resolves.toEqual([0, null]);
@@ -1129,6 +1236,11 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         }, { timeout: 5000 });
         await expect(fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
         await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
+        const observed = new DatabaseSync(databasePath, { readOnly: true });
+        try {
+          expect(observed.prepare("SELECT result FROM outbox WHERE event_id = ? AND destination = 'autoloop'")
+            .get(`consultation.requested:${requestId}`)).toEqual({ result: 'accepted' });
+        } finally { observed.close(); }
       } finally {
         stdout.close();
         if (role.exitCode === null && role.signalCode === null) {

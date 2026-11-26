@@ -14,10 +14,67 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 import { reserveControllerServiceSession, reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
-import { listenVerifiedServiceControl } from '../../deploy/runtime/role-launch.js';
+import { listenVerifiedServiceControl, runInstalledWorkerSupervisor, serveInstalledWorkerTicks } from '../../deploy/runtime/role-launch.js';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const archivedMaterials = process.env.PATRICK_T23_CONTROLLED_MATERIALS;
+
+test('the installed Worker supervisor requires a registered launchd listener', async () => {
+  const serve = vi.fn();
+  await expect(runInstalledWorkerSupervisor({ path: '/unused', sha256: 'a'.repeat(64) }, '/unused.sock', serve))
+    .rejects.toThrow('INSTALLED_WORKER_SUPERVISOR_LISTENER_REQUIRED');
+  expect(serve).not.toHaveBeenCalled();
+});
+
+test('the Worker channel rejects extra data and releases a disconnected Worker while Service owns its tick', async ({ onTestFinished }) => {
+  expect(typeof serveInstalledWorkerTicks).toBe('function');
+  const root = await mkdtemp('/private/tmp/patrick-worker-tick-');
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const endpoint = join(root, 'tick.sock');
+  const shutdown = new AbortController();
+  let admit!: () => void;
+  let finish!: (available: boolean) => void;
+  const admitted = new Promise<void>(resolveAdmission => { admit = resolveAdmission; });
+  const result = new Promise<boolean>(resolveResult => { finish = resolveResult; });
+  const trigger = vi.fn(() => {
+    admit();
+    return result;
+  });
+  const sessions = new Set<Promise<void>>();
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    const session = serveInstalledWorkerTicks(socket, shutdown.signal, trigger)
+      .catch(() => {}).finally(() => socket.destroy());
+    sessions.add(session);
+  });
+  server.listen(endpoint);
+  await once(server, 'listening');
+  try {
+    const invalid = createConnection(endpoint);
+    invalid.end('{"payload":"extra","type":"consultation-tick","version":1}\n');
+    await once(invalid, 'close');
+    expect(trigger).not.toHaveBeenCalled();
+    sessions.clear();
+
+    const worker = createConnection(endpoint);
+    worker.write('{"type":"consultation-tick","version":1}\n');
+    await admitted;
+    const closedWorker = once(worker, 'close');
+    worker.destroy();
+    await closedWorker;
+    const disconnected = await Promise.race([
+      Promise.all(sessions).then(() => true),
+      new Promise<boolean>(resolveDelay => setTimeout(() => resolveDelay(false), 1000).unref()),
+    ]);
+    expect(disconnected).toBe(true);
+    expect(trigger).toHaveBeenCalledTimes(1);
+  } finally {
+    shutdown.abort();
+    finish(false);
+    const closed = once(server, 'close');
+    server.close();
+    await closed;
+  }
+});
 const clt = '/Library/Developer/CommandLineTools';
 const localClangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
 const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80cb75d4';
@@ -200,20 +257,26 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         });
       }).listen({ fd });
     `;
-    let serviceSupervisorEntry: string | undefined;
-    if (role === 'service') {
-      const supervisorModule = join(root, 'service-supervision.mjs');
+    let roleSupervisorEntry: string | undefined;
+    if (role !== 'hub') {
+      const supervisorExport = role === 'service' ? 'runInstalledServiceSupervisor' : 'runInstalledWorkerSupervisor';
+      const supervisorModule = join(root, 'role-supervision.mjs');
       await build({
-        stdin: { contents: "export { runInstalledServiceSupervisor } from './deploy/runtime/role-launch.js';", resolveDir: project },
+        stdin: { contents: `export { ${supervisorExport} } from './deploy/runtime/role-launch.js';`, resolveDir: project },
         outfile: supervisorModule, bundle: true, format: 'esm', platform: 'node',
         external: ['./composition.js', './service.js', './worker.js'],
       });
       const program = { path: controller, sha256: await digest(controller) };
-      serviceSupervisorEntry = `
-        import { runInstalledServiceSupervisor } from ${JSON.stringify(supervisorModule)};
-        await runInstalledServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)}, (socket, shutdown) =>
+      roleSupervisorEntry = `
+        import { ${supervisorExport} as supervise } from ${JSON.stringify(supervisorModule)};
+        await supervise(${JSON.stringify(program)}, ${JSON.stringify(endpoint)}, (socket, shutdown) =>
           new Promise(resolve => {
             socket.once('close', resolve);
+            if (${JSON.stringify(role)} === 'worker') {
+              socket.resume();
+              socket.end('enrolled\\n');
+              return;
+            }
             socket.once('data', request => {
               if (request.toString() !== 'stop\\n') return socket.destroy();
               socket.once('data', drained => {
@@ -237,8 +300,8 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
         worker: { ...worker, entry: role === 'worker' ? roleEntry : 'process.exit(76);' },
       },
       supervisor: { entry: supervisorEntry },
-      ...(serviceSupervisorEntry ? { serviceSupervisor: { entry: serviceSupervisorEntry } } : {}),
-      ...(role === 'worker' ? { workerSupervisor: { entry: supervisorEntry } } : {}),
+      ...(role === 'service' ? { serviceSupervisor: { entry: roleSupervisorEntry! } } : {}),
+      ...(role === 'worker' ? { workerSupervisor: { entry: roleSupervisorEntry! } } : {}),
       cli: { entry: 'console.log(JSON.stringify({ uid: process.getuid(), args: process.argv.slice(2) }));' },
     });
     await applyHostRegistry(plan);
@@ -280,7 +343,7 @@ test.skipIf(process.env.PATRICK_T23_SYSTEM_SUPERVISOR_TEST !== '1').for([
       try {
         let response = '';
         for await (const part of wrongPeer) response += part.toString();
-        expect(response).toBe(role === 'service' ? '' : 'rejected\n');
+        expect(response).toBe(role === 'hub' ? 'rejected\n' : '');
       } finally { wrongPeer.destroy(); }
       const admitted = spawnSync(controller, ['run-role', role], {
         uid, gid, env: {}, cwd: root, encoding: 'utf8', timeout: 8000,

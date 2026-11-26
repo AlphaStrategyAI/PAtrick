@@ -41,6 +41,12 @@ test.each([
   expect(rendered.plists).toHaveProperty(job, expect.stringContaining('<key>SockPathGroup</key><integer>503</integer>'));
   expect(rendered.plists.hubSupervisor).toBeUndefined();
   expect(() => renderDeploymentTemplates(sources, { ...registration, [field]: 0 })).toThrow(`invalid deployment ${role} group`);
+  const combined = renderDeploymentTemplates(sources, { ...registration, serviceSupervisorGid: 503, workerSupervisorGid: 504 });
+  expect(combined.plists.serviceSupervisor).toContain('<string>service-with-worker</string>');
+  expect(combined.plists.serviceSupervisor).toContain('<key>ServiceControl</key>');
+  expect(combined.plists.serviceSupervisor).toContain('<key>WorkerControl</key>');
+  expect(combined.plists.serviceSupervisor).toContain('<key>SockPathGroup</key><integer>504</integer>');
+  expect(combined.plists.workerSupervisor).toBeUndefined();
 });
 
 test('honors an enrolled loopback-only Caddy listener without altering previous previews', () => {

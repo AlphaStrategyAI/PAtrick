@@ -7,6 +7,7 @@ import { extname, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { assertHubIdentity } from '@patrick/integrations/autoloop/client';
 import {
   cleanRuntimeStartup,
   createProvisionedServiceRuntime,
@@ -289,6 +290,18 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
   }
   return {
     url, stop, drain, read,
+    async triggerConsultationTick() {
+      if (!admitting) throw new Error('CONSULTATION_TRIGGER_STOPPED');
+      const hub = provisioning.registration.operationalHub;
+      if (ports.serviceOptions.consultationWorker?.mode !== 'manual' || !hub) {
+        throw new Error('CONSULTATION_TRIGGER_NOT_CONFIGURED');
+      }
+      assertSelected?.();
+      await assertHubIdentity(hub.origin, hub.commit);
+      if (!admitting) throw new Error('CONSULTATION_TRIGGER_STOPPED');
+      assertSelected?.();
+      return runtime.triggerConsultationTick();
+    },
     issueOwnerBootstrap() {
       if (!admitting) throw new Error('OWNER_BOOTSTRAP_UNAVAILABLE');
       return runtime.issueOwnerBootstrap();

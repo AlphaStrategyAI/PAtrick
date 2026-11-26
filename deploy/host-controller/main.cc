@@ -277,7 +277,7 @@ bool listener_matches_endpoint(const sockaddr_un& bound, const std::string& path
   return close(probe) == 0 && matches;
 }
 
-bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
+bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group, int target_fd) {
   int* descriptors = nullptr;
   size_t count = 0;
   const int activation = launch_activate_socket(supervisor.socket_key, &descriptors, &count);
@@ -302,7 +302,7 @@ bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
   const bool admitted_endpoint = lstat(path.c_str(), &endpoint) == 0 && S_ISSOCK(endpoint.st_mode) &&
       endpoint.st_uid == registry_owner && endpoint.st_gid == group &&
       (endpoint.st_mode & 07777) == 0660;
-  bool admitted_address = listener >= control_fd &&
+  bool admitted_address = listener >= target_fd &&
       getsockopt(listener, SOL_SOCKET, SO_TYPE, &socket_type, &option_size) == 0 && socket_type == SOCK_STREAM &&
       getsockname(listener, reinterpret_cast<sockaddr*>(&address), &address_size) == 0 &&
       address.sun_family == AF_UNIX && address.sun_path[0] != '\0';
@@ -317,32 +317,39 @@ bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
     fprintf(stderr, "PATRICK_%s_LISTENER_%s_INVALID\n", supervisor.diagnostic, admitted_address ? "ENDPOINT" : "ADDRESS");
     return false;
   }
-  if (listener != control_fd) {
-    const bool installed = dup2(listener, control_fd) == control_fd;
+  if (listener != target_fd) {
+    const bool installed = dup2(listener, target_fd) == target_fd;
     if (close(listener) != 0 || !installed) return false;
   }
-  return fcntl(control_fd, F_SETFD, 0) == 0;
+  return fcntl(target_fd, F_SETFD, 0) == 0;
 }
 
-int launch_supervisor(const Supervisor& config) {
+int launch_supervisor(const Supervisor& config, bool with_worker = false) {
   if (getuid() != registry_owner || geteuid() != registry_owner) return EX_CONFIG;
   const int registry = open_registry();
   if (registry < 0) return EX_CONFIG;
   const int role = open_protected(registry, config.role, true);
   const int supervisor = open_protected(registry, config.directory, true);
+  const int worker = with_worker ? open_protected(registry, "worker", true) : -1;
   Account account {};
+  Account worker_account {};
+  const bool worker_admitted = !with_worker ||
+      (worker >= 0 && read_account(worker, worker_account) && has_protected_file(worker, "supervisor-required"));
   const bool admitted = role >= 0 && supervisor >= 0 &&
       read_account(role, account) && distinct_role_accounts(registry, config.role, account.uid) &&
+      worker_admitted &&
       has_protected_file(role, "supervisor-required") && has_protected_file(registry, "node") &&
       has_protected_file(supervisor, "entry.mjs") && fchdir(supervisor) == 0;
   const bool closed_role = role < 0 || close(role) == 0;
   const bool closed_supervisor = supervisor < 0 || close(supervisor) == 0;
-  if (close(registry) != 0 || !closed_role || !closed_supervisor || !admitted) {
+  const bool closed_worker = worker < 0 || close(worker) == 0;
+  if (close(registry) != 0 || !closed_role || !closed_supervisor || !closed_worker || !admitted) {
     fprintf(stderr, "PATRICK_%s_SUPERVISOR_REGISTRATION_INVALID\n", config.diagnostic);
     return EX_CONFIG;
   }
-  if (!adopt_supervisor_listener(config, account.gid)) return EX_CONFIG;
-  if (!confine_descriptors(control_fd)) return EX_UNAVAILABLE;
+  if (!adopt_supervisor_listener(config, account.gid, control_fd) ||
+      (with_worker && !adopt_supervisor_listener(worker_supervisor, worker_account.gid, control_fd + 1))) return EX_CONFIG;
+  if (!confine_descriptors(with_worker ? control_fd + 1 : control_fd)) return EX_UNAVAILABLE;
 
   umask(0077);
   std::string node = std::string(registry_root) + "/node";
@@ -351,7 +358,8 @@ int launch_supervisor(const Supervisor& config) {
   char encoding[64];
   snprintf(encoding, sizeof(encoding), "__CF_USER_TEXT_ENCODING=0x%X:0x0:0x0", getuid());
   char listener[] = "PATRICK_SUPERVISOR_LISTENER_FD=3";
-  char* envp[] = {encoding, listener, nullptr};
+  char worker_listener[] = "PATRICK_WORKER_LISTENER_FD=4";
+  char* envp[] = {encoding, listener, with_worker ? worker_listener : nullptr, nullptr};
   execve(node.c_str(), argv, envp);
   return EX_UNAVAILABLE;
 }
@@ -466,7 +474,8 @@ int main(int argc, char** argv) {
   const bool cli = argc >= 2 && strcmp(argv[1], "run-cli") == 0;
   if (!cli && (argc != 3 ||
       (strcmp(argv[1], "run-role") && strcmp(argv[1], "check-role-peer") && strcmp(argv[1], "run-supervisor")) ||
-      (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker")))) return EX_USAGE;
+      (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker") &&
+       (strcmp(argv[1], "run-supervisor") || strcmp(argv[2], "service-with-worker"))))) return EX_USAGE;
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
   if (cli || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
@@ -476,6 +485,7 @@ int main(int argc, char** argv) {
   if (strcmp(argv[1], "run-supervisor") == 0) {
     if (strcmp(argv[2], "hub") == 0) return launch_supervisor(hub_supervisor);
     if (strcmp(argv[2], "service") == 0) return launch_supervisor(service_supervisor);
+    if (strcmp(argv[2], "service-with-worker") == 0) return launch_supervisor(service_supervisor, true);
     return launch_supervisor(worker_supervisor);
   }
   if (strcmp(argv[1], "check-role-peer") == 0) return check_role_peer(argv[2]);

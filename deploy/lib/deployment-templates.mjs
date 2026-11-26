@@ -294,27 +294,30 @@ function render(key, bytes, substitutions) {
   });
 }
 
-function supervisorLaunchd(controller, group, { role, label, socket }) {
+function supervisorLaunchd(controller, group, { role, label, socket }, worker) {
+  const socketEntry = ({ role, socket, group }) => `    <key>${socket}</key>
+    <dict>
+      <key>SockPathName</key><string>/Library/Application Support/PAtrick/controller-v1/${role}/supervisor.sock</string>
+      <key>SockPathOwner</key><integer>0</integer>
+      <key>SockPathGroup</key><integer>${group}</integer>
+      <key>SockPathMode</key><integer>432</integer>
+    </dict>`;
+  const sockets = [{ role, socket, group }, ...(worker ? [worker] : [])];
+  const command = worker ? 'service-with-worker' : role;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
-  <array><string>${controller.replaceAll('&', '&amp;')}</string><string>run-supervisor</string><string>${role}</string></array>
+  <array><string>${controller.replaceAll('&', '&amp;')}</string><string>run-supervisor</string><string>${command}</string></array>
   <key>UserName</key><string>root</string>
   <key>Umask</key><integer>63</integer>
   <key>ProcessType</key><string>Background</string>
   <key>ExitTimeOut</key><integer>60</integer>
   <key>Sockets</key>
   <dict>
-    <key>${socket}</key>
-    <dict>
-      <key>SockPathName</key><string>/Library/Application Support/PAtrick/controller-v1/${role}/supervisor.sock</string>
-      <key>SockPathOwner</key><integer>0</integer>
-      <key>SockPathGroup</key><integer>${group}</integer>
-      <key>SockPathMode</key><integer>432</integer>
-    </dict>
+${sockets.map(socketEntry).join('\n')}
   </dict>
 </dict>
 </plist>
@@ -377,8 +380,12 @@ export function renderDeploymentTemplates(sources, registration) {
       STDOUT: log + '/redacted.stdout.log', STDERR: log + '/redacted.stderr.log' };
     plists[job] = render(job, sources[job], Object.fromEntries(Object.entries(substitutions).map(([k,v]) => [k,v.replaceAll('&','&amp;')])));
   }
+  const sharedWorker = supervisors.some(({ role }) => role === 'service') && supervisors.find(({ role }) => role === 'worker');
   for (const supervisor of supervisors) {
-    plists[supervisor.job] = supervisorLaunchd(controller, registration[supervisor.field], supervisor);
+    if (supervisor === sharedWorker) continue;
+    const worker = supervisor.role === 'service' && sharedWorker
+      ? { ...sharedWorker, group: registration[sharedWorker.field] } : undefined;
+    plists[supervisor.job] = supervisorLaunchd(controller, registration[supervisor.field], supervisor, worker);
   }
   return Object.freeze({ caddy, plists: Object.freeze(plists), caddyProcess: Object.freeze({
     account: accounts.caddy, configPath: base + '/config/Caddyfile', workingDirectory: base,

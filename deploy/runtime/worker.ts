@@ -1,5 +1,5 @@
 import { createServiceRuntime } from '@patrick/service/factory';
-import { createHubClient } from '@patrick/integrations/autoloop/client';
+import { assertHubIdentity, createHubClient } from '@patrick/integrations/autoloop/client';
 import {
   cleanRuntimeStartup,
   isRuntimeMain,
@@ -7,39 +7,6 @@ import {
   unavailableRuntimeDiagnostic,
   type RuntimeProvisioning,
 } from './composition.js';
-
-async function assertHubIdentity(origin: string, commit: string): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetch(new URL('/healthz', origin), {
-      redirect: 'error',
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok || !response.body) throw new Error();
-  } catch {
-    throw new Error('OPERATIONAL_HUB_HEALTH_UNAVAILABLE');
-  }
-  const reader = response.body.getReader();
-  let health: unknown;
-  try {
-    const buffers: Uint8Array[] = [];
-    let bytes = 0;
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      bytes += chunk.value.length;
-      if (bytes > 8192) throw new Error();
-      buffers.push(chunk.value);
-    }
-    health = JSON.parse(Buffer.concat(buffers).toString('utf8'));
-  } catch {
-    throw new Error('OPERATIONAL_HUB_HEALTH_UNAVAILABLE');
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
-  if (!health || typeof health !== 'object' || !('ok' in health) || health.ok !== true ||
-      !('commit' in health) || health.commit !== commit) throw new Error('OPERATIONAL_HUB_IDENTITY_MISMATCH');
-}
 
 const generationWorkers = new WeakMap<RuntimeProvisioning, Pick<ReturnType<typeof createServiceRuntime>, 'drain'>>();
 export function drainGenerationWorker(provisioning: RuntimeProvisioning) {

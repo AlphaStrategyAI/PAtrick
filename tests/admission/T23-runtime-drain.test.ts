@@ -417,6 +417,141 @@ test('top-level cancellation closes lazy runtime and repeated drains share compl
   expect(outcomes.map((value) => value.status)).toEqual(['closed', 'closed', 'closed']);
 });
 
+test('service without a manual consultation worker rejects triggers', async () => {
+  const { createServiceRuntime } = await import('../../apps/service/src/factory.js');
+  const runtime = createServiceRuntime();
+  try {
+    await expect(runtime.triggerConsultationTick()).rejects.toThrow('CONSULTATION_TRIGGER_NOT_CONFIGURED');
+  } finally { await runtime.drain(); }
+});
+
+test('service manual consultation trigger uses owned resources and holds closure through drain', async () => {
+  const { createServiceRuntime } = await import('../../apps/service/src/factory.js');
+  const { createConsultationApi } = await import('../../packages/domain/src/consultations.js');
+  const { CONSULTATION_RULE } = await import('../../packages/integrations/autoloop/client.js');
+  const paths = temporary();
+  const now = () => new Date();
+  const entered = deferred<AbortSignal | undefined>();
+  const lateOutcome = deferred<import('../../packages/integrations/autoloop/client.js').HubEventOutcome>();
+  const outcome = (event: number) => ({ event, runs: [{ run: event, rule: CONSULTATION_RULE, state: 'queued' as const }] });
+  let eventNumber = 0;
+  const postEvent = vi.fn(async () => ({ event: ++eventNumber, duplicate: false, routed: [CONSULTATION_RULE] }));
+  const openMain = vi.fn(openDatabase);
+  const runtime = createServiceRuntime({
+    ...paths, openMain, now,
+    consultationWorker: {
+      mode: 'manual',
+      hub: {
+        ...emptyConsultationHub(), postEvent,
+        async eventOutcome(event, signal) {
+          if (event === 1) return outcome(event);
+          entered.resolve(signal);
+          return lateOutcome.promise;
+        },
+      },
+    },
+  });
+  try {
+    expect(openMain).toHaveBeenCalledExactlyOnceWith(paths.databasePath);
+    const db = openMain.mock.results[0].value as ReturnType<typeof openDatabase>;
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run('owner', 1, 1, now().toISOString());
+    db.prepare("INSERT INTO caller_scopes VALUES ('owner','web','personal','owner',NULL)").run();
+    const principal = { account_id: 'owner', caller_id: 'web', auth_epoch: 1, domains: ['personal'], operations: ['owner'] };
+    const api = createConsultationApi(db, { now });
+    const enqueue = (id: string) => api.createConsultation(principal, {
+      client_request_id: id, text: 'Synthetic question', data_domain: 'personal', parent_work_id: null });
+    const first = await enqueue('factory-manual-first');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(postEvent).not.toHaveBeenCalled();
+
+    const triggered = runtime.triggerConsultationTick();
+    expect(runtime.triggerConsultationTick()).toBe(triggered);
+    await triggered;
+    expect(postEvent).toHaveBeenCalledTimes(1);
+    expect(db.prepare('SELECT result FROM outbox WHERE event_id = ?').get(`consultation.requested:${first.request_id}`))
+      .toEqual({ result: 'accepted' });
+
+    await enqueue('factory-manual-second');
+    const inFlight = runtime.triggerConsultationTick();
+    const signal = await entered.promise;
+    expect(runtime.read().active).toBeGreaterThan(0);
+    expect(await runtime.drain({ timeoutMs: 0 })).toMatchObject({ status: 'draining' });
+    expect(signal?.aborted).toBe(true);
+    expect(db.open).toBe(true);
+    await expect(runtime.triggerConsultationTick()).rejects.toThrow('CONSULTATION_TRIGGER_STOPPED');
+    lateOutcome.resolve(outcome(2));
+    await inFlight;
+    expect(await runtime.drain()).toMatchObject({ status: 'closed', active: 0 });
+    expect(db.open).toBe(false);
+  } finally {
+    lateOutcome.resolve(outcome(2));
+    await runtime.drain();
+  }
+});
+
+test('manual consultation ticks coalesce and drain before releasing borrowed resources', async () => {
+  const { createConsultationApi } = await import('../../packages/domain/src/consultations.js');
+  const { createManualConsultationWorker } = await import('../../packages/integrations/autoloop/consultation-runtime.js');
+  const { CONSULTATION_RULE } = await import('../../packages/integrations/autoloop/client.js');
+  const db = openDatabase(temporary().databasePath);
+  const now = () => new Date();
+  const entered = deferred<AbortSignal | undefined>();
+  const delayedOutcome = deferred<import('../../packages/integrations/autoloop/client.js').HubEventOutcome>();
+  const outcome = (event: number) => ({ event, runs: [{ run: event, rule: CONSULTATION_RULE, state: 'queued' as const }] });
+  let eventNumber = 0;
+  const postEvent = vi.fn(async () => ({ event: ++eventNumber, duplicate: false, routed: [CONSULTATION_RULE] }));
+  const eventOutcome = vi.fn(async (event: number, signal?: AbortSignal) => {
+    if (event === 1) return outcome(event);
+    entered.resolve(signal);
+    return delayedOutcome.promise;
+  });
+  let worker: ReturnType<typeof createManualConsultationWorker> | undefined;
+  try {
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run('owner', 1, 1, now().toISOString());
+    db.prepare("INSERT INTO caller_scopes VALUES ('owner','web','personal','owner',NULL)").run();
+    const principal = { account_id: 'owner', caller_id: 'web', auth_epoch: 1, domains: ['personal'], operations: ['owner'] };
+    const api = createConsultationApi(db, { now });
+    const enqueue = (id: string) => api.createConsultation(principal, {
+      client_request_id: id, text: 'Synthetic question', data_domain: 'personal', parent_work_id: null });
+    const pending = db.prepare("SELECT result FROM outbox WHERE event_id = ? AND destination = 'autoloop'");
+    const first = await enqueue('manual-first');
+    worker = createManualConsultationWorker(db, now, {
+      hub: { ...emptyConsultationHub(), postEvent, eventOutcome },
+    }, { put() { throw new Error('UNEXPECTED_CREDENTIAL_WRITE'); }, resolve: () => null });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(postEvent).not.toHaveBeenCalled();
+    expect(pending.get(`consultation.requested:${first.request_id}`)).toEqual({ result: null });
+
+    const triggered = worker.tick();
+    expect(worker.tick()).toBe(triggered);
+    await triggered;
+    expect(postEvent).toHaveBeenCalledTimes(1);
+    expect(pending.get(`consultation.requested:${first.request_id}`)).toEqual({ result: 'accepted' });
+
+    const second = await enqueue('manual-second');
+    const inFlight = worker.tick();
+    const signal = await entered.promise;
+    expect(worker.tick()).toBe(inFlight);
+    let finished = false;
+    const drained = worker.drain().then(() => { finished = true; });
+    expect(signal?.aborted).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(finished).toBe(false);
+    delayedOutcome.resolve(outcome(2));
+    await Promise.all([inFlight, drained]);
+
+    await worker.tick();
+    expect(postEvent).toHaveBeenCalledTimes(2);
+    expect(eventOutcome).toHaveBeenCalledTimes(2);
+    expect(pending.get(`consultation.requested:${second.request_id}`)).toEqual({ result: null });
+    expect(db.open).toBe(true);
+  } finally {
+    delayedOutcome.resolve(outcome(2));
+    await worker?.drain();
+    db.close();
+  }
+});
+
 test('consultation shutdown keeps the actual paid backend operation joined after cancellation', async () => {
   const { createHash } = await import('node:crypto');
   const { createConsultationApi } = await import('../../packages/domain/src/consultations.js');

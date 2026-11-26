@@ -266,7 +266,7 @@ type SupervisorProgram = Readonly<{ path: string; sha256: string }>;
 const hubReady = 'READY 1 hub\n';
 const hubStopped = 'STOPPED 1 hub\n';
 
-async function verifyRolePeer(socket: Socket, program: SupervisorProgram, role: 'hub' | 'service') {
+async function verifyRolePeer(socket: Socket, program: SupervisorProgram, role: 'hub' | 'service' | 'worker') {
   const { path, sha256: expected } = program;
   const denied = new Error(`INSTALLED_${role.toUpperCase()}_SUPERVISOR_PEER_INVALID`);
   if (resolve(path) !== path || !/^[a-f0-9]{64}$/.test(expected)) throw denied;
@@ -434,21 +434,106 @@ export async function listenVerifiedServiceControl(options: ListenOptions | { fd
   }
 }
 
-export async function runInstalledServiceSupervisor(program: SupervisorProgram, endpoint: string,
-  serve: (socket: Socket, shutdown: AbortSignal) => Promise<void>) {
-  if (process.platform !== 'darwin' || process.getuid?.() !== 0 || process.geteuid?.() !== 0 ||
-      process.env.PATRICK_SUPERVISOR_LISTENER_FD !== '3' || !fstatSync(3).isSocket() || resolve(endpoint) !== endpoint) {
-    throw new Error('INSTALLED_SERVICE_SUPERVISOR_LISTENER_REQUIRED');
+type ServeSupervisorConnection = (socket: Socket, shutdown: AbortSignal) => Promise<void>;
+
+export function runInstalledServiceSupervisor(program: SupervisorProgram, endpoint: string, serve: ServeSupervisorConnection) {
+  return runInstalledRoleSupervisor('service', program, endpoint, serve);
+}
+
+export function runInstalledWorkerSupervisor(program: SupervisorProgram, endpoint: string, serve: ServeSupervisorConnection) {
+  return runInstalledRoleSupervisor('worker', program, endpoint, serve);
+}
+
+const consultationTick = Object.freeze({ version: 1, type: 'consultation-tick' });
+const tickResult = (available: boolean) => ({ version: 1, type: 'consultation-tick-result', available });
+const workerProtocolError = () => new Error('INSTALLED_WORKER_SUPERVISOR_PROTOCOL_INVALID');
+
+export async function serveInstalledWorkerTicks(socket: Socket, shutdown: AbortSignal,
+  trigger: () => Promise<boolean>) {
+  const channel = serviceFrame(socket);
+  let stopWaiting: (() => void) | undefined;
+  function stop() {
+    stopWaiting?.();
+    socket.destroy();
   }
-  const fixedProgram = bindRegistration(() => program).value;
+  shutdown.addEventListener('abort', stop, { once: true });
+  socket.once('end', stop);
+  socket.once('close', stop);
+  try {
+    while (!shutdown.aborted && !socket.destroyed) {
+      const request = await channel.read();
+      shutdown.throwIfAborted();
+      if (socket.destroyed) return;
+      if (canonicalize(request) !== canonicalize(consultationTick)) throw workerProtocolError();
+      const available = await new Promise<boolean | undefined>((settle, reject) => {
+        stopWaiting = () => settle(undefined);
+        void Promise.resolve().then(trigger).then(settle, reject);
+      });
+      stopWaiting = undefined;
+      if (available === undefined) return;
+      if (!shutdown.aborted && !socket.destroyed) channel.write(tickResult(available));
+    }
+  } catch (error) {
+    if (!shutdown.aborted && !socket.readableEnded && !socket.destroyed) throw error;
+  } finally {
+    shutdown.removeEventListener('abort', stop);
+    socket.off('end', stop);
+    socket.off('close', stop);
+    socket.destroy();
+  }
+}
+
+export async function runSupervisedWorkerRole(onReady?: () => void) {
+  if (process.env.PATRICK_SUPERVISOR_FD !== '3' || !fstatSync(3).isSocket()) throw workerProtocolError();
   const descriptor = openSync('/dev/fd/3', constants.O_RDWR);
   closeSync(3);
+  const socket = new Socket({ fd: descriptor, readable: true, writable: true });
+  const channel = serviceFrame(socket);
+  const stopping = new AbortController();
+  function stop() {
+    stopping.abort();
+    socket.destroy();
+  }
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  let ready = false;
+  try {
+    while (!stopping.signal.aborted) {
+      channel.write(consultationTick);
+      const response = canonicalize(await channel.read());
+      if (response === canonicalize(tickResult(true))) {
+        if (!ready) onReady?.();
+        ready = true;
+      } else if (response !== canonicalize(tickResult(false))) throw workerProtocolError();
+      await delay(1000, undefined, { signal: stopping.signal });
+    }
+  } catch (error) {
+    if (!stopping.signal.aborted) throw error;
+  } finally {
+    socket.destroy();
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  }
+}
+
+async function runInstalledRoleSupervisor(role: 'service' | 'worker', program: SupervisorProgram, endpoint: string,
+  serve: ServeSupervisorConnection, shared?: { descriptor: 3 | 4; signal: AbortSignal }) {
+  const name = role.toUpperCase();
+  const inherited = shared?.descriptor ?? 3;
+  const descriptorVariable = inherited === 4 ? 'PATRICK_WORKER_LISTENER_FD' : 'PATRICK_SUPERVISOR_LISTENER_FD';
+  if (process.platform !== 'darwin' || process.getuid?.() !== 0 || process.geteuid?.() !== 0 ||
+      process.env[descriptorVariable] !== String(inherited) || !fstatSync(inherited).isSocket() || resolve(endpoint) !== endpoint) {
+    throw new Error(`INSTALLED_${name}_SUPERVISOR_LISTENER_REQUIRED`);
+  }
+  const fixedProgram = bindRegistration(() => program).value;
+  const descriptor = openSync(`/dev/fd/${inherited}`, constants.O_RDWR);
+  closeSync(inherited);
   const stopping = new AbortController();
   let active: Socket | undefined;
   const sessions = new Map<Socket, Promise<void>>();
   let server: Server | undefined;
   function stop() {
-    stopping.abort(new Error('INSTALLED_SERVICE_SUPERVISOR_STOP_REQUESTED'));
+    stopping.abort(new Error(`INSTALLED_${name}_SUPERVISOR_STOP_REQUESTED`));
     server?.close();
     for (const socket of sessions.keys()) {
       if (socket !== active) socket.destroy();
@@ -456,18 +541,20 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
   }
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
+  shared?.signal.addEventListener('abort', stop, { once: true });
+  if (shared?.signal.aborted) stop();
   try {
     server = await listenVerifiedServiceControl({ fd: descriptor }, endpoint, socket => {
       if (stopping.signal.aborted || active || sessions.size >= 8) return socket.destroy();
       socket.on('error', () => socket.destroy());
-      const finished = verifyRolePeer(socket, fixedProgram, 'service').then(() => {
+      const finished = verifyRolePeer(socket, fixedProgram, role).then(() => {
         if (!socket.destroyed && !stopping.signal.aborted && !active) {
           active = socket;
           return serve(socket, stopping.signal);
         }
       }).catch(error => {
         const code = error instanceof Error && /^[A-Z][A-Z_]{1,95}$/.test(error.message) ? error.message : 'UNKNOWN';
-        console.error('INSTALLED_SERVICE_SUPERVISOR_SESSION_FAILED', code);
+        console.error(`INSTALLED_${name}_SUPERVISOR_SESSION_FAILED`, code);
       }).finally(() => {
         socket.destroy();
         if (active === socket) active = undefined;
@@ -482,6 +569,7 @@ export async function runInstalledServiceSupervisor(program: SupervisorProgram, 
     stop();
     active?.destroy();
     await Promise.all(sessions.values());
+    shared?.signal.removeEventListener('abort', stop);
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
   }
@@ -495,12 +583,13 @@ type SelectedServiceSession = Readonly<{
   assertCurrent(): void;
 }>;
 type ServeSelectedService = (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>;
+type WorkerTick = () => Promise<boolean>;
 const serviceHandshakeMs = 10_000;
 const serviceStopReplyMs = 30_000;
 
 async function serveSelectedService(socket: Socket, admission: SelectedServiceSession, enrollment: GenerationEnrollment,
   generation: InstalledGeneration, authority: ServiceHandoffAuthority, key: ReturnType<typeof serviceHandoffKey>,
-  arm: () => () => void): Promise<() => void> {
+  arm: () => () => void, offerTick?: (tick: WorkerTick | undefined) => void): Promise<() => void> {
   const channel = serviceFrame(socket);
   const expiresAt = performance.now() + serviceHandshakeMs;
   const deadline = new AbortController();
@@ -539,9 +628,15 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
   }
 
   let stopping = false;
+  let pendingTick: { promise: Promise<boolean>; resolve(available: boolean): void } | undefined;
+  function settleTick(available: boolean) {
+    pendingTick?.resolve(available);
+    pendingTick = undefined;
+  }
   function stop() {
     if (stopping || socket.destroyed) return;
     stopping = true;
+    settleTick(false);
     socket.end();
   }
   checkHandshake();
@@ -553,28 +648,62 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
     const confirmDrain = arm();
     channel.write(signed);
     const { selection } = signed;
-    let response = await channel.read();
-    if (matchesServiceStatus(response, 'stop', selection)) {
-      stop();
-      response = await channel.read();
+    offerTick?.(() => {
+      if (stopping || socket.destroyed || admission.signal.aborted) return Promise.resolve(false);
+      if (pendingTick) return pendingTick.promise;
+      let acknowledge!: (available: boolean) => void;
+      const tick = new Promise<boolean>(resolveTick => { acknowledge = resolveTick; });
+      pendingTick = { promise: tick, resolve: acknowledge };
+      try {
+        admission.assertCurrent();
+        channel.write(serviceStatus('worker-tick', selection));
+      } catch {
+        settleTick(false);
+        socket.destroy();
+      }
+      return tick;
+    });
+    let stopReceived = false;
+    for (;;) {
+      const response = await channel.read();
+      if (!stopReceived && matchesServiceStatus(response, 'stop', selection)) {
+        stopReceived = true;
+        stop();
+        continue;
+      }
+      const completed = offerTick && matchesServiceStatus(response, 'worker-tick-completed', selection);
+      if (completed || (offerTick && matchesServiceStatus(response, 'worker-tick-unavailable', selection))) {
+        if (!pendingTick && !stopping) throw serviceHandoffError();
+        settleTick(completed === true);
+        continue;
+      }
+      if (!stopping || !matchesServiceStatus(response, 'drained', selection)) throw serviceHandoffError();
+      await channel.expectEnd();
+      return confirmDrain;
     }
-    if (!stopping || !matchesServiceStatus(response, 'drained', selection)) throw serviceHandoffError();
-    await channel.expectEnd();
-    return confirmDrain;
   } finally {
+    offerTick?.(undefined);
+    settleTick(false);
     admission.signal.removeEventListener('abort', stop);
   }
 }
 
 export async function runSelectedServiceSupervisor(program: SupervisorProgram, endpoint: string,
   enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
-  handoff: ServiceHandoffAuthority | ServeSelectedService) {
+  handoff: ServiceHandoffAuthority | ServeSelectedService, workerEndpoint?: string) {
   const binding = bindRegistration(() => enrollment);
   if (binding.value.serviceRole?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
   const authority = typeof handoff === 'function' ? undefined : bindRegistration(() => handoff);
   const key = authority && serviceHandoffKey(authority.value.publicKey);
   if (authority && typeof authority.value.signSelection !== 'function') throw serviceHandoffError();
-  await runInstalledServiceSupervisor(program, endpoint, async (socket, shutdown) => {
+  const hasWorker = workerEndpoint !== undefined;
+  if (hasWorker !== Boolean(process.env.PATRICK_WORKER_LISTENER_FD) ||
+      (hasWorker && (!authority || resolve(workerEndpoint) !== workerEndpoint || workerEndpoint === endpoint))) {
+    throw new Error('INSTALLED_WORKER_SUPERVISOR_LISTENER_REQUIRED');
+  }
+  let activeTick: WorkerTick | undefined;
+  const offerTick = hasWorker ? (tick?: WorkerTick) => { activeTick = tick; } : undefined;
+  const serve: ServeSupervisorConnection = async (socket, shutdown) => {
     const disconnected = new AbortController();
     const signal = AbortSignal.any([shutdown, disconnected.signal]);
     function stop() { disconnected.abort(new Error('INSTALLED_SERVICE_CONNECTION_LOST')); }
@@ -609,7 +738,7 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
         if (await handoff(socket, admission) !== 'drained') throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
       } else {
         authority!.validate();
-        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm);
+        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm, offerTick);
       }
       authority?.validate();
       binding.validate();
@@ -618,7 +747,18 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
       socket.off('close', stop);
       fence.release();
     }
-  });
+  };
+  if (!hasWorker) return runInstalledServiceSupervisor(program, endpoint, serve);
+
+  const lifetime = new AbortController();
+  const service = runInstalledRoleSupervisor('service', program, endpoint, serve, { descriptor: 3, signal: lifetime.signal });
+  const worker = runInstalledRoleSupervisor('worker', program, workerEndpoint, (socket, shutdown) =>
+    serveInstalledWorkerTicks(socket, shutdown, () => activeTick?.() ?? Promise.resolve(false)),
+  { descriptor: 4, signal: lifetime.signal });
+  await Promise.race([service, worker]).catch(() => {});
+  lifetime.abort();
+  const results = await Promise.allSettled([service, worker]);
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
 }
 
 export async function runSupervisedServiceRole(registration: SupervisedServiceRegistration, provision: RoleProvision,
@@ -672,20 +812,47 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
     const selection = admitSupervisedServiceSelection(binding.value, challenge, frame);
     admitted = selection;
     clearTimeout(deadline);
-    parentEnd = channel.expectEnd().then(() => {
-      clearTimeout(stopDeadline);
-      parentStopped = true;
-      stop();
-    }, () => {
+    let executingTick: Promise<void> | undefined;
+    function failProtocol() {
       protocolFailure = true;
       socket.destroy();
       stop();
-    });
+    }
     function assertSelected() {
       stopping.signal.throwIfAborted();
       binding.validate();
       selection.assertCurrent();
     }
+    async function observeSupervisor() {
+      for (;;) {
+        const request = await channel.readOrEnd();
+        if (request === undefined) {
+          clearTimeout(stopDeadline);
+          parentStopped = true;
+          stop();
+          return;
+        }
+        if (executingTick || !matchesServiceStatus(request, 'worker-tick', selection.signed.selection)) throw serviceHandoffError();
+        const runningService = runtime;
+        executingTick = Promise.resolve().then(async () => {
+          let completed = false;
+          if (runningService && !stopping.signal.aborted && running(runningService.read())) {
+            try {
+              await runningService.triggerConsultationTick();
+              completed = true;
+            } catch (error) {
+              if (!(error instanceof Error) ||
+                  !['CONSULTATION_TRIGGER_NOT_CONFIGURED', 'CONSULTATION_TRIGGER_STOPPED',
+                    'OPERATIONAL_HUB_HEALTH_UNAVAILABLE', 'OPERATIONAL_HUB_IDENTITY_MISMATCH'].includes(error.message)) throw error;
+            }
+          }
+          if (!stopping.signal.aborted && !socket.destroyed) {
+            channel.write(serviceStatus(completed ? 'worker-tick-completed' : 'worker-tick-unavailable', selection.signed.selection));
+          }
+        }).catch(failProtocol).finally(() => { executingTick = undefined; });
+      }
+    }
+    parentEnd = observeSupervisor().catch(failProtocol);
     try {
       assertSelected();
       const runtimeRoot = join(selection.releaseRoot, 'runtime');
@@ -712,6 +879,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
       !startupAttempted || startupFailure === requestedStop;
     if (!cleanupConfirmed) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE', { cause: startupFailure });
     await parentEnd;
+    await executingTick;
     if (protocolFailure || !parentStopped || socket.destroyed) throw serviceHandoffError();
     channel.write(serviceStatus('drained', selection.signed.selection));
     await new Promise<void>((resolveFinished, reject) => {
