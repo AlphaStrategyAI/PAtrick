@@ -38,8 +38,9 @@ export type DeploymentRegistration = Readonly<{
   instanceRoot: string; controllerPath: string; controllerSha256: string; accounts: Readonly<Record<'caddy' | DeploymentJob, string>>;
   origin: string; listener: Readonly<{ host: '127.0.0.1' | '::1'; port: number }>; certificatePath: string; keyPath: string;
   hubSupervisorGid?: number;
+  serviceSupervisorGid?: number;
 }>;
 export function renderDeploymentTemplates(sources: Readonly<Record<'caddy' | DeploymentJob, Uint8Array>>, registration: DeploymentRegistration): Readonly<{
-  caddy: string; plists: Readonly<Record<DeploymentJob, string> & { hubSupervisor?: string }>;
+  caddy: string; plists: Readonly<Record<DeploymentJob, string> & { hubSupervisor?: string; serviceSupervisor?: string }>;
   caddyProcess: Readonly<{ account: string; configPath: string; workingDirectory: string; environment: Readonly<Record<'HOME' | 'XDG_CONFIG_HOME' | 'XDG_DATA_HOME', string>> }>;
 }>;

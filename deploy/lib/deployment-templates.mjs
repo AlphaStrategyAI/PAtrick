@@ -294,23 +294,23 @@ function render(key, bytes, substitutions) {
   });
 }
 
-function hubSupervisorLaunchd(controller, group) {
+function supervisorLaunchd(controller, group, { role, label, socket }) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.patrick.autoloop-hub-supervisor</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
-  <array><string>${controller.replaceAll('&', '&amp;')}</string><string>run-supervisor</string><string>hub</string></array>
+  <array><string>${controller.replaceAll('&', '&amp;')}</string><string>run-supervisor</string><string>${role}</string></array>
   <key>UserName</key><string>root</string>
   <key>Umask</key><integer>63</integer>
   <key>ProcessType</key><string>Background</string>
   <key>ExitTimeOut</key><integer>60</integer>
   <key>Sockets</key>
   <dict>
-    <key>HubControl</key>
+    <key>${socket}</key>
     <dict>
-      <key>SockPathName</key><string>/Library/Application Support/PAtrick/controller-v1/hub/supervisor.sock</string>
+      <key>SockPathName</key><string>/Library/Application Support/PAtrick/controller-v1/${role}/supervisor.sock</string>
       <key>SockPathOwner</key><integer>0</integer>
       <key>SockPathGroup</key><integer>${group}</integer>
       <key>SockPathMode</key><integer>432</integer>
@@ -326,12 +326,18 @@ function hubSupervisorLaunchd(controller, group) {
 export function renderDeploymentTemplates(sources, registration) {
   fields(sources, ['caddy', ...jobs]);
   const registrationFields = ['instanceRoot', 'controllerPath', 'controllerSha256', 'accounts', 'origin', 'listener', 'certificatePath', 'keyPath'];
-  const supervisedHub = registration != null && Object.hasOwn(registration, 'hubSupervisorGid');
-  if (supervisedHub) registrationFields.push('hubSupervisorGid');
+  const supervisors = [
+    { role: 'hub', job: 'hubSupervisor', field: 'hubSupervisorGid', label: 'com.patrick.autoloop-hub-supervisor', socket: 'HubControl' },
+    { role: 'service', job: 'serviceSupervisor', field: 'serviceSupervisorGid', label: 'com.patrick.service-supervisor', socket: 'ServiceControl' },
+  ].filter(({ field }) => registration != null && Object.hasOwn(registration, field));
+  registrationFields.push(...supervisors.map(({ field }) => field));
   fields(registration, registrationFields);
-  const { accounts, listener, origin, controllerPath, controllerSha256, certificatePath, keyPath, hubSupervisorGid } = registration;
-  if (supervisedHub && (!Number.isInteger(hubSupervisorGid) || hubSupervisorGid < 1 || hubSupervisorGid > 0x7fffffff)) {
-    throw new Error('invalid deployment Hub group');
+  const { accounts, listener, origin, controllerPath, controllerSha256, certificatePath, keyPath } = registration;
+  for (const { field, role } of supervisors) {
+    const gid = registration[field];
+    if (!Number.isInteger(gid) || gid < 1 || gid > 0x7fffffff) {
+      throw new Error(role === 'hub' ? 'invalid deployment Hub group' : 'invalid deployment service group');
+    }
   }
   fields(accounts, ['caddy', ...jobs]);
   fields(listener, ['host', 'port']);
@@ -367,7 +373,9 @@ export function renderDeploymentTemplates(sources, registration) {
       STDOUT: log + '/redacted.stdout.log', STDERR: log + '/redacted.stderr.log' };
     plists[job] = render(job, sources[job], Object.fromEntries(Object.entries(substitutions).map(([k,v]) => [k,v.replaceAll('&','&amp;')])));
   }
-  if (supervisedHub) plists.hubSupervisor = hubSupervisorLaunchd(controller, hubSupervisorGid);
+  for (const supervisor of supervisors) {
+    plists[supervisor.job] = supervisorLaunchd(controller, registration[supervisor.field], supervisor);
+  }
   return Object.freeze({ caddy, plists: Object.freeze(plists), caddyProcess: Object.freeze({
     account: accounts.caddy, configPath: base + '/config/Caddyfile', workingDirectory: base,
     environment: Object.freeze({ HOME: base + '/home', XDG_CONFIG_HOME: base + '/config', XDG_DATA_HOME: base + '/data' }),

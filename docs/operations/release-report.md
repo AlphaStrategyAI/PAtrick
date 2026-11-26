@@ -204,6 +204,8 @@ Hub 监督入口 `serveInstalledHubRole` 接受带 `allowHalfOpen` 的本机连�
 
 宿主可在首次登记时提供 `cli.entry`。`patrick-host-controller run-cli doctor` 由登记所有者执行，固定读取私有的 `cli/entry.mjs`，以原样参数启动登记的 Node。控制器清理继承环境和额外文件描述符。入口在宿主注入已核验的安装登记和发布信任材料后，可用 `createInstalledCli(provisioning).run(process.argv.slice(2))` 分派命令，并返回 JSON 和退出码。启用 CLI 需要包含该入口的登记回执，登记树有冲突时安装器会阻止写入。Mac Pro 的 CLI 登记与安装验收待实测。
 
+登记 `serviceSupervisor` 后，控制器从 `ServiceControl` 接收固定路径的 Unix 流监听器，核对监听状态、属主、服务 GID 和 `0660` 权限，再将 fd 3 交给受保护的 `service-supervisor/entry.mjs`。部署渲染器支持生成对应的 `launchd` 配置。本机用临时套接字验证了这一入口。服务代次授权、生产账号启动和系统域读回待验收。
+
 初装入口可从已核验的 `runtime/cli.mjs` 载入 `createFirstInstallCli(registration)`，注入宿主身份、发布信任材料和签名操作登记。该入口在服务数据库建立前即可预览、发布和读取已批准的签名包，并准备首个数据代次。后续代次选择及服务启动仍各自需要登记和验收。
 
 初装预览和批准后的包发布均核对登记控制器的属主、执行权限、上级目录的属主和写权限，以及独立复验得到的 SHA-256。控制器路径只接受无扩展权限或只有拒绝项的 ACL。安装器在发布前后复查同一个控制器文件。实际 `launchd` 账号能否从该路径启动仍由生产作业验收。

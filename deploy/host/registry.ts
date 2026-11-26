@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 export const hostRegistryRoot = '/Library/Application Support/PAtrick/controller-v1';
 export const hostRegistryRoles = Object.freeze(['service', 'hub', 'worker'] as const);
 export const hostRegistrySupervisor = 'hub-supervisor';
+const serviceSupervisorDirectory = 'service-supervisor';
+const serviceSupervisorMarker = 'service/supervisor-required';
 
 const directoryMode = 0o755;
 const nodeMode = 0o555;
@@ -21,6 +23,7 @@ export type HostRegistryRegistration = Readonly<{
   node: Readonly<{ path: string; sha256: string }>;
   roles: Readonly<Record<'service' | 'hub' | 'worker', HostRoleAccount>>;
   supervisor: Readonly<{ entry: string }>;
+  serviceSupervisor?: Readonly<{ entry: string }>;
   cli?: Readonly<{ entry: string }>;
 }>;
 
@@ -84,6 +87,8 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
   const supervisor = registration.supervisor;
   if (!supervisor || typeof supervisor !== 'object') throw new Error('HOST_REGISTRY_ENTRY_INVALID');
   const supervisorEntry = entry((supervisor as { entry?: unknown }).entry);
+  const serviceSupervisorEntry = registration.serviceSupervisor === undefined
+    ? undefined : entry(registration.serviceSupervisor?.entry);
 
   const directories = [
     { path: root, mode: directoryMode },
@@ -102,7 +107,7 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
     const entryBytes = Buffer.from(identity.entry, 'utf8');
     files.push({ path: join(directory, 'entry.mjs'), mode: entryMode, sha256: digest(entryBytes), bytes: entryBytes.length,
       source: { kind: 'bytes', bytes: entryBytes } });
-    if (role === 'hub') {
+    if (role === 'hub' || (role === 'service' && serviceSupervisorEntry !== undefined)) {
       files.push({ path: join(directory, 'supervisor-required'), mode: entryMode, sha256: digest(''), bytes: 0,
         source: { kind: 'bytes', bytes: Buffer.alloc(0) } });
     }
@@ -110,6 +115,13 @@ export function planHostRegistry(registration: HostRegistryRegistration): HostRe
   const supervisorBytes = Buffer.from(supervisorEntry, 'utf8');
   files.push({ path: join(root, hostRegistrySupervisor, 'entry.mjs'), mode: entryMode, sha256: digest(supervisorBytes),
     bytes: supervisorBytes.length, source: { kind: 'bytes', bytes: supervisorBytes } });
+  if (serviceSupervisorEntry !== undefined) {
+    const supervisorRoot = join(root, serviceSupervisorDirectory);
+    const bytes = Buffer.from(serviceSupervisorEntry, 'utf8');
+    directories.push({ path: supervisorRoot, mode: directoryMode });
+    files.push({ path: join(supervisorRoot, 'entry.mjs'), mode: entryMode, sha256: digest(bytes),
+      bytes: bytes.length, source: { kind: 'bytes', bytes } });
+  }
   if (registration.cli !== undefined) {
     const cliRoot = join(root, 'cli');
     const cliBytes = Buffer.from(entry(registration.cli?.entry), 'utf8');
@@ -141,7 +153,11 @@ async function requireNoAcl(path: string, code: string) {
   if (!result?.stdout || result.stderr || result.stdout.trimEnd().includes('\n')) throw new Error(code);
 }
 
-async function validateCliLaunchPath(root: string, registryRoot: string, owner: number) {
+async function validateLaunchPaths(root: string, plan: HostRegistryPlan, owner: number) {
+  const { registryRoot } = plan;
+  const cli = plan.directories.some(directory => directory.path === join(registryRoot, 'cli'));
+  const service = plan.directories.some(directory => directory.path === join(registryRoot, serviceSupervisorDirectory));
+  if (!cli && !service) return;
   if (registryRoot === hostRegistryRoot) {
     const parent = dirname(registryRoot);
     const support = dirname(parent);
@@ -150,8 +166,12 @@ async function validateCliLaunchPath(root: string, registryRoot: string, owner: 
       await requireNoAcl(directory, 'HOST_REGISTRY_DIRECTORY_INVALID');
     }
   }
-  for (const relativePath of ['', 'cli']) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_DIRECTORY_INVALID');
-  for (const relativePath of ['node', 'cli/entry.mjs']) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_FILE_CONFLICT');
+  const directories = ['', ...(cli ? ['cli'] : []), ...(service ? ['service', serviceSupervisorDirectory] : [])];
+  const files = ['node', ...(cli ? ['cli/entry.mjs'] : []), ...(service ? [
+    'service/account', 'service/entry.mjs', serviceSupervisorMarker, join(serviceSupervisorDirectory, 'entry.mjs'),
+  ] : [])];
+  for (const relativePath of directories) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_DIRECTORY_INVALID');
+  for (const relativePath of files) await requireNoAcl(join(root, relativePath), 'HOST_REGISTRY_FILE_CONFLICT');
 }
 
 async function syncDirectory(path: string) {
@@ -199,7 +219,6 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
   if (await existingRegistry(plan)) return;
 
   const staged = await mkdtemp(join(parent, '.patrick-registry-'));
-  const cliRoot = join(plan.registryRoot, 'cli');
   const stagedPath = (path: string) => {
     const child = relative(plan.registryRoot, path);
     if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('HOST_REGISTRY_INVALID');
@@ -225,9 +244,7 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
       await chmod(path, directory.mode);
       await syncDirectory(path);
     }
-    if (plan.directories.some(directory => directory.path === cliRoot)) {
-      await validateCliLaunchPath(staged, plan.registryRoot, owner);
-    }
+    await validateLaunchPaths(staged, plan, owner);
     try { await rename(staged, plan.registryRoot); }
     catch (error) {
       if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '') ||
@@ -242,17 +259,19 @@ export async function applyHostRegistry(plan: HostRegistryPlan): Promise<void> {
 /** Reads the applied tree back and reports the observed digests. */
 export async function readHostRegistry(plan: HostRegistryPlan): Promise<readonly Readonly<{ path: string; sha256: string }>[]> {
   const owner = registryOwner(plan);
-  const cliRoot = join(plan.registryRoot, 'cli');
-  const cliPlanned = plan.directories.some(directory => directory.path === cliRoot);
-  if (!cliPlanned) {
-    const actual = await lstat(cliRoot).catch((error: NodeJS.ErrnoException) => {
+  for (const [relativePath, entries] of [
+    ['cli', plan.directories], [serviceSupervisorDirectory, plan.directories], [serviceSupervisorMarker, plan.files],
+  ] as const) {
+    const path = join(plan.registryRoot, relativePath);
+    if (entries.some(entry => entry.path === path)) continue;
+    const actual = await lstat(path).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
       return undefined;
     });
     if (actual) throw new Error('HOST_REGISTRY_ENTRY_CONFLICT');
   }
   for (const directory of plan.directories) await protectedDirectory(directory.path, owner, directory.mode);
-  if (cliPlanned) await validateCliLaunchPath(plan.registryRoot, plan.registryRoot, owner);
+  await validateLaunchPaths(plan.registryRoot, plan, owner);
   return Promise.all(plan.files.map(async file => {
     const descriptor = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {

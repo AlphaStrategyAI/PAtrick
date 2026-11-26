@@ -19,7 +19,9 @@
 #else
 #include <charconv>
 #include <launch.h>
+#include <libproc.h>
 #include <sys/acl.h>
+#include <sys/proc_info.h>
 #include <vector>
 #endif
 
@@ -237,38 +239,56 @@ bool has_protected_file(int directory, const char* name) {
   return fd >= 0 && close(fd) == 0;
 }
 
-bool adopt_hub_listener(gid_t hub_group) {
+struct Supervisor {
+  const char* role;
+  const char* directory;
+  const char* socket_key;
+  const char* diagnostic;
+  bool require_exact_listener;
+};
+
+constexpr Supervisor hub_supervisor {"hub", "hub-supervisor", "HubControl", "HUB", false};
+constexpr Supervisor service_supervisor {"service", "service-supervisor", "ServiceControl", "SERVICE", true};
+
+bool adopt_supervisor_listener(const Supervisor& supervisor, gid_t group) {
   int* descriptors = nullptr;
   size_t count = 0;
-  const int activation = launch_activate_socket("HubControl", &descriptors, &count);
+  const int activation = launch_activate_socket(supervisor.socket_key, &descriptors, &count);
   if (activation != 0) {
-    fprintf(stderr, "PATRICK_HUB_ACTIVATION_FAILED %d\n", activation);
+    fprintf(stderr, "PATRICK_%s_ACTIVATION_FAILED %d\n", supervisor.diagnostic, activation);
     return false;
   }
   if (count != 1) {
     for (size_t index = 0; index < count; ++index) close(descriptors[index]);
     free(descriptors);
-    fputs("PATRICK_HUB_LISTENER_COUNT_INVALID\n", stderr);
+    fprintf(stderr, "PATRICK_%s_LISTENER_COUNT_INVALID\n", supervisor.diagnostic);
     return false;
   }
   const int listener = descriptors[0];
   free(descriptors);
-  const std::string path = std::string(registry_root) + "/hub/supervisor.sock";
+  const std::string path = std::string(registry_root) + "/" + supervisor.role + "/supervisor.sock";
   sockaddr_un address {};
   socklen_t address_size = sizeof(address);
   int socket_type = 0;
   socklen_t option_size = sizeof(socket_type);
   struct stat endpoint {};
-  const bool admitted_address = listener >= control_fd &&
+  bool admitted_address = listener >= control_fd &&
       getsockopt(listener, SOL_SOCKET, SO_TYPE, &socket_type, &option_size) == 0 && socket_type == SOCK_STREAM &&
       getsockname(listener, reinterpret_cast<sockaddr*>(&address), &address_size) == 0 &&
       address.sun_family == AF_UNIX && address.sun_path[0] != '\0';
+  if (admitted_address && supervisor.require_exact_listener) {
+    socket_fdinfo info {};
+    admitted_address = path.size() < sizeof(address.sun_path) &&
+        strncmp(address.sun_path, path.c_str(), sizeof(address.sun_path)) == 0 &&
+        proc_pidfdinfo(getpid(), listener, PROC_PIDFDSOCKETINFO, &info, sizeof(info)) == sizeof(info) &&
+        (info.psi.soi_options & SO_ACCEPTCONN) != 0;
+  }
   const bool admitted_endpoint = lstat(path.c_str(), &endpoint) == 0 && S_ISSOCK(endpoint.st_mode) &&
-      endpoint.st_uid == registry_owner && endpoint.st_gid == hub_group &&
+      endpoint.st_uid == registry_owner && endpoint.st_gid == group &&
       (endpoint.st_mode & 07777) == 0660;
   if (!admitted_address || !admitted_endpoint) {
     close(listener);
-    fputs(admitted_address ? "PATRICK_HUB_LISTENER_ENDPOINT_INVALID\n" : "PATRICK_HUB_LISTENER_ADDRESS_INVALID\n", stderr);
+    fprintf(stderr, "PATRICK_%s_LISTENER_%s_INVALID\n", supervisor.diagnostic, admitted_address ? "ENDPOINT" : "ADDRESS");
     return false;
   }
   if (listener != control_fd) {
@@ -278,29 +298,29 @@ bool adopt_hub_listener(gid_t hub_group) {
   return fcntl(control_fd, F_SETFD, 0) == 0;
 }
 
-int launch_hub_supervisor() {
+int launch_supervisor(const Supervisor& config) {
   if (getuid() != registry_owner || geteuid() != registry_owner) return EX_CONFIG;
   const int registry = open_registry();
   if (registry < 0) return EX_CONFIG;
-  const int hub = open_protected(registry, "hub", true);
-  const int supervisor = open_protected(registry, "hub-supervisor", true);
+  const int role = open_protected(registry, config.role, true);
+  const int supervisor = open_protected(registry, config.directory, true);
   Account account {};
-  const bool admitted = hub >= 0 && supervisor >= 0 &&
-      read_account(hub, account) && distinct_role_accounts(registry, "hub", account.uid) &&
-      has_protected_file(hub, "supervisor-required") && has_protected_file(registry, "node") &&
+  const bool admitted = role >= 0 && supervisor >= 0 &&
+      read_account(role, account) && distinct_role_accounts(registry, config.role, account.uid) &&
+      has_protected_file(role, "supervisor-required") && has_protected_file(registry, "node") &&
       has_protected_file(supervisor, "entry.mjs") && fchdir(supervisor) == 0;
-  const bool closed_hub = hub < 0 || close(hub) == 0;
+  const bool closed_role = role < 0 || close(role) == 0;
   const bool closed_supervisor = supervisor < 0 || close(supervisor) == 0;
-  if (close(registry) != 0 || !closed_hub || !closed_supervisor || !admitted) {
-    fputs("PATRICK_HUB_SUPERVISOR_REGISTRATION_INVALID\n", stderr);
+  if (close(registry) != 0 || !closed_role || !closed_supervisor || !admitted) {
+    fprintf(stderr, "PATRICK_%s_SUPERVISOR_REGISTRATION_INVALID\n", config.diagnostic);
     return EX_CONFIG;
   }
-  if (!adopt_hub_listener(account.gid)) return EX_CONFIG;
+  if (!adopt_supervisor_listener(config, account.gid)) return EX_CONFIG;
   if (!confine_descriptors(control_fd)) return EX_UNAVAILABLE;
 
   umask(0077);
   std::string node = std::string(registry_root) + "/node";
-  std::string entry = std::string(registry_root) + "/hub-supervisor/entry.mjs";
+  std::string entry = std::string(registry_root) + "/" + config.directory + "/entry.mjs";
   char* argv[] = {node.data(), entry.data(), nullptr};
   char encoding[64];
   snprintf(encoding, sizeof(encoding), "__CF_USER_TEXT_ENCODING=0x%X:0x0:0x0", getuid());
@@ -421,14 +441,16 @@ int main(int argc, char** argv) {
   if (!cli && (argc != 3 ||
       (strcmp(argv[1], "run-role") && strcmp(argv[1], "check-role-peer") && strcmp(argv[1], "run-supervisor")) ||
       (strcmp(argv[2], "service") && strcmp(argv[2], "hub") && strcmp(argv[2], "worker")) ||
-      (strcmp(argv[1], "run-supervisor") == 0 && strcmp(argv[2], "hub")))) return EX_USAGE;
+      (strcmp(argv[1], "run-supervisor") == 0 && strcmp(argv[2], "hub") && strcmp(argv[2], "service")))) return EX_USAGE;
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__x86_64__))
 #ifdef PATRICK_SYNTHETIC_REGISTRATION
   if (cli || strcmp(argv[1], "run-role") || strcmp(argv[2], "service")) return EX_USAGE;
   return launch();
 #else
   if (cli) return launch_registered_cli(argc, argv);
-  if (strcmp(argv[1], "run-supervisor") == 0) return launch_hub_supervisor();
+  if (strcmp(argv[1], "run-supervisor") == 0) {
+    return launch_supervisor(strcmp(argv[2], "hub") == 0 ? hub_supervisor : service_supervisor);
+  }
   if (strcmp(argv[1], "check-role-peer") == 0) return check_role_peer(argv[2]);
   return launch_registered_role(argv[2]);
 #endif

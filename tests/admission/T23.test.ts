@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { canonicalize, verifyRelease, requireInstallableRelease, readRegularFile, admitReadRoot } from '../../deploy/lib/release.mjs';
+import { deploymentPaths, renderDeploymentTemplates } from '../../deploy/lib/deployment-templates.mjs';
 
 const temporary: string[] = [];
 async function packRelease(options: { sourceRoot: string; commit: string; version: string; arch: string; schema: { min: number; max: number }; output: string; evidenceDirectory?: string; signingKey?: string; keyId?: string; policyOutput?: string; requiredEvidence?: string[] }, timeout = 3000) {
@@ -16,6 +17,29 @@ async function packRelease(options: { sourceRoot: string; commit: string; versio
 }
 afterEach(() => temporary.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+test('renders the service supervisor socket only for an enrolled service group', () => {
+  const template = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url));
+  const sources = { caddy: template(deploymentPaths.caddy), service: template(deploymentPaths.service),
+    hub: template(deploymentPaths.hub), worker: template(deploymentPaths.worker) };
+  const controllerSha256 = 'a'.repeat(64);
+  const instanceRoot = '/Library/Application Support/PAtrick/instance';
+  const controllerPath = `/Library/Application Support/PAtrick/controllers/${controllerSha256}/patrick-host-controller`;
+  const registration = { instanceRoot, controllerPath, controllerSha256,
+    accounts: { caddy: '_proxy', service: '_service', hub: '_hub', worker: '_worker' },
+    origin: 'https://patrick.test', listener: { host: '127.0.0.1' as const, port: 43123 },
+    certificatePath: `${instanceRoot}/caddy/trust/cert.pem`, keyPath: `${instanceRoot}/caddy/trust/key.pem` };
+  expect(renderDeploymentTemplates(sources, registration).plists.serviceSupervisor).toBeUndefined();
+  const rendered = renderDeploymentTemplates(sources, { ...registration, serviceSupervisorGid: 503 });
+  expect(rendered.plists.serviceSupervisor).toContain('<string>com.patrick.service-supervisor</string>');
+  expect(rendered.plists.serviceSupervisor).toContain(`<string>${controllerPath}</string><string>run-supervisor</string><string>service</string>`);
+  expect(rendered.plists.serviceSupervisor).toContain('<key>ServiceControl</key>');
+  expect(rendered.plists.serviceSupervisor).toContain('/Library/Application Support/PAtrick/controller-v1/service/supervisor.sock');
+  expect(rendered.plists.serviceSupervisor).toContain('<key>SockPathGroup</key><integer>503</integer>');
+  expect(rendered.plists.hubSupervisor).toBeUndefined();
+  expect(() => renderDeploymentTemplates(sources, { ...registration, serviceSupervisorGid: 0 })).toThrow();
+});
+
 function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'patrick-t23-'));
   temporary.push(root);

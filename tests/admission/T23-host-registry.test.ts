@@ -121,6 +121,106 @@ describe.skipIf(process.platform !== 'darwin')('host role registry', { concurren
     await expect(readHostRegistry(plan)).resolves.toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
   });
 
+  test('indexes the service supervisor and marker only when enrolled', async () => {
+    const serviceRoot = join(root, 'service-enrollment');
+    const supervisorRoot = join(serviceRoot, 'service-supervisor');
+    const supervisorEntry = join(supervisorRoot, 'entry.mjs');
+    const marker = join(serviceRoot, 'service', 'supervisor-required');
+    const base = registration({ registryRoot: serviceRoot });
+    const legacy = planHostRegistry(base);
+    expect(legacy.directories.map(directory => directory.path)).not.toContain(supervisorRoot);
+    expect(legacy.files.map(file => file.path)).not.toContain(marker);
+    expect(() => planHostRegistry({ ...base, serviceSupervisor: { entry: '' } })).toThrow('HOST_REGISTRY_ENTRY_INVALID');
+    const plan = planHostRegistry({ ...base, serviceSupervisor: { entry: roleEntry } });
+    expect(plan.directories).toContainEqual({ path: supervisorRoot, mode: 0o755 });
+    expect(plan.files.find(file => file.path === supervisorEntry)?.mode).toBe(0o444);
+    expect(plan.files.find(file => file.path === marker)?.mode).toBe(0o444);
+    await applyHostRegistry(plan);
+    for (const path of [supervisorRoot, supervisorEntry, marker]) expect((await stat(path)).uid).toBe(process.geteuid!());
+    expect(await readFile(marker, 'utf8')).toBe('');
+    await expect(readHostRegistry(plan)).resolves.toEqual(plan.files.map(file => ({ path: file.path, sha256: file.sha256 })));
+    await expect(applyHostRegistry(legacy)).rejects.toThrow('HOST_REGISTRY_ENTRY_CONFLICT');
+    execFileSync('/bin/chmod', ['+a', 'everyone allow write', marker]);
+    try { await expect(readHostRegistry(plan)).rejects.toThrow('HOST_REGISTRY_FILE_CONFLICT'); }
+    finally { execFileSync('/bin/chmod', ['-a#', '0', marker]); }
+  });
+
+  test('the native service supervisor requires enrollment and adopts only its fixed listening socket', async () => {
+    const executableRoot = join(root, 'service-native');
+    const fixture = registration({ registryRoot: executableRoot, node: { path: process.execPath, sha256: sha256File(process.execPath) } });
+    const roles = { ...fixture.roles,
+      service: { ...fixture.roles.service, uid: process.getuid!(), entry: 'console.log(process.env.PATRICK_SUPERVISOR_FD ?? "legacy");' },
+      hub: { ...fixture.roles.hub, uid: process.getuid!() + 1 },
+    };
+    await applyHostRegistry(planHostRegistry({ ...fixture, roles }));
+    const socketPath = join(executableRoot, 'service', 'supervisor.sock');
+    const otherSocket = join(root, 'other.sock');
+    const header = join(root, 'service-activation.h');
+    await writeFile(header, `
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <launch.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#define PATRICK_NATIVE_REGISTRY_TEST 1
+constexpr char registry_root[] = ${JSON.stringify(executableRoot)};
+constexpr auto registry_owner = ${process.geteuid!()}U;
+inline int fixture_activation(const char* key, int** descriptors, size_t* count) {
+  const char* path = std::getenv("PATRICK_FIXTURE_SOCKET");
+  if (std::strcmp(key, "ServiceControl") != 0 || !path) return ENOENT;
+  sockaddr_un address {};
+  if (std::strlen(path) >= sizeof(address.sun_path)) return ENAMETOOLONG;
+  address.sun_family = AF_UNIX;
+  std::strcpy(address.sun_path, path);
+  address.sun_len = SUN_LEN(&address);
+  const int listener = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (listener < 0) return errno;
+  if (bind(listener, reinterpret_cast<sockaddr*>(&address), address.sun_len) != 0 ||
+      chown(path, static_cast<uid_t>(-1), getgid()) != 0 || chmod(path, 0660) != 0 ||
+      (!std::getenv("PATRICK_FIXTURE_BOUND_ONLY") && listen(listener, 2) != 0)) {
+    const int failure = errno;
+    close(listener);
+    return failure;
+  }
+  *descriptors = static_cast<int*>(std::malloc(sizeof(listener)));
+  if (!*descriptors) { close(listener); return ENOMEM; }
+  **descriptors = listener;
+  *count = 1;
+  return 0;
+}
+#define launch_activate_socket fixture_activation
+`);
+    const controller = join(root, 'service-controller');
+    execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+      '-O2', '-include', header, source, '-o', controller], { cwd: root, timeout: 30_000 });
+    const supervisor = (path?: string, boundOnly = false) => spawnSync(controller, ['run-supervisor', 'service'], {
+      cwd: root, env: { ...(path ? { PATRICK_FIXTURE_SOCKET: path } : {}),
+        ...(boundOnly ? { PATRICK_FIXTURE_BOUND_ONLY: '1' } : {}), NODE_OPTIONS: '--unsupported-fixture-option' },
+      encoding: 'utf8', timeout: 5000,
+    });
+    expect((await exec(controller, ['run-role', 'service'])).stdout).toBe('legacy\n');
+    expect(supervisor(socketPath).status).toBe(78);
+    await rm(executableRoot, { recursive: true });
+    await applyHostRegistry(planHostRegistry({ ...fixture, roles, serviceSupervisor: { entry: [
+      'import { fstatSync } from "node:fs";',
+      'console.log(JSON.stringify({ cwd: process.cwd(), fd: process.env.PATRICK_SUPERVISOR_LISTENER_FD,',
+      '  socket: fstatSync(3).isSocket(), umask: process.umask(), env: process.env.PATRICK_FIXTURE_SOCKET ?? null }));',
+    ].join('\n') } }));
+    await expect(exec(controller, ['run-role', 'service'])).rejects.toMatchObject({ code: 78 });
+    expect(supervisor().status).toBe(78);
+    expect(supervisor(socketPath, true)).toMatchObject({ status: 78, stderr: 'PATRICK_SERVICE_LISTENER_ADDRESS_INVALID\n' });
+    try { expect(supervisor(otherSocket)).toMatchObject({ status: 78, stderr: 'PATRICK_SERVICE_LISTENER_ADDRESS_INVALID\n' }); }
+    finally { await rm(socketPath); }
+    const result = supervisor(socketPath);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      cwd: join(executableRoot, 'service-supervisor'), fd: '3', socket: true, umask: 0o077, env: null,
+    });
+  }, 60_000);
+
   test('the native controller admits the applied registry', async () => {
     const executableRoot = join(root, 'native-registry');
     const executable = process.execPath;
