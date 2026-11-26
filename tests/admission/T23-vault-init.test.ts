@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, openSync, closeSync, unlinkSync, renameSync } from 'node:fs';
 import { createVaultInitController, createVaultInitReader, vaultInitApproval } from '../../deploy/runtime/vault-init.js';
+import { createInstalledCli } from '../../deploy/runtime/cli.js';
+import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { expect, test } from 'vitest';
 import { createVaultKitInstaller } from '../../deploy/obsidian/install.mjs';
 import { connectVault, confirmVault, inspectVault, requireVault } from '../../packages/integrations/vault/connection.js';
@@ -66,6 +68,58 @@ test('previews a confirmed real Vault without reserving or installing any file',
     expect(readdirSync(f.root)).toEqual(['模板']);
   } finally { f.db.close(); rmSync(f.dir, { recursive: true }); }
 });
+
+test('installs and reads back an explicitly pinned published Vault kit', async () => {
+  const f = await fixture();
+  const releases = mkdtempSync(join(realpathSync(tmpdir()), 't23-init-releases-'));
+  try {
+    const release = join(releases, 'a'.repeat(64));
+    const assets = join(release, 'assets', 'vault-kit');
+    mkdirSync(join(release, 'assets'), { recursive: true, mode: 0o711 });
+    cpSync(f.e.assets.path, assets, { recursive: true });
+    const enrollment = { ...f.e, assets: rootAt(assets),
+      publishedKit: { release: rootAt(release), controllerUid: process.geteuid!() } };
+    f.options.assetRoot = assets;
+
+    const controller = createVaultInitController(() => enrollment, f.owner, f.host, f.signer);
+    const plan = await controller.preview();
+    expect(plan.subject.manifestSha256).toBe(f.e.kitSha256);
+    const approval = sign(null, vaultInitApproval(plan), f.approval.privateKey).toString('base64');
+    const origin = 'http://localhost';
+    const cli = createInstalledCli(createRuntimeProvisioning({
+      registration: { identity: f.e.identity, captureHost: f.e.captureHost, serviceUid: f.e.serviceUid,
+        profile: 'test', dataRoot: f.dir, minimumFreeBytes: 1, origin, rpId: 'localhost', listener: { host: '127.0.0.1', port: 0, origin } },
+      hostCapabilities: { vaults: f.host.vaults, vaultInitOperations: {
+        [f.e.operationId]: { format: 'patrick-installed-vault-init-v1', mode: 'approved', enrollment, owner: f.owner,
+          signer: f.signer, plan, approval },
+      } },
+      service: { databasePath: join(f.dir, 'source.sqlite'), credentialDirectory: f.dir,
+        recoveryRuntime: { attach() { throw Error('unexpected startup'); } }, bindRecoveryOperations() { throw Error('unexpected backup'); } },
+    }));
+    const args = ['init', '--vault', f.e.vault.vault_id, '--operation', f.e.operationId];
+    expect(await cli.run([...args, '--preview'])).toMatchObject({ status: 'preview' });
+    expect(await cli.run([...args, '--execute'])).toMatchObject({ status: 'completed' });
+    expect(await cli.run([...args, '--readback'])).toMatchObject({ status: 'completed' });
+    const reader = createVaultInitReader(() => enrollment, f.owner, plan);
+
+    chmodSync(join(release, 'assets'), 0o733);
+    await expect(reader.read()).rejects.toThrow('VAULT_INIT_BINDING_INVALID');
+    chmodSync(join(release, 'assets'), 0o711);
+    const manifest = join(assets, 'manifest.json');
+    if (process.platform === 'darwin') {
+      const acl = spawnSync('/bin/chmod', ['+a', 'everyone allow write', manifest]);
+      expect(acl.status, String(acl.stderr)).toBe(0);
+      await expect(reader.read()).rejects.toThrow('VAULT_INIT_BINDING_INVALID');
+      expect(spawnSync('/bin/chmod', ['-N', manifest]).status).toBe(0);
+    }
+    writeFileSync(manifest, '{}');
+    await expect(reader.read()).rejects.toThrow('VAULT_INIT_BINDING_INVALID');
+  } finally {
+    f.db.close();
+    rmSync(f.dir, { recursive: true });
+    rmSync(releases, { recursive: true });
+  }
+}, 120_000);
 
 test('rejects direct Vault owner and signer accessors without executing them during construction', async () => {
   const f = await fixture();

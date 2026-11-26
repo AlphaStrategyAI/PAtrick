@@ -6,6 +6,8 @@
 
 新构建的完整部署包使用 v4／v5 材料清单，要求 Vault kit 的清单和七项模板及视图齐备。签名与安装读回覆盖这八个文件。迁移到独立目录后，服务从签名包读取这些文件，用于安装 kit、创建草稿和生成采纳视图。旧签名包按其材料清单版本验签，`runtime-only` 使用原资源路径。更新 kit 时，在同一提交更新清单及部署资产摘要。
 
+登记 `patrick init` 时，宿主控制器可在 `withPublishedDeployment` 验证通过后登记 `publishedKit`。登记绑定发布目录身份、控制器 UID、资源根身份和清单摘要。预览、执行与读回检查这个登记及资源摘要，再由 Service 执行 Vault 写入。
+
 - `deploy/obsidian/doctor.mjs` 提供 `inspectObsidian(deviceId)`。默认只检查本机 hostname；如部署使用独立的设备 ID，应由受信本机配置将 ID 与本机绑定，使用 `createObsidianInspector` 绑定 `readMacObsidianState`。探针不打开应用。应用、版本、签名、安装器 SHA-256 锁、LaunchServices 默认 URI 处理器及进程状态是独立事实。
 - `createObsidianDoctor` 复用 T06 的 `loadVault`/`inspectVault`。以明确登记的 service UID、editor UID 和 capture host 调用，核对本地根身份后报告 Reader/DraftWriter/Projector 各自权限、剩余磁盘空间，及通过 `createVaultActivityReader(db)` 取得的最近来源修订和导回指针。`allowed` 是当前身份的文件权限预检；完整往返仍须实测。当前只接受服务与桌面编辑共用同一个已核验的 UNIX UID；独立账户即使声明组或 ACL，也必须先增加双身份查验，不得猜测。
 - 向本人展示报告中的作用域：人工区只读，知识/标准草稿只准新建，系统区是生成视图。绑定由部署配置提供受信的 `vaultId`、`deviceId`、本机 Vault alias 和映射版本，并使用 T06 已确认的配置证明。缺少映射、版本不符、应用未准入或 URI 未登记时，`obsidianEditTarget` 仅提供隔离在 Vault 中的相对路径。URI 打开不是保存回执。

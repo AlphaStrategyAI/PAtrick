@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
 import { accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { canonical, digest } from '../../packages/host/src/recovery/files.js';
 import type { RecoveryJournalRoot } from '../../packages/host/src/recovery/operations.js';
 import type { VaultConnection, VaultRecord } from '../../packages/integrations/vault/connection.js';
@@ -23,10 +24,12 @@ const evidenceId = 'installed-vault-kit';
 type Root = RecoveryJournalRoot;
 type Signer = Parameters<typeof createLifecycleJournal>[1];
 type Lease = { root: string; guard(): void };
+type PublishedKit = Readonly<{ release: Root; controllerUid: number }>;
 export type VaultInitEnrollment = {
   installationId: string; operationId: string; identity: HostIdentity; captureHost: string; serviceUid: number; editorUid: number;
   vault: VaultRecord; mappingRevision: number; owner: Root; journal: Root; assets: Root; stage: Root;
   kitVersion: string; kitSha256: string; approvalPublicKey: string; journalKeyId: string; journalPublicKey: string;
+  publishedKit?: PublishedKit;
 };
 type FileStamp = { identity: string; sha256: string };
 type Snapshot = { directories: Record<string, string | null>; files: Record<string, FileStamp | null> };
@@ -79,6 +82,63 @@ function rootMatches(root: Root) {
   check(s?.isDirectory() && resolve(root.path) === root.path && physical(root.path) && s.uid === BigInt(process.geteuid!()) &&
     (s.mode & 0o022n) === 0n && s.dev === BigInt(root.device) && s.ino === BigInt(root.inode));
 }
+const sourceName = (target: string) => target.startsWith('模板/') ? target.slice('模板/'.length) : target;
+const within = (root: string, path: string) => {
+  const boundary = root.normalize('NFC'), candidate = path.normalize('NFC');
+  return candidate === boundary || candidate.startsWith(boundary === sep ? sep : boundary + sep);
+};
+
+function capturePublishedKit({ release, controllerUid }: PublishedKit, assets: Root) {
+  const releaseStore = dirname(release.path);
+  const files = ['manifest.json', ...kitTargets.map(sourceName)].map(path => join(assets.path, path));
+  const directories = new Set(files.map(dirname));
+  for (let parent = dirname(assets.path); ; parent = dirname(parent)) {
+    directories.add(parent);
+    if (parent === sep) break;
+  }
+  const paths = [...directories, ...files];
+  const uid = BigInt(controllerUid);
+  function fingerprint(path: string) {
+    const info = stat(path);
+    check(info);
+    const inRelease = within(release.path, path);
+    if (directories.has(path)) {
+      const stickyAncestor = !within(releaseStore, path) && info.uid === 0n && (info.mode & 0o1000n) !== 0n;
+      check(info.isDirectory() && (inRelease ? info.uid === uid : info.uid === uid || info.uid === 0n) &&
+        ((info.mode & 0o022n) === 0n || stickyAncestor));
+    } else {
+      check(info.isFile() && info.uid === uid && info.nlink === 1n && (info.mode & 0o7777n) === 0o644n);
+    }
+    const pin = path === release.path ? release : path === assets.path ? assets : undefined;
+    if (pin) check(info.dev === BigInt(pin.device) && info.ino === BigInt(pin.inode));
+    const identity = [node(info), info.uid, info.gid, info.mode].join('/');
+    return inRelease ? [identity, info.ctimeNs, info.mtimeNs, info.size].join('/') : identity;
+  }
+  function verifyAcl() {
+    if (process.platform !== 'darwin') return;
+    check(paths.length <= 64 && paths.every(path => Array.from(path).every(character => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })));
+    const entries = execFileSync('/bin/ls', ['-ldneq', ...paths], {
+      env: { LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000, maxBuffer: 256 * 1024,
+    }).trimEnd().split('\n');
+    let found = 0;
+    for (const entry of entries) {
+      if (/^[d-][rwxStTs-]{9}[@+]? +\d+ /.test(entry)) found++;
+      else check(/^ +\d+: [a-zA-Z0-9:_-]+ (inherited )?deny [a-z_,]+$/.test(entry));
+    }
+    check(found === paths.length);
+  }
+  const identities = paths.map(path => {
+    check(physical(path));
+    return fingerprint(path);
+  });
+  return (verifyPermissions = false) => {
+    if (verifyPermissions) verifyAcl();
+    paths.forEach((path, index) => check(fingerprint(path) === identities[index]));
+  };
+}
 function verifiedKey(pem: string) {
   const key = createPublicKey(pem);
   check(key.asymmetricKeyType === 'ed25519');
@@ -106,7 +166,15 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     scopeHash: vault.scope_hash, kitVersion: e.kitVersion, manifestSha256: e.kitSha256 };
   const components = vault.root_path.normalize('NFC').toLowerCase().split(sep);
   check(!components.includes('.obsidian') && !components.some((name, i) => name === 'obsidian' && components[i-1] === 'application support'));
-  const roots = [e.journal.path, e.assets.path, e.stage.path, vault.root_path];
+  const published = e.publishedKit;
+  if (published !== undefined) {
+    check(published && Number.isSafeInteger(published.controllerUid) && published.controllerUid >= 0 &&
+      published.controllerUid <= 0x7fffffff && resolve(published.release.path) === published.release.path &&
+      sha(basename(published.release.path)) && e.assets.path === join(published.release.path, 'assets', 'vault-kit') &&
+      !within(e.owner.path, published.release.path) && !within(published.release.path, e.owner.path));
+  }
+  const ownedRoots = [e.owner, e.journal, e.stage, ...(published ? [] : [e.assets])];
+  const roots = [...ownedRoots.slice(1).map(root => root.path), vault.root_path];
   for (const path of roots) check(resolve(path) === path && path.startsWith(e.owner.path + sep) &&
     roots.filter(other => other === path || other.startsWith(path + sep)).length === 1);
   const ancestors = new Set<string>();
@@ -119,29 +187,39 @@ function enrollment(current: () => VaultInitEnrollment, owner: ExclusiveRuntimeS
     check(lease.root === e.owner.path && hostname() === e.captureHost &&
       process.geteuid!() === e.serviceUid);
     for (const parent of ancestors) check(dir(parent));
-    for (const root of [e.owner, e.journal, e.assets, e.stage]) rootMatches(root);
+    for (const root of ownedRoots) rootMatches(root);
     const s = stat(vault.root_path);
     check(s?.isDirectory() && physical(vault.root_path) && s.uid === BigInt(e.serviceUid) && (s.mode & 0o022n) === 0n && vault.root_identity === s.dev + ':' + s.ino);
   }
   async function underOwner<T>(work: (lease: Lease) => Promise<T>, extra?: () => void) {
     const admission = () => { binding.validate(); ownerLease.validate(); extra?.(); };
-    const result = await leased(owner, async lease => {
+    let guardPublished: ReturnType<typeof capturePublishedKit> | undefined;
+    const result = await leased(owner, async serviceLease => {
+      serviceLease.guard();
+      if (published) {
+        guardPublished = capturePublishedKit(published, e.assets);
+        guardPublished(true);
+      }
+      const lease = { root: serviceLease.root, guard() { serviceLease.guard(); guardPublished?.(); } };
       guard(lease); const answer = await work(lease); guard(lease); return answer;
     }, true, admission);
     admission();
+    guardPublished?.(true);
     return result;
   }
-  const read = (lease: Lease, path: string) => readRegularFile(path, 16 * 1024 * 1024, {root: e.owner.path, validate: () => guard(lease)});
+  const read = (lease: Lease, path: string, root = e.owner.path) =>
+    readRegularFile(path, 16 * 1024 * 1024, { root, validate: () => guard(lease) });
   async function kit(lease: Lease): Promise<Kit> {
-    const manifest = await read(lease, join(e.assets.path, 'manifest.json'));
+    const readRoot = published?.release.path ?? e.owner.path;
+    const manifest = await read(lease, join(e.assets.path, 'manifest.json'), readRoot);
     check(digest(manifest) === e.kitSha256);
     const value = JSON.parse(manifest.toString());
     check(value.name === 'vault-kit' && value.version === e.kitVersion && Array.isArray(value.files) && value.files.length === 7);
     const remaining = new Set(kitTargets), files: Kit['files'] = [];
     for (const row of value.files) {
       check(remaining.delete(row.path) && sha(row.sha256));
-      const source = row.path.startsWith('模板/') ? row.path.slice('模板/'.length) : row.path;
-      check(row.source === source && digest(await read(lease, join(e.assets.path, source))) === row.sha256);
+      const source = sourceName(row.path);
+      check(row.source === source && digest(await read(lease, join(e.assets.path, source), readRoot)) === row.sha256);
       files.push({ path: row.path, sha256: row.sha256 });
     }
     check(remaining.size === 0);
