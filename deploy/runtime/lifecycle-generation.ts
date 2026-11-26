@@ -53,6 +53,12 @@ export type GenerationOrder = {
 };
 export type SignedGenerationOrder = { order: GenerationOrder; signature: string };
 export type GenerationRecordSigner = { signRecord(bytes: Uint8Array): Promise<string> };
+export type UpgradePreview = Readonly<{
+  installationId: string; currentGenerationId: string; currentSelectionSha256: string; currentPackageSha256: string;
+  currentSchema: number; targetSchema: number; packageSha256: string; manifestSha256: string;
+  planSha256: string; activationAuthorized: false;
+}>;
+type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
 type Entry = { order: GenerationOrder; sha256: string };
 type UseConfirmation<T> = (current: Entry, deployment: AdmittedDeployment, guard: () => void) => Promise<T>;
@@ -304,7 +310,8 @@ export function canRestoreOldRelease(input: {
  * The controller signs an exact order only after its command claim and applicable
  * migration, snapshot, role stop and witness checks. This storage API does no admission.
  */
-function generationStorage(registration: GenerationEnrollment, suppliedOwner?: ExclusiveRuntimeStaging, signer?: GenerationRecordSigner) {
+function generationStorage(registration: GenerationEnrollment, suppliedOwner?: ExclusiveRuntimeStaging, signer?: GenerationRecordSigner,
+  validateRegistration?: () => void) {
   const binding = bindRegistration(() => registration);
   const e = binding.value;
   requireValue((suppliedOwner === undefined) !== (e.ownerLockNode === undefined));
@@ -313,6 +320,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   const signerMethod = signer === undefined ? undefined : captureMethod(signer, 'signRecord');
   const registeredSign = signerMethod?.value;
   function enrolled() {
+    validateRegistration?.();
     binding.validate();
     ownerMethod.validate();
     signerMethod?.validate();
@@ -619,6 +627,31 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       }, signal);
     }, true, enrolled);
   }
+  async function previewUpgrade(packageSha256: string, targetSchema: number, storage: UpgradePreviewStorage): Promise<UpgradePreview> {
+    const release = releases.get(packageSha256);
+    requireValue(release?.expected.profile === 'deployment-complete' &&
+      canonicalize(release.expected.target) === canonicalize(e.target));
+    return leased(owner, async lease => {
+      const state = await readState(lease);
+      const { current } = state;
+      requireValue(current && !state.pending);
+      const generation = current.order.generation;
+      const dataRoot = generationServiceData(join(e.root, 'data', generation.id), generation.roles);
+      requireValue(packageSha256 !== generation.packageSha256 && storage.dataRoot === dataRoot &&
+        storage.databasePath === join(dataRoot, 'service.sqlite') && storage.credentialDirectory === join(dataRoot, 'credentials'));
+      const candidate = await verifyEmittedRuntimeCandidate(join(e.root, 'packages', packageSha256 + '.json'),
+        { ...release, staging: deriveRuntimeStaging(lease, lease.root) });
+      const { min, max } = candidate.schema;
+      requireValue(generation.schema >= min && targetSchema >= generation.schema && targetSchema <= max);
+      await verifyObservation(lease, state);
+      const plan = {
+        installationId: e.installationId, currentGenerationId: generation.id, currentSelectionSha256: current.sha256,
+        currentPackageSha256: generation.packageSha256, currentSchema: generation.schema, targetSchema,
+        packageSha256: candidate.packageSha256, manifestSha256: candidate.manifestSha256, activationAuthorized: false as const,
+      };
+      return { ...plan, planSha256: digest({ format: 'patrick-upgrade-preview-v1', ...plan }) };
+    }, true, enrolled);
+  }
   async function selectReserved(envelope: string, checkRole?: () => void) {
     enrolled();
     requireValue(typeof envelope === 'string' && Buffer.byteLength(envelope) <= recordLimit);
@@ -752,21 +785,47 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     try { return await selectWithHubFence(envelope, service.guard); }
     finally { service.release(); }
   }
-  return Object.freeze({ order, observe, select, useConfirmed });
+  return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade };
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {
   requireValue(signer && (typeof signer === 'object' || typeof signer === 'function'));
-  return generationStorage(registration, owner, signer);
+  return generationStorage(registration, owner, signer).store;
 }
 
 /** Public-only restart surface. The controller provisions read-only filesystem access for this process. */
 export function createGenerationReader(registration: GenerationEnrollment, owner?: ExclusiveRuntimeStaging) {
-  const { observe } = generationStorage(registration, owner);
+  const { observe } = generationStorage(registration, owner).store;
   return Object.freeze({ observe });
 }
 
 export function withConfirmedGeneration<T>(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
   use: UseConfirmation<T>, signal?: AbortSignal): Promise<T> {
-  return generationStorage(registration, owner).useConfirmed(use, signal);
+  return generationStorage(registration, owner).store.useConfirmed(use, signal);
+}
+
+export function createInstalledUpgradePreview(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
+  storage: UpgradePreviewStorage, successorSchemas: Readonly<Record<string, number>>, validateRegistration: () => void) {
+  const ownerMethod = owner === undefined ? undefined : captureMethod(owner, 'withExclusiveReadRoot');
+  const releases = new Map(registration.releases.map(({ expected }) => [expected.packageSha256, expected]));
+  const successors = new Map(Object.entries(successorSchemas));
+  for (const [packageSha256, targetSchema] of successors) {
+    hash(packageSha256);
+    const expected = releases.get(packageSha256);
+    requireValue(expected?.profile === 'deployment-complete' &&
+      canonicalize(expected.target) === canonicalize(registration.target) &&
+      Number.isSafeInteger(targetSchema) && targetSchema >= 0 && targetSchema >= expected.schema.min && targetSchema <= expected.schema.max);
+  }
+  function validate() {
+    validateRegistration();
+    ownerMethod?.validate();
+  }
+  return async (packageSha256: string): Promise<UpgradePreview | undefined> => {
+    const targetSchema = successors.get(packageSha256);
+    if (targetSchema === undefined) return;
+    validate();
+    try {
+      return await generationStorage(registration, owner, undefined, validate).previewUpgrade(packageSha256, targetSchema, storage);
+    } finally { validate(); }
+  };
 }

@@ -2,15 +2,17 @@ import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { closeSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildSync } from 'esbuild';
 import { afterEach, expect, test } from 'vitest';
-import { canonicalize } from '../../deploy/lib/release.mjs';
+import { canonicalize, sha256 } from '../../deploy/lib/release.mjs';
 import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import type { ExclusiveRuntimeStaging } from '../../deploy/lib/emitted-release.mjs';
+import { createInstalledCli } from '../../deploy/runtime/cli.js';
+import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { canRestoreOldRelease, createGenerationReader, createGenerationStore } from '../../deploy/runtime/lifecycle-generation';
 import type { GenerationEnrollment, GenerationOrder, InstalledGeneration } from '../../deploy/runtime/lifecycle-generation';
 
@@ -34,10 +36,10 @@ function host(releases: Release[] = []) {
   const root = directory(fixture, 'owner');
   const keys = generateKeyPairSync('ed25519');
   const lock = join(fixture, 'owner.lock');
-  const hooks: { after?: () => void } = {};
+  const hooks: { before?: () => void; after?: () => void } = {};
   const owner: ExclusiveRuntimeStaging = { async withExclusiveReadRoot(use) {
     const fd = openSync(lock, 'wx', 0o600);
-    try { const result = await use(root); hooks.after?.(); return result; }
+    try { hooks.before?.(); const result = await use(root); hooks.after?.(); return result; }
     finally { closeSync(fd); unlinkSync(lock); }
   } };
   const stores = {
@@ -170,7 +172,7 @@ test('preserves a foreign current and an operation authorization substituted for
 // The complete native release is supplied by the release-evidence job, independently
 // of the selection signer. The portable refusal tests above require no native fixture.
 const inputs: { archive: string; pins: string }[] = JSON.parse(process.env.PATRICK_GENERATION_TEST_RELEASES ?? '[]');
-async function nativeHost() {
+async function nativeHostWithPackages(publishSuccessor: boolean) {
   expect(inputs).toHaveLength(2);
   const releases = inputs.map(input => JSON.parse(readFileSync(input.pins, 'utf8')) as Release);
   const h = host(releases);
@@ -181,18 +183,104 @@ async function nativeHost() {
     const digest = release.expected.packageSha256;
     const archive = join(h.root, 'packages', digest + '.json');
     cpSync(inputs[index].archive, archive);
+    if (!publishSuccessor && index !== 0) break;
     const receipt = await verifyEmittedRuntimeCandidate(archive, { ...release, staging });
     const staged = await stageVerifiedEmittedRuntime(receipt, { staging, destination: join(stageRoot, 'candidate') });
     await publishStagedDeployment(receipt, staged);
     addGeneration(h, index === 0 ? 'one' : 'two', digest, release.expected.activeSchema);
   }
-  const successor = releases[1].expected;
+  return h;
+}
+async function nativeHost() {
+  const h = await nativeHostWithPackages(true);
+  const successor = h.e.releases[1].expected;
   addGeneration(h, 'three', successor.packageSha256, successor.activeSchema);
   const runtimeModule = join(h.fixture, 'lifecycle-generation.mjs');
   buildSync({ bundle: true, platform: 'node', format: 'esm', target: 'node26', outfile: runtimeModule,
     entryPoints: [fileURLToPath(new URL('../../deploy/runtime/lifecycle-generation.ts', import.meta.url))] });
   return { ...h, runtimeModuleUrl: pathToFileURL(runtimeModule).href };
 }
+
+async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'credentialDirectory') {
+  const h = await nativeHostWithPackages(false);
+  const store = createGenerationStore(h.e, h.owner, h.signer);
+  const { current } = await store.select(h.signed(store.order('install', null, 'one')));
+  expect(current).not.toBeNull();
+  const dataRoot = join(h.root, 'data', 'one');
+  const origin = 'https://preview.example.test:8443';
+  const expected = h.e.releases[1].expected;
+  const targetSchema = expected.schema.max;
+  const input = {
+    registration: { identity: h.e.identity, captureHost: hostname(), serviceUid: process.geteuid!(), dataRoot, profile: 'test',
+      minimumFreeBytes: 1, origin, rpId: 'preview.example.test',
+      listener: { host: '127.0.0.1' as const, port: 8443, origin } },
+    upgradePreview: { enrollment: h.e, owner: h.owner, successorSchemas: { [expected.packageSha256]: targetSchema } },
+    service: { databasePath: join(dataRoot, 'service.sqlite'), credentialDirectory: join(dataRoot, 'credentials'),
+      recoveryRuntime: { attach(): never { throw new Error('unexpected database startup'); } },
+      bindRecoveryOperations(): never { throw new Error('unexpected recovery startup'); } },
+  };
+  if (mismatchedStorage) input.service[mismatchedStorage] = join(dataRoot, 'unselected');
+  const cli = createInstalledCli(createRuntimeProvisioning(input));
+  const args = ['upgrade', '--release', expected.packageSha256];
+  return { ...h, cli, args, current: current!, expected, targetSchema, dataRoot };
+}
+
+test.skipIf(inputs.length === 0)('installed upgrade previews a pinned signed successor from the confirmed generation', async () => {
+  const fixture = await installedUpgradeFixture();
+  const { cli, args, current, expected, targetSchema, dataRoot, root } = fixture;
+  const pointer = join(root, 'current');
+  const before = { pointer: node(pointer), current: sha256(readFileSync(pointer)),
+    history: readdirSync(join(root, 'history')).sort(), releases: readdirSync(join(root, 'releases')),
+    data: readdirSync(join(root, 'data')), service: sha256(readFileSync(join(dataRoot, 'service.sqlite'))) };
+  const preview = await cli.run(args);
+  expect(preview).toMatchObject({ status: 'preview', code: 'UPGRADE_PREVIEW', exitCode: 0,
+    upgradePreview: { currentGenerationId: 'one', currentSelectionSha256: current.sha256,
+      currentSchema: current.order.generation.schema, targetSchema,
+      packageSha256: expected.packageSha256, planSha256: expect.stringMatching(/^[a-f0-9]{64}$/), activationAuthorized: false } });
+  expect(await cli.run(args)).toEqual(preview);
+  expect(await cli.run([...args, '--execute', '--operation', 'upgrade'])).toMatchObject({
+    status: 'unavailable', code: 'RELEASE_REGISTRATION_REQUIRED', exitCode: 3,
+  });
+  expect({ pointer: node(pointer), current: sha256(readFileSync(pointer)),
+    history: readdirSync(join(root, 'history')).sort(), releases: readdirSync(join(root, 'releases')),
+    data: readdirSync(join(root, 'data')), service: sha256(readFileSync(join(dataRoot, 'service.sqlite'))) }).toEqual(before);
+}, 90_000);
+
+test.skipIf(inputs.length === 0).each(['databasePath', 'credentialDirectory'] as const)(
+  'installed upgrade refuses a mismatched registered %s', async field => {
+    const { cli, args } = await installedUpgradeFixture(field);
+    expect(await cli.run(args)).toMatchObject({ status: 'blocked', code: 'UPGRADE_PREVIEW_BLOCKED' });
+  }, 90_000);
+
+test.skipIf(inputs.length === 0).each(['before', 'after'] as const)(
+  'installed upgrade refuses an owner accessor installed %s the read callback', async timing => {
+    const { cli, args, owner, hooks } = await installedUpgradeFixture();
+    let accessorCalls = 0;
+    const original = owner.withExclusiveReadRoot;
+    hooks[timing] = () => { Object.defineProperty(owner, 'withExclusiveReadRoot', {
+      get() { accessorCalls++; return original; },
+    }); };
+    expect(await cli.run(args)).toMatchObject({ status: 'blocked', code: 'UPGRADE_PREVIEW_BLOCKED' });
+    expect(accessorCalls).toBe(0);
+  }, 90_000);
+
+test.skipIf(inputs.length === 0)('installed upgrade blocks while the selected pointer is pending', async () => {
+  const { cli, args, root, e } = await installedUpgradeFixture();
+  const history = join(root, 'history');
+  const marker = readdirSync(history).find(name => name.endsWith('.durable'))!;
+  unlinkSync(join(history, marker));
+  expect(await cli.run(args)).toMatchObject({ status: 'blocked', code: 'UPGRADE_PREVIEW_BLOCKED' });
+  expect(node(join(root, 'current'))).toEqual(node(join(history, 'install.json')));
+  expect(readdirSync(join(root, 'releases'))).toEqual([e.releases[0].expected.packageSha256]);
+}, 90_000);
+
+test.skipIf(inputs.length === 0)('installed upgrade rejects a substituted signed successor', async () => {
+  const { cli, args, root, e, expected } = await installedUpgradeFixture();
+  const packages = join(root, 'packages');
+  cpSync(join(packages, e.releases[0].expected.packageSha256 + '.json'), join(packages, expected.packageSha256 + '.json'));
+  expect(await cli.run(args)).toMatchObject({ status: 'blocked', code: 'UPGRADE_PREVIEW_BLOCKED' });
+  expect(readdirSync(join(root, 'releases'))).toEqual([e.releases[0].expected.packageSha256]);
+}, 90_000);
 
 test.skipIf(inputs.length === 0)('reads a completed signed generation through its genuine recursive derived owner', async () => {
   const h = await nativeHost();

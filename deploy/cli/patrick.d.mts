@@ -2,6 +2,7 @@ import type { VaultInitCliPreview } from '../runtime/vault-init-cli.js';
 import type { InstallPreviewResult } from '../runtime/install-preview.js';
 import type * as FirstInstall from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
+import type { UpgradePreview } from '../runtime/lifecycle-generation.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
 export type CliRequest = Readonly<{
@@ -16,16 +17,19 @@ export type CliResult = {
   rpoMs?: number | null; rtoMs?: number | null; checks?: Record<string, DoctorCheck>;
   installPreview?: Omit<Extract<InstallPreviewResult, { status: 'preview' }>, 'status'>;
   installSession?: Omit<Extract<InstallPreviewResult, { status: 'session-observed' }>, 'status'>;
+  upgradePreview?: UpgradePreview;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   candidate?: { sha256: string; manifestSha256: string; installable: false; runtime: 'unavailable' };
 };
 export function parseArguments(argv: readonly string[]): CliRequest;
+export function captureReleaseData<T>(input: T, options?: { plainRecords?: boolean }): { value: T; validate(): void };
 /** The installed live-storage check applies to all requests except exact enrolled readback. */
 export function createPatrickCli(
   host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined,
   firstInstall?: Pick<typeof FirstInstall, 'bindInstallPreviewEnrollment' | 'installBootstrapRequirements' |
     'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'>,
+  previewUpgrade?: (packageSha256: string) => Promise<UpgradePreview | undefined>,
 ): {
   run(argv: readonly string[]): Promise<CliResult>;
 };

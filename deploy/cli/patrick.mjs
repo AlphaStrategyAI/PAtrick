@@ -36,7 +36,7 @@ function captureDataField(object, key) {
 // The registration binder preserves opaque class instances by reference. Trust
 // inputs therefore need their own detached data snapshot and live descriptor
 // checks, including every nested record and array.
-function captureReleaseData(input) {
+export function captureReleaseData(input, { plainRecords = false } = {}) {
   const seen = new WeakMap(), checks = [];
   function copy(value, depth = 0) {
     if (value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)) return value;
@@ -51,7 +51,7 @@ function captureReleaseData(input) {
     const names = Object.getOwnPropertyNames(value).sort();
     if (Object.getOwnPropertySymbols(value).length) throw new Error('HOST_IDENTITY_MISMATCH');
     const descriptors = new Map();
-    const output = Array.isArray(value) ? [] : Object.create(null);
+    const output = Array.isArray(value) ? [] : plainRecords ? {} : Object.create(null);
     seen.set(value, output);
     for (const name of names) {
       const descriptor = Object.getOwnPropertyDescriptor(value, name);
@@ -187,7 +187,7 @@ export function createVaultKitAdapter(host) {
     return { vaultId: receipt.vaultId, configRevision: receipt.configRevision, scopeHash: receipt.scopeHash, manifestSha256: receipt.manifestSha256 };
   } };
 }
-export function createPatrickCli(host, checkLiveStorage, firstInstall) {
+export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUpgrade) {
   async function runCommand(request) {
     let vaultInit;
     let legacyVaultReadback;
@@ -414,6 +414,20 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall) {
         'Retain the plan digest and complete the outstanding bootstrap checks through the enrolled controller.', {
           ...context, installPreview: report,
         });
+    }
+    if (request.command === 'upgrade' && request.action === 'preview' && request.release && previewUpgrade) {
+      try {
+        hostBinding.validate();
+        const upgradePreview = await previewUpgrade(request.release);
+        hostBinding.validate();
+        if (upgradePreview) return response(request, 'preview', 'UPGRADE_PREVIEW',
+          'Retain the plan digest for controller verification of drain, backup and replay.', { ...context, upgradePreview });
+      } catch (error) {
+        const code = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value === 'HOST_IDENTITY_MISMATCH'
+          ? 'HOST_IDENTITY_MISMATCH' : 'UPGRADE_PREVIEW_BLOCKED';
+        return response(request, 'blocked', code,
+          'Reconcile the confirmed generation and pinned successor package through the trusted controller.', context);
+      }
     }
     if (['install', 'upgrade'].includes(request.command)) {
       const entries = host.releases;

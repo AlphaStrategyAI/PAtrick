@@ -16,14 +16,16 @@ import type { SelectedRuntimePaths } from './role-launch.js';
 import { admitSupervisedServiceSelection, type SupervisedServiceRegistration } from './service-handoff.js';
 export type { ServiceHandoffAuthority, SupervisedServiceRegistration } from './service-handoff.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
+import { createInstalledUpgradePreview, type GenerationEnrollment, type UpgradePreview } from './lifecycle-generation.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createPatrickCli, type CliResult } from '../cli/patrick.mjs';
+import { captureReleaseData, createPatrickCli, type CliResult } from '../cli/patrick.mjs';
 import { bindRegistration, sameIdentity, type HostIdentity, type RegisteredHost } from '../lib/doctor.mjs';
+import type { ExclusiveRuntimeStaging } from '../lib/emitted-release.mjs';
 import { createObsidianDoctor } from '../obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
@@ -75,6 +77,9 @@ export type OperationalRecoveryHubBinding = Readonly<{
 export type RuntimeProvisioningInput = Readonly<{
   registration: RuntimeRegistration;
   hostCapabilities?: HostCapabilities;
+  upgradePreview?: Readonly<{
+    enrollment: GenerationEnrollment; owner?: ExclusiveRuntimeStaging; successorSchemas: Readonly<Record<string, number>>;
+  }>;
   operationalRecoveryHub?: OperationalRecoveryHubBinding;
   maintenance?: MaintenanceRegistration;
   service: Readonly<Pick<CreateAppOptions,
@@ -99,6 +104,7 @@ type ProvisionedPorts = Readonly<{
   storageOptions: RuntimeStorageOptions;
   serviceOptions: CreateAppOptions;
   assertCliRecoveryCurrent(): void;
+  upgradePreview?(packageSha256: string): Promise<UpgradePreview | undefined>;
   worker?: RuntimeProvisioningInput['worker'];
 }>;
 
@@ -133,6 +139,33 @@ function ownCapability<T extends object, K extends keyof T>(object: T, key: K): 
   if (descriptor && Object.hasOwn(descriptor, 'value')) return descriptor.value;
   if (key in object) throw new Error('HOST_IDENTITY_MISMATCH');
   return undefined;
+}
+
+function bindUpgradePreview(input: RuntimeProvisioningInput, registration: RuntimeRegistration,
+  databasePath: string, credentialDirectory: string) {
+  const preview = ownCapability(input, 'upgradePreview');
+  if (!preview) return;
+  const enrollment = ownCapability(preview, 'enrollment');
+  const owner = ownCapability(preview, 'owner');
+  const successorSchemas = ownCapability(preview, 'successorSchemas');
+  if (!enrollment || !successorSchemas || ![Object.prototype, null].includes(Object.getPrototypeOf(successorSchemas))) {
+    throw new Error('HOST_IDENTITY_MISMATCH');
+  }
+  const binding = captureReleaseData({ enrollment, successorSchemas }, { plainRecords: true });
+  let invalid = false;
+  const { identity, dataRoot } = registration;
+  return createInstalledUpgradePreview(binding.value.enrollment, owner, { dataRoot, databasePath, credentialDirectory },
+    binding.value.successorSchemas, () => {
+      try {
+        if (invalid || ownCapability(input, 'upgradePreview') !== preview || ownCapability(preview, 'owner') !== owner ||
+          ownCapability(preview, 'enrollment') !== enrollment || ownCapability(preview, 'successorSchemas') !== successorSchemas ||
+          !sameIdentity(identity, binding.value.enrollment.identity)) throw new Error('HOST_IDENTITY_MISMATCH');
+        binding.validate();
+      } catch (error) {
+        invalid = true;
+        throw error;
+      }
+    });
 }
 
 function validateNestedIdentities(host: HostCapabilities | undefined, identity: HostIdentity): void {
@@ -1117,6 +1150,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
       return bindRecoveryTargets(operations, resources);
     },
   };
+  const upgradePreview = bindUpgradePreview(input, registrationData, databasePath!, credentialDirectory!);
   const result = Object.freeze({ registration: registrationData, host });
   if (maintenance && input.maintenance) {
     requireCut(!provisionedStorage.has(input.maintenance.storage));
@@ -1127,13 +1161,14 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     storageOptions,
     serviceOptions: Object.freeze(serviceOptions),
     assertCliRecoveryCurrent,
+    upgradePreview,
     ...(worker && !controlledService ? { worker: Object.freeze({ ...worker, keys: Object.freeze({ ...worker.keys }) }) } : {}),
   }));
   return result;
 }
 
 export function createRuntimeCli(provisioning: RuntimeProvisioning) {
-  const { assertCliRecoveryCurrent } = requireRuntimeProvisioning(provisioning);
+  const { assertCliRecoveryCurrent, upgradePreview } = requireRuntimeProvisioning(provisioning);
   const { host } = provisioning;
   const publicVaultInit = hasVaultInitReadback(host);
   if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
@@ -1150,7 +1185,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
         nextStep: 'Provision a fresh controller binding for the current service database.',
       };
     }
-  }, firstInstall);
+  }, firstInstall, upgradePreview);
 }
 
 type FirstInstallCliRegistration = Readonly<Pick<RegisteredHost,
