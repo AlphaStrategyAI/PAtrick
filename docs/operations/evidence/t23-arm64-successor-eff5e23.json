@@ -1,0 +1,29 @@
+{
+  "format": "patrick-t23-successor-candidate-v1",
+  "observedDate": "2026-11-26",
+  "sourceCommit": "eff5e23123e86ced27082624a50f7d43a6fdb0c8",
+  "sourceSnapshotSha256": "25deca203f439d0f065b300a503a489c599e469abda3af0b4276217dc7382b42",
+  "architecture": "arm64",
+  "hostedMaterials": {
+    "runId": "45827531675",
+    "archiveSha256": "b465cf0e2fbe28d4733c8dbc05354ed4f1adc9cc01ecc50cd8ead2e14a61b0d0",
+    "controllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+    "inventorySha256": "2db1eb2f608ca0c5eac865b63f51f3a6e7c7bf5dfb7d06fea07414067262a519",
+    "verifiedFiles": 488,
+    "targetMacAdmissionPassed": 4
+  },
+  "localCandidate": {
+    "matchingLocalBuilds": 2,
+    "inventorySha256": "fa66f3092a1a48cc2c8ec640056262a263d6bffd95b067c5b91f160a0779d319",
+    "packageSha256": "533e64332fbf31f17d2e207bd687428e661e660eaf65ac4a4863b4ff33c6ef03",
+    "manifestSha256": "81abbc0565a58e345ade72159ed7bdaa01db1653678aa4c434af1e49da961b8e",
+    "materialSha256": "f72876aa5e946ccb7e38deef6fb7a1c744df8f5d1275b0d1f4c9d1571f51bc39",
+    "keyId": "t23-local-61e9e2971b295608",
+    "publicKeySha256": "61e9e2971b295608e87db03b627f42041e419a685c9a452dfc201d80345e14bc",
+    "executionReportSha256": "016b4287f79272ba2e3b78defe20aa1de89f2b0d022b83401da0338f58af361a",
+    "verifiedFiles": 489,
+    "passedScenarios": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
+    "verifiedRejections": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"]
+  },
+  "outstanding": ["host-trust-enrollment", "installed-upgrade", "uninstall-preservation"]
+}
