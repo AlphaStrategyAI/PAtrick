@@ -37,7 +37,7 @@ import { createObsidianDoctor } from '../obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
 import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority } from '../../apps/service/src/auth.js';
-import { createLocalHubPort, validateLocalHubAnswers } from '@patrick/integrations/autoloop/answers';
+import { createLocalHubPort, validateLocalHubAnswers, validateVerifiedLocalAnswerReceipts } from '@patrick/integrations/autoloop/answers';
 import { createAnswerGate } from '../../packages/domain/src/answer-gate.js';
 import { createHubClient, PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
 import { readOptionalHubView } from '@patrick/integrations/autoloop/observer';
@@ -134,6 +134,7 @@ export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollmen
       return readOptionalHubView(database)?.hub_seq ?? 0;
     },
     validateAnswers: validateLocalHubAnswers,
+    validateVerifiedAnswers: validateVerifiedLocalAnswerReceipts,
   });
 }
 

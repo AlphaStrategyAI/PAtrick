@@ -40,6 +40,45 @@ export function validateLocalHubAnswers(database: {
   }
 }
 
+export function validateVerifiedLocalAnswerReceipts(
+  service: { prepare(sql: string): { iterate(): Iterable<unknown> } },
+  answers: { prepare(sql: string): { get(question: string): unknown } },
+  guard: () => void,
+): number {
+  guard();
+  const local = answers.prepare('SELECT card_id, body_json, answer_event_id FROM main.hub_answers WHERE question_id = ?');
+  const verified = service.prepare(`SELECT receipt.question_id, receipt.hub_answer_event_id,
+      intent.hub_card_id, intent.hub_answer_event_id AS accepted_event_id, intent.answer_kind, intent.option_index, intent.raw_custom
+    FROM main.answer_receipts AS receipt
+    LEFT JOIN main.answer_intents AS intent
+      ON intent.intent_id = receipt.intent_id AND intent.account_id = receipt.account_id
+      AND intent.data_domain = receipt.data_domain AND intent.question_id = receipt.question_id
+      AND intent.question_version = receipt.question_version AND intent.work_id = receipt.work_id
+      AND intent.generation = receipt.generation
+    WHERE receipt.validity = 'verified'`);
+  let matched = 0;
+  for (const receipt of verified.iterate() as Iterable<{
+    question_id: string; hub_answer_event_id: string | null; hub_card_id: number | null;
+    accepted_event_id: string | null; answer_kind: 'option' | 'custom' | null;
+    option_index: number | null; raw_custom: string | null;
+  }>) {
+    guard();
+    const row = local.get(receipt.question_id) as HubRow | undefined;
+    if (!row || receipt.hub_card_id === null || row.answer_event_id !== receipt.hub_answer_event_id ||
+        (row.card_id !== receipt.hub_card_id && row.answer_event_id !== receipt.accepted_event_id)) {
+      throw new Error('UPGRADE_ANSWER_RECEIPT_MISMATCH');
+    }
+    const body = parseBody(row.body_json);
+    const matchingBody = receipt.answer_kind === 'option'
+      ? 'choice' in body && body.choice === receipt.option_index
+      : receipt.answer_kind === 'custom' && 'text' in body && body.text === receipt.raw_custom;
+    if (!matchingBody) throw new Error('UPGRADE_ANSWER_RECEIPT_MISMATCH');
+    matched++;
+  }
+  guard();
+  return matched;
+}
+
 /** The optional callback is a trusted in-process ownership handoff, before Hub initialization. */
 export function createLocalHubPort(filePath: string, onDatabase?: (database: SqliteDatabase) => void): LocalHubPort {
   const db = openDatabase(filePath, { manifest: [] });

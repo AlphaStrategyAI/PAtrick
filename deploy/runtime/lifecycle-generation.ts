@@ -80,6 +80,7 @@ type UpgradeDatabasePorts = Readonly<{
   migrateService: UpgradeServiceMigrator;
   hubSequence(database: DatabaseSync, role: 'service' | 'hub'): number;
   validateAnswers(database: DatabaseSync, guard: () => void): void;
+  validateVerifiedAnswers(service: DatabaseSync, answers: DatabaseSync, guard: () => void): number;
 }>;
 export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
@@ -520,10 +521,14 @@ async function replayStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: 
     return sequence;
   });
   guard();
-  const serviceSeq = withImmutableUpgradeDatabase(servicePath, database => databases.hubSequence(database, 'service'));
-  requireValue(serviceSeq === hubSeq);
-  guard();
-  withImmutableUpgradeDatabase(join(rawData, set.localAnswers.path), database => databases.validateAnswers(database, guard));
+  withImmutableUpgradeDatabase(servicePath, service => {
+    requireValue(databases.hubSequence(service, 'service') === hubSeq);
+    guard();
+    withImmutableUpgradeDatabase(join(rawData, set.localAnswers.path), answers => {
+      databases.validateAnswers(answers, guard);
+      databases.validateVerifiedAnswers(service, answers, guard);
+    });
+  });
   guard();
 }
 

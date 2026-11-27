@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { createCredentialStore } from '@patrick/host';
@@ -32,7 +33,7 @@ import {
   type ResumeKey,
 } from '../../packages/domain/src/work-continuation.js';
 import { settleNativeAnswer, type ContinuationPort } from '../../packages/integrations/autoloop/agent.js';
-import { createLocalHubPort, encodeHubAnswer, type LocalHubPort } from '../../packages/integrations/autoloop/answers.js';
+import { createLocalHubPort, encodeHubAnswer, validateVerifiedLocalAnswerReceipts, type LocalHubPort } from '../../packages/integrations/autoloop/answers.js';
 import { requiresChannelReconciliation } from '../../packages/integrations/feishu/channel-gate.js';
 import { createFeishuChannel, openSupervisedSocket, PAIRING_TTL_MS } from '../../packages/integrations/feishu/connection.js';
 import { openDatabase, type SqliteDatabase } from '../../packages/storage/src/database.js';
@@ -146,6 +147,39 @@ test('recovery denial is a nonretryable answer API conflict', async () => {
   } finally { scene.close(); rmSync(credentials, { recursive: true, force: true }); }
 });
 
+
+test.each([17, 55])('upgrade replay reconciles verified receipts with durable local answer card %s', async storedCard => {
+  const scene = await openScene({ crashAfterAccept: false });
+  const answersPath = join(dirname(scene.db.name), 'hub-answers.sqlite');
+  const answers = new DatabaseSync(answersPath);
+  try {
+    const binding = await scene.bind(questionInput('Q-017', 17, proceedOptions(), []));
+    const command = scene.command(webPrincipal, 'upgrade-replay', binding, { kind: 'option', option_id: 'A' });
+    if (storedCard !== 17) await scene.hub.accept('Q-017', storedCard, { choice: 0 });
+    expect(await scene.web.submitAnswer(webPrincipal, command)).toMatchObject({ validity: 'verified' });
+    await scene.hub.accept('awaiting-service-receipt', 18, { text: 'pending' });
+
+    expect(validateVerifiedLocalAnswerReceipts(scene.db, answers, () => {})).toBe(1);
+    const row = answers.prepare('SELECT body_json FROM hub_answers WHERE question_id = ?').get('Q-017');
+    const change = answers.prepare('UPDATE hub_answers SET body_json = ? WHERE question_id = ?');
+    change.run('{"choice":99}', 'Q-017');
+    expect(() => validateVerifiedLocalAnswerReceipts(scene.db, answers, () => {}))
+      .toThrow('UPGRADE_ANSWER_RECEIPT_MISMATCH');
+    change.run(row!.body_json!, 'Q-017');
+    if (storedCard !== 17) {
+      scene.db.prepare('UPDATE answer_intents SET hub_answer_event_id = NULL').run();
+      expect(() => validateVerifiedLocalAnswerReceipts(scene.db, answers, () => {}))
+        .toThrow('UPGRADE_ANSWER_RECEIPT_MISMATCH');
+      scene.db.prepare('UPDATE answer_intents SET hub_answer_event_id = ?').run(`hub:Q-017:${storedCard}`);
+    }
+    scene.db.prepare('UPDATE answer_receipts SET data_domain = ? WHERE validity = ?').run('other', 'verified');
+    expect(() => validateVerifiedLocalAnswerReceipts(scene.db, answers, () => {}))
+      .toThrow('UPGRADE_ANSWER_RECEIPT_MISMATCH');
+  } finally {
+    answers.close();
+    scene.close();
+  }
+});
 
 test('answer-once', async () => {
   const scene = await openScene({ crashAfterAccept: true });

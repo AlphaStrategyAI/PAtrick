@@ -280,8 +280,8 @@ async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'cre
   return { ...h, cli, args, current: current!, expected, targetSchema, dataRoot };
 }
 
-test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
-  'a registered upgrade publishes a signed successor against the frozen cut (projection mismatch: %s)', async mismatchedProjection => {
+test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatch'])(
+  'a registered upgrade publishes a signed successor against the frozen cut (cut fault: %s)', async cutFault => {
   const fixture = await installedUpgradeFixture(undefined, true);
   const { expected, targetSchema, current, root, args, owner, e } = fixture;
   const preview = (await fixture.cli.run(args)).upgradePreview!;
@@ -302,6 +302,18 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
   service.prepare(`INSERT INTO domain_events
     (seq, event_id, aggregate_id, aggregate_version, account_id, data_domain, schema_version, payload, created_at)
     VALUES (1, 'retained-event', 'retained-object', 1, 'account', 'personal', '1.0', '{}', '2026-11-27T00:00:00Z')`).run();
+  service.prepare(`INSERT INTO answer_intents (
+      intent_id, account_id, caller_id, data_domain, client_request_id, command_fingerprint, question_id,
+      question_version, work_id, generation, proposal_revision, options_hash, entry, answer_kind, raw_custom,
+      missing_json, send_status, hub_card_id, hub_answer_event_id, schema_version, created_at, updated_at
+    ) VALUES ('retained-intent', 'account', 'owner', 'personal', 'request', ?, 'retained-question',
+      1, 'work', 1, 1, ?, 'web', 'custom', 'retained answer', '[]', 'accepted', 42, 'hub:retained-question:42',
+      '1.0', '2026-11-27T00:00:00Z', '2026-11-27T00:00:00Z')`).run('a'.repeat(64), 'b'.repeat(64));
+  service.prepare(`INSERT INTO answer_receipts (
+      receipt_id, intent_id, account_id, data_domain, question_id, question_version, work_id, generation,
+      validity, disposition, hub_answer_event_id, result_revision, missing_json, schema_version, created_at
+    ) VALUES ('retained-receipt', 'retained-intent', 'account', 'personal', 'retained-question', 1, 'work', 1,
+      'verified', 'proceed', 'hub:retained-question:42', 1, '[]', '1.0', '2026-11-27T00:00:00Z')`).run();
   storeHubView(service, { hub_seq: 1, runs: [], cards: [] }, '2026-11-27T00:00:00Z');
   const hubPath = join(fixture.dataRoot, autoloopHubDatabase);
   const initializer = join(root, 'releases', current.order.generation.packageSha256, autoloopHub.root, autoloopHub.initializer);
@@ -319,8 +331,8 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
       changes: [{ table: 'events', key: '1', row: { id: 1, source: 'patrick' } }] };
     evolve(new View(hubSetup, 0, {}, 'fixture-format'), [fact], hubSetup);
     hubSetup.prepare('INSERT INTO facts VALUES (?, ?)').run(1, JSON.stringify(fact));
-    if (mismatchedProjection === true) hubSetup.exec("DELETE FROM projections WHERE collection = 'events' AND key = '1'");
-    if (mismatchedProjection === 'empty-log') {
+    if (cutFault === true) hubSetup.exec("DELETE FROM projections WHERE collection = 'events' AND key = '1'");
+    if (cutFault === 'empty-log') {
       hubSetup.exec('DELETE FROM facts');
       hubSetup.exec('DELETE FROM projection_meta');
       service.exec("DELETE FROM hub_snapshots WHERE cursor_name = 'hub_observer'");
@@ -330,7 +342,9 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
   const hub = new Database(hubPath, { fileMustExist: true });
   const answersPath = join(handoff, 'local-answers.sqlite');
   const answers = createLocalHubPort(answersPath);
-  try { await answers.accept('retained-question', 42, { text: 'retained answer' }); } finally { answers.close(); }
+  try {
+    await answers.accept('retained-question', 42, { text: cutFault === 'answer-mismatch' ? 'different answer' : 'retained answer' });
+  } finally { answers.close(); }
   const answersSnapshot = new DatabaseSync(answersPath);
   try { answersSnapshot.exec('PRAGMA journal_mode = DELETE'); } finally { answersSnapshot.close(); }
   const scope = { setId: 'before-upgrade', domains: [{ domain: 'personal', writerEpoch: 'old',
@@ -420,7 +434,7 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
-  if (mismatchedProjection) {
+  if (cutFault) {
     expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
     expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
     expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
