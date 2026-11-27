@@ -9,7 +9,7 @@ import type { createMaintenanceCutReader } from '../runtime/maintenance-readback
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
 export type CliRequest = Readonly<{
-  command: CliCommand; action: 'preview' | 'execute' | 'readback' | 'check-session' | 'prepare-generation' | 'publish-generation'; operation?: string;
+  command: CliCommand; action: 'preview' | 'execute' | 'readback' | 'check-session' | 'prepare-generation' | 'publish-generation' | 'select-generation'; operation?: string;
   target?: string; vault?: string; release?: string; manifest?: string; mode?: 'drill';
 }>;
 export type CliResult = {
@@ -24,6 +24,7 @@ export type CliResult = {
   upgradeRelease?: UpgradeReleaseReceipt;
   upgradePreparationSha256?: string;
   upgradeGenerationSha256?: string;
+  selectionSha256?: string;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   uninstallPreview?: { labels: readonly string[] };

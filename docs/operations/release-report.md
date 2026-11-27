@@ -323,6 +323,8 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 `patrick upgrade --publish-generation --release <sha256> --operation <id>` 完成灰度后，在 Service 和 Hub 写者围栏内暂存并发布 `data/<generationId>`。三库取自已核验的迁移结果和维护快照。同机凭据、Hub 主密钥、Blob 和投影从已停止代次复制，按新代次角色账号设置权限。控制器核对文件摘要、库内 Blob 引用和私有发布回执。暂存复制中断后，控制器用留存的操作登记重新核对切点和资源，再重试。CLI 返回 `uncertain / UPGRADE_GENERATION_PUBLISHED` 及 `upgradeGenerationSha256`。签名切换仍是独立步骤。
 
+`patrick upgrade --select-generation --release <sha256> --operation <id>` 使用受保护的 CLI 入口。控制器登记后继代次、两个回执摘要和安装实例的选择签名器，由维护控制方在提交期间持有同一冻结 epoch。控制器在同一写者围栏和安装根租约内复核切点、准备回执和发布数据。独立签名的选择证明绑定原格式的选择记录与两个回执。重复请求核验签名历史及选择证明。`UPGRADE_GENERATION_SELECTED` 确认指针切换，后续仍需核验各角色启动和写者准入。
+
 2026-11-27，目标 MacBook Pro 用 `d7f1043` 和带能力标记的 `arm64` 签名候选重跑三项隔离升级用例，均通过。后继包由固定工作快照构建两次，使用一次性验收公钥核对 489 个文件。包摘要为 `2a3fa411731ed01537d5741b1ae533907a761564b0214683a675c8c0e8e6337a`。测试覆盖回放结果、异常 Hub 数据拒绝和旧代次保留。系统域升级待验收。
 
 目标 MacBook Pro 从干净提交 `4814ad80` 两次构建一致的 `arm64` 材料，通过四项签名前用例并用隔离 Ed25519 密钥验签。升级用例分别提供一致和内容不一致的已签名快照。前者通过回放，后者两次尝试均未进入切换。两项用例均验证源代次保留。[应答对账验收回执](evidence/t23-arm64-answer-reconciliation-4814ad80.json)

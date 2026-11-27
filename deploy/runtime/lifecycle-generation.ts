@@ -61,6 +61,7 @@ export type GenerationOrder = {
 };
 export type SignedGenerationOrder = { order: GenerationOrder; signature: string };
 export type GenerationRecordSigner = { signRecord(bytes: Uint8Array): Promise<string> };
+type UpgradeSelectionProof = Readonly<{ preparationSha256: string; generationSha256: string }>;
 export type UpgradePreview = Readonly<{
   installationId: string; currentGenerationId: string; currentSelectionSha256: string; currentPackageSha256: string;
   currentSchema: number; targetSchema: number; packageSha256: string; manifestSha256: string;
@@ -72,6 +73,11 @@ export type UpgradeReleaseEnrollment = Readonly<{
   cut: MaintenanceCutReadbackRegistration;
   targetSchema: number;
   stagingNode: GenerationNode;
+  selection?: UpgradeSelectionProof & Readonly<{
+    signer: GenerationRecordSigner;
+    withCutFence<T>(subject: MaintenanceCutReadbackRegistration['subject'], receipt: Awaited<ReturnType<UpgradeCutReader['read']>>,
+      use: (guard: () => void) => Promise<T>): Promise<T>;
+  }>;
 }>;
 type UpgradeCutPlan = Omit<MaintenanceCutReadbackRegistration['subject'], 'claimSha256' | 'planSha256'>;
 type UpgradeCutReader = ReturnType<typeof createMaintenanceCutReader>;
@@ -82,7 +88,7 @@ type UpgradeDatabasePorts = Readonly<{
   validateAnswers(database: DatabaseSync, guard: () => void): void;
   validateVerifiedAnswers(service: DatabaseSync, answers: DatabaseSync, guard: () => void): number;
 }>;
-export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation' | 'publish-generation';
+export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation' | 'publish-generation' | 'select-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
@@ -680,7 +686,7 @@ async function publishUpgradeGeneration(input: {
   sourceData: string; sourceServiceUid: number; sourceHub: string; serviceOwner?: UpgradeRoleOwner; hubOwner?: UpgradeRoleOwner;
   generation: Pick<InstalledGeneration, 'id' | 'packageSha256' | 'schema' | 'releaseRoot'>;
   preparationSha256: string; service: string; rawData: string; migration: Buffer; cut: VerifiedCutMaterial;
-  guard: () => void; confirmCut: () => Promise<void>; onAttempt: () => void;
+  guard: () => void; confirmCut: () => Promise<void>; onAttempt: () => void; requirePublished?: boolean;
 }) {
   const { target, scratch, sourceData, serviceOwner, hubOwner, guard, confirmCut, onAttempt } = input;
   const receiptName = '.patrick-upgrade-generation.json';
@@ -828,6 +834,7 @@ async function publishUpgradeGeneration(input: {
   const partial = lstatSync(scratch, { throwIfNoEntry: false });
   const installed = lstatSync(target, { throwIfNoEntry: false });
   requireValue(!partial || !installed);
+  if (input.requirePublished) requireValue(installed && (installed.mode & 0o7777) === traversal);
   const attempt = bytes({
     format: 'patrick-upgrade-generation-attempt-v1', preparationSha256: input.preparationSha256, generation: input.generation, inventory,
   });
@@ -1268,7 +1275,8 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }, true, enrolled);
   }
   async function prepareUpgradeRelease(targetSchema: number, stagingNode: GenerationNode,
-    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader, databases: UpgradeDatabasePorts) {
+    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader, databases: UpgradeDatabasePorts,
+    selection?: UpgradeReleaseEnrollment['selection']) {
     const { claimSha256, planSha256, ...cutPlan } = cut.subject;
     const { installationId, generationId, selectionSha256, releaseSha256, upgradeOperationId } = cutPlan;
     const nextGeneration = cut.lifecycle.plan.nextGeneration;
@@ -1284,9 +1292,58 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     const publicationRecord = destination + '.published.json';
     const preparationRecord = destination + '.prepared.json';
     const canaryRecord = destination + '.prepared-canary.json';
+    const selectionRecord = destination + '.selection.json';
     const published = join(releasesRoot, releaseSha256);
+    const selectionOrder = selection && order(upgradeOperationId, selectionSha256, nextGeneration);
+    const selectedResult = selectionOrder && selection && {
+      status: 'generation-selected' as const, generationId: nextGeneration, selectionSha256: digest(selectionOrder),
+      preparationSha256: selection.preparationSha256, generationSha256: selection.generationSha256,
+    };
+    const selectionHold = selection && captureMethod(selection, 'withCutFence');
+    const selectionProof = selectedResult && bytes({
+      format: 'patrick-upgrade-selection-proof-v1', installationSha256, operationId: upgradeOperationId,
+      selectionSha256: selectedResult.selectionSha256, preparationSha256: selectedResult.preparationSha256,
+      generationSha256: selectedResult.generationSha256,
+    });
+    if (selectionOrder && selectedResult) {
+      hash(selectedResult.preparationSha256);
+      hash(selectedResult.generationSha256);
+      requireValue(selectionOrder.generation.packageSha256 === releaseSha256 && selectionOrder.generation.schema === targetSchema);
+    }
+    async function verifySelectionProof(guard: () => void) {
+      const info = lstatSync(selectionRecord, { bigint: true, throwIfNoEntry: false });
+      if (!info || !selectionProof) return false;
+      const node = pin(info);
+      const check = () => {
+        guard();
+        requireValue((checkNode(selectionRecord, node, false).mode & 0o7777n) === 0o600n);
+      };
+      const stored = await readRegularFile(selectionRecord, recordLimit, { root: stagingRoot, validate: check });
+      const { proof, signature } = JSON.parse(stored.toString()) as { proof: unknown; signature: string };
+      requireValue(stored.equals(bytes({ proof, signature })) && selectionProof.equals(bytes(proof)) &&
+        signatureValid(selectionProof, signature));
+      return true;
+    }
+    async function observeCompletedSelection(lease: Lease, state: State) {
+      if (!selectedResult) return;
+      if (state.pending?.sha256 === selectedResult.selectionSha256) throw uncertain(upgradeOperationId);
+      if (state.historical) {
+        requireValue(state.historical.sha256 === selectedResult.selectionSha256);
+        requireValue(await verifySelectionProof(() => {
+          boundary(lease);
+          requireValue((checkNode(stagingRoot, stagingNode, true).mode & 0o7777n) === 0o700n);
+        }));
+        await verifyObservation(lease, state, upgradeOperationId);
+        return selectedResult;
+      }
+    }
     let attempted = false;
     try {
+      if (selectedResult) {
+        const completed = await leased(owner, async lease =>
+          observeCompletedSelection(lease, await readState(lease, upgradeOperationId)), true, enrolled);
+        if (completed) return completed;
+      }
       const prepare = (checkWriters: () => void) => leased(owner, async lease => {
         const guard = () => {
           checkWriters();
@@ -1294,9 +1351,13 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           const info = checkNode(stagingRoot, stagingNode, true);
           requireValue(stagingNode.device === e.stores.releases.device && (info.mode & 0o7777n) === 0o700n);
         };
-        const state = await readState(lease);
+        const state = await readState(lease, selectionOrder?.operationId);
         const { current } = state;
         guard();
+        if (selectedResult) {
+          const completed = await observeCompletedSelection(lease, state);
+          if (completed) return completed;
+        }
         requireValue(current && !state.pending && current.sha256 === selectionSha256 &&
           current.order.generation.id === generationId && current.order.generation.packageSha256 !== releaseSha256 &&
           generationId.toLowerCase() !== nextGeneration.toLowerCase());
@@ -1315,11 +1376,19 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         };
         const initialCut = await observeCut();
         const confirmCut = async () => requireValue(canonicalize(await observeCut()) === canonicalize(initialCut));
+        const confirmCutForCommit = async () => {
+          requireValue(canonicalize(await backup.read()) === canonicalize(initialCut));
+          guard();
+          physical(current.order.generation);
+        };
         const access = { hubGroup: e.hubOwner?.gid, serviceGroup: serviceOwner?.gid };
         if (lstatSync(destination, { throwIfNoEntry: false })) return { status: 'interrupted' as const };
         if (!lstatSync(published, { throwIfNoEntry: false })) {
           requireValue(!lstatSync(publicationRecord, { throwIfNoEntry: false }));
-          if (action !== 'execute') return { status: 'pending' as const };
+          if (action !== 'execute') {
+            requireValue(!selectionOrder);
+            return { status: 'pending' as const };
+          }
           const free = statfsSync(stagingRoot, { bigint: true });
           const needed = candidate.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
           requireValue(free.bsize > 0n && free.bavail * free.bsize >= needed);
@@ -1328,6 +1397,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           await publishStagedDeployment(candidate, stage, guard, confirmCut);
         }
         const receipt = { packageSha256: releaseSha256, manifestSha256: candidate.manifestSha256, cutManifestSha256: initialCut.manifestHash };
+        let reverifyGeneration: (() => Promise<void>) | undefined;
         const result = await withPublishedDeployment(candidate, { staging, releasesRoot, ...access }, async deployment => {
           await confirmCut();
           guard();
@@ -1341,7 +1411,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             requireValue((checkNode(publicationRecord, pin(existing), false).mode & 0o7777n) === 0o600n);
             const observed = await readRegularFile(publicationRecord, recordLimit, { root: stagingRoot, validate: guard });
             requireValue(observed.equals(effectiveReceipt));
-            if (action === 'prepare-generation' || action === 'publish-generation') {
+            if (action === 'prepare-generation' || action === 'publish-generation' || selectionOrder) {
               const manifest = candidate.materials.find(file => file.path === 'migrations/manifest.json');
               requireValue(manifest);
               const rawData = destination + '.data';
@@ -1349,7 +1419,10 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
               const nativeHub = generationHubDatabase(current.order.generation.roles) !== legacyHubDatabase;
               const initializer = deployment.autoloopHub?.initializer;
               if (nativeHub) requireValue(initializer);
-              const onAttempt = () => { attempted = true; };
+              const onAttempt = () => {
+                requireValue(!selectionOrder);
+                attempted = true;
+              };
               const publicationSha256 = sha256(effectiveReceipt);
               const prepared = await backup.useVerifiedSet(initialCut, async set => {
                 if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return undefined;
@@ -1395,16 +1468,17 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
               if (canary) await verifyRetained(preparationRecord, bytes({ ...preparationBody, replay: 'answer-replayed' }));
               const preparedPath = canary ? canaryRecord : preparationRecord;
               if (!await verifyRetained(preparedPath, preparation)) {
-                attempted = true;
+                onAttempt();
                 recordUpgradePublication(preparedPath, preparation, stagingNode, guard);
               }
               const preparationSha256 = sha256(preparation);
-              if (action === 'publish-generation' && canary) {
+              if (selectedResult) requireValue(canary && preparationSha256 === selectedResult.preparationSha256);
+              if ((action === 'publish-generation' || selectionOrder) && canary) {
                 const dataParent = join(e.root, 'data');
                 const predecessor = current.order.generation;
                 const predecessorRoot = join(dataParent, predecessor.id);
                 const sourceData = generationServiceData(predecessorRoot, predecessor.roles);
-                const result = await backup.useVerifiedSet(initialCut, cut => publishUpgradeGeneration({
+                const readGeneration = (confirm: () => Promise<void>) => backup.useVerifiedSet(initialCut, cut => publishUpgradeGeneration({
                   target: join(dataParent, nextGeneration), scratch: destination + '.generation.partial',
                   attempt: destination + '.generation-attempt.json',
                   dataParent: e.stores.data, stagingParent: stagingNode, sourceData, serviceOwner, hubOwner: e.hubOwner,
@@ -1412,8 +1486,16 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
                   sourceHub: dirname(join(predecessorRoot, generationHubDatabase(predecessor.roles))),
                   generation: { id: nextGeneration, schema: targetSchema, packageSha256: releaseSha256, releaseRoot: releaseNode },
                   preparationSha256, service: join(migratedService, 'service.sqlite'), migration: prepared, rawData, cut,
-                  guard, confirmCut, onAttempt,
+                  guard, confirmCut: confirm, onAttempt, requirePublished: selectionOrder !== undefined,
                 }));
+                const result = await readGeneration(confirmCut);
+                if (selectionOrder && selectedResult) {
+                  const verifyGeneration = (observed: Awaited<ReturnType<typeof readGeneration>>) =>
+                    requireValue(observed.generationSha256 === selectedResult.generationSha256 &&
+                      canonicalize(observed.generation) === canonicalize(selectionOrder.generation));
+                  verifyGeneration(result);
+                  reverifyGeneration = async () => verifyGeneration(await readGeneration(confirmCutForCommit));
+                }
                 return { status: 'generation-published' as const, receipt, generationId: nextGeneration, preparationSha256, ...result };
               }
               return { status, receipt, generationId: nextGeneration, preparationSha256 };
@@ -1424,6 +1506,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             }
             return { status: 'published' as const, receipt };
           }
+          requireValue(!selectionOrder);
           if (action !== 'execute') return { status: 'interrupted' as const };
           attempted = true;
           syncDirectory(stagingRoot, stagingNode);
@@ -1433,15 +1516,65 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           return { status: 'published' as const, receipt };
         });
         await confirmCut();
+        if (selectionOrder && selectedResult) {
+          requireValue(reverifyGeneration && signer && registeredSign && selectionProof && selectionHold &&
+            result.status === 'generation-published');
+          const reverify = reverifyGeneration;
+          const completion = Symbol();
+          let active = true;
+          let work: Promise<symbol> | undefined;
+          try {
+            selectionHold.validate();
+            const completed = await Reflect.apply(selectionHold.value, selection, [cut.subject, initialCut, (guardFence: () => void) => {
+              requireValue(active && !work && typeof guardFence === 'function');
+              work = (async () => {
+                const guardSelection = () => {
+                  requireValue(active);
+                  selectionHold.validate();
+                  guard();
+                  guardFence();
+                };
+                guardSelection();
+                await confirmCut();
+                if (!await verifySelectionProof(guardSelection)) {
+                  const signature = await Reflect.apply(registeredSign, signer, [selectionProof]);
+                  guardSelection();
+                  requireValue(signatureValid(selectionProof, signature));
+                  recordUpgradePublication(selectionRecord, bytes({ proof: JSON.parse(selectionProof.toString()), signature }),
+                    stagingNode, guardSelection);
+                }
+                guardSelection();
+                syncDirectory(stagingRoot, stagingNode);
+                const signature = await Reflect.apply(registeredSign, signer, [bytes(selectionOrder)]);
+                guardSelection();
+                await selectReserved(canonicalize({ order: selectionOrder, signature }), guardSelection, lease, reverify, guard,
+                  () => { attempted = true; });
+                guardSelection();
+                return completion;
+              })();
+              return work;
+            }]);
+            requireValue(work && completed === completion && await work === completion);
+          } finally {
+            active = false;
+            await work?.catch(error => {
+              if (error instanceof Error && error.message === 'GENERATION_SELECTION_UNCERTAIN') attempted = true;
+            });
+          }
+          return selectedResult;
+        }
         return result;
       }, true, enrolled);
       return await (action === 'readback' ? prepare(() => {}) : withStoppedWriters(prepare));
     } catch (error) {
-      if (attempted) return { status: 'interrupted' as const };
+      if (attempted || selectionOrder && error instanceof Error && error.message === 'GENERATION_SELECTION_UNCERTAIN') {
+        return { status: 'interrupted' as const };
+      }
       throw error;
     }
   }
-  async function selectReserved(envelope: string, checkRole?: () => void) {
+  async function selectReserved(envelope: string, checkRole: () => void, heldLease?: Lease, verifyBeforeCommit?: () => Promise<void>,
+    checkLocal?: () => void, onWrite?: () => void) {
     enrolled();
     requireValue(typeof envelope === 'string' && Buffer.byteLength(envelope) <= recordLimit);
     const signed = JSON.parse(envelope) as SignedGenerationOrder;
@@ -1454,7 +1587,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
       boundary(lease);
     }
     try {
-      const result = await leased(owner, async lease => {
+      const execute = async (lease: Lease) => {
         const state = await readState(lease, id);
         checkSelection(lease);
         if (state.pending?.sha256 === next.sha256) throw uncertain(id);
@@ -1485,21 +1618,37 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           const fd = openSync(stage, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
           try {
             const node = pin(fstatSync(fd, { bigint: true }));
-            const body: RecordBody = { format: 'patrick-installed-selection-record-v1', authorization: signed, node };
-            const signature = await Reflect.apply(registeredSign, signer, [bytes(body)]);
-            checkSelection(lease);
-            const envelope = bytes({ body, signature });
-            requireValue(signatureValid(bytes(body), signature) && envelope.length <= recordLimit);
-            const confirmed = await readState(lease, id, next.order.generation.id, node);
-            checkSelection(lease);
-            requireValue(canonicalize(confirmed) === canonicalize(state));
-            checkNode(stage, node, false);
+            let envelope: Buffer;
+            try {
+              const body: RecordBody = { format: 'patrick-installed-selection-record-v1', authorization: signed, node };
+              const signature = await Reflect.apply(registeredSign, signer, [bytes(body)]);
+              if (verifyBeforeCommit) await verifyBeforeCommit();
+              checkSelection(lease);
+              envelope = bytes({ body, signature });
+              requireValue(signatureValid(bytes(body), signature) && envelope.length <= recordLimit);
+              const confirmed = await readState(lease, id, next.order.generation.id, node);
+              checkSelection(lease);
+              requireValue(canonicalize(confirmed) === canonicalize(state));
+              checkNode(stage, node, false);
+            } catch (error) {
+              if (checkLocal) {
+                checkLocal();
+                const empty = checkNode(stage, node, false);
+                requireValue(empty.size === 0n && empty.nlink === 1n);
+                unlinkSync(stage);
+                syncDirectory(e.root, e.rootNode);
+                attempted = false;
+              }
+              throw error;
+            }
+            onWrite?.();
             writeFileSync(fd, envelope);
             fsyncSync(fd);
           } finally { closeSync(fd); }
           checkSelection(lease);
           linkSync(stage, record);
           syncDirectory(history, e.stores.history);
+          checkSelection(lease);
           // After this point the record forbids a second attempt even on restart.
           renameSync(stage, currentPath);
           syncDirectory(e.root, e.rootNode);
@@ -1526,7 +1675,8 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           requireValue(observed.current?.sha256 === next.sha256 && !observed.pending);
           return observed;
         });
-      }, true, enrolled);
+      };
+      const result = await (heldLease ? execute(heldLease) : leased(owner, execute, true, enrolled));
       enrolled();
       return result;
     } catch (error) {
@@ -1584,10 +1734,13 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
 
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction,
   validate: () => void, backup: UpgradeCutReader, databases: UpgradeDatabasePorts) {
-  requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation' || action === 'publish-generation');
+  requireValue(['execute', 'readback', 'prepare-generation', 'publish-generation', 'select-generation'].includes(action));
   validate();
   const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
-  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, databases);
+  const selection = action === 'select-generation' ? registration.selection : undefined;
+  requireValue(action !== 'select-generation' || selection?.signer && selection.withCutFence);
+  return generationStorage(enrollment, owner, selection?.signer, validate)
+    .prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, databases, selection);
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {

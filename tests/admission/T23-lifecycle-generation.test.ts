@@ -23,7 +23,7 @@ import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createFirstInstallCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import { autoloopHubDatabase, autoloopHubDirectory, canRestoreOldRelease, createGenerationReader, createGenerationStore,
   installedUpgradePlanSha256 } from '../../deploy/runtime/lifecycle-generation';
-import type { GenerationEnrollment, GenerationOrder, InstalledGeneration } from '../../deploy/runtime/lifecycle-generation';
+import type { GenerationEnrollment, GenerationOrder, InstalledGeneration, UpgradeReleaseEnrollment } from '../../deploy/runtime/lifecycle-generation';
 import { createLifecycleJournal, type LifecycleRegistration } from '../../deploy/runtime/lifecycle-journal.js';
 
 const temporary: string[] = [];
@@ -281,7 +281,7 @@ async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'cre
   return { ...h, cli, args, current: current!, expected, targetSchema, dataRoot };
 }
 
-test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatch'])(
+test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatch', ...(inputs[1]?.researchCanary ? ['selection'] : [])])(
   'a registered upgrade publishes a signed successor against the frozen cut (cut fault: %s)', async cutFault => {
   const fixture = await installedUpgradeFixture(undefined, true);
   const { expected, targetSchema, current, root, args, owner, e } = fixture;
@@ -424,9 +424,9 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     },
   };
   const operation = { enrollment: e, owner, cut, targetSchema, stagingNode: node(join(root, 'staging')) };
-  const cli = (lifecycleReadback = lifecycle) => createFirstInstallCli({
+  const cli = (lifecycleReadback = lifecycle, selection?: UpgradeReleaseEnrollment['selection']) => createFirstInstallCli({
     identity: e.identity, captureHost: hostname(), serviceUid: process.geteuid!(), profile: 'test',
-    dataRoot: fixture.dataRoot, minimumFreeBytes: 1, upgradeReleaseOperations: { upgrade: operation },
+    dataRoot: fixture.dataRoot, minimumFreeBytes: 1, upgradeReleaseOperations: { upgrade: { ...operation, selection } },
     lifecycleReadbacks: { upgrade: lifecycleReadback }, upgradeCutReadbacks: { upgrade: cut },
   });
   const readback = [...args, '--readback', '--operation', 'upgrade'];
@@ -462,7 +462,7 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   const prepared = await cli().run(prepare);
   const legacyPreparationPath = join(root, 'staging', '.upgrade-upgrade.prepared.json');
   const preparationPath = inputs[1].researchCanary ? join(root, 'staging', '.upgrade-upgrade.prepared-canary.json') : legacyPreparationPath;
-  if (cutFault) {
+  if (cutFault && cutFault !== 'selection') {
     expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
     expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
     expect(lstatSync(preparationPath, { throwIfNoEntry: false })).toBeUndefined();
@@ -495,6 +495,71 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     replay: inputs[1].researchCanary ? 'research-canary-passed'
       : inputs[1].answerReplay ? 'answer-replayed' : 'hub-replayed',
   });
+  if (cutFault === 'selection') {
+    const select = [...args, '--select-generation', '--operation', 'upgrade'];
+    expect(await cli().run(select)).toMatchObject({ status: 'unavailable', code: 'UPGRADE_SELECTION_ENROLLMENT_REQUIRED' });
+    const publication = await cli().run(publish);
+    expect(publication).toMatchObject({ code: 'UPGRADE_GENERATION_PUBLISHED' });
+    const receipt = JSON.parse(readFileSync(join(successorRoot, '.patrick-upgrade-generation.json'), 'utf8')) as { generation: InstalledGeneration };
+    e.generations.push(receipt.generation);
+    let holds = 0;
+    let revokeDuringSigning = true;
+    let throwOnRelease = false;
+    const selection: NonNullable<UpgradeReleaseEnrollment['selection']> = {
+      preparationSha256: publication.upgradePreparationSha256!, generationSha256: publication.upgradeGenerationSha256!,
+      signer: { async signRecord(bytes) {
+        if (revokeDuringSigning && JSON.parse(Buffer.from(bytes).toString()).format === 'patrick-installed-selection-record-v1') {
+          fenced = false;
+        }
+        return fixture.signer.signRecord(bytes);
+      } },
+      async withCutFence(bound, receipt, use) {
+        expect(bound).toEqual(subject);
+        expect(receipt).toMatchObject({ fenceReceiptId: 'closed', manifestHash: captured.outcome.manifestHash });
+        expect(fenced).toBe(true);
+        holds++;
+        const value = await use(() => { if (!fenced) throw new Error('fixture fence expired'); });
+        if (throwOnRelease) throw new Error('fixture fence teardown failed');
+        return value;
+      },
+    };
+    const projectionPath = join(successorRoot, 'projections/nested/retained.json');
+    writeFileSync(projectionPath, 'substituted before selection');
+    expect(await cli(lifecycle, selection).run(select)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
+    expect(lstatSync(join(root, '.selection-upgrade'), { throwIfNoEntry: false })).toBeUndefined();
+    writeFileSync(projectionPath, projection);
+    expect(await cli(lifecycle, selection).run(select)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(fenced).toBe(false);
+    expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
+    expect(lstatSync(join(root, '.selection-upgrade'), { throwIfNoEntry: false })).toBeUndefined();
+    fenced = true;
+    revokeDuringSigning = false;
+    throwOnRelease = true;
+    expect(await cli(lifecycle, selection).run(select)).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
+    throwOnRelease = false;
+    fenced = false;
+    writeFileSync(projectionPath, 'new write following selection');
+    const selected = await cli(lifecycle, selection).run(select);
+    expect(selected).toMatchObject({ status: 'uncertain', code: 'UPGRADE_GENERATION_SELECTED', generationId: nextGeneration,
+      upgradePreparationSha256: selection.preparationSha256, upgradeGenerationSha256: selection.generationSha256 });
+    const observed = await createGenerationReader(e, owner).observe('upgrade');
+    expect(observed).toMatchObject({ pending: null, current: { sha256: selected.selectionSha256,
+      order: { previous: current.sha256, generation: receipt.generation } } });
+    expect(observed.current?.order).not.toHaveProperty('upgrade');
+    expect(holds).toBe(2);
+    expect(await cli(lifecycle, { ...selection, generationSha256: 'a'.repeat(64) }).run(select))
+      .toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(holds).toBe(2);
+    expect(readFileSync(projectionPath, 'utf8')).toBe('new write following selection');
+    expect(sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')))).toBe(sourceBefore);
+    const durable = readdirSync(join(root, 'history')).find(name => name.startsWith('upgrade.') && name.endsWith('.durable'));
+    expect(durable).toBeDefined();
+    unlinkSync(join(root, 'history', durable!));
+    expect(await cli(lifecycle, selection).run(select)).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
+    expect(holds).toBe(2);
+    return;
+  }
   const migrated = new DatabaseSync(servicePath, { readOnly: true });
   try {
     expect(migrated.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all()).toEqual(migrations);

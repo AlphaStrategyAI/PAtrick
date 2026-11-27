@@ -79,7 +79,16 @@ test.each([
   ['install', '--check-session'], ['upgrade', '--release', 'release', '--check-session'],
   ['install', '--release', 'release', '--check-session', '--operation', 'op'],
   ['install', '--release', 'release', '--check-session', '--readback'],
+  ['install', '--release', 'release', '--select-generation', '--operation', 'op'],
+  ['upgrade', '--select-generation', '--operation', 'op'],
 ])('strict parser refuses %j', (...args) => { expect(() => parseArguments(args)).toThrow('CLI_ARGUMENT_INVALID'); });
+test('upgrade selection requires an enrolled operation and cannot fall back to preview', async () => {
+  const f = fixture();
+  const args = ['upgrade', '--release', 'a'.repeat(64), '--select-generation', '--operation', 'op'];
+  expect(await f.cli().run(args)).toMatchObject({
+    action: 'select-generation', status: 'unavailable', code: 'UPGRADE_SELECTION_ENROLLMENT_REQUIRED',
+  });
+});
 test('install session check requires a registered preview and never falls back to a source candidate', async () => {
   const fixtureHost = fixture();
   const args = ['install', '--release', 'release', '--check-session'];

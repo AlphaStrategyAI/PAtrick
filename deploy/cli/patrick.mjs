@@ -94,11 +94,11 @@ export function parseArguments(argv) {
     if (!flag.startsWith('--') || seen.has(flag)) throw new Error('CLI_ARGUMENT_INVALID');
     seen.add(flag);
     const name = flag.slice(2);
-    if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation', 'publish-generation'].includes(name)) {
+    if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation', 'publish-generation', 'select-generation'].includes(name)) {
       if (explicitAction || command === 'doctor' && name !== 'preview' ||
         name === 'check-session' && command !== 'install' ||
         name === 'prepare-generation' && command !== 'install' && command !== 'upgrade' ||
-        name === 'publish-generation' && command !== 'upgrade') throw new Error('CLI_ARGUMENT_INVALID');
+        ['publish-generation', 'select-generation'].includes(name) && command !== 'upgrade') throw new Error('CLI_ARGUMENT_INVALID');
       explicitAction = true;
       request.action = name;
       continue;
@@ -115,7 +115,7 @@ export function parseArguments(argv) {
   if (request.action === 'check-session') {
     if (!request.release || request.operation) throw new Error('CLI_ARGUMENT_INVALID');
   } else if (request.action !== 'preview' && !request.operation) throw new Error('CLI_ARGUMENT_INVALID');
-  if (['prepare-generation', 'publish-generation'].includes(request.action) && !request.release) throw new Error('CLI_ARGUMENT_INVALID');
+  if (['prepare-generation', 'publish-generation', 'select-generation'].includes(request.action) && !request.release) throw new Error('CLI_ARGUMENT_INVALID');
   return Object.freeze(request);
 }
 function response(request, status, code, nextStep, extra = {}) {
@@ -243,6 +243,10 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     if (request.command !== 'doctor' && (host.serviceUid !== process.geteuid?.() || host.captureHost !== hostname())) {
       return response(request, 'blocked', 'HOST_SERVICE_IDENTITY_MISMATCH', 'Run the trusted controller under the registered service UID and capture host.', context);
     }
+    if (request.action === 'select-generation' && !upgradeReleaseSelected) {
+      return response(request, 'unavailable', 'UPGRADE_SELECTION_ENROLLMENT_REQUIRED',
+        'Enroll the published generation and its selection authority through the protected controller.', context);
+    }
     if (uninstallSelected) {
       const read = () => {
         if (host.uninstallOperations !== uninstallOperations) throw new Error('HOST_IDENTITY_MISMATCH');
@@ -355,12 +359,21 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
               (registeredJournal && registeredJournal.value !== journal)) throw new Error('HOST_IDENTITY_MISMATCH');
           return descriptor.value;
         });
-        const { enrollment, cut } = binding.value;
+        const { enrollment, cut, selection } = binding.value;
         if (!sameIdentity(identity, enrollment.identity) || cut.subject.upgradeOperationId !== request.operation ||
             cut.subject.releaseSha256 !== request.release) throw new Error('HOST_IDENTITY_MISMATCH');
         const validate = () => { binding.validate(); hostBinding.validate(); };
+        validate();
+        if (request.action === 'select-generation' && (!selection?.signer || typeof selection.withCutFence !== 'function')) {
+          return response(request, 'unavailable', 'UPGRADE_SELECTION_ENROLLMENT_REQUIRED',
+            'Enroll the published generation and its selection authority through the protected controller.', selected);
+        }
         const result = await run(binding.value, request.action, validate);
         validate();
+        if (result.status === 'generation-selected') return response(request, 'uncertain', 'UPGRADE_GENERATION_SELECTED',
+          'Read back the installed role startup and writer admission.',
+          { ...selected, generationId: result.generationId, selectionSha256: result.selectionSha256,
+            upgradePreparationSha256: result.preparationSha256, upgradeGenerationSha256: result.generationSha256 });
         if (result.status === 'generation-published') return response(request, 'uncertain', 'UPGRADE_GENERATION_PUBLISHED',
           'Confirm the signed generation selection.',
           { ...selected, upgradeRelease: result.receipt, generationId: result.generationId,
