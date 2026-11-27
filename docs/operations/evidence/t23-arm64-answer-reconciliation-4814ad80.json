@@ -1,0 +1,22 @@
+{
+  "format": "patrick-t23-arm64-staged-answer-reconciliation-v1",
+  "observedOn": "2026-11-27",
+  "architecture": "arm64",
+  "target": "registered MacBook Pro",
+  "scope": "isolated-acceptance",
+  "sourceCommit": "4814ad802cfcf275f0f7c5c9bfc1aceef6045e75",
+  "previousCommit": "d7f1043bbe0e75d59361cbe0946ffede5ef8174d",
+  "sourceSnapshotSha256": "69a357cd47d9734e1e2b5e65e93b3cab5fc7ed6997f311ebcf9c031ba8f71ad0",
+  "inventorySha256": "a87367c21aa1b2546bac7546c90184ddc83529782e6f8c8c72859f7821641864",
+  "packageSha256": "4bebd38ca174f6711868b6ceecd505b8cf468f3fe1a723216796af44e7cc5fee",
+  "manifestSha256": "f70b3d82ae7dcffc67f576607b34632e5398516838936f8c659dcf114e01455e",
+  "signerScope": "isolated-test-key",
+  "matchingNativeBuilds": 2,
+  "passedPresigningScenarios": 4,
+  "verifiedMaterialFiles": 489,
+  "verificationRejected": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
+  "identicalStagedAnswer": "UPGRADE_ANSWER_REPLAYED",
+  "inconsistentStagedAnswer": ["UPGRADE_RELEASE_INTERRUPTED", "UPGRADE_RELEASE_ADMISSION_FAILED"],
+  "confirmedSourceSelectionPreserved": true,
+  "outstanding": ["research-canary", "signed-generation-selection", "system-trust-enrollment", "system-upgrade", "system-reboot", "system-uninstall-preservation"]
+}
