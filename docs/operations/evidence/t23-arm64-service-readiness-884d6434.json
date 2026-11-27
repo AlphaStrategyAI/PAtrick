@@ -24,5 +24,22 @@
   },
   "isolatedGenerationTestsPassed": 40,
   "hostedRunId": 45952711628,
+  "hostedCandidates": {
+    "pairedVerification": "verified-signed-darwin-assets",
+    "verifiedMaterialFilesPerArchitecture": 489,
+    "arm64": {
+      "jobId": 140352021020,
+      "archiveSha256": "8fca33e0680e0388d7495861f33c721776367f2c3407ccdead0ab7578c8f897a",
+      "packageSha256": "fc55e9efb9c972b160d785754517b22ad2e081636e699f91b94a36fa3411edeb",
+      "manifestSha256": "04fcac89f87071512361f0ad98eb426b8d660f29d0d8c85f1fd1ba01378c4c8f",
+      "isolatedUpgradeCasesPassed": ["consistent-staged-answers", "inconsistent-staged-answers"]
+    },
+    "x64": {
+      "jobId": 140352021359,
+      "archiveSha256": "2608c02e36cc67ec84ef0b438bf1c27c88703ebe3eafda01f6b65dc8d03cc611",
+      "packageSha256": "b3ecf559514c7a8c2493d302278f04dd9bb5b134e235f2d439ccdd017690af92",
+      "manifestSha256": "f3af13dc9961637acddfdb2ef8016fb9ace3a051e18006fb12ca3be87b9c2918"
+    }
+  },
   "outstanding": ["research-canary", "signed-generation-selection", "system-trust-enrollment", "system-upgrade", "system-reboot", "system-uninstall-preservation"]
 }
