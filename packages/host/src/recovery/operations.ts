@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, lstat, open, readFile, realpath, unlink } from 'node:fs/promises';
 import { dirname, join, parse, resolve, sep } from 'node:path';
-import { assertRecoveryBackupSource, createRecoveryBackup, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
+import { assertRecoveryBackupSource, createRecoveryBackup, recoverySetEvidence, verifyImmutableRecoverySet, verifyRecoverySet, type RecoveryBackupOptions } from './backup.js';
 import { createRecoveryRestorer, type RecoveryRestoreOptions } from './restore.js';
 import { assertName, canonical, containedPath, durableJson, syncDirectory } from './files.js';
 import type { RecoveryDatabaseQuery, RecoveryDatabaseState, RecoveryManifestAuthority, RecoveryRestoreReceipt, RecoveryScope, RecoverySet } from './types.js';
@@ -211,7 +211,7 @@ export function createRecoveryBackupReader(options: {
   }
 
   return {
-    async read(requested: RecoveryOperationRequest): Promise<RecoveryOperationStatus> {
+    async read(requested: RecoveryOperationRequest, assertVerifiedSet?: (set: RecoverySet) => void): Promise<RecoveryOperationStatus> {
       const request = checkedRequest(requested);
       if (request.mode !== 'backup' || request.manifestHash !== undefined) throw new Error('RECOVERY_OPERATION_UNAVAILABLE');
       const target = plan(request);
@@ -230,6 +230,10 @@ export function createRecoveryBackupReader(options: {
         if (canonical(set.manifest.domains) !== canonical(target.scope.domains)) throw new Error('RECOVERY_OPERATION_BINDING_MISMATCH');
         if (target.verifyProtection && !await target.verifyProtection.call(target.protection, set)) {
           throw new Error('RECOVERY_OFF_HOST_UNCONFIRMED');
+        }
+        if (assertVerifiedSet) {
+          recoverySetEvidence(set);
+          assertVerifiedSet(set);
         }
       }, maxBytes);
 

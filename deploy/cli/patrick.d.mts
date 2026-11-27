@@ -4,6 +4,7 @@ import type * as FirstInstall from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { runUninstall } from '../host/uninstall.js';
 import type { UpgradePreview } from '../runtime/lifecycle-generation.js';
+import type { createMaintenanceCutReader } from '../runtime/maintenance-readback.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
 export type CliRequest = Readonly<{
@@ -31,7 +32,7 @@ export function createPatrickCli(
   host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined,
   firstInstall?: Pick<typeof FirstInstall, 'bindInstallPreviewEnrollment' | 'installBootstrapRequirements' |
     'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'> &
-    { runUninstall?: typeof runUninstall },
+    { runUninstall?: typeof runUninstall; createMaintenanceCutReader?: typeof createMaintenanceCutReader },
   previewUpgrade?: (packageSha256: string) => Promise<UpgradePreview | undefined>,
 ): {
   run(argv: readonly string[]): Promise<CliResult>;

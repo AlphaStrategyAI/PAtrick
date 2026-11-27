@@ -210,6 +210,9 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     const installSelected = installOperations && Object.hasOwn(installOperations, request.operation);
     const uninstallOperations = request.command === 'uninstall' && request.operation ? host?.uninstallOperations : undefined;
     const uninstallSelected = uninstallOperations && Object.hasOwn(uninstallOperations, request.operation);
+    const upgradeCutReadbacks = request.command === 'upgrade' && request.action === 'readback' && request.operation
+      ? host?.upgradeCutReadbacks : undefined;
+    const upgradeCutSelected = upgradeCutReadbacks && Object.hasOwn(upgradeCutReadbacks, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
     const lifecycle = legacyVaultReadback ? legacyVaultReadback.registration
@@ -220,7 +223,7 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     const requestedTarget = request.command === 'init' ? request.vault
       : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
     const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
-    if (!coldTargetSelected && !lifecycleSelected && !vaultInit?.publicRead &&
+    if (!coldTargetSelected && !lifecycleSelected && !upgradeCutSelected && !vaultInit?.publicRead &&
       !((installSelected || uninstallSelected) && request.action === 'readback')) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
@@ -284,6 +287,7 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
       const ready = Object.values(report.checks).filter((check) => check.impact === 'core').every((check) => check.status === 'ready');
       return response(request, ready ? 'completed' : 'blocked', ready ? 'DOCTOR_READY' : 'DOCTOR_PREREQUISITES', 'Resolve each core prerequisite before service admission.', report);
     }
+    let upgradeLifecycle;
     if (lifecycleSelected) {
       const binding = bindRegistration(() => {
         if (legacyVaultReadback) {
@@ -314,11 +318,41 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const result = await reader.read({ operationId: request.operation, command: request.command,
           targetId: lifecycleTarget, expectedGeneration, planSha256 });
         validate();
-        return projectLifecycle(request, context, result);
+        if (!upgradeCutSelected || result.status !== 'running_or_uncertain') return projectLifecycle(request, context, result);
+        upgradeLifecycle = { registration: selected, validate };
       } catch {
         let code = 'LIFECYCLE_READBACK_FAILED';
         try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
         return response(request, 'blocked', code, 'Inspect the signed records and independent evidence through the trusted controller.', context);
+      }
+    }
+    if (upgradeCutSelected) {
+      const selected = { ...context, operationId: request.operation };
+      const createReader = firstInstall?.createMaintenanceCutReader;
+      if (typeof createReader !== 'function') return response(request, 'unavailable', 'UPGRADE_CUT_RUNTIME_REQUIRED',
+        'Provision the enrolled maintenance cut verifier.', selected);
+      try {
+        const binding = bindRegistration(() => {
+          if (host.upgradeCutReadbacks !== upgradeCutReadbacks) throw new Error('HOST_IDENTITY_MISMATCH');
+          const descriptor = Object.getOwnPropertyDescriptor(upgradeCutReadbacks, request.operation);
+          if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+          return descriptor.value;
+        });
+        const { subject, target } = binding.value;
+        if (!sameIdentity(identity, target.identity) || subject.upgradeOperationId !== request.operation ||
+            subject.releaseSha256 !== request.release) throw new Error('HOST_IDENTITY_MISMATCH');
+        const result = await createReader(upgradeLifecycle
+          ? { ...binding.value, lifecycle: upgradeLifecycle.registration } : binding.value).read();
+        upgradeLifecycle?.validate();
+        binding.validate();
+        hostBinding.validate();
+        return response(request, 'uncertain', 'UPGRADE_CUT_VERIFIED',
+          'Read back the migrated generation and its activation receipt through the enrolled controller.',
+          { ...selected, generationId: subject.generationId, manifestHash: result.manifestHash });
+      } catch (error) {
+        const code = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value === 'HOST_IDENTITY_MISMATCH'
+          ? 'HOST_IDENTITY_MISMATCH' : 'UPGRADE_CUT_UNCONFIRMED';
+        return response(request, 'blocked', code, 'Reconcile the registered cut, backup and independent fence evidence.', selected);
       }
     }
     const installs = request.command === 'install' && request.release !== undefined

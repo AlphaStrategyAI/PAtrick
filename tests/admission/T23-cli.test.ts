@@ -30,9 +30,10 @@ import { afterEach } from 'vitest';
 import { openDatabase } from '@patrick/storage';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { readRecoveryDatabase } from '../../packages/host/src/recovery/backup.js';
+import type { RecoveryScope } from '../../packages/host/src/recovery/types.js';
 import { canonical, digest } from '../../packages/host/src/recovery/files.js';
 import { createLifecycleJournal, type LifecycleRegistration, type LifecycleRequest } from '../../deploy/runtime/lifecycle-journal.js';
-import { createRuntimeCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import { createFirstInstallCli, createMaintenanceCutReader, createRuntimeCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
 import type { RegisteredHost } from '../../deploy/lib/doctor.mjs';
 import { createNetworkInspector } from '../../packages/host/src/network/probes.js';
 import { createObsidianDoctor, createObsidianInspector } from '../../deploy/obsidian/doctor.mjs';
@@ -55,7 +56,7 @@ function fixture() {
   const identity = { accountId: 'owner', scopeId: 'scope', domains: ['personal'], deviceId: 'device', configRevision: '1' };
   let captures = 0;
   let interrupt = false;
-  const scope = { setId: 'set', domains: [{ domain: 'personal', writerEpoch: 'epoch', withdrawal: { seq: 0, hash: createHash('sha256').update('').digest('hex') } }], resources: [], versionLocks: { app: '1' } };
+  const scope: RecoveryScope = { setId: 'set', domains: [{ domain: 'personal', writerEpoch: 'epoch', withdrawal: { seq: 0, hash: createHash('sha256').update('').digest('hex') } }], resources: [], versionLocks: { app: '1' } };
   const backup = { root: join(root, 'sets'), databases: { service, hub }, authority, freeze: { async acquire() {
     captures++;
     if (interrupt) throw new Error('SECRET /Users/private credential=secret');
@@ -130,6 +131,82 @@ function verificationOnlyHost(f: ReturnType<typeof fixture>) {
 }
 
 const backupReadCommand = ['backup', '--target', 'target', '--readback', '--operation', 'backup'];
+
+test('a stopped installation requires a continuously fenced, claim-bound signed cut for upgrade', async () => {
+  const f = fixture();
+  const handoffRoot = join(f.root, 'handoff');
+  const answersPath = join(handoffRoot, 'local-answers.sqlite');
+  mkdirSync(handoffRoot);
+  const answers = openDatabase(answersPath);
+  answers.close();
+  f.target.backup.scope.resources.push({ kind: 'handoff', root: handoffRoot });
+  const completed = await f.cli().run(['backup', '--target', 'target', '--execute', '--operation', 'backup']);
+  expect(completed.status).toBe('completed');
+  f.closeSources();
+
+  const { backupReadback } = verificationOnlyHost(f);
+  const cut = { installationId: 'install', generationId: 'generation', selectionSha256: digest('selection'),
+    releaseSha256: digest('successor'), upgradeOperationId: 'upgrade', fenceEpoch: 'fence-start',
+    operationId: 'backup', targetId: 'target', setId: 'set', cutId: 'cut' };
+  const planSha256 = digest(canonical(cut));
+  const request = { operationId: cut.upgradeOperationId, command: 'upgrade' as const,
+    targetId: cut.releaseSha256, expectedGeneration: cut.generationId, planSha256 };
+  const lifecycle: LifecycleRegistration = {
+    root: backupReadback.root,
+    identity: { ...f.target.identity, installationId: cut.installationId },
+    plan: { command: request.command, targetId: request.targetId, expectedGeneration: request.expectedGeneration,
+      planSha256, nextGeneration: 'next-generation', releaseSha256: cut.releaseSha256 },
+    authority: backupReadback.authority,
+    evidence: { version: 'fixture', async observe(): Promise<never> { throw new Error('unexpected terminal'); } },
+  };
+  const journal = createLifecycleJournal(() => lifecycle, f.host.recovery.authority);
+  await journal.reserve(request);
+  const claim = await journal.claim(request);
+  if (claim.status !== 'claimed') throw new Error('expected a lifecycle claim');
+  const subject = { ...cut, planSha256, claimSha256: claim.subject.claimSha256 };
+  const receipt = { subject, status: 'closed_and_fenced' as const, fenceReceiptId: 'fence', currentFenceEpoch: subject.fenceEpoch,
+    manifestHash: completed.manifestHash!, localAnswersSha256: digest(readFileSync(answersPath)) };
+  let observations = 0;
+  const registered = { subject, journalRoot: backupReadback.root, journalAuthority: backupReadback.authority,
+    target: backupReadback.targets.target, lifecycle, async readContinuousFence() { observations++; return receipt; } };
+  expect(await createMaintenanceCutReader(registered).read()).toEqual({
+    status: 'verified', operationId: 'backup', setId: 'set', cutId: 'cut', manifestHash: completed.manifestHash, fenceReceiptId: 'fence',
+  });
+  expect(observations).toBe(2);
+  expect(f.captures()).toBe(1);
+  const cli = createFirstInstallCli({ ...f.host,
+    upgradeCutReadbacks: { upgrade: registered }, lifecycleReadbacks: { upgrade: lifecycle } });
+  const readback = ['upgrade', '--readback', '--operation', 'upgrade', '--release', subject.releaseSha256];
+  expect(await cli.run(readback)).toMatchObject({
+    status: 'uncertain', code: 'UPGRADE_CUT_VERIFIED', operationId: 'upgrade', generationId: 'generation',
+    manifestHash: completed.manifestHash,
+  });
+  expect(await cli.run([...readback.slice(0, -1), digest('other-release')])).toMatchObject({ status: 'blocked' });
+  expect(observations).toBe(4);
+  const wrongClaim = createMaintenanceCutReader({ ...registered, subject: { ...subject, claimSha256: digest('another-claim') } });
+  await expect(wrongClaim.read()).rejects.toThrow('MAINTENANCE_UPGRADE_CLAIM_UNCONFIRMED');
+  expect(observations).toBe(4);
+
+  for (const changed of [
+    { ...receipt, subject: { ...subject, generationId: 'other' } },
+    { ...receipt, subject: { ...subject, claimSha256: digest('other') } },
+    { ...receipt, subject: { ...subject, selectionSha256: digest('other-selection') } },
+    { ...receipt, currentFenceEpoch: 'reacquired' },
+    { ...receipt, manifestHash: digest('other') },
+    { ...receipt, localAnswersSha256: digest('other') },
+    undefined,
+  ]) {
+    const reader = createMaintenanceCutReader({ ...registered, async readContinuousFence() { return changed; } });
+    await expect(reader.read()).rejects.toThrow();
+  }
+  const fencedOnlyOnce = createMaintenanceCutReader({ ...registered,
+    async readContinuousFence() { return ++observations === 5 ? receipt : undefined; } });
+  await expect(fencedOnlyOnce.read()).rejects.toThrow();
+  writeFileSync(join(f.target.backup.options.root, 'set', 'resources/0/local-answers.sqlite'), 'changed');
+  await expect(createMaintenanceCutReader(registered).read()).rejects.toThrow();
+  expect(await cli.run(readback)).toMatchObject({ status: 'blocked', code: 'UPGRADE_CUT_UNCONFIRMED' });
+  expect(f.captures()).toBe(1);
+});
 
 test('verification-only CLI reads an authenticated completed backup after both source connections close', async () => {
   const f = fixture();

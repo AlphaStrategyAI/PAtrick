@@ -16,6 +16,8 @@ import type { SelectedRuntimePaths } from './role-launch.js';
 import { admitSupervisedServiceSelection, type SupervisedServiceRegistration } from './service-handoff.js';
 export type { ServiceHandoffAuthority, SupervisedServiceRegistration } from './service-handoff.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
+import { assertMaintenanceRecoverySet, createMaintenanceCutReader } from './maintenance-readback.js';
+export { createMaintenanceCutReader } from './maintenance-readback.js';
 import { runUninstall } from '../host/uninstall.js';
 import { createInstalledUpgradePreview, type GenerationEnrollment, type UpgradePreview } from './lifecycle-generation.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -113,6 +115,7 @@ const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
 const firstInstall = Object.freeze({
   bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease, runUninstall,
+  createLifecycleJournalReader, createMaintenanceCutReader,
 });
 
 export function requireRuntimeProvisioning(provisioning: RuntimeProvisioning): ProvisionedPorts {
@@ -789,11 +792,8 @@ function createMaintenanceOwner(input: MaintenanceRegistration, registration: Ru
         const result = await operations!.read(request);
         requireCut(result.status === 'completed' && answerDigest);
         const set = await verifyRecoverySet(await containedPath(setRoot, setId), signer, scope.versionLocks, readDatabase);
-        const handoff = set.manifest.artifacts.filter((artifact) => artifact.path.startsWith('resources/' + scope.resources.length + '/'));
-        requireCut(set.manifestHash === result.outcome.manifestHash && set.manifest.setId === setId &&
-          set.manifest.cutId === cutId && canonical(set.manifest.domains) === canonical(scope.domains) &&
-          set.manifest.completeness.recoverable === true && handoff.length === 1 && handoff[0].kind === 'handoff' &&
-          handoff[0].path === 'resources/' + scope.resources.length + '/local-answers.sqlite' && handoff[0].hash === answerDigest);
+        assertMaintenanceRecoverySet(set, { scope: backupScope, cutId, manifestHash: result.outcome.manifestHash,
+          localAnswersSha256: answerDigest });
         if (offHost) {
           const receipt: unknown = JSON.parse(await readFile(await containedPath(set.directory, 'off-host-receipt.json'), 'utf8'));
           requireCut(await verifyProtection!(subject, set.manifestHash, receipt) === true);
@@ -1079,6 +1079,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     get installPreviews() { return hostCapabilities.installPreviews; },
     get installOperations() { return ownCapability(hostCapabilities, 'installOperations'); },
     get uninstallOperations() { return ownCapability(hostCapabilities, 'uninstallOperations'); },
+    get upgradeCutReadbacks() { return ownCapability(hostCapabilities, 'upgradeCutReadbacks'); },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
     identity,
     captureHost: registrationData.captureHost,
@@ -1177,6 +1178,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   const publicVaultInit = hasVaultInitReadback(host);
   if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
   if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 &&
+    Object.getOwnPropertyNames(host.upgradeCutReadbacks ?? {}).length === 0 &&
     Object.getOwnPropertyNames(host.installOperations ?? {}).length === 0 &&
     Object.getOwnPropertyNames(host.uninstallOperations ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
@@ -1195,7 +1197,8 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
 
 type FirstInstallCliRegistration = Readonly<Pick<RegisteredHost,
   'identity' | 'captureHost' | 'serviceUid' | 'profile' | 'dataRoot' | 'minimumFreeBytes' |
-  'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations' | 'uninstallOperations'>>;
+  'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations' | 'uninstallOperations' |
+  'lifecycleReadbacks' | 'upgradeCutReadbacks'>>;
 
 export function createFirstInstallCli(registration: FirstInstallCliRegistration) {
   const { identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies } = registration;
@@ -1204,6 +1207,8 @@ export function createFirstInstallCli(registration: FirstInstallCliRegistration)
     get installPreviews() { return ownCapability(registration, 'installPreviews'); },
     get installOperations() { return ownCapability(registration, 'installOperations'); },
     get uninstallOperations() { return ownCapability(registration, 'uninstallOperations'); },
+    get lifecycleReadbacks() { return ownCapability(registration, 'lifecycleReadbacks'); },
+    get upgradeCutReadbacks() { return ownCapability(registration, 'upgradeCutReadbacks'); },
     runtime: firstInstall,
   });
   return createPatrickCli(host, undefined, firstInstall);

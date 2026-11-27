@@ -297,6 +297,8 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 2026-11-27，修复版 `d7f1043` 的 `arm64` 验收签名包通过目标 MacBook Pro 系统域初装、重复安装、首代次准备及签名回执读回。启用新实例时复核了旧实例的代次指针。launchd 停启后六个作业均变更 PID，Service UID 仍为 `402`，两个代次指针的摘要一致。Hub 健康检查和 Worker 通信通过，登记证书下的回环 HTTPS 健康端点返回 `200`，匿名会话返回 `401`。所有者通行密钥、整机重启、正式数据升级及卸载保留待验收。[系统验收回执](evidence/t23-arm64-system-intake-d7f1043.json)
 
+升级控制器可为精确操作登记 `upgradeCutReadbacks`。`patrick upgrade --readback --release <sha256> --operation <id>` 在 Service 停止后核验未完成的签名升级认领、已签名 RecoverySet、两库和本地应答库。`readContinuousFence` 从独立控制方读回封闭证明，绑定安装实例、源代次和选择摘要、候选摘要、升级计划和认领、备份操作及围栏 epoch。控制方须记录围栏持续状态并使原 epoch 在失效后永久不可用。读回在文件核验前后检查同一认领和围栏证明。`UPGRADE_CUT_VERIFIED` 保留 `uncertain`，候选迁移、切换和启动须取得各自的完成证据。
+
 构建 `45930143177` 的 Apple Silicon 和 Intel 作业均通过。独立下载复核了每套归档中的 489 个部署文件、原生 SQLite 扩展和控制器。用本机生成的 `arm64` 验收包与托管材料生成的 `x64` 验收包对同一提交执行联合验签，两份包均通过。当前目标机的 `arm64` 包拒绝错误公钥、包摘要及 Intel 架构预期。系统验收库尚无 `personal` 域的写者登记，所有者首次登记口令依赖该写入准入。[验签与实机回执](evidence/t23-arm64-system-intake-d7f1043.json)
 
 2026-11-26，目标 MacBook Pro 使用所有者确认的 Ed25519 公钥，在 `/Library/Application Support/PAtrick/t23-acceptance` 安装 `2c25555` 的托管 `arm64` 签名包。首次预览拦下了一次模式为 `0500` 的控制器。复验控制器摘要并校正为 `0555` 后，发布、重试、首代次准备及公钥读回均通过。Caddy、Service、Hub 与 Worker 已分配独立本机账号。首代次选择、三服务启动和所有者登录仍待验收。[系统目录初装回执](evidence/t23-arm64-system-intake-2c25555.json)

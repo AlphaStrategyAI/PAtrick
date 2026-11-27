@@ -214,12 +214,21 @@ function enrollment(current: () => LifecycleRegistration) {
       const observed = await inspect(bind(request));
       observed.confirm();
       return observed.status;
+    },
+    async readClaim(request: LifecycleRequest): Promise<LifecycleEvidenceSubject | undefined> {
+      const binding = bind(request);
+      const observed = await inspect(binding);
+      observed.confirm();
+      if (observed.status.status === 'running_or_uncertain' && observed.claim) {
+        return structuredClone({ binding, claimSha256: observed.claim.sha256 });
+      }
     } };
 }
 
 /** A reconstructed reader requires only public journal verification and independently enrolled evidence readback. */
 export function createLifecycleJournalReader(current: () => LifecycleRegistration) {
-  return { read: enrollment(current).read };
+  const { read, readClaim } = enrollment(current);
+  return { read, readClaim };
 }
 
 export function createLifecycleJournal(current: () => LifecycleRegistration, signer: Signer) {
