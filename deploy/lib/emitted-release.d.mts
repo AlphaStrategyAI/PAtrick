@@ -85,6 +85,7 @@ export type AdmittedDeployment = Readonly<StagedRuntimePaths & {
   autoloopHub?: Readonly<{ commit: string; root: string; entry: string; initializer: string }>;
 }>;
 export type AdmittedEmittedRuntime = AdmittedDeployment | Readonly<StagedRuntimePaths & { profile: 'runtime-only' }>;
+export function checkRuntimeAcl(paths: string[]): void;
 export function withStagedDeployment<T>(receipt: VerifiedEmittedRuntimeCandidate, staged: StagedEmittedRuntime,
   use: (runtime: AdmittedDeployment) => Promise<T>): Promise<T>;
 /**

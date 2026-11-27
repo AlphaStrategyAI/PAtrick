@@ -307,6 +307,7 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   });
   const readback = [...args, '--readback', '--operation', 'upgrade'];
   const execute = [...args, '--execute', '--operation', 'upgrade'];
+  const prepare = [...args, '--prepare-generation', '--operation', 'upgrade'];
   const releasePath = join(root, 'releases', expected.packageSha256);
   const pointerBefore = readFileSync(join(root, 'current'));
   const sourceBefore = sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')));
@@ -331,11 +332,22 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   expect(await cli().run(execute)).toEqual(published);
   expect(await cli().run(readback)).toMatchObject({ code: 'UPGRADE_RELEASE_PUBLISHED' });
   expect(node(releasePath)).toEqual(releaseNode);
+  const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
+  const prepared = await cli().run(prepare);
+  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_DATA_STAGED', generationId: nextGeneration });
+  for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
+    expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
+  }
+  const stagedNode = node(stagedData);
+  expect(await cli().run(prepare)).toEqual(prepared);
+  expect(node(stagedData)).toEqual(stagedNode);
+  writeFileSync(join(stagedData, 'resources/0/local-answers.sqlite'), 'changed staged file');
+  expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
   expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
   expect(sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')))).toBe(sourceBefore);
   fenced = false;
   expect(await cli().run(readback)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
-}, 180_000);
+}, 240_000);
 
 test.skipIf(inputs.length === 0)('installed upgrade previews a pinned signed successor from the confirmed generation', async () => {
   const fixture = await installedUpgradeFixture();

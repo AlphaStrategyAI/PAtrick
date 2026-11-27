@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   createRecoveryBackupReader, type RecoveryBackupReadbackTarget, type RecoveryJournalRoot,
 } from '../../packages/host/src/recovery/operations.js';
-import type { RecoveryManifestAuthority, RecoveryScope, RecoverySet } from '../../packages/host/src/recovery/types.js';
+import type { RecoveryArtifact, RecoveryManifestAuthority, RecoveryScope, RecoverySet } from '../../packages/host/src/recovery/types.js';
 import { sameIdentity } from '../lib/doctor.mjs';
 import { createLifecycleJournalReader, type LifecycleRegistration, type LifecycleRequest } from './lifecycle-journal.js';
 
@@ -29,6 +29,7 @@ type FenceObservation = Readonly<{
   localAnswersSha256: string;
 }>;
 type Verifier = Pick<RecoveryManifestAuthority, 'keyId' | 'verify'>;
+export type VerifiedCutMaterial = Readonly<{ directory: string; artifacts: readonly Readonly<RecoveryArtifact>[] }>;
 export type MaintenanceCutReadbackRegistration = {
   subject: CutSubject;
   journalRoot: RecoveryJournalRoot;
@@ -105,16 +106,29 @@ export function createMaintenanceCutReader(registration: MaintenanceCutReadbackR
     return { fenceReceiptId, manifestHash, localAnswersSha256 };
   }
 
+  async function verifyCut() {
+    const fence = await currentFence();
+    let verified: VerifiedCutMaterial | undefined;
+    const result = await backup.read({ operationId, targetId, mode: 'backup' }, (set) => {
+      assertMaintenanceRecoverySet(set, { scope, cutId, ...fence });
+      verified = Object.freeze({ directory: set.directory,
+        artifacts: Object.freeze(set.manifest.artifacts.map(artifact => Object.freeze({ ...artifact }))) });
+    });
+    if (result.status !== 'completed' || !verified || !isDeepStrictEqual(await currentFence(), fence)) {
+      throw new Error('MAINTENANCE_CLOSE_UNCONFIRMED');
+    }
+    const receipt = { status: 'verified' as const, operationId, setId, cutId,
+      manifestHash: fence.manifestHash, fenceReceiptId: fence.fenceReceiptId };
+    return { receipt, verified };
+  }
   return Object.freeze({
-    async read() {
-      const fence = await currentFence();
-      const result = await backup.read({ operationId, targetId, mode: 'backup' }, (set) =>
-        assertMaintenanceRecoverySet(set, { scope, cutId, ...fence }));
-      if (result.status !== 'completed' || !isDeepStrictEqual(await currentFence(), fence)) {
-        throw new Error('MAINTENANCE_CLOSE_UNCONFIRMED');
-      }
-      return { status: 'verified' as const, operationId, setId, cutId,
-        manifestHash: fence.manifestHash, fenceReceiptId: fence.fenceReceiptId };
+    async read() { return (await verifyCut()).receipt; },
+    async useVerifiedSet<T>(expected: Awaited<ReturnType<typeof verifyCut>>['receipt'], use: (set: VerifiedCutMaterial) => Promise<T>) {
+      const { verified, receipt } = await verifyCut();
+      if (!isDeepStrictEqual(receipt, expected)) throw new Error('MAINTENANCE_CLOSE_UNCONFIRMED');
+      const output = await use(verified);
+      if (!isDeepStrictEqual((await verifyCut()).receipt, expected)) throw new Error('MAINTENANCE_CLOSE_UNCONFIRMED');
+      return output;
     },
   });
 }

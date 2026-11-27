@@ -96,7 +96,8 @@ export function parseArguments(argv) {
     const name = flag.slice(2);
     if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation'].includes(name)) {
       if (explicitAction || command === 'doctor' && name !== 'preview' ||
-        ['check-session', 'prepare-generation'].includes(name) && command !== 'install') throw new Error('CLI_ARGUMENT_INVALID');
+        name === 'check-session' && command !== 'install' ||
+        name === 'prepare-generation' && command !== 'install' && command !== 'upgrade') throw new Error('CLI_ARGUMENT_INVALID');
       explicitAction = true;
       request.action = name;
       continue;
@@ -359,6 +360,9 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const validate = () => { binding.validate(); hostBinding.validate(); };
         const result = await run(binding.value, request.action, validate);
         validate();
+        if (result.status === 'data-staged') return response(request, 'uncertain', 'UPGRADE_DATA_STAGED',
+          'Run the successor schema migrations and contract replay in the isolated stage.',
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
         if (result.status === 'published') return response(request, 'uncertain', 'UPGRADE_RELEASE_PUBLISHED',
           'Prepare the successor data generation from the verified cut.', { ...selected, upgradeRelease: result.receipt });
         if (result.status === 'interrupted') return response(request, 'uncertain', 'UPGRADE_RELEASE_INTERRUPTED',
@@ -403,6 +407,8 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
       ? host.installPreviews : undefined;
     const installEnrolled = installs && Object.hasOwn(installs, request.release);
     const checkSession = request.action === 'check-session';
+    if (prepareGeneration && request.command === 'upgrade') return response(request, 'unavailable',
+      'UPGRADE_RELEASE_RUNTIME_REQUIRED', 'Provision the enrolled upgrade and maintenance cut.', context);
     if (prepareGeneration && (!installSelected || !installEnrolled)) return response(request, 'unavailable',
       'INSTALL_GENERATION_ENROLLMENT_REQUIRED', 'Provision the release operation and first generation through the registered controller.', context);
     if (checkSession && !installEnrolled) return response(request, 'unavailable', 'INSTALL_SESSION_ENROLLMENT_REQUIRED',

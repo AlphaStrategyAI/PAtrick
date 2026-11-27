@@ -21,7 +21,7 @@ export { createMaintenanceCutReader } from './maintenance-readback.js';
 import { runUninstall } from '../host/uninstall.js';
 import {
   createInstalledUpgradePreview, runInstalledUpgradeRelease as runGenerationUpgradeRelease,
-  type GenerationEnrollment, type UpgradePreview, type UpgradeReleaseEnrollment,
+  type GenerationEnrollment, type UpgradePreview, type UpgradeReleaseAction, type UpgradeReleaseEnrollment,
 } from './lifecycle-generation.js';
 export { installedUpgradePlanSha256 } from './lifecycle-generation.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -116,7 +116,7 @@ type ProvisionedPorts = Readonly<{
 }>;
 
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
-export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: 'execute' | 'readback', validate: () => void) {
+export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction, validate: () => void) {
   validate();
   return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut));
 }

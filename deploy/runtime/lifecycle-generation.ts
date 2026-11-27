@@ -1,16 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, randomUUID, verify } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync,
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, realpathSync, renameSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { open } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-import { createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
+import { checkRuntimeAcl, createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
   verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { isLifecycleRecordName } from './lifecycle-journal.js';
-import type { createMaintenanceCutReader, MaintenanceCutReadbackRegistration } from './maintenance-readback.js';
+import type { createMaintenanceCutReader, MaintenanceCutReadbackRegistration, VerifiedCutMaterial } from './maintenance-readback.js';
+import { containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
 
 type Lease = RuntimeLease;
 
@@ -69,6 +71,7 @@ export type UpgradeReleaseEnrollment = Readonly<{
 }>;
 type UpgradeCutPlan = Omit<MaintenanceCutReadbackRegistration['subject'], 'claimSha256' | 'planSha256'>;
 type UpgradeCutReader = ReturnType<typeof createMaintenanceCutReader>;
+export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
@@ -322,6 +325,117 @@ function recordUpgradePublication(path: string, contents: Buffer, parent: Genera
     renameSync(scratch, path);
     syncDirectory(dirname(path), parent);
   } finally { closeSync(fd); }
+}
+
+async function stageUpgradeData(set: VerifiedCutMaterial, path: string, parent: GenerationNode, guard: () => void,
+  confirmCut: () => Promise<void>, onAttempt: () => void) {
+  const staging = dirname(path);
+  const scratch = path + '.partial';
+  const { artifacts } = set;
+  const entries = new Map<string, Set<string>>();
+  for (const { path: artifact } of artifacts) {
+    for (let entry = artifact; entry !== '.'; entry = dirname(entry)) {
+      const parent = dirname(entry);
+      const children = entries.get(parent) ?? new Set<string>();
+      children.add(basename(entry));
+      entries.set(parent, children);
+    }
+  }
+  async function inspect(root: string) {
+    const rootPin = pin(stat(root));
+    const directories = new Map<string, GenerationNode>();
+    const confirmDirectory = (directory: string, expected: GenerationNode) =>
+      requireValue((checkNode(directory, expected, true).mode & 0o7777n) === 0o700n);
+    guard();
+    confirmDirectory(root, rootPin);
+    for (const [relative, children] of entries) {
+      const directory = join(root, relative);
+      const expected = pin(stat(directory));
+      confirmDirectory(directory, expected);
+      requireValue(canonicalize(readdirSync(directory).sort()) === canonicalize([...children].sort()));
+      directories.set(directory, expected);
+    }
+    checkRuntimeAcl([...directories.keys(), ...artifacts.map(artifact => join(root, artifact.path))]);
+    for (const artifact of artifacts) {
+      guard();
+      const file = await containedPath(root, artifact.path);
+      const expected = pin(stat(file));
+      requireValue((checkNode(file, expected, false).mode & 0o7777n) === 0o600n);
+      const actual = await fileHash(file);
+      checkNode(file, expected, false);
+      requireValue(actual.hash === artifact.hash && actual.bytes === artifact.bytes);
+    }
+    guard();
+    for (const [directory, expected] of [...directories].sort(([left], [right]) => right.length - left.length)) {
+      confirmDirectory(directory, expected);
+      syncDirectory(directory, expected);
+    }
+    return rootPin;
+  }
+  guard();
+  checkRuntimeAcl([dirname(staging), staging]);
+  if (lstatSync(scratch, { throwIfNoEntry: false })) return false;
+  if (lstatSync(path, { throwIfNoEntry: false })) {
+    await inspect(path);
+    await confirmCut();
+    guard();
+    syncDirectory(staging, parent);
+    return true;
+  }
+  const free = statfsSync(staging, { bigint: true });
+  const needed = artifacts.reduce((total, file) => total + BigInt(file.bytes), 0n);
+  requireValue(free.bsize > 0n && free.bavail * free.bsize >= needed);
+  onAttempt();
+  mkdirSync(scratch, { mode: 0o700 });
+  const rootPin = pin(stat(scratch));
+  const newDirectories = [...entries.keys()].filter(relative => relative !== '.')
+    .sort((left, right) => left.length - right.length).map(relative => join(scratch, relative));
+  for (const directory of newDirectories) mkdirSync(directory, { mode: 0o700 });
+  checkRuntimeAcl([scratch, ...newDirectories]);
+  for (const artifact of artifacts) {
+    guard();
+    checkNode(scratch, rootPin, true);
+    const source = await containedPath(set.directory, artifact.path);
+    guard();
+    checkNode(scratch, rootPin, true);
+    const target = join(scratch, artifact.path);
+    const descriptor = await open(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    try {
+      guard();
+      const targetNode = pin(await descriptor.stat({ bigint: true }));
+      requireValue((checkNode(target, targetNode, false).mode & 0o7777n) === 0o600n);
+      checkRuntimeAcl([target]);
+      const input = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const sourceInfo = await input.stat();
+        requireValue(sourceInfo.isFile() && sourceInfo.size === artifact.bytes);
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, artifact.bytes));
+        for (let offset = 0; offset < artifact.bytes;) {
+          guard();
+          const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, artifact.bytes - offset), offset);
+          requireValue(bytesRead > 0);
+          for (let written = 0; written < bytesRead;) {
+            guard();
+            const { bytesWritten } = await descriptor.write(buffer, written, bytesRead - written, offset + written);
+            requireValue(bytesWritten > 0);
+            written += bytesWritten;
+          }
+          offset += bytesRead;
+        }
+      } finally { await input.close(); }
+      guard();
+      await descriptor.sync();
+    } finally { await descriptor.close(); }
+  }
+  requireValue(canonicalize(await inspect(scratch)) === canonicalize(rootPin));
+  await confirmCut();
+  guard();
+  checkNode(scratch, rootPin, true);
+  requireValue(!lstatSync(path, { throwIfNoEntry: false }));
+  renameSync(scratch, path);
+  syncDirectory(staging, parent);
+  checkNode(path, rootPin, true);
+  return true;
 }
 
 export function canRestoreOldRelease(input: {
@@ -693,7 +807,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }, true, enrolled);
   }
   async function prepareUpgradeRelease(targetSchema: number, stagingNode: GenerationNode,
-    cut: MaintenanceCutReadbackRegistration, action: 'execute' | 'readback', backup: UpgradeCutReader) {
+    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader) {
     const { claimSha256, planSha256, ...cutPlan } = cut.subject;
     const { installationId, generationId, selectionSha256, releaseSha256, upgradeOperationId } = cutPlan;
     const nextGeneration = cut.lifecycle.plan.nextGeneration;
@@ -742,7 +856,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         if (lstatSync(destination, { throwIfNoEntry: false })) return { status: 'interrupted' as const };
         if (!lstatSync(published, { throwIfNoEntry: false })) {
           requireValue(!lstatSync(publicationRecord, { throwIfNoEntry: false }));
-          if (action === 'readback') return { status: 'pending' as const };
+          if (action !== 'execute') return { status: 'pending' as const };
           const free = statfsSync(stagingRoot, { bigint: true });
           const needed = candidate.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
           requireValue(free.bsize > 0n && free.bavail * free.bsize >= needed);
@@ -764,13 +878,19 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             requireValue((checkNode(publicationRecord, pin(existing), false).mode & 0o7777n) === 0o600n);
             const observed = await readRegularFile(publicationRecord, recordLimit, { root: stagingRoot, validate: guard });
             requireValue(observed.equals(effectiveReceipt));
+            if (action === 'prepare-generation') {
+              const staged = await backup.useVerifiedSet(initialCut, set =>
+                stageUpgradeData(set, destination + '.data', stagingNode, guard, confirmCut, () => { attempted = true; }));
+              return staged ? { status: 'data-staged' as const, receipt, generationId: nextGeneration }
+                : { status: 'interrupted' as const };
+            }
             if (action === 'execute') {
               attempted = true;
               syncDirectory(stagingRoot, stagingNode);
             }
             return { status: 'published' as const, receipt };
           }
-          if (action === 'readback') return { status: 'interrupted' as const };
+          if (action !== 'execute') return { status: 'interrupted' as const };
           attempted = true;
           syncDirectory(stagingRoot, stagingNode);
           syncDirectory(releasesRoot, e.stores.releases);
@@ -781,7 +901,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         await confirmCut();
         return result;
       }, true, enrolled);
-      return await (action === 'execute' ? withStoppedWriters(prepare) : prepare(() => {}));
+      return await (action === 'readback' ? prepare(() => {}) : withStoppedWriters(prepare));
     } catch (error) {
       if (attempted) return { status: 'interrupted' as const };
       throw error;
@@ -928,9 +1048,9 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade, prepareUpgradeRelease, withStoppedWriters };
 }
 
-export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: 'execute' | 'readback',
+export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction,
   validate: () => void, backup: UpgradeCutReader) {
-  requireValue(action === 'execute' || action === 'readback');
+  requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation');
   validate();
   const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
   return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup);

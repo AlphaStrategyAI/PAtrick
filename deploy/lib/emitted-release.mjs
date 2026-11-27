@@ -350,7 +350,7 @@ function ancestry(path, ownerRoot) {
 function recheck(capture, fingerprint = physical) {
   for (const [path, identity] of capture) check(fingerprint(stat(path)) === identity, 'physical identity changed ' + path);
 }
-function checkRuntimeAcl(paths) {
+export function checkRuntimeAcl(paths) {
   if (process.platform !== 'darwin') return;
   check(paths.every(path => Array.from(path).every(character => {
     const code = character.charCodeAt(0);
