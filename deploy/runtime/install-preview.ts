@@ -3,7 +3,6 @@ import { createPublicKey, verify } from 'node:crypto';
 import { accessSync, chmodSync, chownSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync,
   readFileSync, realpathSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
-import { stripTypeScriptTypes } from 'node:module';
 import { hostname, machine } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,12 +11,13 @@ import { openDatabase } from '@patrick/storage';
 import { autoloopHubDatabase, autoloopHubDirectory, flatAutoloopHubDatabase, legacyHubDatabase, serviceDataDirectory,
   type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import { projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
-import { autoloopHub, renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
+import { renderDeploymentTemplates, deploymentPaths, type DeploymentRegistration } from '../lib/deployment-templates.mjs';
 import {
   createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, stageVerifiedEmittedRuntime, publishStagedDeployment, withPublishedDeployment,
   type AdmittedDeployment, type ExclusiveRuntimeStaging, type RuntimeLease, type EmittedReleaseExpectation, type EmittedReleaseTrustPolicy,
 } from '../lib/emitted-release.mjs';
 import { admitReadRoot, canonicalize, readRegularFile, RELEASE_LIMITS, sha256 } from '../lib/release.mjs';
+import { autoloopKernelSha256, loadAutoloopKernel } from './autoloop-kernel.js';
 import { createLifecycleJournal, createLifecycleJournalReader, lifecycleRecordName,
   type LifecycleRegistration, type LifecycleRequest, type LifecycleStatus } from './lifecycle-journal.ts';
 
@@ -566,7 +566,6 @@ Promise<LifecycleStatus | { status: 'approval-required' } | T> {
   }
 }
 
-const autoloopKernelSha256 = autoloopHub.files[autoloopHub.initializer];
 const firstDatabases = ['service.sqlite', autoloopHubDatabase, 'answers.sqlite'] as const;
 const firstDirectories = ['credentials', 'blobs', 'projections'] as const;
 const firstServiceEntries = ['service.sqlite', 'answers.sqlite', ...firstDirectories] as const;
@@ -702,19 +701,6 @@ async function observeGenerationFiles(root: string, uid: number, existing: boole
   return { roles, databaseSha256 };
 }
 
-async function loadAutoloopInitializer(kernelPath: string, guard: () => void) {
-  const root = admitReadRoot(dirname(kernelPath));
-  const source = await readRegularFile(kernelPath, 64 * 1024, { root: root.root, validate() {
-    guard();
-    root.validate();
-  } });
-  if (sha256(source) !== autoloopKernelSha256) throw new Error('AUTOLOOP_BOOTSTRAP_SOURCE_INVALID');
-  const code = Buffer.from(stripTypeScriptTypes(source.toString('utf8'))).toString('base64');
-  const { initialize } = await import('data:text/javascript;base64,' + code) as { initialize(database: DatabaseSync): void };
-  guard();
-  return initialize;
-}
-
 export async function prepareFirstInstallGeneration(current: Registry, releaseId: string, operationId: string,
   operation: InstallReleaseEnrollment, validateOperation: () => void): Promise<InstalledGeneration> {
   validateOperation();
@@ -744,7 +730,7 @@ export async function prepareFirstInstallGeneration(current: Registry, releaseId
           if (typeof operation.signJournal !== 'function') throw new Error('INSTALL_GENERATION_SIGNER_REQUIRED');
           const initializer = kernelPath ?? release.autoloopHub?.initializer;
           requireFact(typeof initializer === 'string');
-          const initialize = await loadAutoloopInitializer(initializer, guard);
+          const { initialize } = await loadAutoloopKernel(initializer, guard);
           const disk = statfsSync(data, { bigint: true });
           requireFact(disk.bsize > 0n && disk.bavail * disk.bsize >= BigInt(e.reserveBytes.data));
           writing = true;

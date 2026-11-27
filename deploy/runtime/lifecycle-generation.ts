@@ -12,6 +12,7 @@ import { checkRuntimeAcl, createInstalledRootOwner, deriveRuntimeStaging, leased
   verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
+import { loadAutoloopKernel, replayAutoloopProjection } from './autoloop-kernel.js';
 import { isLifecycleRecordName } from './lifecycle-journal.js';
 import type { createMaintenanceCutReader, MaintenanceCutReadbackRegistration, VerifiedCutMaterial } from './maintenance-readback.js';
 import { containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
@@ -506,12 +507,17 @@ function observeServiceMigration(path: string, guard: () => void, expected?: Ser
   });
 }
 
-function validateStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: string, servicePath: string,
-  databases: UpgradeDatabasePorts, guard: () => void) {
+async function replayStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: string, servicePath: string,
+  initializer: string, databases: UpgradeDatabasePorts, guard: () => void) {
   guard();
   const hub = set.artifacts.find(artifact => artifact.path === 'databases/hub.sqlite' && artifact.kind === 'database');
   requireValue(hub);
-  const hubSeq = withImmutableUpgradeDatabase(join(rawData, hub.path), database => databases.hubSequence(database, 'hub'));
+  const kernel = await loadAutoloopKernel(initializer, guard);
+  const hubSeq = withImmutableUpgradeDatabase(join(rawData, hub.path), database => {
+    const sequence = databases.hubSequence(database, 'hub');
+    replayAutoloopProjection(kernel, database, sequence, guard);
+    return sequence;
+  });
   guard();
   const serviceSeq = withImmutableUpgradeDatabase(servicePath, database => databases.hubSequence(database, 'service'));
   requireValue(serviceSeq === hubSeq);
@@ -1059,18 +1065,20 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
               const rawData = destination + '.data';
               const migratedService = destination + '.service';
               const nativeHub = generationHubDatabase(current.order.generation.roles) !== legacyHubDatabase;
-              if (nativeHub) requireValue(deployment.autoloopHub);
+              const initializer = deployment.autoloopHub?.initializer;
+              if (nativeHub) requireValue(initializer);
               const onAttempt = () => { attempted = true; };
               const prepared = await backup.useVerifiedSet(initialCut, async set => {
                 if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return false;
                 if (!await migrateStagedService({ set, rawData, path: migratedService, parent: stagingNode,
                   releaseRoot: deployment.root, manifestSha256: manifest.sha256, publicationSha256: sha256(effectiveReceipt),
                   migrate: databases.migrateService, guard, confirmCut, onAttempt })) return false;
-                if (nativeHub) validateStagedUpgradeCompanions(set, rawData, join(migratedService, 'service.sqlite'), databases, guard);
+                if (nativeHub && initializer) await replayStagedUpgradeCompanions(set, rawData,
+                  join(migratedService, 'service.sqlite'), initializer, databases, guard);
                 return true;
               });
               if (!prepared) return { status: 'interrupted' as const };
-              return { status: nativeHub ? 'data-validated' as const : 'service-migrated' as const,
+              return { status: nativeHub ? 'hub-replayed' as const : 'service-migrated' as const,
                 receipt, generationId: nextGeneration };
             }
             if (action === 'execute') {

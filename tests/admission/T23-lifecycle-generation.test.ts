@@ -280,7 +280,8 @@ async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'cre
   return { ...h, cli, args, current: current!, expected, targetSchema, dataRoot };
 }
 
-test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed successor against the frozen cut and supports readback', async () => {
+test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
+  'a registered upgrade publishes a signed successor against the frozen cut (projection mismatch: %s)', async mismatchedProjection => {
   const fixture = await installedUpgradeFixture(undefined, true);
   const { expected, targetSchema, current, root, args, owner, e } = fixture;
   const preview = (await fixture.cli.run(args)).upgradePreview!;
@@ -307,13 +308,24 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   const initializerSource = readFileSync(initializer);
   expect(sha256(initializerSource)).toBe(autoloopHub.files[autoloopHub.initializer]);
   const initializerCode = Buffer.from(stripTypeScriptTypes(initializerSource.toString())).toString('base64');
-  const { initialize } = await import('data:text/javascript;base64,' + initializerCode) as { initialize(database: DatabaseSync): void };
+  const { View, evolve } = await import('data:text/javascript;base64,' + initializerCode) as {
+    View: new(database: DatabaseSync, seq?: number, next?: Record<string, number>, format?: string) => unknown;
+    evolve(view: unknown, facts: unknown[], database: DatabaseSync): void;
+  };
   const hubSetup = new DatabaseSync(hubPath);
   try {
     hubSetup.exec('DROP TABLE generation_marker');
-    initialize(hubSetup);
-    hubSetup.prepare('INSERT INTO facts VALUES (?, ?)').run(1, '{"version":1,"seq":1,"at":0,"type":"rules","changes":[]}');
-    hubSetup.prepare('INSERT INTO projection_meta VALUES (1, 1, ?, ?)').run('{}', 'fixture-format');
+    const fact = { version: 1, seq: 1, at: 0, type: 'event',
+      changes: [{ table: 'events', key: '1', row: { id: 1, source: 'patrick' } }] };
+    evolve(new View(hubSetup, 0, {}, 'fixture-format'), [fact], hubSetup);
+    hubSetup.prepare('INSERT INTO facts VALUES (?, ?)').run(1, JSON.stringify(fact));
+    if (mismatchedProjection === true) hubSetup.exec("DELETE FROM projections WHERE collection = 'events' AND key = '1'");
+    if (mismatchedProjection === 'empty-log') {
+      hubSetup.exec('DELETE FROM facts');
+      hubSetup.exec('DELETE FROM projection_meta');
+      service.exec("DELETE FROM hub_snapshots WHERE cursor_name = 'hub_observer'");
+      service.exec("DELETE FROM projection_cursors WHERE name = 'hub_observer'");
+    }
   } finally { hubSetup.close(); }
   const hub = new Database(hubPath, { fileMustExist: true });
   const answersPath = join(handoff, 'local-answers.sqlite');
@@ -408,7 +420,13 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
-  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_DATA_VALIDATED', generationId: nextGeneration });
+  if (mismatchedProjection) {
+    expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
+    expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
+    return;
+  }
+  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration });
   for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
     expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
   }

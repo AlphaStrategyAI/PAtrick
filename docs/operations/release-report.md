@@ -303,7 +303,7 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 `patrick upgrade --prepare-generation --release <sha256> --operation <id>` 核对发布回执，在写者锁内将 RecoverySet 中登记的 Service、Hub、Answers 快照和附带资源复制到 `staging/.upgrade-<id>.data`，逐项核对路径、字节数、SHA-256 和围栏。随后用候选包签名清单中的 SQL 迁移 Service 数据库的独立副本，比对迁移历史、完整性和原有表数据，持久化回执并发布到 `staging/.upgrade-<id>.service`。同操作可重验已发布的副本，或续跑可核验的 `.service.partial`。缺少完整回执或核验失败时保留现场供检查。
 
-原生 Autoloop Hub 的升级会继续只读核对快照的结构、事实和投影水位，以及迁移后 Service 的 `hub_observer` 水位。Answers 检查交接清单中登记的快照，核对表结构、答复内容和答复事件标识。全部通过后返回 `uncertain / UPGRADE_DATA_VALIDATED`。旧版 Hub 支持到 `uncertain / UPGRADE_SERVICE_MIGRATED`。契约回放和签名代次选择仍待验证。
+原生 Autoloop Hub 的升级会核对快照结构和迁移后 Service 的 `hub_observer` 水位。控制器使用候选包内经摘要锁定的 Hub 内核，在临时数据库顺序回放事实，对照已暂存的投影、引用、待转发记录和水位。Answers 检查交接清单中登记的快照，核对表结构、答复内容和答复事件标识。全部通过后返回 `uncertain / UPGRADE_HUB_REPLAYED`。旧版 Hub 支持到 `uncertain / UPGRADE_SERVICE_MIGRATED`。其余契约回放、灰度验证和签名代次选择待验收。
 
 构建 `45930143177` 的 Apple Silicon 和 Intel 作业均通过。独立下载复核了每套归档中的 489 个部署文件、原生 SQLite 扩展和控制器。用本机生成的 `arm64` 验收包与托管材料生成的 `x64` 验收包对同一提交执行联合验签，两份包均通过。当前目标机的 `arm64` 包拒绝错误公钥、包摘要及 Intel 架构预期。系统验收库尚无 `personal` 域的写者登记，所有者首次登记口令依赖该写入准入。[验签与实机回执](evidence/t23-arm64-system-intake-d7f1043.json)
 
