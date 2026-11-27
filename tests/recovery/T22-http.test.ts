@@ -19,6 +19,7 @@ import { mountEditRoutes } from '../../apps/service/src/routes/edits.js';
 import { mountSourceRoutes } from '../../apps/service/src/routes/sources.js';
 import { createAnswerGate, type AnswerGate } from '../../packages/domain/src/answer-gate.js';
 import { createLocalHubPort, encodeHubAnswer } from '../../packages/integrations/autoloop/answers.js';
+import { confirmVault, connectVault } from '../../packages/integrations/vault/connection.js';
 import { createVaultApi } from '../../packages/integrations/vault/drafts.js';
 import { createSourceRegistry } from '../../packages/integrations/sources/registry.js';
 import { mountWorkControlRoutes } from '../../apps/service/src/routes/work-controls.js';
@@ -153,15 +154,18 @@ test.each(['closure', 'domain'] as const)('answer return %s cannot record new HT
 });
 
 test('edit adapter return closure denies a fresh HTTP command record', async () => {
-  const f = fixture(); const vaultRoot = join(f.root, 'vault'); const isolated = join(f.root, 'isolated');
-  mkdirSync(vaultRoot); mkdirSync(isolated);
-  f.db.prepare(`INSERT INTO vaults VALUES ('vault','source','owner','personal','fixture',? ,?,'identity',?, ?,1,1,'connected','1.0',?,?)`)
-    .run(vaultRoot, isolated, vaultRoot, 'a'.repeat(64), at, at);
+  const f = fixture();
+  const vaultRoot = join(f.root, 'vault');
+  mkdirSync(vaultRoot);
+  await connectVault(f.db, { root: vaultRoot, accountId: 'owner', deviceId: 'desktop', vaultId: 'vault',
+    domain: 'personal', captureHost: 'fixture', now: at });
+  await confirmVault(f.db, 'desktop', 'vault', at);
   const api = createVaultApi(f.db, { blobs: createBlobStore(join(f.root, 'blobs')), now });
   mountEditRoutes(f.app, () => ({ db: f.db, now, api: { ...api, async createEdit(principal, input) {
     const receipt = await api.createEdit(principal, input); f.gate.revoke('personal'); return receipt;
   } } }));
   await blocked(await f.post('/edits', 'edit', { operation: 'create_standard', vault_id: 'vault', draft_key: 'draft', expected_active_version: null }));
+  expect(count(f.db, 'edit_intents')).toBe(1);
   expect(count(f.db, 'command_inbox')).toBe(0); expect(count(f.db, 'command_records')).toBe(0);
 });
 

@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, test, vi } from 'vitest';
@@ -38,7 +38,7 @@ async function feature<T>(name: string): Promise<T> {
 }
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'patrick-T22-'));
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'patrick-T22-'));
   const service = openDatabase(join(root, 'service.sqlite'));
   const hub = openDatabase(join(root, 'hub.sqlite'));
   for (const db of [service, hub]) {
