@@ -97,6 +97,7 @@ const sourceRoots = Object.freeze([
   'deploy/runtime/install-preview.ts',
   'deploy/runtime/role-launch.ts',
   'deploy/runtime/service-handoff.ts',
+  'deploy/runtime/witness-admission.ts',
   'deploy/runtime/hub-process.ts',
   upgradeResearchSource,
   'deploy/runtime/vault-init.ts',
@@ -274,7 +275,7 @@ async function captureSource(root, commit, profile) {
     ? [...Object.values(deployment.deploymentPaths), preflight.source, ...deployment.vaultKitPaths] : [];
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, ...hostSources, maintenanceReadbackSource, 'deploy/lib/deployment-templates.d.mts',
-    'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
+    'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts', 'deploy/runtime/witness-admission.ts',
     'deploy/runtime/hub-process.ts', upgradeResearchSource, vaultKitResolver, ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.

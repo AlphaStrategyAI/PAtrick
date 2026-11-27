@@ -23,6 +23,8 @@ export type {
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { assertMaintenanceRecoverySet, createMaintenanceCutReader } from './maintenance-readback.js';
 export { createMaintenanceCutReader } from './maintenance-readback.js';
+export { createWitnessAdmissionController } from './witness-admission.js';
+export type { WitnessAdmissionController, WitnessAdmissionEnrollment, WitnessAdmissionOutcome } from './witness-admission.js';
 import { runUninstall } from '../host/uninstall.js';
 import {
   createInstalledUpgradePreview, runInstalledUpgradeRelease as runGenerationUpgradeRelease,
