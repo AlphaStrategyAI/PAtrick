@@ -1,0 +1,51 @@
+{
+  "format": "patrick-t23-system-intake-v1",
+  "observedAt": "2026-11-27T10:50:48+08:00",
+  "sourceCommit": "d7f1043bbe0e75d59361cbe0946ffede5ef8174d",
+  "architecture": "arm64",
+  "installationId": "t23-macbook-arm64-d7f1043",
+  "releaseId": "acceptance-d7f1043",
+  "signerScope": "local-acceptance",
+  "packageSha256": "de58e40d26137da2aaaf64b64839ecb1547d388fc23787be6d7178682281559f",
+  "manifestSha256": "b5c732d69d4f38c84010e69579f777e3b83027ce2932977b610f49d60f00725d",
+  "publicKeySha256": "eeee86486d547a5fd8f5f50b48aa34045cf6c3be61205ff9154cbbf63aafeaa9",
+  "controllerSha256": "77b8840b29543776f1bd9096dfafbb9b5f722664f700f0db64e971af41aa8d32",
+  "planSha256": "7ba8f9968aedd6174dc1243a94daafd002134a4fc6fd3c66640000d94d923034",
+  "verifiedFiles": 489,
+  "publish": "INSTALL_RELEASE_PUBLISHED",
+  "repeatInstall": "INSTALL_RELEASE_PUBLISHED",
+  "readback": "INSTALL_RELEASE_PUBLISHED",
+  "generation": "INSTALL_GENERATION_PREPARED",
+  "generationReadback": "INSTALL_GENERATION_PREPARED",
+  "currentSelected": false,
+  "activation": {
+    "observedAt": "2026-11-27T10:55:17+08:00",
+    "localReceiptSha256": "72c2204d41f8f8d05758ff1bd31daad90756ad27d2033be5082b301c1561cc46",
+    "selectedGeneration": "first-generation",
+    "origin": "https://localhost:18443",
+    "hubReady": true,
+    "workerContact": true,
+    "verifiedTlsStatus": 200,
+    "anonymousSessionStatus": 401,
+    "previousSelectionPreserved": true
+  },
+  "launchdRestart": {
+    "observedAt": "2026-11-27T10:57:25+08:00",
+    "logSha256": "784879ad6b3c1549d26421f530964b4d3dbec10043a0a73b5fa504a36f9f9fc8",
+    "caSha256": "0f050670528c359a7afd44cbb61e10679734a2112018f6356b9b19e683006530",
+    "generationPointersVerified": true,
+    "hubReady": true,
+    "workerReadyAfterRestart": true,
+    "verifiedTlsStatus": 200,
+    "anonymousSessionStatus": 401,
+    "jobs": [
+      { "label": "com.patrick.autoloop-hub-supervisor", "uid": 0, "pidChanged": true },
+      { "label": "com.patrick.service-supervisor", "uid": 0, "pidChanged": true },
+      { "label": "com.patrick.autoloop-hub", "uid": 403, "pidChanged": true },
+      { "label": "com.patrick.service", "uid": 402, "pidChanged": true },
+      { "label": "com.patrick.autoloop-worker", "uid": 404, "pidChanged": true },
+      { "label": "com.patrick.caddy", "uid": 401, "pidChanged": true }
+    ]
+  },
+  "outstanding": ["owner-passkey-and-session", "host-reboot", "installed-upgrade", "uninstall-preserves-data"]
+}
