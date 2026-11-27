@@ -23,7 +23,7 @@ import type { EmittedReleaseExpectation, NativeByteReleaseExpectation, EmittedRe
 import { inspectEmittedRuntimeMaterial, prepareEmittedRuntimeCandidate, packEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import type { EmittedMaterialInput, ExplicitEvidenceInput, PreparedEmittedRuntimeCandidate } from '../../scripts/pack-runtime.mjs';
 import { createFirstInstallCli, createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning, prepareFirstInstallGeneration, runInstalledRuntimeRole, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
+import { createRuntimeProvisioning, ownerBootstrapControlEndpoint, prepareFirstInstallGeneration, requestInstalledOwnerBootstrap, runInstalledRuntimeRole, startSelectedHubRole, startSelectedRuntimeRole, type RuntimeProvisioningInput } from '../../deploy/runtime/composition.js';
 import { installReleaseApproval, previewFirstInstall, runFirstInstallRelease, type InstallPreviewEnrollment, type InstallReleaseEnrollment } from '../../deploy/runtime/install-preview.js';
 import { createGenerationStore, reserveServiceWriter, type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from '../../deploy/runtime/lifecycle-generation.js';
 import { startHubProcess, type HubProcess } from '../../deploy/runtime/hub-process.js';
@@ -1207,7 +1207,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         return `
           import { createPrivateKey, sign } from 'node:crypto';
           import { readFileSync } from 'node:fs';
-          import { runSelectedServiceSupervisor } from ${JSON.stringify(compositionPath)};
+          import { ownerBootstrapControlEndpoint, runSelectedServiceSupervisor } from ${JSON.stringify(compositionPath)};
           const privateKey = createPrivateKey(readFileSync(${JSON.stringify(signingKeyPath)}));
           let rejectNext = true;
           await runSelectedServiceSupervisor(${JSON.stringify(program)}, ${JSON.stringify(endpoint)},
@@ -1218,10 +1218,12 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
                   throw new Error('FIXTURE_SELECTION_SIGNING_UNAVAILABLE');
                 }
                 return sign(null, bytes, privateKey).toString('base64');
-              } }, ${JSON.stringify(workerEndpoint)});
+              } }, ${JSON.stringify(workerEndpoint)},
+            { endpoint: ownerBootstrapControlEndpoint(${JSON.stringify(instanceRoot)}) });
         `;
       },
     });
+    const ownerEndpoint = ownerBootstrapControlEndpoint(instanceRoot);
     try {
       await vi.waitFor(async () => expect((await lstat(service.endpoint)).isSocket()).toBe(true), { timeout: 5000 });
       expect((await lstat(service.workerEndpoint)).gid).toBe(workerOwner.gid);
@@ -1242,6 +1244,13 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         );
       }, { timeout: 5000 });
       await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await vi.waitFor(async () => {
+        const ownerInfo = await lstat(ownerEndpoint);
+        expect([ownerInfo.isSocket(), ownerInfo.uid, ownerInfo.mode & 0o7777]).toEqual([true, 0, 0o600]);
+      }, { timeout: 5000 });
+      await expect(requestInstalledOwnerBootstrap(ownerEndpoint)).resolves.toEqual({
+        status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+      });
       await expect(store.select(envelope)).resolves.toMatchObject({ current: { order } });
       const role = spawn(service.controllerPath, ['run-role', 'service'], {
         ...serviceOwner, cwd: instanceRoot, env: {}, stdio: ['ignore', 'pipe', 'pipe'],
@@ -1259,6 +1268,33 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         expect(JSON.parse(report)).toEqual({ event: 'ready', ...serviceOwner });
         expect((await fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
         expect((await fetch(`${serviceUrl}/`, { signal: AbortSignal.timeout(3000) })).status).toBe(200);
+        const firstBootstrap = await requestInstalledOwnerBootstrap(ownerEndpoint);
+        expect(firstBootstrap).toMatchObject({ status: 'issued' });
+        if (firstBootstrap.status !== 'issued') throw new Error('expected issued owner bootstrap ticket');
+        const secondBootstrap = await requestInstalledOwnerBootstrap(ownerEndpoint);
+        expect(secondBootstrap).toMatchObject({
+          status: 'issued',
+          session: firstBootstrap.session,
+          selectionSha256: firstBootstrap.selectionSha256,
+        });
+        if (secondBootstrap.status !== 'issued') throw new Error('expected reissued owner bootstrap ticket');
+        expect(secondBootstrap.ticket).not.toBe(firstBootstrap.ticket);
+        const revokedChallenge = await fetch(`${serviceUrl}/api/v1/auth/challenge`, {
+          method: 'POST',
+          headers: { origin, 'content-type': 'application/json', 'x-patrick-bootstrap': firstBootstrap.ticket },
+          body: JSON.stringify({ rp_id: enrollment.tls.rpId }),
+          signal: AbortSignal.timeout(3000),
+        });
+        expect(revokedChallenge.status).toBe(403);
+        const activeChallenge = await fetch(`${serviceUrl}/api/v1/auth/challenge`, {
+          method: 'POST',
+          headers: { origin, 'content-type': 'application/json', 'x-patrick-bootstrap': secondBootstrap.ticket },
+          body: JSON.stringify({ rp_id: enrollment.tls.rpId }),
+          signal: AbortSignal.timeout(3000),
+        });
+        expect(activeChallenge.status).toBe(200);
+        const activeChallengeBody = await activeChallenge.json() as { challenge?: { rp?: { id?: string } } };
+        expect(activeChallengeBody.challenge?.rp?.id).toBe(enrollment.tls.rpId);
         expect(hubChecks).toBe(0);
         const workerRole = spawn(service.controllerPath, ['run-role', 'worker'], {
           ...workerOwner, cwd: instanceRoot, env: {}, stdio: ['ignore', 'pipe', 'pipe'],
@@ -1283,6 +1319,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
         await expect(Promise.race([closed, delay(35_000, 'timed out', { ref: false })])).resolves.toEqual([0, null]);
         await vi.waitFor(async () => {
           await expect(lstat(join(control, 'active-session.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+          await expect(lstat(ownerEndpoint)).rejects.toMatchObject({ code: 'ENOENT' });
         }, { timeout: 5000 });
         await expect(fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
         await vi.waitUntil(() => {

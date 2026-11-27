@@ -42,13 +42,33 @@ export type ServiceSelection = {
 export type SignedServiceSelection = { version: 1; type: 'selection'; selection: ServiceSelection; signature: string };
 
 export const serviceHandoffError = () => new Error('INSTALLED_SERVICE_SUPERVISOR_PROTOCOL_INVALID');
+export const ownerBootstrapProtocolError = () => new Error('INSTALLED_OWNER_BOOTSTRAP_PROTOCOL_INVALID');
 export const serviceReady = Object.freeze({ version: 1, type: 'ready' });
+export const ownerBootstrapControlRequest = Object.freeze({ version: 1, type: 'issue-owner-bootstrap' });
+export const ownerBootstrapUnavailableCodes = Object.freeze([
+  'OWNER_BOOTSTRAP_UNAVAILABLE',
+  'OWNER_PASSKEY_ALREADY_REGISTERED',
+  'RECOVERY_WRITE_BLOCKED',
+  'RECOVERY_SERVICE_HANDLE_MISMATCH',
+  'OWNER_BOOTSTRAP_BUSY',
+] as const);
+export type OwnerBootstrapUnavailableCode = (typeof ownerBootstrapUnavailableCodes)[number];
+export type ServiceOwnerBootstrapResult =
+  | Readonly<{ status: 'issued'; ticket: string; expires_at: string; session: string; selectionSha256: string }>
+  | Readonly<{ status: 'unavailable'; code: OwnerBootstrapUnavailableCode }>;
 const maxFrame = 8192;
 const hex = (value: unknown, length: number): value is string =>
   typeof value === 'string' && value.length === length && /^[0-9a-f]+$/.test(value);
 const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value);
 const accountId = (value: number) => Number.isInteger(value) && value > 0 && value <= 0x7fffffff;
+const bootstrapTicket = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(value);
+const isoTimestamp = (value: unknown): value is string =>
+  typeof value === 'string' && value.length >= 20 && value.length <= 40 &&
+  !Number.isNaN(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value;
+const unavailableCode = (value: unknown): value is OwnerBootstrapUnavailableCode =>
+  typeof value === 'string' && (ownerBootstrapUnavailableCodes as readonly string[]).includes(value);
 
 export function serviceFrame(socket: Socket) {
   const stream = socket.iterator({ destroyOnReturn: false }) as AsyncIterator<Buffer>;
@@ -103,7 +123,7 @@ export function serviceChallenge(frame: unknown): string {
   return frame.challenge;
 }
 
-type ServiceStatus = 'stop' | 'drained' | 'worker-tick' | 'worker-tick-completed' | 'worker-tick-unavailable';
+type ServiceStatus = 'stop' | 'drained' | 'worker-tick' | 'worker-tick-completed' | 'worker-tick-unavailable' | 'owner-bootstrap';
 
 export function serviceStatus(type: ServiceStatus, { session, selectionSha256 }: ServiceSelection) {
   return { version: 1, type, session, selectionSha256 };
@@ -111,6 +131,86 @@ export function serviceStatus(type: ServiceStatus, { session, selectionSha256 }:
 
 export function matchesServiceStatus(frame: unknown, type: ServiceStatus, selection: ServiceSelection) {
   return canonicalize(frame) === canonicalize(serviceStatus(type, selection));
+}
+
+export function ownerBootstrapDiagnosticCode(error: unknown): OwnerBootstrapUnavailableCode {
+  if (error instanceof Error && unavailableCode(error.message) && error.message !== 'OWNER_BOOTSTRAP_BUSY') {
+    return error.message;
+  }
+  return 'OWNER_BOOTSTRAP_UNAVAILABLE';
+}
+
+export function serviceOwnerBootstrapIssued(selection: ServiceSelection, ticket: string, expiresAt: string) {
+  if (!bootstrapTicket(ticket) || !isoTimestamp(expiresAt)) throw serviceHandoffError();
+  return {
+    version: 1, type: 'owner-bootstrap-issued',
+    session: selection.session, selectionSha256: selection.selectionSha256,
+    ticket, expires_at: expiresAt,
+  };
+}
+
+export function serviceOwnerBootstrapUnavailable(selection: ServiceSelection, code: OwnerBootstrapUnavailableCode) {
+  if (!unavailableCode(code)) throw serviceHandoffError();
+  return {
+    version: 1, type: 'owner-bootstrap-unavailable',
+    session: selection.session, selectionSha256: selection.selectionSha256, code,
+  };
+}
+
+export function parseServiceOwnerBootstrap(frame: unknown, selection: ServiceSelection): ServiceOwnerBootstrapResult | undefined {
+  if (!frame || typeof frame !== 'object' || Object.getPrototypeOf(frame) !== Object.prototype) return undefined;
+  const messageType = (frame as { type?: unknown }).type;
+  if (messageType !== 'owner-bootstrap-issued' && messageType !== 'owner-bootstrap-unavailable') return undefined;
+  if (messageType === 'owner-bootstrap-issued') {
+    if (!fields(frame, 'expires_at selectionSha256 session ticket type version') || frame.version !== 1 ||
+        frame.session !== selection.session || frame.selectionSha256 !== selection.selectionSha256 ||
+        !bootstrapTicket(frame.ticket) || !isoTimestamp(frame.expires_at)) throw serviceHandoffError();
+    return Object.freeze({
+      status: 'issued', ticket: frame.ticket, expires_at: frame.expires_at,
+      session: frame.session, selectionSha256: frame.selectionSha256,
+    });
+  }
+  if (!fields(frame, 'code selectionSha256 session type version') || frame.version !== 1 ||
+      frame.session !== selection.session || frame.selectionSha256 !== selection.selectionSha256 ||
+      !unavailableCode(frame.code)) throw serviceHandoffError();
+  return Object.freeze({ status: 'unavailable', code: frame.code });
+}
+
+export function ownerBootstrapControlResponse(result: ServiceOwnerBootstrapResult) {
+  if (result.status === 'issued') {
+    if (!hex(result.session, 32) || !hex(result.selectionSha256, 64) ||
+        !bootstrapTicket(result.ticket) || !isoTimestamp(result.expires_at)) throw ownerBootstrapProtocolError();
+    return {
+      version: 1, type: 'owner-bootstrap-issued',
+      session: result.session, selectionSha256: result.selectionSha256,
+      ticket: result.ticket, expires_at: result.expires_at,
+    };
+  }
+  if (!unavailableCode(result.code)) throw ownerBootstrapProtocolError();
+  return { version: 1, type: 'owner-bootstrap-unavailable', code: result.code };
+}
+
+export function parseOwnerBootstrapControlResponse(frame: unknown): ServiceOwnerBootstrapResult {
+  if (!frame || typeof frame !== 'object' || Object.getPrototypeOf(frame) !== Object.prototype) {
+    throw ownerBootstrapProtocolError();
+  }
+  const messageType = (frame as { type?: unknown }).type;
+  if (messageType === 'owner-bootstrap-issued') {
+    if (!fields(frame, 'expires_at selectionSha256 session ticket type version') || frame.version !== 1 ||
+        !hex(frame.session, 32) || !hex(frame.selectionSha256, 64) ||
+        !bootstrapTicket(frame.ticket) || !isoTimestamp(frame.expires_at)) throw ownerBootstrapProtocolError();
+    return Object.freeze({
+      status: 'issued', ticket: frame.ticket, expires_at: frame.expires_at,
+      session: frame.session, selectionSha256: frame.selectionSha256,
+    });
+  }
+  if (messageType === 'owner-bootstrap-unavailable') {
+    if (!fields(frame, 'code type version') || frame.version !== 1 || !unavailableCode(frame.code)) {
+      throw ownerBootstrapProtocolError();
+    }
+    return Object.freeze({ status: 'unavailable', code: frame.code });
+  }
+  throw ownerBootstrapProtocolError();
 }
 
 export function serviceHandoffKey(value: string) {

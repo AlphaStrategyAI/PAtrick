@@ -9,13 +9,17 @@ import {
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
 export { runUpgradeResearchCanary } from './upgrade-research.js';
 export {
-  runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runInstalledServiceSupervisor, runInstalledWorkerSupervisor,
-  runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, runSupervisedWorkerRole, serveInstalledHubRole, serveInstalledWorkerTicks,
-  startSelectedHubRole, startSelectedRuntimeRole,
+  ownerBootstrapControlEndpoint, requestInstalledOwnerBootstrap, runInstalledHubRole, runInstalledHubSupervisor,
+  runInstalledOwnerBootstrapControl, runInstalledRuntimeRole, runInstalledServiceSupervisor, runInstalledWorkerSupervisor,
+  runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, runSupervisedWorkerRole,
+  serveInstalledHubRole, serveInstalledOwnerBootstrapControl, serveInstalledWorkerTicks, startSelectedHubRole, startSelectedRuntimeRole,
+  type OwnerBootstrapRequester, type ServiceSupervisorOwnerControl,
 } from './role-launch.js';
 import type { SelectedRuntimePaths } from './role-launch.js';
 import { admitSupervisedServiceSelection, type SupervisedServiceRegistration } from './service-handoff.js';
-export type { ServiceHandoffAuthority, SupervisedServiceRegistration } from './service-handoff.js';
+export type {
+  OwnerBootstrapUnavailableCode, ServiceHandoffAuthority, ServiceOwnerBootstrapResult, SupervisedServiceRegistration,
+} from './service-handoff.js';
 import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { assertMaintenanceRecoverySet, createMaintenanceCutReader } from './maintenance-readback.js';
 export { createMaintenanceCutReader } from './maintenance-readback.js';

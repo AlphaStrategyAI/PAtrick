@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { close, closeSync, constants, fstatSync, lstatSync, openSync } from 'node:fs';
+import { chmodSync, close, closeSync, constants, fstatSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer, Socket, type ListenOptions, type Server } from 'node:net';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { leased, type ExclusiveRuntimeStaging, type RuntimeLease } from '../lib/emitted-release.mjs';
@@ -14,11 +14,14 @@ import type { RuntimeProvisioningInput } from './composition.js';
 import { startHubProcess, type HubProcess } from './hub-process.js';
 import { autoloopHubDatabase, autoloopHubDirectory, createInstalledHubRoleOwner, generationHubDatabase, generationHubRoleDigest, generationServiceData, hubControlRoot,
   hubWriterFencePath, reserveControllerServiceSession, reserveServiceWriter, withConfirmedGeneration,
-  type GenerationEnrollment, type InstalledGeneration } from './lifecycle-generation.js';
+  type GenerationEnrollment, type GenerationNode, type InstalledGeneration } from './lifecycle-generation.js';
 import {
-  admitSupervisedServiceSelection, matchesServiceStatus, serviceChallenge, serviceFrame, serviceHandoffError,
-  serviceHandoffKey, serviceIdentityDigest, serviceReady, serviceSelectionBytes, serviceStatus, validateSupervisedServiceAccount,
-  verifyServiceSelection, type ServiceHandoffAuthority, type ServiceSelection, type SupervisedServiceRegistration,
+  admitSupervisedServiceSelection, matchesServiceStatus, ownerBootstrapControlRequest, ownerBootstrapControlResponse,
+  ownerBootstrapDiagnosticCode, ownerBootstrapProtocolError, parseOwnerBootstrapControlResponse, parseServiceOwnerBootstrap,
+  serviceChallenge, serviceFrame, serviceHandoffError, serviceHandoffKey, serviceIdentityDigest,
+  serviceOwnerBootstrapIssued, serviceOwnerBootstrapUnavailable, serviceReady, serviceSelectionBytes, serviceStatus,
+  validateSupervisedServiceAccount, verifyServiceSelection, type ServiceHandoffAuthority,
+  type ServiceOwnerBootstrapResult, type ServiceSelection, type SupervisedServiceRegistration,
 } from './service-handoff.js';
 
 export type SelectedRuntimePaths = Readonly<{
@@ -596,13 +599,256 @@ type SelectedServiceSession = Readonly<{
 }>;
 type ServeSelectedService = (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>;
 type WorkerTick = () => Promise<boolean>;
+export type OwnerBootstrapRequester = () => Promise<ServiceOwnerBootstrapResult>;
+export type ServiceSupervisorOwnerControl = Readonly<{
+  endpoint?: string;
+  onAvailable?: (issue: OwnerBootstrapRequester | undefined) => void;
+}>;
 const serviceSupervisorReadyMs = 60_000;
 const serviceHandshakeMs = 10_000;
 const serviceStopReplyMs = 30_000;
+const ownerControlRequestMs = 5_000;
+const ownerControlMaxPathBytes = 103;
+const ownerControlSocketName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,58}\.sock$/;
+const ownerControlInvalid = () => new Error('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
 
-async function serveSelectedService(socket: Socket, admission: SelectedServiceSession, enrollment: GenerationEnrollment,
+export function ownerBootstrapControlEndpoint(root: string): string {
+  return join(root, 'runtime', 'service-control', 'owner.sock');
+}
+
+function checkPinnedDirectory(path: string, pin: GenerationNode, uid: number, mode?: number) {
+  const info = lstatSync(path, { bigint: true });
+  if (!info.isDirectory() || realpathSync.native(path) !== path || info.uid !== BigInt(uid) ||
+      String(info.dev) !== pin.device || String(info.ino) !== pin.inode || String(info.birthtimeNs) !== pin.birthtimeNs ||
+      (mode !== undefined && (info.mode & 0o7777n) !== BigInt(mode))) throw ownerControlInvalid();
+}
+
+function validateOwnerControlAncestors(parent: string, expectedUid: number) {
+  for (let ancestor = dirname(parent); ; ancestor = dirname(ancestor)) {
+    const info = lstatSync(ancestor);
+    const writableByOthers = (info.mode & 0o022) !== 0 && (info.mode & 0o1000) === 0;
+    const ownerAllowed = expectedUid === 0 ? info.uid === 0 : info.uid === 0 || info.uid === expectedUid;
+    if (!info.isDirectory() || realpathSync.native(ancestor) !== ancestor || !ownerAllowed || writableByOthers) {
+      throw ownerControlInvalid();
+    }
+    if (ancestor === sep) break;
+  }
+}
+
+function validateOwnerControlParent(endpoint: string, expectedUid: number) {
+  if (typeof endpoint !== 'string' || endpoint.includes('\0') || resolve(endpoint) !== endpoint ||
+      Buffer.byteLength(endpoint) > ownerControlMaxPathBytes || !ownerControlSocketName.test(basename(endpoint))) {
+    throw ownerControlInvalid();
+  }
+  const parent = dirname(endpoint);
+  let info;
+  try { info = lstatSync(parent); }
+  catch { throw ownerControlInvalid(); }
+  if (!info.isDirectory() || realpathSync.native(parent) !== parent ||
+      info.uid !== expectedUid || (info.mode & 0o7777) !== 0o700) {
+    throw ownerControlInvalid();
+  }
+  validateOwnerControlAncestors(parent, expectedUid);
+  return { parent, dev: info.dev, ino: info.ino };
+}
+
+function validateOwnerControlSocket(endpoint: string, expectedUid: number, pinned?: { dev: number; ino: number }) {
+  let info;
+  try { info = lstatSync(endpoint); }
+  catch { throw ownerControlInvalid(); }
+  if (!info.isSocket() || info.uid !== expectedUid || (info.mode & 0o7777) !== 0o600 ||
+      (pinned && (info.dev !== pinned.dev || info.ino !== pinned.ino))) {
+    throw ownerControlInvalid();
+  }
+  return { dev: info.dev, ino: info.ino };
+}
+
+function verifyControllerOwnerControlDirectory(enrollment: GenerationEnrollment) {
+  const role = enrollment.serviceRole;
+  if (!role?.controllerOwned) throw ownerControlInvalid();
+  checkPinnedDirectory(enrollment.root, enrollment.rootNode, 0);
+  const runtime = join(enrollment.root, 'runtime');
+  const runtimeInfo = lstatSync(runtime);
+  if (!runtimeInfo.isDirectory() || realpathSync.native(runtime) !== runtime ||
+      runtimeInfo.uid !== 0 || (runtimeInfo.mode & 0o022) !== 0) throw ownerControlInvalid();
+  checkPinnedDirectory(join(runtime, 'service-control'), role.rootNode, 0, 0o700);
+}
+
+export async function serveInstalledOwnerBootstrapControl(
+  socket: Socket,
+  shutdown: AbortSignal,
+  issue: OwnerBootstrapRequester,
+): Promise<void> {
+  const channel = serviceFrame(socket);
+  const deadline = new AbortController();
+  const signal = AbortSignal.any([shutdown, deadline.signal]);
+  const timer = setTimeout(() => deadline.abort(ownerBootstrapProtocolError()), ownerControlRequestMs);
+  let stopWaiting: (() => void) | undefined;
+  function stop() {
+    stopWaiting?.();
+    socket.destroy();
+  }
+  signal.addEventListener('abort', stop, { once: true });
+  socket.once('close', stop);
+  try {
+    const request = await new Promise<unknown>((resolveRead, rejectRead) => {
+      stopWaiting = () => resolveRead(undefined);
+      void channel.read().then(resolveRead, rejectRead);
+    });
+    stopWaiting = undefined;
+    clearTimeout(timer);
+    if (request === undefined || signal.aborted || socket.destroyed) return;
+    if (canonicalize(request) !== canonicalize(ownerBootstrapControlRequest)) throw ownerBootstrapProtocolError();
+    const result = await new Promise<ServiceOwnerBootstrapResult | undefined>((resolveIssue, rejectIssue) => {
+      stopWaiting = () => resolveIssue(undefined);
+      void Promise.resolve().then(issue).then(resolveIssue, rejectIssue);
+    });
+    stopWaiting = undefined;
+    if (result === undefined || shutdown.aborted || socket.destroyed) return;
+    channel.write(ownerBootstrapControlResponse(result));
+    await new Promise<void>(resolveEnded => {
+      if (socket.destroyed) return resolveEnded();
+      socket.once('close', resolveEnded);
+      socket.end(() => {
+        socket.off('close', resolveEnded);
+        resolveEnded();
+      });
+    });
+  } catch (error) {
+    if (!shutdown.aborted && !socket.destroyed) throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', stop);
+    socket.off('close', stop);
+    socket.destroy();
+  }
+}
+
+export async function runInstalledOwnerBootstrapControl(
+  endpoint: string,
+  shutdown: AbortSignal,
+  issue: OwnerBootstrapRequester,
+  options?: Readonly<{ expectedUid?: number; verifyDirectory?: () => void; onReady?: () => void }>,
+): Promise<void> {
+  const expectedUid = options?.expectedUid ?? process.geteuid?.();
+  if (expectedUid === undefined || !Number.isInteger(expectedUid) || expectedUid < 0) throw ownerControlInvalid();
+  validateOwnerControlParent(endpoint, expectedUid);
+  options?.verifyDirectory?.();
+  const existing = lstatSync(endpoint, { throwIfNoEntry: false });
+  if (existing) {
+    if (!existing.isSocket() || existing.uid !== expectedUid || (existing.mode & 0o077) !== 0) throw ownerControlInvalid();
+    unlinkSync(endpoint);
+  }
+  let active: Socket | undefined;
+  const sessions = new Map<Socket, Promise<void>>();
+  let server: Server | undefined;
+  let boundSocket: { dev: number; ino: number } | undefined;
+  let ready = false;
+  function stop() {
+    server?.close();
+    for (const socket of sessions.keys()) {
+      if (socket !== active) socket.destroy();
+    }
+  }
+  shutdown.addEventListener('abort', stop, { once: true });
+  try {
+    const previousUmask = process.umask(0o077);
+    try {
+      server = await listenVerifiedServiceControl({ path: endpoint }, endpoint, socket => {
+        if (!ready || shutdown.aborted || active || sessions.size >= 4) return socket.destroy();
+        socket.on('error', () => socket.destroy());
+        active = socket;
+        const finished = Promise.resolve().then(() => {
+          validateOwnerControlParent(endpoint, expectedUid);
+          options?.verifyDirectory?.();
+          validateOwnerControlSocket(endpoint, expectedUid, boundSocket);
+          return serveInstalledOwnerBootstrapControl(socket, shutdown, issue);
+        }).catch(() => {
+          socket.destroy();
+        }).finally(() => {
+          socket.destroy();
+          if (active === socket) active = undefined;
+          sessions.delete(socket);
+        });
+        sessions.set(socket, finished);
+      }, AbortSignal.any([shutdown, AbortSignal.timeout(5000)]));
+    } finally {
+      process.umask(previousUmask);
+    }
+    chmodSync(endpoint, 0o600);
+    validateOwnerControlParent(endpoint, expectedUid);
+    options?.verifyDirectory?.();
+    boundSocket = validateOwnerControlSocket(endpoint, expectedUid);
+    ready = true;
+    options?.onReady?.();
+    const closed = once(server, 'close');
+    if (shutdown.aborted) stop();
+    await closed;
+  } finally {
+    ready = false;
+    stop();
+    active?.destroy();
+    await Promise.all(sessions.values());
+    shutdown.removeEventListener('abort', stop);
+    if (boundSocket) {
+      const current = lstatSync(endpoint, { throwIfNoEntry: false });
+      if (current?.isSocket() && current.dev === boundSocket.dev && current.ino === boundSocket.ino) {
+        try { unlinkSync(endpoint); } catch { void 0; }
+      }
+    }
+  }
+}
+
+export async function requestInstalledOwnerBootstrap(
+  endpoint: string,
+  options?: Readonly<{ timeoutMs?: number; expectedUid?: number }>,
+): Promise<ServiceOwnerBootstrapResult> {
+  const timeoutMs = options?.timeoutMs ?? ownerControlRequestMs;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw ownerControlInvalid();
+  const expectedUid = options?.expectedUid ?? process.geteuid?.();
+  if (expectedUid === undefined || !Number.isInteger(expectedUid) || expectedUid < 0) throw ownerControlInvalid();
+  const parent = validateOwnerControlParent(endpoint, expectedUid);
+  const pinned = validateOwnerControlSocket(endpoint, expectedUid);
+  const socket = createConnection({ path: endpoint, allowHalfOpen: true });
+  const timer = setTimeout(() => socket.destroy(new Error('INSTALLED_OWNER_BOOTSTRAP_REQUEST_TIMEOUT')), timeoutMs);
+  try {
+    await once(socket, 'connect');
+    const afterParent = validateOwnerControlParent(endpoint, expectedUid);
+    if (afterParent.dev !== parent.dev || afterParent.ino !== parent.ino) throw ownerControlInvalid();
+    validateOwnerControlSocket(endpoint, expectedUid, pinned);
+    const channel = serviceFrame(socket);
+    channel.write(ownerBootstrapControlRequest);
+    socket.end();
+    const response = await channel.read();
+    await channel.expectEnd();
+    return parseOwnerBootstrapControlResponse(response);
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
+  }
+}
+
+export function executeSupervisedOwnerBootstrap(
+  runningService: Pick<Service, 'read' | 'issueOwnerBootstrap'> | undefined,
+  selection: ServiceSelection,
+  assertSelected: () => void,
+) {
+  if (!runningService || !running(runningService.read())) {
+    return serviceOwnerBootstrapUnavailable(selection, 'OWNER_BOOTSTRAP_UNAVAILABLE');
+  }
+  assertSelected();
+  try {
+    const issued = runningService.issueOwnerBootstrap();
+    return serviceOwnerBootstrapIssued(selection, issued.ticket, issued.expires_at);
+  } catch (error) {
+    return serviceOwnerBootstrapUnavailable(selection, ownerBootstrapDiagnosticCode(error));
+  }
+}
+
+export async function serveSelectedService(socket: Socket, admission: SelectedServiceSession, enrollment: GenerationEnrollment,
   generation: InstalledGeneration, authority: ServiceHandoffAuthority, key: ReturnType<typeof serviceHandoffKey>,
-  arm: () => () => void, setPhase: SetSupervisorSessionPhase, offerTick?: (tick: WorkerTick | undefined) => void): Promise<() => void> {
+  arm: () => () => void, setPhase: SetSupervisorSessionPhase, offerTick?: (tick: WorkerTick | undefined) => void,
+  offerOwnerBootstrap?: (issue: OwnerBootstrapRequester | undefined) => void): Promise<() => void> {
   const channel = serviceFrame(socket);
   const expiresAt = performance.now() + serviceHandshakeMs;
   const deadline = new AbortController();
@@ -646,14 +892,23 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
 
   let stopping = false;
   let pendingTick: { promise: Promise<boolean>; resolve(available: boolean): void } | undefined;
+  let pendingBootstrap: {
+    promise: Promise<ServiceOwnerBootstrapResult>;
+    resolve(result: ServiceOwnerBootstrapResult): void;
+  } | undefined;
   function settleTick(available: boolean) {
     pendingTick?.resolve(available);
     pendingTick = undefined;
+  }
+  function settleBootstrap(result: ServiceOwnerBootstrapResult) {
+    pendingBootstrap?.resolve(result);
+    pendingBootstrap = undefined;
   }
   function stop() {
     if (stopping || socket.destroyed) return;
     stopping = true;
     settleTick(false);
+    settleBootstrap({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE' });
     socket.end();
   }
   checkHandshake();
@@ -682,6 +937,25 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
       }
       return tick;
     });
+    offerOwnerBootstrap?.(() => {
+      if (stopping || socket.destroyed || admission.signal.aborted) {
+        return Promise.resolve({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE' });
+      }
+      if (pendingBootstrap) {
+        return Promise.resolve({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_BUSY' });
+      }
+      let acknowledge!: (result: ServiceOwnerBootstrapResult) => void;
+      const request = new Promise<ServiceOwnerBootstrapResult>(resolveBootstrap => { acknowledge = resolveBootstrap; });
+      pendingBootstrap = { promise: request, resolve: acknowledge };
+      try {
+        admission.assertCurrent();
+        channel.write(serviceStatus('owner-bootstrap', selection));
+      } catch {
+        settleBootstrap({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE' });
+        socket.destroy();
+      }
+      return request;
+    });
     let stopReceived = false;
     for (;;) {
       const response = await channel.read();
@@ -696,20 +970,31 @@ async function serveSelectedService(socket: Socket, admission: SelectedServiceSe
         settleTick(completed === true);
         continue;
       }
+      if (offerOwnerBootstrap) {
+        const bootstrapReply = parseServiceOwnerBootstrap(response, selection);
+        if (bootstrapReply) {
+          if (!pendingBootstrap && !stopping) throw serviceHandoffError();
+          settleBootstrap(bootstrapReply);
+          continue;
+        }
+      }
       if (!stopping || !matchesServiceStatus(response, 'drained', selection)) throw serviceHandoffError();
       await channel.expectEnd();
       return confirmDrain;
     }
   } finally {
     offerTick?.(undefined);
+    offerOwnerBootstrap?.(undefined);
     settleTick(false);
+    settleBootstrap({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE' });
     admission.signal.removeEventListener('abort', stop);
   }
 }
 
 export async function runSelectedServiceSupervisor(program: SupervisorProgram, endpoint: string,
   enrollment: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined,
-  handoff: ServiceHandoffAuthority | ServeSelectedService, workerEndpoint?: string) {
+  handoff: ServiceHandoffAuthority | ServeSelectedService, workerEndpoint?: string,
+  ownerControl?: ServiceSupervisorOwnerControl) {
   const binding = bindRegistration(() => enrollment);
   if (binding.value.serviceRole?.controllerOwned !== true) throw new Error('INSTALLED_SERVICE_CONTROLLER_REQUIRED');
   const authority = typeof handoff === 'function' ? undefined : bindRegistration(() => handoff);
@@ -720,8 +1005,24 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
       (hasWorker && (!authority || resolve(workerEndpoint) !== workerEndpoint || workerEndpoint === endpoint))) {
     throw new Error('INSTALLED_WORKER_SUPERVISOR_LISTENER_REQUIRED');
   }
+  const ownerEndpoint = ownerControl?.endpoint;
+  if (ownerControl !== undefined && !authority) throw ownerControlInvalid();
+  if (ownerEndpoint !== undefined) {
+    const expectedDir = join(binding.value.root, 'runtime', 'service-control');
+    if (typeof ownerEndpoint !== 'string' || resolve(ownerEndpoint) !== ownerEndpoint ||
+        Buffer.byteLength(ownerEndpoint) > ownerControlMaxPathBytes ||
+        dirname(ownerEndpoint) !== expectedDir || !ownerControlSocketName.test(basename(ownerEndpoint)) ||
+        ownerEndpoint === endpoint || ownerEndpoint === workerEndpoint) {
+      throw ownerControlInvalid();
+    }
+  }
   let activeTick: WorkerTick | undefined;
   const offerTick = hasWorker ? (tick?: WorkerTick) => { activeTick = tick; } : undefined;
+  let activeOwnerBootstrap: OwnerBootstrapRequester | undefined;
+  const offerOwnerBootstrap = ownerControl ? (issue?: OwnerBootstrapRequester) => {
+    activeOwnerBootstrap = issue;
+    ownerControl.onAvailable?.(issue);
+  } : undefined;
   const serve: ServeSupervisorConnection = async (socket, shutdown, setPhase) => {
     const disconnected = new AbortController();
     const signal = AbortSignal.any([shutdown, disconnected.signal]);
@@ -761,7 +1062,7 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
         if (await handoff(socket, admission) !== 'drained') throw new Error('INSTALLED_SERVICE_DRAIN_REQUIRED');
       } else {
         authority!.validate();
-        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm, setPhase, offerTick);
+        confirmDrain = await serveSelectedService(socket, admission, binding.value, selection.generation, authority!.value, key!, arm, setPhase, offerTick, offerOwnerBootstrap);
       }
       authority?.validate();
       binding.validate();
@@ -771,16 +1072,34 @@ export async function runSelectedServiceSupervisor(program: SupervisorProgram, e
       fence.release();
     }
   };
-  if (!hasWorker) return runInstalledServiceSupervisor(program, endpoint, serve);
+  if (!hasWorker && ownerEndpoint === undefined) return runInstalledServiceSupervisor(program, endpoint, serve);
 
   const lifetime = new AbortController();
-  const service = runInstalledRoleSupervisor('service', program, endpoint, serve, { descriptor: 3, signal: lifetime.signal });
-  const worker = runInstalledRoleSupervisor('worker', program, workerEndpoint, (socket, shutdown) =>
-    serveInstalledWorkerTicks(socket, shutdown, () => activeTick?.() ?? Promise.resolve(false)),
-  { descriptor: 4, signal: lifetime.signal });
-  await Promise.race([service, worker]).catch(() => {});
+  const tasks: Promise<void>[] = [
+    runInstalledRoleSupervisor('service', program, endpoint, serve, { descriptor: 3, signal: lifetime.signal }),
+  ];
+  if (hasWorker) {
+    tasks.push(runInstalledRoleSupervisor('worker', program, workerEndpoint, (socket, shutdown) =>
+      serveInstalledWorkerTicks(socket, shutdown, () => activeTick?.() ?? Promise.resolve(false)),
+    { descriptor: 4, signal: lifetime.signal }));
+  }
+  if (ownerEndpoint !== undefined) {
+    tasks.push(runInstalledOwnerBootstrapControl(
+      ownerEndpoint,
+      lifetime.signal,
+      () => activeOwnerBootstrap?.() ?? Promise.resolve({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE' }),
+      {
+        expectedUid: 0,
+        verifyDirectory() {
+          binding.validate();
+          verifyControllerOwnerControlDirectory(binding.value);
+        },
+      },
+    ));
+  }
+  await Promise.race(tasks).catch(() => {});
   lifetime.abort();
-  const results = await Promise.allSettled([service, worker]);
+  const results = await Promise.allSettled(tasks);
   for (const result of results) if (result.status === 'rejected') throw result.reason;
 }
 
@@ -836,6 +1155,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
     admitted = selection;
     clearTimeout(deadline);
     let executingTick: Promise<void> | undefined;
+    let executingBootstrap: Promise<void> | undefined;
     function failProtocol() {
       protocolFailure = true;
       socket.destroy();
@@ -854,6 +1174,16 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
           parentStopped = true;
           stop();
           return;
+        }
+        if (matchesServiceStatus(request, 'owner-bootstrap', selection.signed.selection)) {
+          if (executingBootstrap) throw serviceHandoffError();
+          const runningService = runtime;
+          executingBootstrap = Promise.resolve().then(() => {
+            if (stopping.signal.aborted || socket.destroyed) return;
+            const reply = executeSupervisedOwnerBootstrap(runningService, selection.signed.selection, assertSelected);
+            if (!stopping.signal.aborted && !socket.destroyed) channel.write(reply);
+          }).catch(failProtocol).finally(() => { executingBootstrap = undefined; });
+          continue;
         }
         if (executingTick || !matchesServiceStatus(request, 'worker-tick', selection.signed.selection)) throw serviceHandoffError();
         const runningService = runtime;
@@ -903,6 +1233,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
     if (!cleanupConfirmed) throw new Error('INSTALLED_ROLE_DRAIN_INCOMPLETE', { cause: startupFailure });
     await parentEnd;
     await executingTick;
+    await executingBootstrap;
     if (protocolFailure || !parentStopped || socket.destroyed) throw serviceHandoffError();
     channel.write(serviceStatus('drained', selection.signed.selection));
     await new Promise<void>((resolveFinished, reject) => {

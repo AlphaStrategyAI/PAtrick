@@ -309,6 +309,7 @@ export async function startServiceListener(runtime: ServiceRuntime, provisioning
     },
     issueOwnerBootstrap() {
       if (!admitting) throw new Error('OWNER_BOOTSTRAP_UNAVAILABLE');
+      assertSelected?.();
       return runtime.issueOwnerBootstrap();
     },
     ...(maintenance ? { maintenance } : {}),

@@ -1,10 +1,10 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, createReadStream, openSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
-import { constants, machine } from 'node:os';
+import { constants, hostname, machine } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,24 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { applyHostRegistry, planHostRegistry, readHostRegistry } from '../../deploy/host/registry.js';
 import { servicePreflight } from '../../deploy/lib/deployment-templates.mjs';
 import { reserveControllerServiceSession, reserveServiceWriter, type GenerationEnrollment } from '../../deploy/runtime/lifecycle-generation.js';
-import { listenVerifiedServiceControl, runInstalledWorkerSupervisor, serveInstalledWorkerTicks } from '../../deploy/runtime/role-launch.js';
+import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import {
+  executeSupervisedOwnerBootstrap,
+  listenVerifiedServiceControl,
+  ownerBootstrapControlEndpoint,
+  requestInstalledOwnerBootstrap,
+  runInstalledOwnerBootstrapControl,
+  runInstalledWorkerSupervisor,
+  serveInstalledOwnerBootstrapControl,
+  serveInstalledWorkerTicks,
+  serveSelectedService,
+  type OwnerBootstrapRequester,
+} from '../../deploy/runtime/role-launch.js';
+import { createInstalledService } from '../../deploy/runtime/service.js';
+import {
+  serviceFrame, serviceHandoffKey, serviceOwnerBootstrapIssued, serviceOwnerBootstrapUnavailable,
+  serviceStatus, type ServiceSelection,
+} from '../../deploy/runtime/service-handoff.js';
 
 const enabled = process.env.PATRICK_T23_CONTROLLED_LAUNCH === '1';
 const archivedMaterials = process.env.PATRICK_T23_CONTROLLED_MATERIALS;
@@ -74,6 +91,323 @@ test('the Worker channel rejects extra data and releases a disconnected Worker w
     server.close();
     await closed;
   }
+});
+
+test('owner bootstrap control channel validates socket permissions, rejects malformed requests, and releases disconnected callers', async ({ onTestFinished }) => {
+  const root = await mkdtemp('/private/tmp/patrick-owner-ctl-');
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const controlDir = join(root, 'control');
+  await mkdir(controlDir, { mode: 0o700 });
+  const endpoint = join(controlDir, 'owner.sock');
+  expect(ownerBootstrapControlEndpoint('/Library/Application Support/PAtrick/instance')).toBe(
+    '/Library/Application Support/PAtrick/instance/runtime/service-control/owner.sock',
+  );
+
+  const longEndpoint = join(controlDir, `${'a'.repeat(90)}.sock`);
+  await expect(runInstalledOwnerBootstrapControl(longEndpoint, AbortSignal.timeout(500), async () => ({
+    status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+  }))).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+
+  const looseDir = join(root, 'loose');
+  await mkdir(looseDir, { mode: 0o755 });
+  await expect(runInstalledOwnerBootstrapControl(join(looseDir, 'owner.sock'), AbortSignal.timeout(500), async () => ({
+    status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+  }))).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+
+  const regularTarget = join(controlDir, 'not-a-socket.sock');
+  await writeFile(regularTarget, 'plain', { mode: 0o600 });
+  await expect(runInstalledOwnerBootstrapControl(regularTarget, AbortSignal.timeout(500), async () => ({
+    status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+  }))).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+  await expect(requestInstalledOwnerBootstrap(regularTarget)).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+
+  const symlinkTarget = join(controlDir, 'link.sock');
+  await symlink(endpoint, symlinkTarget);
+  await expect(requestInstalledOwnerBootstrap(symlinkTarget)).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+
+  const shutdown = new AbortController();
+  let ready!: () => void;
+  const started = new Promise<void>(resolveReady => { ready = resolveReady; });
+  const sampleTicket = 'A'.repeat(43);
+  const sampleExpires = '2026-11-27T12:00:00.000Z';
+  const sampleSession = 'a'.repeat(32);
+  const sampleSelectionSha = 'b'.repeat(64);
+  let nextResponse: Awaited<ReturnType<OwnerBootstrapRequester>> = {
+    status: 'issued', ticket: sampleTicket, expires_at: sampleExpires,
+    session: sampleSession, selectionSha256: sampleSelectionSha,
+  };
+  let admitPending!: () => void;
+  let releasePending!: () => void;
+  const pendingAdmitted = new Promise<void>(resolveAdmit => { admitPending = resolveAdmit; });
+  const pendingRelease = new Promise<void>(resolveRelease => { releasePending = resolveRelease; });
+  let holdNext = false;
+  const issue = vi.fn<OwnerBootstrapRequester>(async () => {
+    if (holdNext) {
+      holdNext = false;
+      admitPending();
+      await pendingRelease;
+    }
+    return nextResponse;
+  });
+  const serverTask = runInstalledOwnerBootstrapControl(endpoint, shutdown.signal, issue, { onReady: ready });
+  try {
+    await started;
+    const socketInfo = await stat(endpoint);
+    expect(socketInfo.mode & 0o7777).toBe(0o600);
+
+    const malformed = createConnection(endpoint);
+    malformed.end('{"extra":true,"type":"issue-owner-bootstrap","version":1}\n');
+    await once(malformed, 'close');
+    expect(issue).not.toHaveBeenCalled();
+
+    await expect(requestInstalledOwnerBootstrap(endpoint)).resolves.toEqual(nextResponse);
+    expect(issue).toHaveBeenCalledTimes(1);
+
+    nextResponse = { status: 'unavailable', code: 'RECOVERY_WRITE_BLOCKED' };
+    await expect(requestInstalledOwnerBootstrap(endpoint)).resolves.toEqual(nextResponse);
+    expect(issue).toHaveBeenCalledTimes(2);
+
+    holdNext = true;
+    const dropper = createConnection(endpoint);
+    dropper.write('{"type":"issue-owner-bootstrap","version":1}\n');
+    await pendingAdmitted;
+    const dropperClosed = once(dropper, 'close');
+    dropper.destroy();
+    await dropperClosed;
+    releasePending();
+    nextResponse = { status: 'unavailable', code: 'OWNER_PASSKEY_ALREADY_REGISTERED' };
+    await expect(requestInstalledOwnerBootstrap(endpoint)).resolves.toEqual(nextResponse);
+
+    await chmod(endpoint, 0o644);
+    await expect(requestInstalledOwnerBootstrap(endpoint)).rejects.toThrow('INSTALLED_OWNER_BOOTSTRAP_CONTROL_INVALID');
+    await chmod(endpoint, 0o600);
+  } finally {
+    shutdown.abort();
+    releasePending();
+    await serverTask;
+  }
+  await expect(stat(endpoint)).rejects.toMatchObject({ code: 'ENOENT' });
+
+  const directEndpoint = join(controlDir, 'direct.sock');
+  const directShutdown = new AbortController();
+  const directServer = createServer({ allowHalfOpen: true }, socket => {
+    void serveInstalledOwnerBootstrapControl(socket, directShutdown.signal, async () => ({
+      status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+    })).catch(() => {}).finally(() => socket.destroy());
+  });
+  directServer.listen(directEndpoint);
+  await once(directServer, 'listening');
+  await chmod(directEndpoint, 0o600);
+  try {
+    await expect(requestInstalledOwnerBootstrap(directEndpoint)).resolves.toEqual({
+      status: 'unavailable', code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+    });
+  } finally {
+    directShutdown.abort();
+    directServer.close();
+    await once(directServer, 'close');
+  }
+});
+
+test('serveSelectedService bridges owner-bootstrap over the authenticated channel with single-flight, HTTP verification, and protocol checks', async ({ onTestFinished }) => {
+  const root = await mkdtemp('/private/tmp/patrick-owner-bridge-');
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const dataRoot = join(root, 'service-data');
+  await mkdir(dataRoot, { mode: 0o700 });
+  const databasePath = join(dataRoot, 'service.sqlite');
+  const credentialDirectory = join(dataRoot, 'credentials');
+  await mkdir(credentialDirectory, { mode: 0o700 });
+  const identity = {
+    accountId: 'owner-bridge', scopeId: 'owner-bridge-scope', deviceId: 'darwin-arm64',
+    configRevision: 'r1', domains: ['personal'],
+  };
+  let attachedDb: DatabaseSync | undefined;
+  let admitWriter: (() => void) | undefined;
+  const rpId = 'bridge.patrick.test';
+  const origin = `https://${rpId}`;
+  const provisioning = createRuntimeProvisioning({
+    registration: {
+      identity, captureHost: hostname(), serviceUid: process.geteuid!(), profile: 'test',
+      dataRoot, minimumFreeBytes: 0, origin, rpId, listener: { host: '127.0.0.1', port: 0, origin },
+    },
+    service: {
+      databasePath, credentialDirectory,
+      recoveryRuntime: {
+        attach({ database, admission }) {
+          attachedDb = database as unknown as DatabaseSync;
+          admitWriter = () => {
+            const writer = { domain: 'personal', writerEpoch: 'epoch-1', activationId: 'act-1', witnessRevision: 'rev-1' };
+            database.prepare(`INSERT INTO recovery_domain_gates(data_domain,writer_epoch,status,activation_id,witness_revision,reason,updated_at)
+              VALUES(?,?,?,?,?,?,?)`).run(writer.domain, writer.writerEpoch, 'open', writer.activationId, writer.witnessRevision, 'test', new Date().toISOString());
+            admission.admit(writer);
+          };
+        },
+      },
+      bindRecoveryOperations() {
+        return {
+          root: dataRoot, targets: {},
+          authority: { keyId: 'fixture', async sign() { throw new Error('unexpected'); }, async verify() { return false; } },
+        };
+      },
+    },
+  });
+  const runtime = createInstalledService(provisioning);
+  onTestFinished(async () => { await runtime.drain(); });
+  const service = {
+    read: () => ({ listener: 'running' as const, activeRequests: 0, openConnections: 0, runtime: runtime.read() }),
+    issueOwnerBootstrap: () => runtime.issueOwnerBootstrap(),
+  };
+
+  const pair = generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const key = serviceHandoffKey(publicKey);
+  const nodePin = { device: '1', inode: '2', birthtimeNs: '3' };
+  const generation = {
+    id: 'first-generation', schema: 1, packageSha256: 'c'.repeat(64), releaseRoot: nodePin, dataRoot: nodePin,
+    roles: {
+      service: nodePin, 'service.sqlite': nodePin, 'answers.sqlite': nodePin,
+      credentials: nodePin, blobs: nodePin, projections: nodePin, 'hub/hub.db': nodePin,
+    },
+  };
+  const enrollment = {
+    installationId: 'owner-bridge-inst', hostId: 'owner-bridge-host', identity, root, rootNode: nodePin,
+    serviceRole: { uid: process.geteuid!(), gid: process.getegid!(), rootNode: nodePin, writerNode: nodePin, controllerOwned: true as const },
+  } as unknown as GenerationEnrollment;
+  const session = 'd'.repeat(32);
+  const selectionSha256 = 'e'.repeat(64);
+  const endpoint = join(root, 'handoff.sock');
+
+  const postChallenge = async (ticket: string) => {
+    const response = await runtime.app.fetch(new Request(`${origin}/api/v1/auth/challenge`, {
+      method: 'POST',
+      headers: {
+        host: rpId, origin, 'content-type': 'application/json', 'x-patrick-bootstrap': ticket,
+      },
+      body: JSON.stringify({ rp_id: rpId }),
+    }));
+    return { status: response.status, json: await response.json() as Record<string, unknown> };
+  };
+
+  const openSockets = new Set<Socket>();
+  const server = createServer({ allowHalfOpen: true }, accepted => {
+    openSockets.add(accepted);
+    accepted.once('close', () => openSockets.delete(accepted));
+  });
+  server.listen(endpoint);
+  await once(server, 'listening');
+  onTestFinished(async () => {
+    for (const openSocket of openSockets) openSocket.destroy();
+    await new Promise<void>(resolveClosed => server.close(() => resolveClosed()));
+  });
+
+  const incoming = once(server, 'connection') as Promise<[Socket]>;
+  const client = createConnection({ path: endpoint, allowHalfOpen: true });
+  openSockets.add(client);
+  const [serverSocket] = await incoming;
+  const clientChannel = serviceFrame(client);
+  const shutdown = new AbortController();
+  let requestBootstrap: OwnerBootstrapRequester | undefined;
+  let offered!: () => void;
+  const ready = new Promise<void>(resolveReady => { offered = resolveReady; });
+  let releaseDelay!: () => void;
+  let delayNextReply = false;
+  const replyGate = new Promise<void>(resolveGate => { releaseDelay = resolveGate; });
+  let activeSelection!: ServiceSelection;
+
+  const supervisorTask = serveSelectedService(
+    serverSocket,
+    { paths: { selectionSha256 } as never, deployment: {} as never, session, signal: shutdown.signal, assertCurrent() {} },
+    enrollment, generation,
+    { publicKey, signSelection: bytes => sign(null, bytes, pair.privateKey).toString('base64') },
+    key, () => () => {}, () => {}, undefined,
+    requester => {
+      requestBootstrap = requester;
+      if (requester) offered();
+    },
+  );
+
+  const clientLoop = (async () => {
+    expect(await clientChannel.read()).toEqual({ version: 1, type: 'ready' });
+    clientChannel.write({ version: 1, type: 'hello', challenge: randomBytes(32).toString('hex') });
+    const signed = await clientChannel.read() as { selection: ServiceSelection };
+    activeSelection = signed.selection;
+    for (;;) {
+      const frame = await clientChannel.readOrEnd();
+      if (frame === undefined) {
+        clientChannel.write(serviceStatus('drained', activeSelection));
+        client.end();
+        return;
+      }
+      if (delayNextReply) {
+        delayNextReply = false;
+        await replyGate;
+      }
+      const reply = executeSupervisedOwnerBootstrap(service, activeSelection, () => {});
+      clientChannel.write(reply);
+    }
+  })();
+
+  await ready;
+  expect(requestBootstrap).toBeTypeOf('function');
+
+  await expect(requestBootstrap!()).resolves.toEqual({ status: 'unavailable', code: 'RECOVERY_WRITE_BLOCKED' });
+  expect(service.read().runtime.status).toBe('running');
+
+  admitWriter!();
+  delayNextReply = true;
+  const firstPending = requestBootstrap!();
+  await expect(requestBootstrap!()).resolves.toEqual({ status: 'unavailable', code: 'OWNER_BOOTSTRAP_BUSY' });
+  releaseDelay();
+  const first = await firstPending;
+  expect(first).toMatchObject({ status: 'issued', session, selectionSha256 });
+  if (first.status !== 'issued') throw new Error('expected issued bootstrap ticket');
+
+  const second = await requestBootstrap!();
+  expect(second.status).toBe('issued');
+  if (second.status !== 'issued') throw new Error('expected second issued bootstrap ticket');
+  expect(second.ticket).not.toBe(first.ticket);
+
+  expect((await postChallenge(first.ticket)).status).toBe(403);
+  const challenge = await postChallenge(second.ticket);
+  expect(challenge.status).toBe(200);
+  expect((challenge.json.challenge as { rp: { id: string } }).rp.id).toBe(rpId);
+
+  attachedDb!.prepare(`INSERT INTO passkey_credentials(credential_id, account_id, public_key, counter, created_at)
+    VALUES('cred-1', ?, ?, 0, ?)`).run(identity.accountId, Buffer.from([1, 2, 3]), new Date().toISOString());
+  await expect(requestBootstrap!()).resolves.toEqual({ status: 'unavailable', code: 'OWNER_PASSKEY_ALREADY_REGISTERED' });
+  expect(service.read().runtime.status).toBe('running');
+
+  shutdown.abort();
+  const confirmDrain = await supervisorTask;
+  confirmDrain();
+  await clientLoop;
+  serverSocket.destroy();
+  client.destroy();
+  expect(requestBootstrap).toBeUndefined();
+
+  const badIncoming = once(server, 'connection') as Promise<[Socket]>;
+  const rogueClient = createConnection({ path: endpoint, allowHalfOpen: true });
+  openSockets.add(rogueClient);
+  const [rogueServer] = await badIncoming;
+  const rogueChannel = serviceFrame(rogueClient);
+  const rogueTask = serveSelectedService(
+    rogueServer,
+    { paths: { selectionSha256 } as never, deployment: {} as never, session, signal: new AbortController().signal, assertCurrent() {} },
+    enrollment, generation,
+    { publicKey, signSelection: bytes => sign(null, bytes, pair.privateKey).toString('base64') },
+    key, () => () => {}, () => {}, undefined, () => {},
+  );
+  await rogueChannel.read();
+  rogueChannel.write({ version: 1, type: 'hello', challenge: randomBytes(32).toString('hex') });
+  const rogueSigned = await rogueChannel.read() as { selection: ServiceSelection };
+  rogueChannel.write(serviceOwnerBootstrapIssued(rogueSigned.selection, 'B'.repeat(43), '2026-11-27T12:00:00.000Z'));
+  await expect(rogueTask).rejects.toThrow('INSTALLED_SERVICE_SUPERVISOR_PROTOCOL_INVALID');
+  rogueServer.destroy();
+  rogueClient.destroy();
+
+  expect(serviceOwnerBootstrapUnavailable(activeSelection, 'OWNER_BOOTSTRAP_UNAVAILABLE')).toMatchObject({
+    version: 1, type: 'owner-bootstrap-unavailable', session, selectionSha256, code: 'OWNER_BOOTSTRAP_UNAVAILABLE',
+  });
 });
 const clt = '/Library/Developer/CommandLineTools';
 const localClangSha = '1590ac950a3d627817d09ade5cb60b2115f17a72182a3141e010b4bcc482a0c9';
