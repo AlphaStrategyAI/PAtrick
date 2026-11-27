@@ -94,10 +94,11 @@ export function parseArguments(argv) {
     if (!flag.startsWith('--') || seen.has(flag)) throw new Error('CLI_ARGUMENT_INVALID');
     seen.add(flag);
     const name = flag.slice(2);
-    if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation'].includes(name)) {
+    if (['preview', 'execute', 'readback', 'check-session', 'prepare-generation', 'publish-generation'].includes(name)) {
       if (explicitAction || command === 'doctor' && name !== 'preview' ||
         name === 'check-session' && command !== 'install' ||
-        name === 'prepare-generation' && command !== 'install' && command !== 'upgrade') throw new Error('CLI_ARGUMENT_INVALID');
+        name === 'prepare-generation' && command !== 'install' && command !== 'upgrade' ||
+        name === 'publish-generation' && command !== 'upgrade') throw new Error('CLI_ARGUMENT_INVALID');
       explicitAction = true;
       request.action = name;
       continue;
@@ -114,7 +115,7 @@ export function parseArguments(argv) {
   if (request.action === 'check-session') {
     if (!request.release || request.operation) throw new Error('CLI_ARGUMENT_INVALID');
   } else if (request.action !== 'preview' && !request.operation) throw new Error('CLI_ARGUMENT_INVALID');
-  if (request.action === 'prepare-generation' && !request.release) throw new Error('CLI_ARGUMENT_INVALID');
+  if (['prepare-generation', 'publish-generation'].includes(request.action) && !request.release) throw new Error('CLI_ARGUMENT_INVALID');
   return Object.freeze(request);
 }
 function response(request, status, code, nextStep, extra = {}) {
@@ -360,6 +361,10 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const validate = () => { binding.validate(); hostBinding.validate(); };
         const result = await run(binding.value, request.action, validate);
         validate();
+        if (result.status === 'generation-published') return response(request, 'uncertain', 'UPGRADE_GENERATION_PUBLISHED',
+          'Confirm the signed generation selection.',
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId,
+            upgradePreparationSha256: result.preparationSha256, upgradeGenerationSha256: result.generationSha256 });
         if (result.status === 'research-canary-passed') return response(request, 'uncertain', 'UPGRADE_RESEARCH_CANARY_PASSED',
           'Publish the verified successor data and confirm the signed generation selection.',
           { ...selected, upgradeRelease: result.receipt, generationId: result.generationId, upgradePreparationSha256: result.preparationSha256 });

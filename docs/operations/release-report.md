@@ -321,6 +321,8 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 目标 MacBook Pro 对干净提交 `d4224c5b` 完成两次原生 `arm64` 构建、四项签名前场景和隔离验签。使用 `d7f1043` 前序包重跑升级准备，确认灰度回执、旧答复回执和源代次指针。系统域安装待验收。[隔离验收回执](evidence/t23-arm64-research-canary-d4224c5b.json)
 
+`patrick upgrade --publish-generation --release <sha256> --operation <id>` 完成灰度后，在 Service 和 Hub 写者围栏内暂存并发布 `data/<generationId>`。三库取自已核验的迁移结果和维护快照。同机凭据、Hub 主密钥、Blob 和投影从已停止代次复制，按新代次角色账号设置权限。控制器核对文件摘要、库内 Blob 引用和私有发布回执。暂存复制中断后，控制器用留存的操作登记重新核对切点和资源，再重试。CLI 返回 `uncertain / UPGRADE_GENERATION_PUBLISHED` 及 `upgradeGenerationSha256`。签名切换仍是独立步骤。
+
 2026-11-27，目标 MacBook Pro 用 `d7f1043` 和带能力标记的 `arm64` 签名候选重跑三项隔离升级用例，均通过。后继包由固定工作快照构建两次，使用一次性验收公钥核对 489 个文件。包摘要为 `2a3fa411731ed01537d5741b1ae533907a761564b0214683a675c8c0e8e6337a`。测试覆盖回放结果、异常 Hub 数据拒绝和旧代次保留。系统域升级待验收。
 
 目标 MacBook Pro 从干净提交 `4814ad80` 两次构建一致的 `arm64` 材料，通过四项签名前用例并用隔离 Ed25519 密钥验签。升级用例分别提供一致和内容不一致的已签名快照。前者通过回放，后者两次尝试均未进入切换。两项用例均验证源代次保留。[应答对账验收回执](evidence/t23-arm64-answer-reconciliation-4814ad80.json)

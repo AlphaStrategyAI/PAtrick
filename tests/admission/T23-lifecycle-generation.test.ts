@@ -297,9 +297,25 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   const operationsRoot = directory(fixture.fixture, 'operations');
   const sets = directory(fixture.fixture, 'sets');
   const handoff = directory(fixture.fixture, 'handoff');
+  const credential = 'synthetic same-host credential';
+  const projection = 'synthetic retained projection';
+  const sourceCredential = join(fixture.dataRoot, 'credentials', 'cred_fixture');
+  const retainedBlob = Buffer.from('synthetic retained blob');
+  const blobHash = sha256(retainedBlob);
+  const blobPath = join('blobs', blobHash.slice(0, 2), blobHash);
+  if (inputs[1].researchCanary) {
+    const projectionRoot = directory(join(fixture.dataRoot, 'projections'), 'nested');
+    writeFileSync(sourceCredential, credential, { mode: 0o600 });
+    writeFileSync(join(projectionRoot, 'retained.json'), projection, { mode: 0o600 });
+    directory(join(fixture.dataRoot, 'blobs'), blobHash.slice(0, 2));
+    writeFileSync(join(fixture.dataRoot, blobPath), retainedBlob, { mode: 0o644 });
+  }
   const migrationsDir = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
   const migrations = JSON.parse(readFileSync(join(migrationsDir, 'manifest.json'), 'utf8')) as MigrationEntry[];
   const service = openDatabase(join(fixture.dataRoot, 'service.sqlite'), { migrationsDir, manifest: migrations.slice(0, -1) });
+  const timestamp = '2026-11-27T00:00:00Z';
+  if (inputs[1].researchCanary) service.prepare('INSERT INTO blobs (sha256, byte_length, created_at) VALUES (?, ?, ?)')
+    .run(blobHash, retainedBlob.length, timestamp);
   service.prepare(`INSERT INTO domain_events
     (seq, event_id, aggregate_id, aggregate_version, account_id, data_domain, schema_version, payload, created_at)
     VALUES (1, 'retained-event', 'retained-object', 1, 'account', 'personal', '1.0', '{}', '2026-11-27T00:00:00Z')`).run();
@@ -317,6 +333,9 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
       'verified', 'proceed', 'hub:retained-question:42', 1, '[]', '1.0', '2026-11-27T00:00:00Z')`).run();
   storeHubView(service, { hub_seq: 1, runs: [], cards: [] }, '2026-11-27T00:00:00Z');
   const hubPath = join(fixture.dataRoot, autoloopHubDatabase);
+  const masterKey = Buffer.alloc(32, 7).toString('base64url');
+  const masterKeyPath = join(fixture.dataRoot, autoloopHubDirectory, 'master.key');
+  if (inputs[1].researchCanary) writeFileSync(masterKeyPath, masterKey, { mode: 0o600 });
   const initializer = join(root, 'releases', current.order.generation.packageSha256, autoloopHub.root, autoloopHub.initializer);
   const initializerSource = readFileSync(initializer);
   expect(sha256(initializerSource)).toBe(autoloopHub.files[autoloopHub.initializer]);
@@ -349,7 +368,11 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   const answersSnapshot = new DatabaseSync(answersPath);
   try { answersSnapshot.exec('PRAGMA journal_mode = DELETE'); } finally { answersSnapshot.close(); }
   const scope = { setId: 'before-upgrade', domains: [{ domain: 'personal', writerEpoch: 'old',
-    withdrawal: { seq: 0, hash: sha256(Buffer.alloc(0)) } }], versionLocks: { source: 'fixture' }, resources: [{ kind: 'handoff' as const, root: handoff }] };
+    withdrawal: { seq: 0, hash: sha256(Buffer.alloc(0)) } }], versionLocks: { source: 'fixture' }, resources: [
+    ...(inputs[1].researchCanary ? [{ kind: 'blob' as const, root: join(fixture.dataRoot, 'blobs') }] : []),
+    { kind: 'handoff' as const, root: handoff },
+  ] };
+  const stagedAnswers = `resources/${scope.resources.length - 1}/local-answers.sqlite`;
   const backupRequest = { operationId: 'backup', targetId: 'cut', mode: 'backup' as const };
   const backup = createRecoveryOperations({ root: operationsRoot, authority, targets: { cut: {
     identity: e.identity, backup: { scope, options: { root: sets, authority, databases: { service, hub },
@@ -409,6 +432,8 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   const readback = [...args, '--readback', '--operation', 'upgrade'];
   const execute = [...args, '--execute', '--operation', 'upgrade'];
   const prepare = [...args, '--prepare-generation', '--operation', 'upgrade'];
+  const publish = [...args, '--publish-generation', '--operation', 'upgrade'];
+  const successorRoot = join(root, 'data', nextGeneration);
   const releasePath = join(root, 'releases', expected.packageSha256);
   const pointerBefore = readFileSync(join(root, 'current'));
   const sourceBefore = sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')));
@@ -441,6 +466,7 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
     expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
     expect(lstatSync(preparationPath, { throwIfNoEntry: false })).toBeUndefined();
+    expect(lstatSync(successorRoot, { throwIfNoEntry: false })).toBeUndefined();
     expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
     return;
   }
@@ -449,7 +475,7 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
       : inputs[1].answerReplay ? 'UPGRADE_ANSWER_REPLAYED' : 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration,
   });
   expect(readdirSync(join(root, 'staging')).some(name => name.startsWith('.answer-replay-'))).toBe(false);
-  for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
+  for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', stagedAnswers]) {
     expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
   }
   const stagedNode = node(stagedData);
@@ -493,6 +519,35 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   expect(await cli().run(prepare)).toEqual(prepared);
   expect(node(servicePath)).toEqual(serviceNode);
   expect(lstatSync(interrupted, { throwIfNoEntry: false })).toBeUndefined();
+  if (inputs[1].researchCanary) {
+    unlinkSync(masterKeyPath);
+    expect(await cli().run(publish)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(lstatSync(successorRoot, { throwIfNoEntry: false })).toBeUndefined();
+    writeFileSync(masterKeyPath, masterKey, { mode: 0o600 });
+    const publication = await cli().run(publish);
+    expect(publication).toMatchObject({ status: 'uncertain', code: 'UPGRADE_GENERATION_PUBLISHED',
+      generationId: nextGeneration, upgradePreparationSha256: prepared.upgradePreparationSha256,
+      upgradeGenerationSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(readFileSync(join(successorRoot, 'service.sqlite'))).toEqual(readFileSync(servicePath));
+    expect(readFileSync(join(successorRoot, autoloopHubDatabase))).toEqual(readFileSync(join(stagedData, 'databases/hub.sqlite')));
+    expect(readFileSync(join(successorRoot, autoloopHubDirectory, 'master.key'), 'utf8')).toBe(masterKey);
+    expect(readFileSync(join(successorRoot, 'answers.sqlite'))).toEqual(readFileSync(join(stagedData, stagedAnswers)));
+    expect(readFileSync(join(successorRoot, blobPath))).toEqual(retainedBlob);
+    expect(readFileSync(join(successorRoot, 'credentials/cred_fixture'), 'utf8')).toBe(credential);
+    expect(readFileSync(join(successorRoot, 'projections/nested/retained.json'), 'utf8')).toBe(projection);
+    expect(node(join(successorRoot, 'credentials/cred_fixture'))).not.toEqual(node(sourceCredential));
+    expect(await cli().run(publish)).toEqual(publication);
+    const partialGeneration = join(root, 'staging', '.upgrade-upgrade.generation.partial');
+    renameSync(successorRoot, partialGeneration);
+    unlinkSync(join(partialGeneration, '.patrick-upgrade-generation.json'));
+    writeFileSync(join(partialGeneration, 'projections/nested/retained.json'), 'incomplete');
+    expect(await cli().run(publish)).toMatchObject({ status: 'uncertain', code: 'UPGRADE_GENERATION_PUBLISHED',
+      generationId: nextGeneration });
+    expect(readFileSync(join(successorRoot, 'projections/nested/retained.json'), 'utf8')).toBe(projection);
+    writeFileSync(join(successorRoot, 'projections/nested/retained.json'), 'substituted');
+    expect(await cli().run(publish)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
+  }
   const serviceBytes = readFileSync(servicePath);
   const changedService = new DatabaseSync(servicePath);
   try {
@@ -500,13 +555,13 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   } finally { changedService.close(); }
   expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
   writeFileSync(servicePath, serviceBytes);
-  writeFileSync(join(stagedData, 'resources/0/local-answers.sqlite'), 'changed staged file');
+  writeFileSync(join(stagedData, stagedAnswers), 'changed staged file');
   expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
   expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
   expect(sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')))).toBe(sourceBefore);
   fenced = false;
   expect(await cli().run(readback)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
-}, 240_000);
+}, 720_000);
 
 test.skipIf(inputs.length === 0)('installed upgrade previews a pinned signed successor from the confirmed generation', async () => {
   const fixture = await installedUpgradeFixture();

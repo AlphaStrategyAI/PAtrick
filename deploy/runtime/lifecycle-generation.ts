@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync,
+import { chmodSync, chownSync, closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync,
   readFileSync, realpathSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -82,7 +82,7 @@ type UpgradeDatabasePorts = Readonly<{
   validateAnswers(database: DatabaseSync, guard: () => void): void;
   validateVerifiedAnswers(service: DatabaseSync, answers: DatabaseSync, guard: () => void): number;
 }>;
-export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation';
+export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation' | 'publish-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
@@ -672,6 +672,239 @@ export function canRestoreOldRelease(input: {
   return input.snapshotVerified === true && input.writerStopped === true && input.writesSinceSwitch === 0;
 }
 
+type UpgradeGenerationFile = { path: string; hash: string; bytes: number };
+type UpgradeRoleOwner = Readonly<{ uid: number; gid: number }>;
+
+async function publishUpgradeGeneration(input: {
+  target: string; scratch: string; attempt: string; dataParent: GenerationNode; stagingParent: GenerationNode;
+  sourceData: string; sourceServiceUid: number; sourceHub: string; serviceOwner?: UpgradeRoleOwner; hubOwner?: UpgradeRoleOwner;
+  generation: Pick<InstalledGeneration, 'id' | 'packageSha256' | 'schema' | 'releaseRoot'>;
+  preparationSha256: string; service: string; rawData: string; migration: Buffer; cut: VerifiedCutMaterial;
+  guard: () => void; confirmCut: () => Promise<void>; onAttempt: () => void;
+}) {
+  const { target, scratch, sourceData, serviceOwner, hubOwner, guard, confirmCut, onAttempt } = input;
+  const receiptName = '.patrick-upgrade-generation.json';
+  const localUid = process.geteuid!();
+  const prefix = serviceOwner ? serviceDataDirectory + '/' : '';
+  const traversal = serviceOwner ? 0o711 : hubOwner ? 0o710 : 0o700;
+  type Directory = { path: string; owner?: UpgradeRoleOwner };
+  const directories: Directory[] = [{ path: autoloopHubDirectory, owner: hubOwner }];
+  if (serviceOwner) directories.push({ path: serviceDataDirectory, owner: serviceOwner });
+  const sources: (UpgradeGenerationFile & { source: string; owner?: UpgradeRoleOwner; node: GenerationNode; sourceUid: number })[] = [];
+  async function addFile(file: UpgradeGenerationFile, source: string, owner?: UpgradeRoleOwner, sourceUid = localUid) {
+    guard();
+    const node = pin(stat(source));
+    checkNode(source, node, false, sourceUid);
+    const observed = await fileHash(source);
+    checkNode(source, node, false, sourceUid);
+    requireValue(observed.hash === file.hash && observed.bytes === file.bytes);
+    sources.push({ ...file, source, owner, node, sourceUid });
+  }
+  async function captureLive(root: string, path: string, result: UpgradeGenerationFile[], dirs: Directory[]) {
+    guard();
+    const snapshot = pin(stat(root));
+    checkNode(root, snapshot, true, input.sourceServiceUid);
+    checkRuntimeAcl([root]);
+    dirs.push({ path, owner: serviceOwner });
+    for (const name of readdirSync(root).sort()) {
+      const file = join(root, name);
+      const child = join(path, name);
+      const info = stat(file);
+      if (info.isDirectory()) await captureLive(file, child, result, dirs);
+      else {
+        const node = pin(info);
+        checkNode(file, node, false, input.sourceServiceUid);
+        checkRuntimeAcl([file]);
+        const observed = await fileHash(file);
+        checkNode(file, node, false, input.sourceServiceUid);
+        result.push({ path: child, ...observed });
+      }
+    }
+    checkNode(root, snapshot, true, input.sourceServiceUid);
+  }
+  async function captureResources() {
+    const files: UpgradeGenerationFile[] = [];
+    const dirs: Directory[] = [];
+    for (const name of dataDirectories) await captureLive(join(sourceData, name), prefix + name, files, dirs);
+    return { files, dirs };
+  }
+  const resources = await captureResources();
+  const resourceDigest = ({ dirs, files }: typeof resources) => digest({ dirs: dirs.map(item => item.path), files });
+  directories.push(...resources.dirs);
+  for (const file of resources.files) {
+    await addFile(file, join(sourceData, file.path.slice(prefix.length)), serviceOwner, input.sourceServiceUid);
+  }
+  const hub = input.cut.artifacts.find(item => item.path === 'databases/hub.sqlite' && item.kind === 'database');
+  requireValue(hub);
+  const migration = JSON.parse(input.migration.toString()) as { output: { hash: string; bytes: number } };
+  await addFile({ path: prefix + 'service.sqlite', ...migration.output }, input.service, serviceOwner);
+  const hubDatabase = join(input.rawData, hub.path);
+  await addFile({ path: autoloopHubDatabase, hash: hub.hash, bytes: hub.bytes }, hubDatabase, hubOwner);
+  const masterKey = join(input.sourceHub, 'master.key');
+  const keyInfo = lstatSync(masterKey, { bigint: true, throwIfNoEntry: false });
+  if (keyInfo) {
+    const uid = hubOwner?.uid ?? localUid;
+    const info = checkNode(masterKey, pin(keyInfo), false, uid);
+    requireValue((info.mode & 0o7777n) === 0o600n && info.size >= 43n && info.size <= 45n &&
+      (!hubOwner || info.gid === BigInt(hubOwner.gid)));
+    checkRuntimeAcl([masterKey]);
+    await addFile({ path: join(autoloopHubDirectory, 'master.key'), ...await fileHash(masterKey) }, masterKey, hubOwner, uid);
+  } else {
+    requireValue(!withImmutableUpgradeDatabase(hubDatabase, database => database.prepare('SELECT 1 FROM facts LIMIT 1').get()));
+  }
+  const answers = input.cut.localAnswers;
+  await addFile({ path: prefix + 'answers.sqlite', hash: answers.hash, bytes: answers.bytes },
+    join(input.rawData, answers.path), serviceOwner);
+  const byPath = new Map(sources.map(file => [file.path, file]));
+  withImmutableUpgradeDatabase(input.service, database => {
+    for (const row of database.prepare('SELECT sha256, byte_length FROM blobs').iterate()) {
+      hash(row.sha256);
+      const file = byPath.get(`${prefix}blobs/${row.sha256.slice(0, 2)}/${row.sha256}`);
+      requireValue(file?.hash === row.sha256 && file.bytes === row.byte_length);
+    }
+  });
+  const inventory = digest({ directories: directories.map(item => item.path),
+    files: sources.map(({ path, hash, bytes }) => ({ path, hash, bytes })) });
+  const expectedEntries = new Map<string, string[]>([['.', [receiptName]]]);
+  for (const name of [...directories, ...sources].map(item => item.path)) {
+    const parent = dirname(name);
+    const entries = expectedEntries.get(parent);
+    if (entries) entries.push(basename(name));
+    else expectedEntries.set(parent, [basename(name)]);
+  }
+  function inspect(path: string, owner: UpgradeRoleOwner | undefined, directory: boolean, mode: number) {
+    const node = pin(stat(path));
+    const info = checkNode(path, node, directory, owner?.uid ?? localUid);
+    requireValue((info.mode & 0o7777n) === BigInt(mode) && (!owner || info.gid === BigInt(owner.gid)));
+    return node;
+  }
+  async function observe(root: string, withReceipt: boolean) {
+    guard();
+    const mode = stat(root).mode & 0o7777n;
+    requireValue(mode === 0o700n || root === target && mode === BigInt(traversal));
+    checkRuntimeAcl([root, ...directories.map(entry => join(root, entry.path))]);
+    const dataRoot = inspect(root, hubOwner && { uid: localUid, gid: hubOwner.gid }, true, Number(mode));
+    const roles = {} as InstalledGeneration['roles'];
+    const roleNames = new Set<string>([...dataFiles, ...dataDirectories, serviceDataDirectory, autoloopHubDirectory, autoloopHubDatabase]);
+    const retained = new Map([[root, dataRoot]]);
+    for (const { path, owner } of directories) {
+      const pathOnDisk = join(root, path);
+      const node = inspect(pathOnDisk, owner, true, 0o700);
+      retained.set(pathOnDisk, node);
+      const role = path.startsWith(prefix) ? path.slice(prefix.length) : path;
+      if (roleNames.has(role)) Object.assign(roles, { [role]: node });
+    }
+    for (const [relative, children] of expectedEntries) {
+      const required = children.filter(name => relative !== '.' || name !== receiptName || withReceipt);
+      requireValue(canonicalize(readdirSync(join(root, relative)).sort()) === canonicalize(required.sort()));
+    }
+    for (const entry of directories) {
+      if (!expectedEntries.has(entry.path)) requireValue(readdirSync(join(root, entry.path)).length === 0);
+    }
+    for (const { path, owner, hash, bytes } of sources) {
+      guard();
+      const file = join(root, path);
+      const node = inspect(file, owner, false, 0o600);
+      checkRuntimeAcl([file]);
+      const observed = await fileHash(file);
+      requireValue(observed.hash === hash && observed.bytes === bytes && canonicalize(inspect(file, owner, false, 0o600)) === canonicalize(node));
+      const role = path.startsWith(prefix) ? path.slice(prefix.length) : path;
+      if (roleNames.has(role)) Object.assign(roles, { [role]: node });
+    }
+    const generation = { ...input.generation, dataRoot, roles };
+    const receipt = bytes({ format: 'patrick-upgrade-generation-v1', preparationSha256: input.preparationSha256, generation, inventory });
+    for (const [path, node] of [...retained].reverse()) syncDirectory(path, node);
+    return { receipt, generation };
+  }
+  async function readback(root: string) {
+    const result = await observe(root, true);
+    const path = join(root, receiptName);
+    inspect(path, undefined, false, 0o600);
+    requireValue(result.receipt.equals(await readRegularFile(path, recordLimit, { root, validate: guard })));
+    return result;
+  }
+  guard();
+  requireValue(input.dataParent.device === input.stagingParent.device);
+  const partial = lstatSync(scratch, { throwIfNoEntry: false });
+  const installed = lstatSync(target, { throwIfNoEntry: false });
+  requireValue(!partial || !installed);
+  const attempt = bytes({
+    format: 'patrick-upgrade-generation-attempt-v1', preparationSha256: input.preparationSha256, generation: input.generation, inventory,
+  });
+  if (lstatSync(input.attempt, { throwIfNoEntry: false })) {
+    inspect(input.attempt, undefined, false, 0o600);
+    requireValue(attempt.equals(await readRegularFile(input.attempt, recordLimit, { root: dirname(scratch), validate: guard })));
+    syncDirectory(dirname(scratch), input.stagingParent);
+  } else {
+    requireValue(!partial && !installed);
+    await confirmCut();
+    guard();
+    onAttempt();
+    recordUpgradePublication(input.attempt, attempt, input.stagingParent, guard);
+  }
+  const completePartial = partial && lstatSync(join(scratch, receiptName), { throwIfNoEntry: false });
+  if (!completePartial && !installed) {
+    if (partial) {
+      const scratchNode = inspect(scratch, undefined, true, 0o700);
+      checkRuntimeAcl([scratch]);
+      await confirmCut();
+      guard();
+      checkNode(scratch, scratchNode, true);
+      onAttempt();
+      rmSync(scratch, { recursive: true });
+    }
+    const free = statfsSync(dirname(scratch), { bigint: true });
+    requireValue(free.bsize > 0n && free.bavail * free.bsize >= sources.reduce((total, file) => total + BigInt(file.bytes), 0n));
+    onAttempt();
+    mkdirSync(scratch, { mode: 0o700 });
+    if (hubOwner) chownSync(scratch, localUid, hubOwner.gid);
+    for (const { path, owner } of directories) {
+      const child = join(scratch, path);
+      mkdirSync(child, { mode: 0o700 });
+      if (owner) chownSync(child, owner.uid, owner.gid);
+    }
+    for (const file of sources) {
+      const targetFile = join(scratch, file.path);
+      await copyUpgradeArtifact(file.source, targetFile, file.bytes, () => {
+        guard();
+        checkNode(file.source, file.node, false, file.sourceUid);
+      });
+      if (file.owner) {
+        chownSync(targetFile, file.owner.uid, file.owner.gid);
+        const fd = openSync(targetFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try { fsyncSync(fd); } finally { closeSync(fd); }
+      }
+    }
+    const result = await observe(scratch, false);
+    recordUpgradePublication(join(scratch, receiptName), result.receipt, result.generation.dataRoot, guard);
+  }
+  const result = await readback(installed ? target : scratch);
+  requireValue(resourceDigest(await captureResources()) === resourceDigest(resources));
+  if (keyInfo) {
+    const retainedKey = byPath.get(join(autoloopHubDirectory, 'master.key'))!;
+    checkNode(masterKey, retainedKey.node, false, retainedKey.sourceUid);
+    requireValue((await fileHash(masterKey)).hash === retainedKey.hash);
+    checkNode(masterKey, retainedKey.node, false, retainedKey.sourceUid);
+  } else requireValue(!lstatSync(masterKey, { throwIfNoEntry: false }));
+  await confirmCut();
+  guard();
+  if (!installed) {
+    onAttempt();
+    requireValue(!lstatSync(target, { throwIfNoEntry: false }));
+    checkNode(scratch, result.generation.dataRoot, true);
+    renameSync(scratch, target);
+  }
+  if (!installed || (installed.mode & 0o7777) === 0o700 && traversal !== 0o700) {
+    onAttempt();
+    chmodSync(target, traversal);
+    syncDirectory(target, result.generation.dataRoot);
+  }
+  syncDirectory(dirname(target), input.dataParent);
+  syncDirectory(dirname(scratch), input.stagingParent);
+  checkNode(target, result.generation.dataRoot, true);
+  return { generation: result.generation, generationSha256: sha256(result.receipt) };
+}
+
 export function installedUpgradePlanSha256(previewSha256: string, nextGeneration: string, cut: UpgradeCutPlan) {
   hash(previewSha256);
   token(nextGeneration);
@@ -1108,7 +1341,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             requireValue((checkNode(publicationRecord, pin(existing), false).mode & 0o7777n) === 0o600n);
             const observed = await readRegularFile(publicationRecord, recordLimit, { root: stagingRoot, validate: guard });
             requireValue(observed.equals(effectiveReceipt));
-            if (action === 'prepare-generation') {
+            if (action === 'prepare-generation' || action === 'publish-generation') {
               const manifest = candidate.materials.find(file => file.path === 'migrations/manifest.json');
               requireValue(manifest);
               const rawData = destination + '.data';
@@ -1165,7 +1398,25 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
                 attempted = true;
                 recordUpgradePublication(preparedPath, preparation, stagingNode, guard);
               }
-              return { status, receipt, generationId: nextGeneration, preparationSha256: sha256(preparation) };
+              const preparationSha256 = sha256(preparation);
+              if (action === 'publish-generation' && canary) {
+                const dataParent = join(e.root, 'data');
+                const predecessor = current.order.generation;
+                const predecessorRoot = join(dataParent, predecessor.id);
+                const sourceData = generationServiceData(predecessorRoot, predecessor.roles);
+                const result = await backup.useVerifiedSet(initialCut, cut => publishUpgradeGeneration({
+                  target: join(dataParent, nextGeneration), scratch: destination + '.generation.partial',
+                  attempt: destination + '.generation-attempt.json',
+                  dataParent: e.stores.data, stagingParent: stagingNode, sourceData, serviceOwner, hubOwner: e.hubOwner,
+                  sourceServiceUid: sourceData === predecessorRoot ? process.geteuid!() : serviceOwner!.uid,
+                  sourceHub: dirname(join(predecessorRoot, generationHubDatabase(predecessor.roles))),
+                  generation: { id: nextGeneration, schema: targetSchema, packageSha256: releaseSha256, releaseRoot: releaseNode },
+                  preparationSha256, service: join(migratedService, 'service.sqlite'), migration: prepared, rawData, cut,
+                  guard, confirmCut, onAttempt,
+                }));
+                return { status: 'generation-published' as const, receipt, generationId: nextGeneration, preparationSha256, ...result };
+              }
+              return { status, receipt, generationId: nextGeneration, preparationSha256 };
             }
             if (action === 'execute') {
               attempted = true;
@@ -1333,7 +1584,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
 
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction,
   validate: () => void, backup: UpgradeCutReader, databases: UpgradeDatabasePorts) {
-  requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation');
+  requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation' || action === 'publish-generation');
   validate();
   const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
   return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, databases);
