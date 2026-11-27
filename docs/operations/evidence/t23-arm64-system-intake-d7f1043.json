@@ -18,6 +18,23 @@
   "generation": "INSTALL_GENERATION_PREPARED",
   "generationReadback": "INSTALL_GENERATION_PREPARED",
   "currentSelected": false,
+  "rejectedArm64VerificationInputs": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
+  "hostedCandidates": {
+    "runId": "45930143177",
+    "verificationSha256": "76684228804f5c0fe06cbccd06c58f4e466e906ed23fae33a345eb869dca3c25",
+    "arm64ArchiveSha256": "45876abf1cd60ae92a72c53fad47470edaef51835941dd44292cd0f726ae1b1b",
+    "x64ArchiveSha256": "8181dfd71ea697e84daffa41e4d6ec4855ea8e65984bf858d46e8872f5a96846",
+    "verifiedFilesPerArchitecture": 489
+  },
+  "pairedSignatureVerification": {
+    "verificationSha256": "d6ae67b8fe48081edd59496f3cdf5b18cd0c59af4cdba006b4936b3a851b227f",
+    "arm64MaterialsOrigin": "local-native-build",
+    "x64MaterialsOrigin": "hosted-native-build",
+    "x64PackageSha256": "1d923242d83b8f5d6b09b195882d6518513066bb7599d84305cf919d3e90565e",
+    "x64ManifestSha256": "b3220486ce59284fd226f79b8abdf2e92adce991bb153055c0cd094a2348b85a",
+    "x64PublicKeySha256": "69aa8a9abfde6635e4ad5ed06f2421d84b489374e6ddd8a273a24b1ba541f246",
+    "x64ExecutionReportSha256": "44621a5a6d849e0d4e172f45995b6aa96301865193c3bcc26e891a2b84f44a69"
+  },
   "activation": {
     "observedAt": "2026-11-27T10:55:17+08:00",
     "localReceiptSha256": "72c2204d41f8f8d05758ff1bd31daad90756ad27d2033be5082b301c1561cc46",
@@ -47,5 +64,6 @@
       { "label": "com.patrick.caddy", "uid": 401, "pidChanged": true }
     ]
   },
+  "ownerEnrollment": { "domain": "personal", "writerGate": "missing", "registeredPasskeys": 0 },
   "outstanding": ["owner-passkey-and-session", "host-reboot", "installed-upgrade", "uninstall-preserves-data"]
 }
