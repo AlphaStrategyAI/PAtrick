@@ -373,6 +373,28 @@ describe('T23 finite release candidates', () => {
     expect(execFileSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 3000 }).length).toBe(0);
   });
 
+  it('packs evidence while unrelated entries are added beside the evidence root', () => {
+    const f = fixture();
+    const nested = join(f.options.evidenceDirectory, 'nested');
+    mkdirSync(nested);
+    writeFileSync(join(nested, 'probe.txt'), 'nested evidence');
+    const packer = new URL('../../scripts/pack-release.mjs', import.meta.url).href;
+    const script = `import fs from 'node:fs';
+      const original = fs.promises.opendir;
+      let unrelated = 0;
+      fs.promises.opendir = async (...args) => {
+        const handle = await original(...args);
+        fs.mkdirSync(${JSON.stringify(join(f.root, 'unrelated-'))} + (++unrelated));
+        return handle;
+      };
+      const { packRelease } = await import(${JSON.stringify(packer)});
+      await packRelease(${JSON.stringify(f.options)});
+    `;
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 3000, stdio: 'pipe' });
+    expect(JSON.parse(readFileSync(f.output, 'utf8')).manifest.artifacts)
+      .toContainEqual(expect.objectContaining({ path: 'evidence/nested/probe.txt', sha256: hash('nested evidence') }));
+  });
+
   it('bounds a wide evidence root containing only empty directories', async () => {
     const f = fixture();
     for (let index = 0; index < 10001; index++) mkdirSync(join(f.options.evidenceDirectory, `empty-${index}`));

@@ -68,11 +68,12 @@ export async function packRelease({ sourceRoot, commit, version, arch, schema, o
   if (lock.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object') throw new Error('unsupported dependency lock');
   add('metadata/sbom.json', Buffer.from(canonicalize({ format: 'patrick-lock-sbom-v1', commit, lockSha256: sha256(lockBytes), packages: lock.packages })));
   const evidence = [];
-  const evidenceRoot = evidenceDirectory ? admitReadRoot(resolve(evidenceDirectory)) : undefined;
+  const evidenceAdmission = { allowAncestorEntriesChange: true };
+  const evidenceRoot = evidenceDirectory ? admitReadRoot(resolve(evidenceDirectory), evidenceAdmission) : undefined;
   let evidenceEntries = 1; // The selected evidence root also consumes one entry.
   async function collect(directory, prefix, depth = 0) {
     if (depth > RELEASE_LIMITS.evidenceDepth) throw new Error('evidence depth limit');
-    const directoryRoot = admitReadRoot(resolve(directory));
+    const directoryRoot = admitReadRoot(resolve(directory), evidenceAdmission);
     const validateDirectory = () => { evidenceRoot.validate(); directoryRoot.validate(); };
     validateDirectory();
     const children = [];
