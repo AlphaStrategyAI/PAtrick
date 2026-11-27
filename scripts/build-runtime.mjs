@@ -88,6 +88,7 @@ const sourceRoots = Object.freeze([
   designPath + 'icons',
   designPath + 'logo-curious-p.svg',
   ...Object.values(entries),
+  'deploy/runtime/autoloop-kernel.ts',
   'deploy/runtime/lifecycle-generation.ts',
   'deploy/runtime/lifecycle-journal.ts',
   maintenanceReadbackSource,
