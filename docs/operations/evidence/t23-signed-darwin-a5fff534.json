@@ -1,0 +1,44 @@
+{
+  "format": "patrick-t23-signed-darwin-v1",
+  "observedDate": "2026-11-27",
+  "sourceCommit": "a5fff534ed2433819b557b45f54e7c7efb24579d",
+  "runId": "45970619001",
+  "signer": {
+    "scope": "local-acceptance",
+    "keyId": "patrick-local-acceptance-a5fff534",
+    "publicKeySha256": "a0734a69fe0ba035aef084843c54f39b375227662566e9a8fd013bdee0618e6b"
+  },
+  "pairedVerification": "verified-signed-darwin-assets",
+  "architectures": {
+    "arm64": {
+      "nativeJobId": 140409866740,
+      "archiveSha256": "bfd33e3671a8ba28d022a8684963491abc5c5cdcd955622954c1bdd6d9bd2d4d",
+      "inventorySha256": "ef439a2ab47f2c701e94839aca6d6514c1f0c27c9cbad36de1cf5d5874e0c7ef",
+      "executionReportSha256": "4e0a4a14ea6e6c1235a5f1b171d12bb56d16d87f2ad481a1cefa9edb47d8ed73",
+      "controllerSha256": "fcac3d0f616be144222601029645671d6df4239c22ef4b54520a72b3b7e8e2d1",
+      "manifestSha256": "69a7b34a64e641c88379b2ae258968aed3bc81b6bb2c6b11e484e72d19c9d584",
+      "packageSha256": "7a0a9a17549986d97f82fcc284eef1df5ed069b2f3ca2612612df591f66e69c7",
+      "verifiedFiles": 489,
+      "nativeDescription": "Mach-O 64-bit bundle arm64"
+    },
+    "x64": {
+      "nativeJobId": 140409866388,
+      "archiveSha256": "1d7604cd3c42a06e057156baf4bbfa9c83d50e8e538ccd66f75fce4983a51344",
+      "inventorySha256": "c57145c522eb6a3cc9e24a95c15d1278ab58e48d6f438066da7ae365cdb23e4d",
+      "executionReportSha256": "befa3659e53057df93948f97adb43ebbc3ffd0c991c1a1c0ef3523fd8b65b831",
+      "controllerSha256": "64e2f1263ec99826c93e1407d2d8cc03fe2b3f160ef3af6fafd6fcd58bdbae6a",
+      "manifestSha256": "c8dbe1b6feb9153159e12974342797c0d18b12b99a22adbf1881f64b20cf6910",
+      "packageSha256": "d872d3eb6d5d4cb7293db3c0186c662f49aca0531d5a54b8d366750450a31f30",
+      "verifiedFiles": 489,
+      "nativeDescription": "Mach-O 64-bit bundle x86_64"
+    }
+  },
+  "verifiedRejections": ["wrong-signer", "wrong-package-sha256", "swapped-architecture"],
+  "outstanding": [
+    "host-trust-enrollment",
+    "owner-passkey-and-session",
+    "host-restart",
+    "installed-upgrade",
+    "uninstall-preservation"
+  ]
+}
