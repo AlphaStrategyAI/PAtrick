@@ -301,7 +301,7 @@ Service 通过原生控制器交付的 fd 3 领取选定代次。监督端核对
 
 `upgradeReleaseOperations` 为同一操作登记发布能力。`patrick upgrade --execute --release <sha256> --operation <id>` 持有本地写者锁，复验当前代次、签名候选、升级计划和维护切点，将候选发布到 `releases/<sha256>`。控制器同步两个父目录后，将绑定认领、围栏和发布目录标识的回执写入受保护的 `staging` 目录。`--readback` 只在复验回执和候选树后返回 `UPGRADE_RELEASE_PUBLISHED`。候选可见但回执缺失时返回 `UPGRADE_RELEASE_INTERRUPTED`，获准重试可复验并补写回执。若同一操作也登记了切点或日志读回，三者须引用同一套登记对象。候选发布后升级状态仍为 `uncertain`，`current` 继续指向原代次。
 
-`patrick upgrade --prepare-generation --release <sha256> --operation <id>` 核对该操作的发布回执，并在写者锁内将已签名 RecoverySet 中登记的 Service、Hub、Answers 快照和附带资源复制到 `staging/.upgrade-<id>.data`。控制器逐项核对清单路径、字节数、SHA-256 和围栏，完成后返回 `uncertain / UPGRADE_DATA_STAGED`。同操作可重验已暂存的字节。存在中断目录或核验不匹配时，运维须保留现场并核对登记。下一阶段才执行迁移、合同回放和签名代次选择。
+`patrick upgrade --prepare-generation --release <sha256> --operation <id>` 核对发布回执，在写者锁内将 RecoverySet 中登记的 Service、Hub、Answers 快照和附带资源复制到 `staging/.upgrade-<id>.data`，逐项核对路径、字节数、SHA-256 和围栏。随后用候选包签名清单中的 SQL 迁移 Service 数据库的独立副本，比对迁移历史、完整性和原有表数据，持久化回执并发布到 `staging/.upgrade-<id>.service`。完成后返回 `uncertain / UPGRADE_SERVICE_MIGRATED`。同操作可重验已发布的副本，或续跑可核验的 `.service.partial`。缺少完整回执或核验失败时保留现场供检查。Hub、Answers、契约回放和签名代次选择仍待验证。
 
 构建 `45930143177` 的 Apple Silicon 和 Intel 作业均通过。独立下载复核了每套归档中的 489 个部署文件、原生 SQLite 扩展和控制器。用本机生成的 `arm64` 验收包与托管材料生成的 `x64` 验收包对同一提交执行联合验签，两份包均通过。当前目标机的 `arm64` 包拒绝错误公钥、包摘要及 Intel 架构预期。系统验收库尚无 `personal` 域的写者登记，所有者首次登记口令依赖该写入准入。[验签与实机回执](evidence/t23-arm64-system-intake-d7f1043.json)
 

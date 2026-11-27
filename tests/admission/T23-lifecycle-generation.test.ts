@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildSync } from 'esbuild';
 import { afterEach, expect, test } from 'vitest';
-import { openDatabase } from '@patrick/storage';
+import { openDatabase, type MigrationEntry } from '@patrick/storage';
 import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { canonicalize, sha256 } from '../../deploy/lib/release.mjs';
 import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
@@ -243,7 +243,12 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   const operationsRoot = directory(fixture.fixture, 'operations');
   const sets = directory(fixture.fixture, 'sets');
   const handoff = directory(fixture.fixture, 'handoff');
-  const service = openDatabase(join(fixture.dataRoot, 'service.sqlite'));
+  const migrationsDir = fileURLToPath(new URL('../../packages/storage/migrations/', import.meta.url));
+  const migrations = JSON.parse(readFileSync(join(migrationsDir, 'manifest.json'), 'utf8')) as MigrationEntry[];
+  const service = openDatabase(join(fixture.dataRoot, 'service.sqlite'), { migrationsDir, manifest: migrations.slice(0, -1) });
+  service.prepare(`INSERT INTO domain_events
+    (seq, event_id, aggregate_id, aggregate_version, account_id, data_domain, schema_version, payload, created_at)
+    VALUES (1, 'retained-event', 'retained-object', 1, 'account', 'personal', '1.0', '{}', '2026-11-27T00:00:00Z')`).run();
   const hub = openDatabase(join(fixture.dataRoot, 'hub.sqlite'));
   const answers = new DatabaseSync(join(handoff, 'local-answers.sqlite'));
   answers.exec('CREATE TABLE answers (answer TEXT)');
@@ -334,13 +339,34 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
-  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_DATA_STAGED', generationId: nextGeneration });
+  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_SERVICE_MIGRATED', generationId: nextGeneration });
   for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
     expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
   }
   const stagedNode = node(stagedData);
+  const serviceRoot = join(root, 'staging', '.upgrade-upgrade.service');
+  const servicePath = join(serviceRoot, 'service.sqlite');
+  const serviceNode = node(servicePath);
+  const migrated = new DatabaseSync(servicePath, { readOnly: true });
+  try {
+    expect(migrated.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all()).toEqual(migrations);
+    expect(migrated.prepare('SELECT event_id FROM domain_events ORDER BY seq').all()).toEqual([{ event_id: 'retained-event' }]);
+  } finally { migrated.close(); }
   expect(await cli().run(prepare)).toEqual(prepared);
   expect(node(stagedData)).toEqual(stagedNode);
+  expect(node(servicePath)).toEqual(serviceNode);
+  const interrupted = serviceRoot + '.partial';
+  renameSync(serviceRoot, interrupted);
+  expect(await cli().run(prepare)).toEqual(prepared);
+  expect(node(servicePath)).toEqual(serviceNode);
+  expect(lstatSync(interrupted, { throwIfNoEntry: false })).toBeUndefined();
+  const serviceBytes = readFileSync(servicePath);
+  const changedService = new DatabaseSync(servicePath);
+  try {
+    changedService.prepare('UPDATE domain_events SET payload = ? WHERE seq = 1').run('{"updated":true}');
+  } finally { changedService.close(); }
+  expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+  writeFileSync(servicePath, serviceBytes);
   writeFileSync(join(stagedData, 'resources/0/local-answers.sqlite'), 'changed staged file');
   expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
   expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);

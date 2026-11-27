@@ -118,7 +118,13 @@ type ProvisionedPorts = Readonly<{
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction, validate: () => void) {
   validate();
-  return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut));
+  return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut),
+    (path, migrationsDir, manifest) => {
+      const database = openDatabase(path, { migrationsDir, manifest });
+      try {
+        if (database.pragma('journal_mode = DELETE', { simple: true }) !== 'delete') throw new Error('UPGRADE_DATABASE_NOT_STANDALONE');
+      } finally { database.close(); }
+    });
 }
 
 const firstInstall = Object.freeze({

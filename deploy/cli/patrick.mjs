@@ -360,8 +360,8 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const validate = () => { binding.validate(); hostBinding.validate(); };
         const result = await run(binding.value, request.action, validate);
         validate();
-        if (result.status === 'data-staged') return response(request, 'uncertain', 'UPGRADE_DATA_STAGED',
-          'Run the successor schema migrations and contract replay in the isolated stage.',
+        if (result.status === 'service-migrated') return response(request, 'uncertain', 'UPGRADE_SERVICE_MIGRATED',
+          'Complete Hub and Answers validation and contract replay in the isolated stage.',
           { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
         if (result.status === 'published') return response(request, 'uncertain', 'UPGRADE_RELEASE_PUBLISHED',
           'Prepare the successor data generation from the verified cut.', { ...selected, upgradeRelease: result.receipt });

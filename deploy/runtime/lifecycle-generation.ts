@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { createPublicKey, randomUUID, verify } from 'node:crypto';
+import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, realpathSync, renameSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { pathToFileURL } from 'node:url';
+import type { MigrationEntry } from '@patrick/storage';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
 import { checkRuntimeAcl, createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
   verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
@@ -71,6 +73,7 @@ export type UpgradeReleaseEnrollment = Readonly<{
 }>;
 type UpgradeCutPlan = Omit<MaintenanceCutReadbackRegistration['subject'], 'claimSha256' | 'planSha256'>;
 type UpgradeCutReader = ReturnType<typeof createMaintenanceCutReader>;
+type UpgradeServiceMigrator = (databasePath: string, migrationsDir: string, manifest: readonly MigrationEntry[]) => void;
 export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
@@ -327,6 +330,37 @@ function recordUpgradePublication(path: string, contents: Buffer, parent: Genera
   } finally { closeSync(fd); }
 }
 
+async function copyUpgradeArtifact(source: string, target: string, length: number, guard: () => void) {
+  guard();
+  const descriptor = await open(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  try {
+    const targetNode = pin(await descriptor.stat({ bigint: true }));
+    guard();
+    requireValue((checkNode(target, targetNode, false).mode & 0o7777n) === 0o600n);
+    checkRuntimeAcl([target]);
+    const input = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const sourceInfo = await input.stat();
+      requireValue(sourceInfo.isFile() && sourceInfo.size === length);
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, length));
+      for (let offset = 0; offset < length;) {
+        guard();
+        const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, length - offset), offset);
+        requireValue(bytesRead > 0);
+        for (let written = 0; written < bytesRead;) {
+          guard();
+          const { bytesWritten } = await descriptor.write(buffer, written, bytesRead - written, offset + written);
+          requireValue(bytesWritten > 0);
+          written += bytesWritten;
+        }
+        offset += bytesRead;
+      }
+    } finally { await input.close(); }
+    guard();
+    await descriptor.sync();
+  } finally { await descriptor.close(); }
+}
+
 async function stageUpgradeData(set: VerifiedCutMaterial, path: string, parent: GenerationNode, guard: () => void,
   confirmCut: () => Promise<void>, onAttempt: () => void) {
   const staging = dirname(path);
@@ -396,36 +430,10 @@ async function stageUpgradeData(set: VerifiedCutMaterial, path: string, parent: 
     guard();
     checkNode(scratch, rootPin, true);
     const source = await containedPath(set.directory, artifact.path);
-    guard();
-    checkNode(scratch, rootPin, true);
-    const target = join(scratch, artifact.path);
-    const descriptor = await open(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-    try {
+    await copyUpgradeArtifact(source, join(scratch, artifact.path), artifact.bytes, () => {
       guard();
-      const targetNode = pin(await descriptor.stat({ bigint: true }));
-      requireValue((checkNode(target, targetNode, false).mode & 0o7777n) === 0o600n);
-      checkRuntimeAcl([target]);
-      const input = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const sourceInfo = await input.stat();
-        requireValue(sourceInfo.isFile() && sourceInfo.size === artifact.bytes);
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, artifact.bytes));
-        for (let offset = 0; offset < artifact.bytes;) {
-          guard();
-          const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, artifact.bytes - offset), offset);
-          requireValue(bytesRead > 0);
-          for (let written = 0; written < bytesRead;) {
-            guard();
-            const { bytesWritten } = await descriptor.write(buffer, written, bytesRead - written, offset + written);
-            requireValue(bytesWritten > 0);
-            written += bytesWritten;
-          }
-          offset += bytesRead;
-        }
-      } finally { await input.close(); }
-      guard();
-      await descriptor.sync();
-    } finally { await descriptor.close(); }
+      checkNode(scratch, rootPin, true);
+    });
   }
   requireValue(canonicalize(await inspect(scratch)) === canonicalize(rootPin));
   await confirmCut();
@@ -436,6 +444,148 @@ async function stageUpgradeData(set: VerifiedCutMaterial, path: string, parent: 
   syncDirectory(staging, parent);
   checkNode(path, rootPin, true);
   return true;
+}
+
+type ServiceFactTable = { name: string; columns: string[]; order: string[] };
+
+function columnIdentifier(name: string) {
+  return '"' + name.replaceAll('"', '""') + '"';
+}
+
+function observeServiceMigration(path: string, guard: () => void, expected?: ServiceFactTable[]) {
+  const uri = pathToFileURL(path);
+  uri.searchParams.set('immutable', '1');
+  const database = new DatabaseSync(uri.href, { readOnly: true });
+  try {
+    database.exec('PRAGMA temp_store = MEMORY');
+    requireValue(database.prepare('PRAGMA integrity_check').get()?.integrity_check === 'ok' &&
+      !database.prepare('PRAGMA foreign_key_check').iterate().next().value);
+    const available = new Map<string, ServiceFactTable>();
+    for (const row of database.prepare(`SELECT name FROM main.sqlite_schema
+      WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name <> 'schema_migrations' ORDER BY name`).all()) {
+      const name = String(row.name);
+      const columns = database.prepare('SELECT name, pk FROM pragma_table_info(?) ORDER BY cid').all(name)
+        .map(column => ({ name: String(column.name), key: Number(column.pk) }));
+      const keys = columns.filter(column => column.key > 0).sort((left, right) => left.key - right.key);
+      available.set(name, { name, columns: columns.map(column => column.name),
+        order: (keys.length ? keys : columns).map(column => column.name) });
+    }
+    const tables = expected ?? [...available.values()];
+    const facts = createHash('sha256');
+    for (const table of tables) {
+      const current = available.get(table.name);
+      requireValue(current && table.columns.every(column => current.columns.includes(column)));
+      const columns = table.columns.map(columnIdentifier).join(', ');
+      const order = table.order.map(column => `${columnIdentifier(column)} COLLATE BINARY`).join(', ');
+      const statement = database.prepare(`SELECT ${columns} FROM ${columnIdentifier(table.name)} ORDER BY ${order}`);
+      statement.setReadBigInts(true);
+      facts.update(bytes(table));
+      for (const row of statement.iterate()) {
+        guard();
+        const values = table.columns.map(column => {
+          const value = row[column];
+          if (value instanceof Uint8Array) return ['blob', Buffer.from(value).toString('base64')];
+          return value === null ? ['null'] : [typeof value, String(value)];
+        });
+        facts.update(bytes(values));
+      }
+    }
+    const history = database.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
+    return { history: history.map(({ file, sha256 }) => ({ file, sha256 })), factsSha256: facts.digest('hex'), tables };
+  } finally { database.close(); }
+}
+
+async function migrateStagedService(input: {
+  set: VerifiedCutMaterial; rawData: string; path: string; parent: GenerationNode;
+  releaseRoot: string; manifestSha256: string; publicationSha256: string; migrate: UpgradeServiceMigrator;
+  guard: () => void; confirmCut: () => Promise<void>; onAttempt: () => void;
+}) {
+  const { set, rawData, path, parent, releaseRoot, manifestSha256, publicationSha256, migrate, guard, confirmCut, onAttempt } = input;
+  const found = set.artifacts.find(file => file.path === 'databases/service.sqlite' && file.kind === 'database');
+  if (!found) throw new Error('UPGRADE_SERVICE_SNAPSHOT_MISSING');
+  const artifact = found;
+  const migrationsDir = join(releaseRoot, 'migrations');
+  const manifestBytes = await readRegularFile(join(migrationsDir, 'manifest.json'), 64 * 1024, { root: releaseRoot, validate: guard });
+  requireValue(sha256(manifestBytes) === manifestSha256);
+  const manifest = JSON.parse(manifestBytes.toString()) as MigrationEntry[];
+  const source = join(rawData, artifact.path);
+  const before = observeServiceMigration(source, guard);
+  requireValue(before.history.length <= manifest.length &&
+    canonicalize(before.history) === canonicalize(manifest.slice(0, before.history.length)));
+  const scratch = path + '.partial';
+  const receiptName = '.patrick-service-migration.json';
+  async function observe(root: string, rootPin: GenerationNode, retained: boolean) {
+    guard();
+    requireValue((checkNode(root, rootPin, true).mode & 0o7777n) === 0o700n &&
+      canonicalize(readdirSync(root).sort()) === canonicalize(retained ? [receiptName, 'service.sqlite'] : ['service.sqlite']));
+    const database = join(root, 'service.sqlite');
+    const receiptFile = join(root, receiptName);
+    checkRuntimeAcl(retained ? [root, database, receiptFile] : [root, database]);
+    const databaseNode = pin(stat(database));
+    requireValue((checkNode(database, databaseNode, false).mode & 0o7777n) === 0o600n);
+    const after = observeServiceMigration(database, guard, before.tables);
+    requireValue(canonicalize(after.history) === canonicalize(manifest) && after.factsSha256 === before.factsSha256);
+    const output = await fileHash(database);
+    guard();
+    checkNode(database, databaseNode, false);
+    return bytes({
+      format: 'patrick-upgrade-service-migration-v1', publicationSha256, manifestSha256,
+      sourceSha256: artifact.hash, factsSha256: after.factsSha256, rootPin, databaseNode, output,
+    });
+  }
+  guard();
+  const partial = lstatSync(scratch, { throwIfNoEntry: false });
+  const published = lstatSync(path, { throwIfNoEntry: false });
+  requireValue(!partial || !published);
+  async function publish(rootPin: GenerationNode) {
+    guard();
+    syncDirectory(scratch, rootPin);
+    await confirmCut();
+    guard();
+    checkNode(scratch, rootPin, true);
+    requireValue(!lstatSync(path, { throwIfNoEntry: false }));
+    renameSync(scratch, path);
+    syncDirectory(dirname(path), parent);
+    checkNode(path, rootPin, true);
+    return true;
+  }
+  if (partial || published) {
+    const retained = partial ? scratch : path;
+    const receiptFile = join(retained, receiptName);
+    if (partial && !lstatSync(receiptFile, { throwIfNoEntry: false })) return false;
+    const rootPin = pin(stat(retained));
+    const observed = await observe(retained, rootPin, true);
+    requireValue((checkNode(receiptFile, pin(stat(receiptFile)), false).mode & 0o7777n) === 0o600n);
+    requireValue(observed.equals(await readRegularFile(receiptFile, recordLimit, { root: retained, validate: guard })));
+    if (partial) {
+      onAttempt();
+      return publish(rootPin);
+    }
+    await confirmCut();
+    guard();
+    syncDirectory(dirname(path), parent);
+    return true;
+  }
+  const free = statfsSync(dirname(path), { bigint: true });
+  requireValue(free.bsize > 0n && free.bavail * free.bsize >= BigInt(artifact.bytes));
+  onAttempt();
+  mkdirSync(scratch, { mode: 0o700 });
+  const rootPin = pin(stat(scratch));
+  checkRuntimeAcl([scratch]);
+  const database = join(scratch, 'service.sqlite');
+  const checkScratch = () => { guard(); checkNode(scratch, rootPin, true); };
+  await copyUpgradeArtifact(source, database, artifact.bytes, checkScratch);
+  const copied = await fileHash(database);
+  requireValue(copied.hash === artifact.hash && copied.bytes === artifact.bytes);
+  await confirmCut();
+  checkScratch();
+  migrate(database, migrationsDir, manifest);
+  const receipt = await observe(scratch, rootPin, false);
+  checkScratch();
+  const fd = openSync(database, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+  recordUpgradePublication(join(scratch, receiptName), receipt, rootPin, checkScratch);
+  return publish(rootPin);
 }
 
 export function canRestoreOldRelease(input: {
@@ -807,7 +957,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }, true, enrolled);
   }
   async function prepareUpgradeRelease(targetSchema: number, stagingNode: GenerationNode,
-    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader) {
+    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader, migrate: UpgradeServiceMigrator) {
     const { claimSha256, planSha256, ...cutPlan } = cut.subject;
     const { installationId, generationId, selectionSha256, releaseSha256, upgradeOperationId } = cutPlan;
     const nextGeneration = cut.lifecycle.plan.nextGeneration;
@@ -865,7 +1015,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
           await publishStagedDeployment(candidate, stage, guard, confirmCut);
         }
         const receipt = { packageSha256: releaseSha256, manifestSha256: candidate.manifestSha256, cutManifestSha256: initialCut.manifestHash };
-        const result = await withPublishedDeployment(candidate, { staging, releasesRoot, ...access }, async () => {
+        const result = await withPublishedDeployment(candidate, { staging, releasesRoot, ...access }, async deployment => {
           await confirmCut();
           guard();
           const releaseNode = pin(stat(published));
@@ -879,9 +1029,17 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
             const observed = await readRegularFile(publicationRecord, recordLimit, { root: stagingRoot, validate: guard });
             requireValue(observed.equals(effectiveReceipt));
             if (action === 'prepare-generation') {
-              const staged = await backup.useVerifiedSet(initialCut, set =>
-                stageUpgradeData(set, destination + '.data', stagingNode, guard, confirmCut, () => { attempted = true; }));
-              return staged ? { status: 'data-staged' as const, receipt, generationId: nextGeneration }
+              const manifest = candidate.materials.find(file => file.path === 'migrations/manifest.json');
+              requireValue(manifest);
+              const rawData = destination + '.data';
+              const onAttempt = () => { attempted = true; };
+              const migrated = await backup.useVerifiedSet(initialCut, async set => {
+                if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return false;
+                return migrateStagedService({ set, rawData, path: destination + '.service', parent: stagingNode,
+                  releaseRoot: deployment.root, manifestSha256: manifest.sha256, publicationSha256: sha256(effectiveReceipt),
+                  migrate, guard, confirmCut, onAttempt });
+              });
+              return migrated ? { status: 'service-migrated' as const, receipt, generationId: nextGeneration }
                 : { status: 'interrupted' as const };
             }
             if (action === 'execute') {
@@ -1049,11 +1207,11 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
 }
 
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction,
-  validate: () => void, backup: UpgradeCutReader) {
+  validate: () => void, backup: UpgradeCutReader, migrate: UpgradeServiceMigrator) {
   requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation');
   validate();
   const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
-  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup);
+  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, migrate);
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {
