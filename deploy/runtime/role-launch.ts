@@ -596,6 +596,7 @@ type SelectedServiceSession = Readonly<{
 }>;
 type ServeSelectedService = (socket: Socket, admission: SelectedServiceSession) => Promise<'drained'>;
 type WorkerTick = () => Promise<boolean>;
+const serviceSupervisorReadyMs = 60_000;
 const serviceHandshakeMs = 10_000;
 const serviceStopReplyMs = 30_000;
 
@@ -794,8 +795,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
   const stopping = new AbortController();
   const requestedStop = new Error('INSTALLED_SERVICE_STOP_REQUESTED');
   const drainOptions = { timeoutMs: 2_147_483_647 };
-  let timeoutCode = 'INSTALLED_SERVICE_SUPERVISOR_READY_TIMEOUT';
-  const deadline = setTimeout(() => socket.destroy(new Error(timeoutCode)), serviceHandshakeMs);
+  let deadline = setTimeout(() => socket.destroy(new Error('INSTALLED_SERVICE_SUPERVISOR_READY_TIMEOUT')), serviceSupervisorReadyMs);
   let admitted: ReturnType<typeof admitSupervisedServiceSelection> | undefined;
   let runtime: Service | undefined;
   let parentStopped = false;
@@ -826,7 +826,8 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
   socket.once('close', stop);
   try {
     if (canonicalize(await channel.read()) !== canonicalize(serviceReady)) throw serviceHandoffError();
-    timeoutCode = 'INSTALLED_SERVICE_SUPERVISOR_SELECTION_TIMEOUT';
+    clearTimeout(deadline);
+    deadline = setTimeout(() => socket.destroy(new Error('INSTALLED_SERVICE_SUPERVISOR_SELECTION_TIMEOUT')), serviceHandshakeMs);
     const challenge = randomBytes(32).toString('hex');
     channel.write({ version: 1, type: 'hello', challenge });
     const frame = await channel.read();

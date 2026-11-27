@@ -81,14 +81,15 @@ const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
 
-test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)(
-  'the Service uses its inherited socket when the descriptor path cannot be reopened', async () => {
+test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0).each([0, 10_001])(
+  'the Service uses its inherited socket without reopening it after waiting %i ms', async readyDelay => {
     const bootstrap = await build({
       stdin: { resolveDir: project, contents: `
         import fs from 'node:fs';
         import { generateKeyPairSync } from 'node:crypto';
         import { syncBuiltinESMExports } from 'node:module';
         import { hostname } from 'node:os';
+        import { mock } from 'node:test';
         import { runSupervisedServiceRole } from './deploy/runtime/role-launch.js';
         const root = '/private/var';
         const info = fs.lstatSync(root, { bigint: true });
@@ -99,7 +100,8 @@ test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)(
           return openPath(path, ...options);
         };
         syncBuiltinESMExports();
-        await runSupervisedServiceRole({
+        mock.timers.enable({ apis: ['setTimeout'] });
+        const running = runSupervisedServiceRole({
           root, rootNode: { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) },
           installationId: 'socket-test', hostId: 'socket-test', captureHost: hostname(),
           uid: process.getuid(), gid: process.getgid(), publicKey,
@@ -107,12 +109,15 @@ test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)(
         }, () => { throw new Error('unexpected Service provisioning'); }).catch(error => {
           if (error.message !== 'INSTALLED_SERVICE_SUPERVISOR_PROTOCOL_INVALID') throw error;
         });
+        mock.timers.tick(${readyDelay});
+        console.log('waiting for supervisor');
+        await running;
       ` },
       bundle: true, write: false, format: 'esm', platform: 'node',
       external: ['./composition.js', './service.js', './worker.js'],
     });
     const role = spawn(process.execPath, ['--input-type=module', '-e', bootstrap.outputFiles[0].text], {
-      env: { PATRICK_SUPERVISOR_FD: '3' }, stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
+      env: { PATRICK_SUPERVISOR_FD: '3' }, stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
     });
     const channel = role.stdio[3] as Socket;
     channel.setTimeout(3000, () => channel.destroy(new Error('Service handshake test timed out')));
@@ -120,6 +125,7 @@ test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)(
     let errors = '';
     role.stderr!.setEncoding('utf8').on('data', chunk => { errors += chunk; });
     try {
+      await Promise.race([once(role.stdout!, 'data'), exited]);
       channel.end('{"type":"ready","version":1}\n');
       let response = '';
       for await (const chunk of channel) response += chunk.toString();

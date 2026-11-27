@@ -1227,7 +1227,7 @@ test.skipIf(!upstreamHubSource || process.geteuid?.() !== 0)(
       expect((await lstat(service.workerEndpoint)).gid).toBe(workerOwner.gid);
       const rejectedStartedAt = performance.now();
       const rejected = spawnSync(service.controllerPath, ['run-role', 'service'], {
-        ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 15_000,
+        ...serviceOwner, cwd: instanceRoot, env: {}, encoding: 'utf8', timeout: 75_000,
       });
       const rejectedDuration = Math.round(performance.now() - rejectedStartedAt);
       const rejectedCodes = (rejected.stderr ?? '').match(/\b(?:PATRICK_ROLE|INSTALLED_SERVICE)_[A-Z_]+\b/g);
