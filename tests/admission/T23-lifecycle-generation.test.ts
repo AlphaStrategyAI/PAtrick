@@ -219,7 +219,7 @@ test('preserves a foreign current and an operation authorization substituted for
 
 // The complete native release is supplied by the release-evidence job, independently
 // of the selection signer. The portable refusal tests above require no native fixture.
-const inputs: { archive: string; pins: string }[] = JSON.parse(process.env.PATRICK_GENERATION_TEST_RELEASES ?? '[]');
+const inputs: { archive: string; pins: string; answerReplay?: true }[] = JSON.parse(process.env.PATRICK_GENERATION_TEST_RELEASES ?? '[]');
 async function nativeHostWithPackages(publishSuccessor: boolean) {
   expect(inputs).toHaveLength(2);
   const releases = inputs.map(input => JSON.parse(readFileSync(input.pins, 'utf8')) as Release);
@@ -426,7 +426,10 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log'])(
     expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
     return;
   }
-  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration });
+  expect(prepared).toMatchObject({
+    status: 'uncertain', code: inputs[1].answerReplay ? 'UPGRADE_ANSWER_REPLAYED' : 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration,
+  });
+  expect(readdirSync(join(root, 'staging')).some(name => name.startsWith('.answer-replay-'))).toBe(false);
   for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
     expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
   }

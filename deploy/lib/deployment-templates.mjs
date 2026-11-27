@@ -15,6 +15,7 @@ export const servicePreflight = Object.freeze({
   path: 'runtime/service-bootstrap-v1.mts',
   sha256: 'f4c0a603a39a098516754a2a7aa2d46d657f97ee6de200f5e20b3890210a251d',
 });
+export const upgradeAnswerReplayTrailer = '\n// patrick-upgrade-answer-replay-v1\n';
 export const autoloopHub = Object.freeze({
   commit: '45aecbf578289cda72d1fc773dcad069bfe7778b',
   root: 'runtime/autoloop-hub',

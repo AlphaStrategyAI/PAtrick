@@ -27,6 +27,7 @@ export function checkDirectoryDefinition(sections: readonly DirectorySection[], 
 export function directoryIdentity(data: Buffer, arch: DarwinTarget['arch']): DirectoryNativeIdentity;
 export const deploymentPaths: Readonly<Record<DeploymentKey, string>>;
 export const servicePreflight: Readonly<{ source: string; path: string; sha256: string }>;
+export const upgradeAnswerReplayTrailer: string;
 export const autoloopHub: Readonly<{
   commit: string; root: string; entry: string; initializer: 'kernel/evolve.ts'; files: Readonly<Record<string, string>>;
 }>;

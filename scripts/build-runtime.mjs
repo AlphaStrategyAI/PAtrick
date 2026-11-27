@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import {
+  appendFile,
   chmod,
   copyFile,
   lstat,
@@ -793,7 +794,7 @@ async function buildRuntime(values, recipe) {
     const esbuild = await loadTool(toolRoot, lock, 'node_modules/esbuild', '0.28.2', 'lib/main.js');
     const vite = await loadTool(toolRoot, lock, 'apps/web/node_modules/vite', '7.3.8', 'dist/node/index.js');
     const exports = await workspaceExports(sourceRoot);
-    await esbuild.build({
+    const result = await esbuild.build({
       absWorkingDir: sourceRoot,
       entryPoints: entries,
       outdir: resolve(materials, 'runtime'),
@@ -807,6 +808,7 @@ async function buildRuntime(values, recipe) {
       preserveSymlinks: true,
       tsconfigRaw: { compilerOptions: {} },
       sourcemap: false,
+      metafile: true,
       legalComments: 'eof',
       entryNames: '[name]',
       chunkNames: 'chunk-[hash]',
@@ -822,6 +824,10 @@ async function buildRuntime(values, recipe) {
         },
       }],
     });
+    const compositionPath = resolve(materials, 'runtime/composition.mjs');
+    const composition = Object.entries(result.metafile.outputs).find(([path]) => resolve(sourceRoot, path) === compositionPath)?.[1];
+    if (!composition?.exports.includes('replayUpgradeAnswerContract')) fail('RUNTIME_ANSWER_REPLAY_ENTRY_MISSING');
+    await appendFile(compositionPath, deployment.upgradeAnswerReplayTrailer);
     if (deployment.completeProfile(profile)) {
       await copySelected(sourceRoot, materials, [...Object.values(deployment.deploymentPaths), ...deployment.vaultKitPaths]);
       const { source, path } = deployment.servicePreflight;

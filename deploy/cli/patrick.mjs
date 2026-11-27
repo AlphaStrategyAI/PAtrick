@@ -360,6 +360,9 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const validate = () => { binding.validate(); hostBinding.validate(); };
         const result = await run(binding.value, request.action, validate);
         validate();
+        if (result.status === 'answer-replayed') return response(request, 'uncertain', 'UPGRADE_ANSWER_REPLAYED',
+          'Complete the remaining successor contracts and research canary before selecting the generation.',
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
         if (result.status === 'hub-replayed') return response(request, 'uncertain', 'UPGRADE_HUB_REPLAYED',
           'Complete the remaining successor contracts and canary before selecting the generation.',
           { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });

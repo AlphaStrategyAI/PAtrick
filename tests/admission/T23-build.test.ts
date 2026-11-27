@@ -142,6 +142,24 @@ afterAll(async () => {
 });
 
 describe('T23 installed runtime build and bootstrap', () => {
+  test('replays a lost answer receipt with the relocated candidate and a closed writer', async () => {
+    const scratch = await mkdtemp(join(temporary, 'answer-replay-'));
+    const entry = pathToFileURL(join(relocated, 'runtime', 'composition.mjs')).href;
+    expect(await readFile(join(relocated, 'runtime', 'composition.mjs'), 'utf8'))
+      .toMatch(/\/\/ patrick-upgrade-answer-replay-v1\n$/);
+    const result = runNode(['--permission', '--allow-addons',
+      `--allow-fs-read=${relocated}/*`, `--allow-fs-read=${scratch}/*`, `--allow-fs-write=${scratch}/*`,
+      '--input-type=module', '--eval', `
+        import assert from 'node:assert/strict';
+        const [entry, database] = process.argv.slice(1);
+        const { replayUpgradeAnswerContract } = await import(entry);
+        const first = await replayUpgradeAnswerContract(database);
+        assert.deepEqual(first, { validity: 'audit_only', receipts: 1, resumes: 0, verifiedEvents: 0 });
+        await assert.rejects(replayUpgradeAnswerContract(database), { code: 'EEXIST' });
+      `, '--', entry, join(scratch, 'answers-replay.sqlite')], { cwd: scratch });
+    expect(result.status, output(result)).toBe(0);
+  }, 30000);
+
   test('deployment-complete ships the kit used by relocated Vault setup and draft rendering', async () => {
     const artifact = join(temporary, 'complete-vault-kit');
     const selection = ['--source-root', root, '--source-commit', sourceCommit, '--profile', 'deployment-complete'];

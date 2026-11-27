@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
-  readFileSync, realpathSync, renameSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync,
+  readFileSync, realpathSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import type { MigrationEntry } from '@patrick/storage';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
+import { upgradeAnswerReplayTrailer } from '../lib/deployment-templates.mjs';
 import { checkRuntimeAcl, createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
   verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
@@ -524,6 +525,38 @@ async function replayStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: 
   guard();
   withImmutableUpgradeDatabase(join(rawData, set.localAnswers.path), database => databases.validateAnswers(database, guard));
   guard();
+}
+
+async function runUpgradeAnswerContract(deployment: AdmittedDeployment,
+  composition: Readonly<{ bytes: number; sha256: string }>, stagingRoot: string, stagingNode: GenerationNode,
+  guard: () => void): Promise<boolean> {
+  const entry = await readRegularFile(deployment.entrypoints.composition, composition.bytes, { root: deployment.root, validate: guard });
+  requireValue(entry.length === composition.bytes && sha256(entry) === composition.sha256);
+  if (!entry.toString('utf8').endsWith(upgradeAnswerReplayTrailer)) return false;
+  guard();
+  const scratch = mkdtempSync(join(stagingRoot, '.answer-replay-'));
+  const scratchNode = pin(stat(scratch));
+  try {
+    const output = execFileSync(process.execPath, ['--permission', '--allow-addons',
+      `--allow-fs-read=${deployment.root}/*`, `--allow-fs-read=${scratch}/*`, `--allow-fs-write=${scratch}/*`,
+      '--input-type=module', '--eval', `
+        const [entry, database] = process.argv.slice(1);
+        const { replayUpgradeAnswerContract } = await import(entry);
+        const result = await replayUpgradeAnswerContract(database);
+        process.stdout.write(JSON.stringify(result));
+      `, '--', pathToFileURL(deployment.entrypoints.composition).href, join(scratch, 'contract.sqlite')], {
+      cwd: scratch, env: {}, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL',
+      maxBuffer: recordLimit, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    guard();
+    const result: unknown = JSON.parse(output);
+    requireValue(canonicalize(result) === canonicalize({ validity: 'audit_only', receipts: 1, resumes: 0, verifiedEvents: 0 }));
+    return true;
+  } finally {
+    requireValue((checkNode(stagingRoot, stagingNode, true).mode & 0o7777n) === 0o700n);
+    checkNode(scratch, scratchNode, true);
+    rmSync(scratch, { recursive: true });
+  }
 }
 
 async function migrateStagedService(input: {
@@ -1078,8 +1111,13 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
                 return true;
               });
               if (!prepared) return { status: 'interrupted' as const };
-              return { status: nativeHub ? 'hub-replayed' as const : 'service-migrated' as const,
-                receipt, generationId: nextGeneration };
+              const progress = { receipt, generationId: nextGeneration };
+              if (!nativeHub) return { status: 'service-migrated' as const, ...progress };
+              await confirmCut();
+              const composition = candidate.materials.find(file => file.path === 'runtime/composition.mjs');
+              requireValue(composition);
+              const answerReplayed = await runUpgradeAnswerContract(deployment, composition, stagingRoot, stagingNode, guard);
+              return { status: answerReplayed ? 'answer-replayed' as const : 'hub-replayed' as const, ...progress };
             }
             if (action === 'execute') {
               attempted = true;

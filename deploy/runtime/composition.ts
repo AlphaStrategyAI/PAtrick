@@ -38,6 +38,7 @@ import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
 import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority } from '../../apps/service/src/auth.js';
 import { createLocalHubPort, validateLocalHubAnswers } from '@patrick/integrations/autoloop/answers';
+import { createAnswerGate } from '../../packages/domain/src/answer-gate.js';
 import { createHubClient, PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
 import { readOptionalHubView } from '@patrick/integrations/autoloop/observer';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
@@ -49,6 +50,7 @@ import { createNetworkInspector } from '../../packages/host/src/network/probes.j
 import { createNodeNetworkProbePorts } from '../../packages/host/src/network/node-probes.js';
 import {
   openDatabase,
+  createRecoveryRuntimeGate,
   recoveryWriteAllowed,
   type SqliteDatabase, type RecoveryRuntimeAdmission,
 } from '@patrick/storage';
@@ -1313,6 +1315,92 @@ export function isRuntimeMain(url: string): boolean {
 export function openRuntimeDatabase(path: string): SqliteDatabase {
   if (!isAbsolute(path)) throw new Error('DATABASE_PATH_INVALID');
   return openDatabase(path);
+}
+
+export async function replayUpgradeAnswerContract(path: string) {
+  if (!isAbsolute(path)) throw new Error('DATABASE_PATH_INVALID');
+  closeSync(openSync(path, 'wx', 0o600));
+  const database = openRuntimeDatabase(path);
+  try {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const timestamp = now.toISOString();
+    const domain = 'personal';
+    const intentId = 'upgrade-answer-contract';
+    const questionId = 'upgrade-answer-question';
+    const cardId = 17;
+    const eventId = `hub:${questionId}:${cardId}`;
+    const optionsHash = 'b'.repeat(64);
+    const basisHash = 'c'.repeat(64);
+    const writer = { domain, writerEpoch: 'fixture-epoch', activationId: 'fixture-activation', witnessRevision: 'fixture-witness' };
+    const recovery = createRecoveryRuntimeGate(database);
+    database.prepare(`INSERT INTO recovery_domain_gates
+      (data_domain, writer_epoch, status, activation_id, witness_revision, reason, updated_at)
+      VALUES (?, ?, 'open', ?, ?, 'fixture', ?)`).run(domain, writer.writerEpoch, writer.activationId, writer.witnessRevision, timestamp);
+    database.prepare(`INSERT INTO mandate_types VALUES
+      ('fixture-type', 'fixture-account', ?, '[]', '[]', '[]', '["personal"]', 'low', 'L0', 0, 1, '1.0', ?)`)
+      .run(domain, timestamp);
+    database.prepare(`INSERT INTO mandates VALUES
+      ('fixture-mandate', 'fixture-type', 'fixture-account', ?, 'active', '[]', '[]', '[]', '["personal"]',
+      'low', 'L0', 0, '2027-01-01T00:00:00.000Z', 0, ?, 1, '1.0', ?, ?)`)
+      .run(domain, basisHash, timestamp, timestamp);
+    database.prepare(`INSERT INTO work_generations VALUES
+      ('fixture-work', 1, 'fixture-account', ?, 'fixture-root', 'fixture-mandate', 'judgment', 'judge',
+      1, 0, NULL, 'running', 0, 0, 0, NULL, 0, '1.0', ?, ?)`).run(domain, timestamp, timestamp);
+    database.prepare(`INSERT INTO judgment_bases VALUES
+      ('fixture-work', 1, 'fixture-account', ?, ?, '[]', NULL, NULL, 0, ?)`).run(domain, basisHash, timestamp);
+    database.prepare(`INSERT INTO question_bindings VALUES
+      (?, 1, 'fixture-work', 1, 'fixture-account', ?, 1, ?, ?, ?, '[]', '[]', 0, 'open',
+      NULL, NULL, NULL, 0, '1.0', 0, ?, ?)`).run(questionId, domain, optionsHash, cardId, basisHash, timestamp, timestamp);
+    database.prepare("INSERT INTO question_locks VALUES (?, 'sending', ?, ?)").run(questionId, intentId, timestamp);
+    database.prepare(`INSERT INTO answer_intents (
+      intent_id, account_id, caller_id, data_domain, client_request_id, command_fingerprint, question_id,
+      question_version, work_id, generation, proposal_revision, options_hash, entry, answer_kind, option_id,
+      option_index, disposition, next_action, missing_json, send_status, hub_card_id, hub_answer_event_id, schema_version,
+      created_at, updated_at
+    ) VALUES (?, 'fixture-account', 'fixture-owner', ?, ?, ?, ?, 1, 'fixture-work', 1, 1, ?, 'web', 'option',
+      'approve', 0, 'proceed', 'judge', '[]', 'accepted', ?, ?, '1.0', ?, ?)`)
+      .run(intentId, domain, intentId, 'a'.repeat(64), questionId, optionsHash, cardId, eventId, timestamp, timestamp);
+    const localAnswers = createLocalHubPort(path + '.hub');
+    try {
+      await localAnswers.accept(questionId, cardId, { choice: 0 });
+      const count = (sql: string) => (database.prepare(sql).get() as { count: number }).count;
+      async function replay(admitted: boolean) {
+        let reads = 0;
+        const gate = createAnswerGate(database, {
+          domain, now: () => now,
+          hub: {
+            async read(requested) {
+              if (requested !== questionId) throw new Error('UPGRADE_ANSWER_REPLAY_INVALID');
+              reads++;
+              return localAnswers.read(requested);
+            },
+            async accept() { throw new Error('UPGRADE_ANSWER_REPLAY_DISPATCH'); },
+          },
+          encode() { throw new Error('UPGRADE_ANSWER_REPLAY_ENCODE'); },
+        });
+        const receipt = await gate.recoverAnswer(intentId);
+        const retry = await gate.recoverAnswer(intentId);
+        const receipts = count('SELECT count(*) AS count FROM answer_receipts');
+        const resumes = count('SELECT count(*) AS count FROM resume_intents');
+        const verifiedEvents = count("SELECT count(*) AS count FROM domain_events WHERE json_extract(payload, '$.type') = 'answer.verified'");
+        const expectedCount = admitted ? 1 : 0;
+        if (receipt.validity !== (admitted ? 'verified' : 'audit_only') || receipt.intent_id !== intentId ||
+            receipt.question_id !== questionId || receipt.hub_answer_event_id !== (admitted ? eventId : null) ||
+            receipt.receipt_id !== retry.receipt_id || reads !== 1 || receipts !== 1 ||
+            resumes !== expectedCount || verifiedEvents !== expectedCount) throw new Error('UPGRADE_ANSWER_REPLAY_INVALID');
+        return { validity: receipt.validity, receipts, resumes, verifiedEvents };
+      }
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        recovery.admit(writer);
+        await replay(true);
+      } finally {
+        recovery.revoke(domain);
+        database.exec('ROLLBACK');
+      }
+      return await replay(false);
+    } finally { localAnswers.close(); }
+  } finally { database.close(); }
 }
 
 export function runtimeRecoveryWriteAllowed(database: SqliteDatabase, domain: string): boolean {
