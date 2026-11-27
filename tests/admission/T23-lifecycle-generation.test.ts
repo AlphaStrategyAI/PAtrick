@@ -219,7 +219,8 @@ test('preserves a foreign current and an operation authorization substituted for
 
 // The complete native release is supplied by the release-evidence job, independently
 // of the selection signer. The portable refusal tests above require no native fixture.
-const inputs: { archive: string; pins: string; answerReplay?: true }[] = JSON.parse(process.env.PATRICK_GENERATION_TEST_RELEASES ?? '[]');
+const inputs: { archive: string; pins: string; answerReplay?: true; researchCanary?: true }[] =
+  JSON.parse(process.env.PATRICK_GENERATION_TEST_RELEASES ?? '[]');
 async function nativeHostWithPackages(publishSuccessor: boolean) {
   expect(inputs).toHaveLength(2);
   const releases = inputs.map(input => JSON.parse(readFileSync(input.pins, 'utf8')) as Release);
@@ -434,7 +435,8 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
-  const preparationPath = join(root, 'staging', '.upgrade-upgrade.prepared.json');
+  const legacyPreparationPath = join(root, 'staging', '.upgrade-upgrade.prepared.json');
+  const preparationPath = inputs[1].researchCanary ? join(root, 'staging', '.upgrade-upgrade.prepared-canary.json') : legacyPreparationPath;
   if (cutFault) {
     expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
     expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
@@ -443,7 +445,8 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     return;
   }
   expect(prepared).toMatchObject({
-    status: 'uncertain', code: inputs[1].answerReplay ? 'UPGRADE_ANSWER_REPLAYED' : 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration,
+    status: 'uncertain', code: inputs[1].researchCanary ? 'UPGRADE_RESEARCH_CANARY_PASSED'
+      : inputs[1].answerReplay ? 'UPGRADE_ANSWER_REPLAYED' : 'UPGRADE_HUB_REPLAYED', generationId: nextGeneration,
   });
   expect(readdirSync(join(root, 'staging')).some(name => name.startsWith('.answer-replay-'))).toBe(false);
   for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
@@ -463,7 +466,8 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     generationId: nextGeneration,
     release: { packageSha256: expected.packageSha256, cutManifestSha256: captured.outcome.manifestHash },
     serviceMigrationSha256: sha256(readFileSync(join(serviceRoot, '.patrick-service-migration.json'))),
-    replay: inputs[1].answerReplay ? 'answer-replayed' : 'hub-replayed',
+    replay: inputs[1].researchCanary ? 'research-canary-passed'
+      : inputs[1].answerReplay ? 'answer-replayed' : 'hub-replayed',
   });
   const migrated = new DatabaseSync(servicePath, { readOnly: true });
   try {
@@ -471,6 +475,14 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
     expect(migrated.prepare('SELECT event_id FROM domain_events ORDER BY seq').all()).toEqual([{ event_id: 'retained-event' }]);
   } finally { migrated.close(); }
   expect(await cli().run(prepare)).toEqual(prepared);
+  if (inputs[1].researchCanary) {
+    const legacyPreparation = Buffer.from(canonicalize({ ...JSON.parse(preparation.toString()), replay: 'answer-replayed' }));
+    writeFileSync(legacyPreparationPath, legacyPreparation, { mode: 0o600 });
+    unlinkSync(preparationPath);
+    expect(await cli().run(prepare)).toEqual(prepared);
+    expect(readFileSync(legacyPreparationPath)).toEqual(legacyPreparation);
+    expect(readFileSync(preparationPath)).toEqual(preparation);
+  }
   writeFileSync(preparationPath, Buffer.from(canonicalize({ ...JSON.parse(preparation.toString()), generationId: 'substituted' })));
   expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
   writeFileSync(preparationPath, preparation);

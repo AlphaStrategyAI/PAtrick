@@ -142,6 +142,25 @@ afterAll(async () => {
 });
 
 describe('T23 installed runtime build and bootstrap', () => {
+  test('replays research dispatch and verifies the closed writer in the relocated candidate', async () => {
+    const scratch = await mkdtemp(join(temporary, 'research-canary-'));
+    const entry = pathToFileURL(join(relocated, 'runtime', 'composition.mjs')).href;
+    const result = runNode(['--permission', '--allow-addons',
+      `--allow-fs-read=${relocated}/*`, `--allow-fs-read=${scratch}/*`, `--allow-fs-write=${scratch}/*`,
+      '--input-type=module', '--eval', `
+        import assert from 'node:assert/strict';
+        const [entry, database] = process.argv.slice(1);
+        const { runUpgradeResearchCanary } = await import(entry);
+        assert.deepEqual(await runUpgradeResearchCanary(database), {
+          closedBefore: true, recovered: 'duplicate', hubCalls: 2, workGenerations: 1, closedAfter: true,
+        });
+        await assert.rejects(runUpgradeResearchCanary(database), { code: 'EEXIST' });
+      `, '--', entry, join(scratch, 'research.sqlite')], { cwd: scratch });
+    expect(result.status, output(result)).toBe(0);
+    expect(await readFile(join(relocated, 'runtime', 'composition.mjs'), 'utf8'))
+      .toMatch(/\/\/ patrick-upgrade-research-canary-v1\n\n\/\/ patrick-upgrade-answer-replay-v1\n$/);
+  }, 30000);
+
   test('replays a lost answer receipt with the relocated candidate and a closed writer', async () => {
     const scratch = await mkdtemp(join(temporary, 'answer-replay-'));
     const entry = pathToFileURL(join(relocated, 'runtime', 'composition.mjs')).href;

@@ -69,6 +69,7 @@ const entries = Object.freeze({
 });
 const hostSources = ['deploy/host/registry.ts', 'deploy/host/uninstall.ts'];
 const maintenanceReadbackSource = 'deploy/runtime/maintenance-readback.ts';
+const upgradeResearchSource = 'deploy/runtime/upgrade-research.ts';
 const vaultKitResolver = 'packages/integrations/vault/kit-path.ts';
 const designPath = 'docs/designs/设计资产/v2/';
 const sourceRoots = Object.freeze([
@@ -97,6 +98,7 @@ const sourceRoots = Object.freeze([
   'deploy/runtime/role-launch.ts',
   'deploy/runtime/service-handoff.ts',
   'deploy/runtime/hub-process.ts',
+  upgradeResearchSource,
   'deploy/runtime/vault-init.ts',
   'deploy/runtime/vault-init-cli.ts',
   'scripts/build-runtime.mjs',
@@ -273,7 +275,7 @@ async function captureSource(root, commit, profile) {
   const committed = sourceTree(root, commit, templatePaths);
   const allowedAdditions = [...Object.values(entries), ...recipePaths, ...hostSources, maintenanceReadbackSource, 'deploy/lib/deployment-templates.d.mts',
     'deploy/runtime/vault-init-cli.ts', 'deploy/runtime/role-launch.ts', 'deploy/runtime/service-handoff.ts',
-    'deploy/runtime/hub-process.ts', vaultKitResolver, ...templatePaths];
+    'deploy/runtime/hub-process.ts', upgradeResearchSource, vaultKitResolver, ...templatePaths];
   const paths = [...new Set([...committed.keys(), ...allowedAdditions])].sort();
   // The reviewed Web source imports SVGs from this single non-ASCII directory.
   // All other source paths and the emitted inventory retain the portable path allowlist.
@@ -827,7 +829,8 @@ async function buildRuntime(values, recipe) {
     const compositionPath = resolve(materials, 'runtime/composition.mjs');
     const composition = Object.entries(result.metafile.outputs).find(([path]) => resolve(sourceRoot, path) === compositionPath)?.[1];
     if (!composition?.exports.includes('replayUpgradeAnswerContract')) fail('RUNTIME_ANSWER_REPLAY_ENTRY_MISSING');
-    await appendFile(compositionPath, deployment.upgradeAnswerReplayTrailer);
+    if (!composition.exports.includes('runUpgradeResearchCanary')) fail('RUNTIME_RESEARCH_CANARY_ENTRY_MISSING');
+    await appendFile(compositionPath, deployment.upgradeResearchCanaryTrailer + deployment.upgradeAnswerReplayTrailer);
     if (deployment.completeProfile(profile)) {
       await copySelected(sourceRoot, materials, [...Object.values(deployment.deploymentPaths), ...deployment.vaultKitPaths]);
       const { source, path } = deployment.servicePreflight;

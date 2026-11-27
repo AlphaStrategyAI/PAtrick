@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import type { MigrationEntry } from '@patrick/storage';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-import { upgradeAnswerReplayTrailer } from '../lib/deployment-templates.mjs';
+import { upgradeAnswerReplayTrailer, upgradeResearchCanaryTrailer } from '../lib/deployment-templates.mjs';
 import { checkRuntimeAcl, createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
   verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
@@ -532,12 +532,14 @@ async function replayStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: 
   guard();
 }
 
-async function runUpgradeAnswerContract(deployment: AdmittedDeployment,
+async function runUpgradeContracts(deployment: AdmittedDeployment,
   composition: Readonly<{ bytes: number; sha256: string }>, stagingRoot: string, stagingNode: GenerationNode,
-  guard: () => void): Promise<boolean> {
+  guard: () => void): Promise<'hub-replayed' | 'answer-replayed' | 'research-canary-passed'> {
   const entry = await readRegularFile(deployment.entrypoints.composition, composition.bytes, { root: deployment.root, validate: guard });
   requireValue(entry.length === composition.bytes && sha256(entry) === composition.sha256);
-  if (!entry.toString('utf8').endsWith(upgradeAnswerReplayTrailer)) return false;
+  const source = entry.toString('utf8');
+  if (!source.endsWith(upgradeAnswerReplayTrailer)) return 'hub-replayed';
+  const research = source.endsWith(upgradeResearchCanaryTrailer + upgradeAnswerReplayTrailer);
   guard();
   const scratch = mkdtempSync(join(stagingRoot, '.answer-replay-'));
   const scratchNode = pin(stat(scratch));
@@ -545,18 +547,23 @@ async function runUpgradeAnswerContract(deployment: AdmittedDeployment,
     const output = execFileSync(process.execPath, ['--permission', '--allow-addons',
       `--allow-fs-read=${deployment.root}/*`, `--allow-fs-read=${scratch}/*`, `--allow-fs-write=${scratch}/*`,
       '--input-type=module', '--eval', `
-        const [entry, database] = process.argv.slice(1);
-        const { replayUpgradeAnswerContract } = await import(entry);
-        const result = await replayUpgradeAnswerContract(database);
-        process.stdout.write(JSON.stringify(result));
-      `, '--', pathToFileURL(deployment.entrypoints.composition).href, join(scratch, 'contract.sqlite')], {
+        const [entry, answers, research] = process.argv.slice(1);
+        const runtime = await import(entry);
+        const answer = await runtime.replayUpgradeAnswerContract(answers);
+        const canary = research ? await runtime.runUpgradeResearchCanary(research) : null;
+        process.stdout.write(JSON.stringify({ answer, canary }));
+      `, '--', pathToFileURL(deployment.entrypoints.composition).href, join(scratch, 'contract.sqlite'),
+      ...(research ? [join(scratch, 'research.sqlite')] : [])], {
       cwd: scratch, env: {}, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL',
       maxBuffer: recordLimit, stdio: ['ignore', 'pipe', 'pipe'],
     });
     guard();
     const result: unknown = JSON.parse(output);
-    requireValue(canonicalize(result) === canonicalize({ validity: 'audit_only', receipts: 1, resumes: 0, verifiedEvents: 0 }));
-    return true;
+    requireValue(canonicalize(result) === canonicalize({
+      answer: { validity: 'audit_only', receipts: 1, resumes: 0, verifiedEvents: 0 },
+      canary: research ? { closedBefore: true, recovered: 'duplicate', hubCalls: 2, workGenerations: 1, closedAfter: true } : null,
+    }));
+    return research ? 'research-canary-passed' : 'answer-replayed';
   } finally {
     requireValue((checkNode(stagingRoot, stagingNode, true).mode & 0o7777n) === 0o700n);
     checkNode(scratch, scratchNode, true);
@@ -1043,6 +1050,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     const destination = join(stagingRoot, '.upgrade-' + upgradeOperationId);
     const publicationRecord = destination + '.published.json';
     const preparationRecord = destination + '.prepared.json';
+    const canaryRecord = destination + '.prepared-canary.json';
     const published = join(releasesRoot, releaseSha256);
     let attempted = false;
     try {
@@ -1121,35 +1129,41 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
                 return migration;
               });
               if (!prepared) return { status: 'interrupted' as const };
-              let status: 'service-migrated' | 'hub-replayed' | 'answer-replayed' = 'service-migrated';
+              let status: 'service-migrated' | Awaited<ReturnType<typeof runUpgradeContracts>> = 'service-migrated';
               if (nativeHub) {
                 await confirmCut();
                 const composition = candidate.materials.find(file => file.path === 'runtime/composition.mjs');
                 requireValue(composition);
-                status = await runUpgradeAnswerContract(deployment, composition, stagingRoot, stagingNode, guard)
-                  ? 'answer-replayed' : 'hub-replayed';
+                status = await runUpgradeContracts(deployment, composition, stagingRoot, stagingNode, guard);
               }
               await confirmCut();
               guard();
-              const preparation = bytes({
+              const preparationBody = {
                 format: 'patrick-upgrade-preparation-v1', operationId: upgradeOperationId,
                 generationId: nextGeneration, sourceSelectionSha256: selectionSha256, targetSchema,
                 publicationSha256, release: receipt, serviceMigrationSha256: sha256(prepared), replay: status,
-              });
-              const retained = lstatSync(preparationRecord, { bigint: true, throwIfNoEntry: false });
-              if (retained) {
+              };
+              const preparation = bytes(preparationBody);
+              async function verifyRetained(path: string, expected: Buffer) {
+                const retained = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+                if (!retained) return false;
                 const node = pin(retained);
                 const checkPreparation = () => {
                   guard();
-                  requireValue((checkNode(preparationRecord, node, false).mode & 0o7777n) === 0o600n);
+                  requireValue((checkNode(path, node, false).mode & 0o7777n) === 0o600n);
                 };
                 checkPreparation();
-                requireValue(preparation.equals(await readRegularFile(preparationRecord, recordLimit, {
+                requireValue(expected.equals(await readRegularFile(path, recordLimit, {
                   root: stagingRoot, validate: checkPreparation,
                 })));
-              } else {
+                return true;
+              }
+              const canary = status === 'research-canary-passed';
+              if (canary) await verifyRetained(preparationRecord, bytes({ ...preparationBody, replay: 'answer-replayed' }));
+              const preparedPath = canary ? canaryRecord : preparationRecord;
+              if (!await verifyRetained(preparedPath, preparation)) {
                 attempted = true;
-                recordUpgradePublication(preparationRecord, preparation, stagingNode, guard);
+                recordUpgradePublication(preparedPath, preparation, stagingNode, guard);
               }
               return { status, receipt, generationId: nextGeneration, preparationSha256: sha256(preparation) };
             }

@@ -28,6 +28,7 @@ export function directoryIdentity(data: Buffer, arch: DarwinTarget['arch']): Dir
 export const deploymentPaths: Readonly<Record<DeploymentKey, string>>;
 export const servicePreflight: Readonly<{ source: string; path: string; sha256: string }>;
 export const upgradeAnswerReplayTrailer: string;
+export const upgradeResearchCanaryTrailer: string;
 export const autoloopHub: Readonly<{
   commit: string; root: string; entry: string; initializer: 'kernel/evolve.ts'; files: Readonly<Record<string, string>>;
 }>;

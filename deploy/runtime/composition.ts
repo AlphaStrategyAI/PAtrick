@@ -7,6 +7,7 @@ import {
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease,
 } from './install-preview.js';
 export { installReleaseApproval, prepareFirstInstallGeneration } from './install-preview.js';
+export { runUpgradeResearchCanary } from './upgrade-research.js';
 export {
   runInstalledHubRole, runInstalledHubSupervisor, runInstalledRuntimeRole, runInstalledServiceSupervisor, runInstalledWorkerSupervisor,
   runSelectedServiceSupervisor, runSupervisedHubRole, runSupervisedServiceRole, runSupervisedWorkerRole, serveInstalledHubRole, serveInstalledWorkerTicks,
