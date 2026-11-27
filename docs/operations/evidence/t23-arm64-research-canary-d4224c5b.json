@@ -1,0 +1,22 @@
+{
+  "format": "patrick-t23-research-canary-acceptance-v1",
+  "date": "2026-11-27",
+  "target": { "device": "registered MacBook Pro", "os": "darwin", "arch": "arm64" },
+  "sourceCommit": "d4224c5b0d433677ffbb63f0f1f96c2dca183590",
+  "sourceSnapshotSha256": "88da3ac2736179c935d85a56482c481e271da567dbe345ddc20844def4adb62d",
+  "packageSha256": "0ae4af78b5620ee26afc433a460abc8e955f73d23f65695dd7084130981ba5f8",
+  "manifestSha256": "697752e5f2cc4b33530be2c74b78f0db7609b39787940ece99a3a0299addef5a",
+  "signerScope": "isolated-test-key",
+  "nativeBuilds": 2,
+  "passedPresigningScenarios": 4,
+  "verifiedFiles": 489,
+  "upgrade": {
+    "sourceCommit": "d7f1043bbe0e75d59361cbe0946ffede5ef8174d",
+    "installationScope": "isolated local root",
+    "expectedCode": "UPGRADE_RESEARCH_CANARY_PASSED",
+    "passedScenarios": 1,
+    "preservedPriorReceipt": true,
+    "sourceSelectionRetained": true
+  },
+  "systemInstallation": "pending"
+}
