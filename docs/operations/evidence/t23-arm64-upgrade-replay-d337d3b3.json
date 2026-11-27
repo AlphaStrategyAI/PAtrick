@@ -1,0 +1,32 @@
+{
+  "format": "patrick-t23-isolated-upgrade-replay-v1",
+  "observedDate": "2026-11-27",
+  "target": { "os": "darwin", "arch": "arm64" },
+  "sourceCommit": "d337d3b3a35b7edc5e5868b9c2e2d1de947ee91b",
+  "sourceSnapshotSha256": "952a0b90b36b2dd2b9dcfe43d35e572b13c12cdcb7e5b6a7b32074961f2a3185",
+  "predecessorCommit": "d7f1043bbe0e75d59361cbe0946ffede5ef8174d",
+  "successor": {
+    "signerScope": "isolated-acceptance",
+    "matchingNativeBuilds": 2,
+    "inventorySha256": "214b5a074b4c55877d92eb4a53de06bc436ea50b5e5d7420d020e1f9e5bcfd58",
+    "materialSha256": "a8844e71b1b0ab9ec3507cf5ba787483d8a348a7ef9a4478741e734604591310",
+    "packageSha256": "0cb4bf37b3d5e538c622faac6df80bc0db431439ba01f5971fd06ea567dfb17e",
+    "manifestSha256": "5376af3d97787ba6b1da8aa4279ba11445957e032fb57124d7f5f554e30c76b8",
+    "publicKeySha256": "e10cfe9668d43798ab5e150e4c64ae313b49d70d73c034b0a17d73f166fdd67c",
+    "executionReportSha256": "8e35607160e7dbfbdf3047699fdd637afd55796cddba842e3d8d6b43f516f032",
+    "verifiedFiles": 489,
+    "passedScenarios": ["relocated-node-import", "service-cli-drain", "sqlite-migrate-reopen", "worker-role-readback"],
+    "verifiedRejections": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"]
+  },
+  "upgradeReplay": {
+    "command": "npm exec -- vitest run tests/admission/T23-lifecycle-generation.test.ts -t 'a registered upgrade publishes a signed successor'",
+    "passed": 3,
+    "skipped": 36,
+    "durationSeconds": 321.22,
+    "cases": ["projection-matches", "projection-mismatch-rejected", "empty-fact-log-rejected"],
+    "currentPointerPreserved": true,
+    "sourceServiceDataPreserved": true,
+    "lastVerifiedStage": "UPGRADE_HUB_REPLAYED"
+  },
+  "outstanding": ["staged-application-contract-replay", "research-canary", "signed-generation-selection", "system-trust-enrollment", "system-upgrade", "system-reboot", "system-uninstall-preservation"]
+}
