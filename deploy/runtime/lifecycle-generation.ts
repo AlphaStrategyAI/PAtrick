@@ -74,6 +74,11 @@ export type UpgradeReleaseEnrollment = Readonly<{
 type UpgradeCutPlan = Omit<MaintenanceCutReadbackRegistration['subject'], 'claimSha256' | 'planSha256'>;
 type UpgradeCutReader = ReturnType<typeof createMaintenanceCutReader>;
 type UpgradeServiceMigrator = (databasePath: string, migrationsDir: string, manifest: readonly MigrationEntry[]) => void;
+type UpgradeDatabasePorts = Readonly<{
+  migrateService: UpgradeServiceMigrator;
+  hubSequence(database: DatabaseSync, role: 'service' | 'hub'): number;
+  validateAnswers(database: DatabaseSync, guard: () => void): void;
+}>;
 export type UpgradeReleaseAction = 'execute' | 'readback' | 'prepare-generation';
 export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
@@ -452,7 +457,7 @@ function columnIdentifier(name: string) {
   return '"' + name.replaceAll('"', '""') + '"';
 }
 
-function observeServiceMigration(path: string, guard: () => void, expected?: ServiceFactTable[]) {
+function withImmutableUpgradeDatabase<T>(path: string, use: (database: DatabaseSync) => T): T {
   const uri = pathToFileURL(path);
   uri.searchParams.set('immutable', '1');
   const database = new DatabaseSync(uri.href, { readOnly: true });
@@ -460,6 +465,12 @@ function observeServiceMigration(path: string, guard: () => void, expected?: Ser
     database.exec('PRAGMA temp_store = MEMORY');
     requireValue(database.prepare('PRAGMA integrity_check').get()?.integrity_check === 'ok' &&
       !database.prepare('PRAGMA foreign_key_check').iterate().next().value);
+    return use(database);
+  } finally { database.close(); }
+}
+
+function observeServiceMigration(path: string, guard: () => void, expected?: ServiceFactTable[]) {
+  return withImmutableUpgradeDatabase(path, database => {
     const available = new Map<string, ServiceFactTable>();
     for (const row of database.prepare(`SELECT name FROM main.sqlite_schema
       WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name <> 'schema_migrations' ORDER BY name`).all()) {
@@ -492,7 +503,21 @@ function observeServiceMigration(path: string, guard: () => void, expected?: Ser
     }
     const history = database.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all();
     return { history: history.map(({ file, sha256 }) => ({ file, sha256 })), factsSha256: facts.digest('hex'), tables };
-  } finally { database.close(); }
+  });
+}
+
+function validateStagedUpgradeCompanions(set: VerifiedCutMaterial, rawData: string, servicePath: string,
+  databases: UpgradeDatabasePorts, guard: () => void) {
+  guard();
+  const hub = set.artifacts.find(artifact => artifact.path === 'databases/hub.sqlite' && artifact.kind === 'database');
+  requireValue(hub);
+  const hubSeq = withImmutableUpgradeDatabase(join(rawData, hub.path), database => databases.hubSequence(database, 'hub'));
+  guard();
+  const serviceSeq = withImmutableUpgradeDatabase(servicePath, database => databases.hubSequence(database, 'service'));
+  requireValue(serviceSeq === hubSeq);
+  guard();
+  withImmutableUpgradeDatabase(join(rawData, set.localAnswers.path), database => databases.validateAnswers(database, guard));
+  guard();
 }
 
 async function migrateStagedService(input: {
@@ -957,7 +982,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     }, true, enrolled);
   }
   async function prepareUpgradeRelease(targetSchema: number, stagingNode: GenerationNode,
-    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader, migrate: UpgradeServiceMigrator) {
+    cut: MaintenanceCutReadbackRegistration, action: UpgradeReleaseAction, backup: UpgradeCutReader, databases: UpgradeDatabasePorts) {
     const { claimSha256, planSha256, ...cutPlan } = cut.subject;
     const { installationId, generationId, selectionSha256, releaseSha256, upgradeOperationId } = cutPlan;
     const nextGeneration = cut.lifecycle.plan.nextGeneration;
@@ -1032,15 +1057,21 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
               const manifest = candidate.materials.find(file => file.path === 'migrations/manifest.json');
               requireValue(manifest);
               const rawData = destination + '.data';
+              const migratedService = destination + '.service';
+              const nativeHub = generationHubDatabase(current.order.generation.roles) !== legacyHubDatabase;
+              if (nativeHub) requireValue(deployment.autoloopHub);
               const onAttempt = () => { attempted = true; };
-              const migrated = await backup.useVerifiedSet(initialCut, async set => {
+              const prepared = await backup.useVerifiedSet(initialCut, async set => {
                 if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return false;
-                return migrateStagedService({ set, rawData, path: destination + '.service', parent: stagingNode,
+                if (!await migrateStagedService({ set, rawData, path: migratedService, parent: stagingNode,
                   releaseRoot: deployment.root, manifestSha256: manifest.sha256, publicationSha256: sha256(effectiveReceipt),
-                  migrate, guard, confirmCut, onAttempt });
+                  migrate: databases.migrateService, guard, confirmCut, onAttempt })) return false;
+                if (nativeHub) validateStagedUpgradeCompanions(set, rawData, join(migratedService, 'service.sqlite'), databases, guard);
+                return true;
               });
-              return migrated ? { status: 'service-migrated' as const, receipt, generationId: nextGeneration }
-                : { status: 'interrupted' as const };
+              if (!prepared) return { status: 'interrupted' as const };
+              return { status: nativeHub ? 'data-validated' as const : 'service-migrated' as const,
+                receipt, generationId: nextGeneration };
             }
             if (action === 'execute') {
               attempted = true;
@@ -1207,11 +1238,11 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
 }
 
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction,
-  validate: () => void, backup: UpgradeCutReader, migrate: UpgradeServiceMigrator) {
+  validate: () => void, backup: UpgradeCutReader, databases: UpgradeDatabasePorts) {
   requireValue(action === 'execute' || action === 'readback' || action === 'prepare-generation');
   validate();
   const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
-  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, migrate);
+  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup, databases);
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {

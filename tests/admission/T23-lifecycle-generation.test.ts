@@ -2,20 +2,27 @@ import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, sign, verify } from 'node:crypto';
 import { closeSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import Database from 'better-sqlite3';
 import { buildSync } from 'esbuild';
 import { afterEach, expect, test } from 'vitest';
 import { openDatabase, type MigrationEntry } from '@patrick/storage';
+import { createLocalHubPort, validateLocalHubAnswers } from '@patrick/integrations/autoloop/answers';
+import { readOptionalHubView, storeHubView } from '@patrick/integrations/autoloop/observer';
+import { readPinnedAutoloopRecoveryDatabase } from '../../packages/host/src/recovery/backup.js';
 import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { canonicalize, sha256 } from '../../deploy/lib/release.mjs';
 import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import type { ExclusiveRuntimeStaging } from '../../deploy/lib/emitted-release.mjs';
+import { autoloopHub } from '../../deploy/lib/deployment-templates.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
 import { createFirstInstallCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
-import { canRestoreOldRelease, createGenerationReader, createGenerationStore, installedUpgradePlanSha256 } from '../../deploy/runtime/lifecycle-generation';
+import { autoloopHubDatabase, autoloopHubDirectory, canRestoreOldRelease, createGenerationReader, createGenerationStore,
+  installedUpgradePlanSha256 } from '../../deploy/runtime/lifecycle-generation';
 import type { GenerationEnrollment, GenerationOrder, InstalledGeneration } from '../../deploy/runtime/lifecycle-generation';
 import { createLifecycleJournal, type LifecycleRegistration } from '../../deploy/runtime/lifecycle-journal.js';
 
@@ -100,6 +107,44 @@ test('requires exact zero generation writes and both verified prerequisites', ()
     expect(canRestoreOldRelease({ snapshotVerified: true, writerStopped: invalid, writesSinceSwitch: 0 })).toBe(false);
   }
   expect(canRestoreOldRelease({ snapshotVerified: true, writerStopped: true, writesSinceSwitch: 0 })).toBe(true);
+});
+
+test('rejects a partial or stale stored Hub observation during upgrade validation', () => {
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'generation-observer-'));
+  temporary.push(root);
+  const database = openDatabase(join(root, 'service.sqlite'));
+  try {
+    expect(readOptionalHubView(database)).toBeUndefined();
+    storeHubView(database, { hub_seq: 1, runs: [], cards: [] }, '2026-11-27T00:00:00Z');
+    const updateSnapshot = database.prepare("UPDATE hub_snapshots SET snapshot = ? WHERE cursor_name = 'hub_observer'");
+    for (const snapshot of [
+      { runs: [], cards: [null] },
+      { runs: [null], cards: [] },
+      { runs: [{ id: 1, rule: 'fixture', state: 'queued', attempts: 0, summary: '', error: '', events: [null] }], cards: [] },
+    ]) {
+      updateSnapshot.run(JSON.stringify(snapshot));
+      expect(() => readOptionalHubView(database)).toThrow('HUB_STATE_INVALID');
+    }
+    updateSnapshot.run('{"runs":[],"cards":[]}');
+    database.exec("UPDATE projection_cursors SET hub_seq = 0 WHERE name = 'hub_observer'");
+    expect(() => readOptionalHubView(database)).toThrow('HUB_CURSOR_MISMATCH');
+    database.exec("DELETE FROM projection_cursors WHERE name = 'hub_observer'");
+    expect(() => readOptionalHubView(database)).toThrow('HUB_VIEW_MISSING');
+  } finally { database.close(); }
+});
+
+test('rejects unexpected schema objects in the local Answers snapshot', async () => {
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'generation-answers-'));
+  temporary.push(root);
+  const path = join(root, 'local-answers.sqlite');
+  const answers = createLocalHubPort(path);
+  try { await answers.accept('question', 1, { choice: 0 }); } finally { answers.close(); }
+  const database = new DatabaseSync(path);
+  try {
+    expect(() => validateLocalHubAnswers(database, () => {})).not.toThrow();
+    database.exec('CREATE INDEX unexpected_answer_index ON hub_answers(card_id)');
+    expect(() => validateLocalHubAnswers(database, () => {})).toThrow('HUB_ANSWERS_SCHEMA_INVALID');
+  } finally { database.close(); }
 });
 
 test('checks physical enrollment on authenticated absence, including after root replacement', async () => {
@@ -204,12 +249,19 @@ async function nativeHost() {
   return { ...h, runtimeModuleUrl: pathToFileURL(runtimeModule).href };
 }
 
-async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'credentialDirectory') {
+async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'credentialDirectory', nativeHub = false) {
   const h = await nativeHostWithPackages(false);
+  const dataRoot = join(h.root, 'data', 'one');
+  if (nativeHub) {
+    const generation = h.e.generations[0];
+    generation.roles[autoloopHubDirectory] = node(directory(dataRoot, autoloopHubDirectory));
+    renameSync(join(dataRoot, 'hub.sqlite'), join(dataRoot, autoloopHubDatabase));
+    generation.roles[autoloopHubDatabase] = node(join(dataRoot, autoloopHubDatabase));
+    delete generation.roles['hub.sqlite'];
+  }
   const store = createGenerationStore(h.e, h.owner, h.signer);
   const { current } = await store.select(h.signed(store.order('install', null, 'one')));
   expect(current).not.toBeNull();
-  const dataRoot = join(h.root, 'data', 'one');
   const origin = 'https://preview.example.test:8443';
   const expected = h.e.releases[1].expected;
   const targetSchema = expected.schema.max;
@@ -229,7 +281,7 @@ async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'cre
 }
 
 test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed successor against the frozen cut and supports readback', async () => {
-  const fixture = await installedUpgradeFixture();
+  const fixture = await installedUpgradeFixture(undefined, true);
   const { expected, targetSchema, current, root, args, owner, e } = fixture;
   const preview = (await fixture.cli.run(args)).upgradePreview!;
   const keys = generateKeyPairSync('ed25519');
@@ -249,15 +301,32 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   service.prepare(`INSERT INTO domain_events
     (seq, event_id, aggregate_id, aggregate_version, account_id, data_domain, schema_version, payload, created_at)
     VALUES (1, 'retained-event', 'retained-object', 1, 'account', 'personal', '1.0', '{}', '2026-11-27T00:00:00Z')`).run();
-  const hub = openDatabase(join(fixture.dataRoot, 'hub.sqlite'));
-  const answers = new DatabaseSync(join(handoff, 'local-answers.sqlite'));
-  answers.exec('CREATE TABLE answers (answer TEXT)');
-  answers.close();
+  storeHubView(service, { hub_seq: 1, runs: [], cards: [] }, '2026-11-27T00:00:00Z');
+  const hubPath = join(fixture.dataRoot, autoloopHubDatabase);
+  const initializer = join(root, 'releases', current.order.generation.packageSha256, autoloopHub.root, autoloopHub.initializer);
+  const initializerSource = readFileSync(initializer);
+  expect(sha256(initializerSource)).toBe(autoloopHub.files[autoloopHub.initializer]);
+  const initializerCode = Buffer.from(stripTypeScriptTypes(initializerSource.toString())).toString('base64');
+  const { initialize } = await import('data:text/javascript;base64,' + initializerCode) as { initialize(database: DatabaseSync): void };
+  const hubSetup = new DatabaseSync(hubPath);
+  try {
+    hubSetup.exec('DROP TABLE generation_marker');
+    initialize(hubSetup);
+    hubSetup.prepare('INSERT INTO facts VALUES (?, ?)').run(1, '{"version":1,"seq":1,"at":0,"type":"rules","changes":[]}');
+    hubSetup.prepare('INSERT INTO projection_meta VALUES (1, 1, ?, ?)').run('{}', 'fixture-format');
+  } finally { hubSetup.close(); }
+  const hub = new Database(hubPath, { fileMustExist: true });
+  const answersPath = join(handoff, 'local-answers.sqlite');
+  const answers = createLocalHubPort(answersPath);
+  try { await answers.accept('retained-question', 42, { text: 'retained answer' }); } finally { answers.close(); }
+  const answersSnapshot = new DatabaseSync(answersPath);
+  try { answersSnapshot.exec('PRAGMA journal_mode = DELETE'); } finally { answersSnapshot.close(); }
   const scope = { setId: 'before-upgrade', domains: [{ domain: 'personal', writerEpoch: 'old',
     withdrawal: { seq: 0, hash: sha256(Buffer.alloc(0)) } }], versionLocks: { source: 'fixture' }, resources: [{ kind: 'handoff' as const, root: handoff }] };
   const backupRequest = { operationId: 'backup', targetId: 'cut', mode: 'backup' as const };
   const backup = createRecoveryOperations({ root: operationsRoot, authority, targets: { cut: {
     identity: e.identity, backup: { scope, options: { root: sets, authority, databases: { service, hub },
+      readDatabase: readPinnedAutoloopRecoveryDatabase, nativeHubBinding: { database: hub, domains: ['personal'] },
       freeze: { async acquire() { return { cutId: 'drained', ingressFrozen: true, claimsFrozen: true, receiptsFrozen: true,
         effectsFrozen: true, executionTreesStopped: true, uncertainCallsJournaled: true, durableHandoff: true, async release() {} }; } } },
     },
@@ -297,7 +366,7 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   let fenced = false;
   const cut = {
     subject, lifecycle, journalRoot: journalRoot(operationsRoot), journalAuthority: publicAuthority,
-    target: { root: sets, scope, authority: publicAuthority, identity: e.identity },
+    target: { root: sets, scope, authority: publicAuthority, identity: e.identity, readDatabase: readPinnedAutoloopRecoveryDatabase },
     async readContinuousFence() {
       return fenced ? { subject, status: 'closed_and_fenced' as const, fenceReceiptId: 'closed',
         currentFenceEpoch: subject.fenceEpoch, manifestHash: captured.outcome.manifestHash,
@@ -339,7 +408,7 @@ test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed succes
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
-  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_SERVICE_MIGRATED', generationId: nextGeneration });
+  expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_DATA_VALIDATED', generationId: nextGeneration });
   for (const path of ['databases/service.sqlite', 'databases/hub.sqlite', 'resources/0/local-answers.sqlite']) {
     expect(readFileSync(join(stagedData, path))).toEqual(readFileSync(join(sets, scope.setId, path)));
   }

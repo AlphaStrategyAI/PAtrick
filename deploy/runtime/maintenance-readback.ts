@@ -29,7 +29,11 @@ type FenceObservation = Readonly<{
   localAnswersSha256: string;
 }>;
 type Verifier = Pick<RecoveryManifestAuthority, 'keyId' | 'verify'>;
-export type VerifiedCutMaterial = Readonly<{ directory: string; artifacts: readonly Readonly<RecoveryArtifact>[] }>;
+export type VerifiedCutMaterial = Readonly<{
+  directory: string;
+  artifacts: readonly Readonly<RecoveryArtifact>[];
+  localAnswers: Readonly<RecoveryArtifact>;
+}>;
 export type MaintenanceCutReadbackRegistration = {
   subject: CutSubject;
   journalRoot: RecoveryJournalRoot;
@@ -44,7 +48,7 @@ const name = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA
 
 export function assertMaintenanceRecoverySet(set: RecoverySet, expected: {
   scope: RecoveryScope; cutId: string; manifestHash: string; localAnswersSha256: string;
-}): void {
+}): RecoveryArtifact {
   const { manifest } = set;
   const { scope, cutId, manifestHash, localAnswersSha256 } = expected;
   const prefix = `resources/${scope.resources.length - 1}/`;
@@ -55,6 +59,7 @@ export function assertMaintenanceRecoverySet(set: RecoverySet, expected: {
       handoff[0].path !== `${prefix}local-answers.sqlite` || handoff[0].hash !== localAnswersSha256) {
     throw new Error('MAINTENANCE_CUT_MISMATCH');
   }
+  return handoff[0];
 }
 
 function bindVerifier(authority: Verifier): Verifier {
@@ -110,9 +115,10 @@ export function createMaintenanceCutReader(registration: MaintenanceCutReadbackR
     const fence = await currentFence();
     let verified: VerifiedCutMaterial | undefined;
     const result = await backup.read({ operationId, targetId, mode: 'backup' }, (set) => {
-      assertMaintenanceRecoverySet(set, { scope, cutId, ...fence });
+      const localAnswers = assertMaintenanceRecoverySet(set, { scope, cutId, ...fence });
       verified = Object.freeze({ directory: set.directory,
-        artifacts: Object.freeze(set.manifest.artifacts.map(artifact => Object.freeze({ ...artifact }))) });
+        artifacts: Object.freeze(set.manifest.artifacts.map(artifact => Object.freeze({ ...artifact }))),
+        localAnswers: Object.freeze({ ...localAnswers }) });
     });
     if (result.status !== 'completed' || !verified || !isDeepStrictEqual(await currentFence(), fence)) {
       throw new Error('MAINTENANCE_CLOSE_UNCONFIRMED');

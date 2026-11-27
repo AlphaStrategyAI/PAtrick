@@ -37,10 +37,12 @@ import { createObsidianDoctor } from '../obsidian/doctor.mjs';
 import { createVaultKitInstaller } from '../obsidian/install.mjs';
 import { ServiceStartupError, createServiceRuntime, type CreateAppOptions, type ServiceCloseHold } from '@patrick/service/factory';
 import { issueFirstOwnerBootstrapTicket, OWNER_DOMAIN, validateBrowserAuthority } from '../../apps/service/src/auth.js';
-import { createLocalHubPort } from '@patrick/integrations/autoloop/answers';
+import { createLocalHubPort, validateLocalHubAnswers } from '@patrick/integrations/autoloop/answers';
 import { createHubClient, PINNED_HUB_COMMIT, type HubKeys } from '@patrick/integrations/autoloop/client';
+import { readOptionalHubView } from '@patrick/integrations/autoloop/observer';
 import { createRecoveryBackupReader, createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
-import { assertDatabaseIntegrity, assertRecoveryBackupSource, verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
+import { assertDatabaseIntegrity, assertRecoveryBackupSource, readPinnedAutoloopRecoveryDatabase,
+  verifyRecoverySet } from '../../packages/host/src/recovery/backup.js';
 import { assertName, canonical, containedPath, fileHash } from '../../packages/host/src/recovery/files.js';
 import type { RecoveryDatabaseReader, RecoveryFreezePort, RecoveryManifestAuthority, RecoveryOffHostPort, RecoveryScope } from '../../packages/host/src/recovery/types.js';
 import { createNetworkInspector } from '../../packages/host/src/network/probes.js';
@@ -118,13 +120,19 @@ type ProvisionedPorts = Readonly<{
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
 export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: UpgradeReleaseAction, validate: () => void) {
   validate();
-  return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut),
-    (path, migrationsDir, manifest) => {
+  return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut), {
+    migrateService(path, migrationsDir, manifest) {
       const database = openDatabase(path, { migrationsDir, manifest });
       try {
         if (database.pragma('journal_mode = DELETE', { simple: true }) !== 'delete') throw new Error('UPGRADE_DATABASE_NOT_STANDALONE');
       } finally { database.close(); }
-    });
+    },
+    hubSequence(database, role) {
+      if (role === 'hub') return readPinnedAutoloopRecoveryDatabase(database, 'hub').hubSeq;
+      return readOptionalHubView(database)?.hub_seq ?? 0;
+    },
+    validateAnswers: validateLocalHubAnswers,
+  });
 }
 
 const firstInstall = Object.freeze({

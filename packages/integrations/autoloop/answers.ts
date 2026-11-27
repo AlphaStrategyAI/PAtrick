@@ -14,18 +14,38 @@ export type LocalHubPort = {
 };
 
 type HubRow = { card_id: number; body_json: string; answer_event_id: string };
+const localAnswersTable = `hub_answers (
+      question_id TEXT PRIMARY KEY,
+      card_id INTEGER NOT NULL,
+      body_json TEXT NOT NULL,
+      answer_event_id TEXT NOT NULL
+    ) STRICT`;
+
+export function validateLocalHubAnswers(database: {
+  prepare(sql: string): { all(): unknown[]; iterate(): Iterable<unknown> };
+}, guard: () => void): void {
+  const schema = database.prepare("SELECT type, sql FROM main.sqlite_schema WHERE name NOT GLOB 'sqlite_*'")
+    .all() as { type: string; sql: string }[];
+  if (schema.length !== 1 || schema[0].type !== 'table' || schema[0].sql !== `CREATE TABLE ${localAnswersTable}`) {
+    throw new Error('HUB_ANSWERS_SCHEMA_INVALID');
+  }
+  for (const row of database.prepare(
+    'SELECT question_id, card_id, body_json, answer_event_id FROM main.hub_answers',
+  ).iterate() as Iterable<HubRow & { question_id: string }>) {
+    guard();
+    if (!Number.isSafeInteger(row.card_id) || row.answer_event_id !== `hub:${row.question_id}:${row.card_id}`) {
+      throw new Error('HUB_ANSWER_INVALID');
+    }
+    parseBody(row.body_json);
+  }
+}
 
 /** The optional callback is a trusted in-process ownership handoff, before Hub initialization. */
 export function createLocalHubPort(filePath: string, onDatabase?: (database: SqliteDatabase) => void): LocalHubPort {
   const db = openDatabase(filePath, { manifest: [] });
   try {
     onDatabase?.(db);
-    db.exec(`CREATE TABLE IF NOT EXISTS hub_answers (
-      question_id TEXT PRIMARY KEY,
-      card_id INTEGER NOT NULL,
-      body_json TEXT NOT NULL,
-      answer_event_id TEXT NOT NULL
-    ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS ${localAnswersTable}`);
     const insert = db.prepare(`INSERT INTO hub_answers (question_id, card_id, body_json, answer_event_id)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(question_id) DO NOTHING`);

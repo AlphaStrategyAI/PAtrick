@@ -1,4 +1,5 @@
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
+import { parseHubViewEntries } from './client.js';
 
 export const HUB_CURSOR = 'hub_observer';
 
@@ -117,16 +118,24 @@ export function storeHubView(db: SqliteDatabase, view: HubSnapshot, now: string)
 }
 
 export function readHubView(db: SqliteDatabase): HubSnapshot {
+  const view = readOptionalHubView(db);
+  if (!view) throw new Error('HUB_VIEW_MISSING');
+  return view;
+}
+
+export function readOptionalHubView(db: {
+  prepare(sql: string): { get(cursor: string): unknown };
+}): HubSnapshot | undefined {
   const stored = db.prepare('SELECT hub_seq, snapshot FROM hub_snapshots WHERE cursor_name = ?').get(HUB_CURSOR) as
     | { hub_seq: number; snapshot: string }
     | undefined;
   const cursor = db.prepare('SELECT hub_seq FROM projection_cursors WHERE name = ?').get(HUB_CURSOR) as
     | { hub_seq: number }
     | undefined;
+  if (!stored && !cursor) return undefined;
   if (!stored || !cursor) throw new Error('HUB_VIEW_MISSING');
   if (stored.hub_seq !== cursor.hub_seq) throw new Error('HUB_CURSOR_MISMATCH');
-  const parsed = JSON.parse(stored.snapshot) as { runs: HubRunView[]; cards: HubCardView[] };
-  return { hub_seq: stored.hub_seq, runs: parsed.runs, cards: parsed.cards };
+  return { hub_seq: stored.hub_seq, ...parseHubViewEntries(JSON.parse(stored.snapshot)) };
 }
 
 function nextPage(page: HubStatePage): number | null {

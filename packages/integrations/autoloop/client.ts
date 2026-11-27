@@ -1,5 +1,5 @@
 import { withImmediateTransaction, type SqliteDatabase } from '@patrick/storage';
-import type { HubCardView, HubRuleLine, HubRunEventView, HubRunView, HubStatePage } from './observer.js';
+import type { HubCardView, HubRuleLine, HubRunEventView, HubRunView, HubSnapshot, HubStatePage } from './observer.js';
 
 export type StageKind = 'draft.requested' | 'draft.ready';
 
@@ -375,19 +375,23 @@ function parseEventOutcome(value: unknown, event: number): HubEventOutcome {
 }
 
 function parseState(value: unknown): HubStatePage {
-  if (!isRecord(value) || typeof value.seq !== 'number' || typeof value.hasMore !== 'boolean' || !Array.isArray(value.runs) || !Array.isArray(value.cards) || !Array.isArray(value.lines)) {
+  if (!isRecord(value) || typeof value.seq !== 'number' || typeof value.hasMore !== 'boolean' || !Array.isArray(value.lines)) {
     throw new Error('HUB_STATE_INVALID');
   }
   return {
     seq: value.seq,
     hasMore: value.hasMore,
     nextBefore: nullableNumber(value.nextBefore, 'HUB_STATE_INVALID'),
-    runs: value.runs.map(parseRun),
-    cards: value.cards.map(parseCard),
+    ...parseHubViewEntries(value),
     recentCardStates: Array.isArray(value.recentCards) ? value.recentCards.flatMap((card: unknown) =>
       isRecord(card) && typeof card.id === 'number' && typeof card.state === 'string' ? [{ id: card.id, state: card.state }] : []) : undefined,
     lines: value.lines.map(parseLine),
   };
+}
+
+export function parseHubViewEntries(value: unknown): Pick<HubSnapshot, 'runs' | 'cards'> {
+  if (!isRecord(value) || !Array.isArray(value.runs) || !Array.isArray(value.cards)) throw new Error('HUB_STATE_INVALID');
+  return { runs: value.runs.map(parseRun), cards: value.cards.map(parseCard) };
 }
 
 function parseLine(value: unknown): HubRuleLine {
