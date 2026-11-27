@@ -434,9 +434,11 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   expect(node(releasePath)).toEqual(releaseNode);
   const stagedData = join(root, 'staging', '.upgrade-upgrade.data');
   const prepared = await cli().run(prepare);
+  const preparationPath = join(root, 'staging', '.upgrade-upgrade.prepared.json');
   if (cutFault) {
     expect(prepared).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
     expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+    expect(lstatSync(preparationPath, { throwIfNoEntry: false })).toBeUndefined();
     expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
     return;
   }
@@ -451,12 +453,27 @@ test.skipIf(inputs.length === 0).each([false, true, 'empty-log', 'answer-mismatc
   const serviceRoot = join(root, 'staging', '.upgrade-upgrade.service');
   const servicePath = join(serviceRoot, 'service.sqlite');
   const serviceNode = node(servicePath);
+  expect(prepared).toMatchObject({ upgradePreparationSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+  const preparation = readFileSync(preparationPath);
+  expect(prepared.upgradePreparationSha256).toBe(sha256(preparation));
+  expect(JSON.parse(preparation.toString())).toMatchObject({
+    format: 'patrick-upgrade-preparation-v1',
+    sourceSelectionSha256: current.sha256,
+    operationId: 'upgrade',
+    generationId: nextGeneration,
+    release: { packageSha256: expected.packageSha256, cutManifestSha256: captured.outcome.manifestHash },
+    serviceMigrationSha256: sha256(readFileSync(join(serviceRoot, '.patrick-service-migration.json'))),
+    replay: inputs[1].answerReplay ? 'answer-replayed' : 'hub-replayed',
+  });
   const migrated = new DatabaseSync(servicePath, { readOnly: true });
   try {
     expect(migrated.prepare('SELECT file, sha256 FROM schema_migrations ORDER BY position').all()).toEqual(migrations);
     expect(migrated.prepare('SELECT event_id FROM domain_events ORDER BY seq').all()).toEqual([{ event_id: 'retained-event' }]);
   } finally { migrated.close(); }
   expect(await cli().run(prepare)).toEqual(prepared);
+  writeFileSync(preparationPath, Buffer.from(canonicalize({ ...JSON.parse(preparation.toString()), generationId: 'substituted' })));
+  expect(await cli().run(prepare)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+  writeFileSync(preparationPath, preparation);
   expect(node(stagedData)).toEqual(stagedNode);
   expect(node(servicePath)).toEqual(serviceNode);
   const interrupted = serviceRoot + '.partial';

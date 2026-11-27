@@ -621,19 +621,20 @@ async function migrateStagedService(input: {
   if (partial || published) {
     const retained = partial ? scratch : path;
     const receiptFile = join(retained, receiptName);
-    if (partial && !lstatSync(receiptFile, { throwIfNoEntry: false })) return false;
+    if (partial && !lstatSync(receiptFile, { throwIfNoEntry: false })) return undefined;
     const rootPin = pin(stat(retained));
     const observed = await observe(retained, rootPin, true);
     requireValue((checkNode(receiptFile, pin(stat(receiptFile)), false).mode & 0o7777n) === 0o600n);
     requireValue(observed.equals(await readRegularFile(receiptFile, recordLimit, { root: retained, validate: guard })));
     if (partial) {
       onAttempt();
-      return publish(rootPin);
+      await publish(rootPin);
+      return observed;
     }
     await confirmCut();
     guard();
     syncDirectory(dirname(path), parent);
-    return true;
+    return observed;
   }
   const free = statfsSync(dirname(path), { bigint: true });
   requireValue(free.bsize > 0n && free.bavail * free.bsize >= BigInt(artifact.bytes));
@@ -654,7 +655,8 @@ async function migrateStagedService(input: {
   const fd = openSync(database, constants.O_RDONLY | constants.O_NOFOLLOW);
   try { fsyncSync(fd); } finally { closeSync(fd); }
   recordUpgradePublication(join(scratch, receiptName), receipt, rootPin, checkScratch);
-  return publish(rootPin);
+  await publish(rootPin);
+  return receipt;
 }
 
 export function canRestoreOldRelease(input: {
@@ -1040,6 +1042,7 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
     const releasesRoot = join(e.root, 'releases');
     const destination = join(stagingRoot, '.upgrade-' + upgradeOperationId);
     const publicationRecord = destination + '.published.json';
+    const preparationRecord = destination + '.prepared.json';
     const published = join(releasesRoot, releaseSha256);
     let attempted = false;
     try {
@@ -1106,23 +1109,49 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
               const initializer = deployment.autoloopHub?.initializer;
               if (nativeHub) requireValue(initializer);
               const onAttempt = () => { attempted = true; };
+              const publicationSha256 = sha256(effectiveReceipt);
               const prepared = await backup.useVerifiedSet(initialCut, async set => {
-                if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return false;
-                if (!await migrateStagedService({ set, rawData, path: migratedService, parent: stagingNode,
-                  releaseRoot: deployment.root, manifestSha256: manifest.sha256, publicationSha256: sha256(effectiveReceipt),
-                  migrate: databases.migrateService, guard, confirmCut, onAttempt })) return false;
+                if (!await stageUpgradeData(set, rawData, stagingNode, guard, confirmCut, onAttempt)) return undefined;
+                const migration = await migrateStagedService({ set, rawData, path: migratedService, parent: stagingNode,
+                  releaseRoot: deployment.root, manifestSha256: manifest.sha256, publicationSha256,
+                  migrate: databases.migrateService, guard, confirmCut, onAttempt });
+                if (!migration) return undefined;
                 if (nativeHub && initializer) await replayStagedUpgradeCompanions(set, rawData,
                   join(migratedService, 'service.sqlite'), initializer, databases, guard);
-                return true;
+                return migration;
               });
               if (!prepared) return { status: 'interrupted' as const };
-              const progress = { receipt, generationId: nextGeneration };
-              if (!nativeHub) return { status: 'service-migrated' as const, ...progress };
+              let status: 'service-migrated' | 'hub-replayed' | 'answer-replayed' = 'service-migrated';
+              if (nativeHub) {
+                await confirmCut();
+                const composition = candidate.materials.find(file => file.path === 'runtime/composition.mjs');
+                requireValue(composition);
+                status = await runUpgradeAnswerContract(deployment, composition, stagingRoot, stagingNode, guard)
+                  ? 'answer-replayed' : 'hub-replayed';
+              }
               await confirmCut();
-              const composition = candidate.materials.find(file => file.path === 'runtime/composition.mjs');
-              requireValue(composition);
-              const answerReplayed = await runUpgradeAnswerContract(deployment, composition, stagingRoot, stagingNode, guard);
-              return { status: answerReplayed ? 'answer-replayed' as const : 'hub-replayed' as const, ...progress };
+              guard();
+              const preparation = bytes({
+                format: 'patrick-upgrade-preparation-v1', operationId: upgradeOperationId,
+                generationId: nextGeneration, sourceSelectionSha256: selectionSha256, targetSchema,
+                publicationSha256, release: receipt, serviceMigrationSha256: sha256(prepared), replay: status,
+              });
+              const retained = lstatSync(preparationRecord, { bigint: true, throwIfNoEntry: false });
+              if (retained) {
+                const node = pin(retained);
+                const checkPreparation = () => {
+                  guard();
+                  requireValue((checkNode(preparationRecord, node, false).mode & 0o7777n) === 0o600n);
+                };
+                checkPreparation();
+                requireValue(preparation.equals(await readRegularFile(preparationRecord, recordLimit, {
+                  root: stagingRoot, validate: checkPreparation,
+                })));
+              } else {
+                attempted = true;
+                recordUpgradePublication(preparationRecord, preparation, stagingNode, guard);
+              }
+              return { status, receipt, generationId: nextGeneration, preparationSha256: sha256(preparation) };
             }
             if (action === 'execute') {
               attempted = true;

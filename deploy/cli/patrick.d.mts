@@ -22,6 +22,7 @@ export type CliResult = {
   installSession?: Omit<Extract<InstallPreviewResult, { status: 'session-observed' }>, 'status'>;
   upgradePreview?: UpgradePreview;
   upgradeRelease?: UpgradeReleaseReceipt;
+  upgradePreparationSha256?: string;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   uninstallPreview?: { labels: readonly string[] };

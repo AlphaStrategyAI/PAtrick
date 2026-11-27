@@ -362,13 +362,13 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         validate();
         if (result.status === 'answer-replayed') return response(request, 'uncertain', 'UPGRADE_ANSWER_REPLAYED',
           'Complete the remaining successor contracts and research canary before selecting the generation.',
-          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId, upgradePreparationSha256: result.preparationSha256 });
         if (result.status === 'hub-replayed') return response(request, 'uncertain', 'UPGRADE_HUB_REPLAYED',
           'Complete the remaining successor contracts and canary before selecting the generation.',
-          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId, upgradePreparationSha256: result.preparationSha256 });
         if (result.status === 'service-migrated') return response(request, 'uncertain', 'UPGRADE_SERVICE_MIGRATED',
           'Complete Hub and Answers validation and contract replay in the isolated stage.',
-          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId });
+          { ...selected, upgradeRelease: result.receipt, generationId: result.generationId, upgradePreparationSha256: result.preparationSha256 });
         if (result.status === 'published') return response(request, 'uncertain', 'UPGRADE_RELEASE_PUBLISHED',
           'Prepare the successor data generation from the verified cut.', { ...selected, upgradeRelease: result.receipt });
         if (result.status === 'interrupted') return response(request, 'uncertain', 'UPGRADE_RELEASE_INTERRUPTED',
