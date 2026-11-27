@@ -789,9 +789,7 @@ export async function runSupervisedServiceRole(registration: SupervisedServiceRe
   validateSupervisedServiceAccount(binding.value);
   serviceHandoffKey(binding.value.publicKey);
   if (process.env.PATRICK_SUPERVISOR_FD !== '3' || !fstatSync(3).isSocket()) throw serviceHandoffError();
-  const fd = openSync('/dev/fd/3', constants.O_RDWR);
-  closeSync(3);
-  const socket = new Socket({ fd, readable: true, writable: true, allowHalfOpen: true });
+  const socket = new Socket({ fd: 3, readable: true, writable: true, allowHalfOpen: true });
   const channel = serviceFrame(socket);
   const stopping = new AbortController();
   const requestedStop = new Error('INSTALLED_SERVICE_STOP_REQUESTED');

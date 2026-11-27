@@ -81,6 +81,57 @@ const localNodeSha = '533bd644c5ae0e0ea3a80e433aad16b817447ccba1e1eea701875eac80
 const source = fileURLToPath(new URL('../../deploy/host-controller/main.cc', import.meta.url));
 const project = fileURLToPath(new URL('../..', import.meta.url));
 
+test.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)(
+  'the Service uses its inherited socket when the descriptor path cannot be reopened', async () => {
+    const bootstrap = await build({
+      stdin: { resolveDir: project, contents: `
+        import fs from 'node:fs';
+        import { generateKeyPairSync } from 'node:crypto';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { hostname } from 'node:os';
+        import { runSupervisedServiceRole } from './deploy/runtime/role-launch.js';
+        const root = '/private/var';
+        const info = fs.lstatSync(root, { bigint: true });
+        const publicKey = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+        const openPath = fs.openSync;
+        fs.openSync = (path, ...options) => {
+          if (path === '/dev/fd/3') throw Object.assign(new Error('reopening /dev/fd/3 denied'), { code: 'EACCES' });
+          return openPath(path, ...options);
+        };
+        syncBuiltinESMExports();
+        await runSupervisedServiceRole({
+          root, rootNode: { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs) },
+          installationId: 'socket-test', hostId: 'socket-test', captureHost: hostname(),
+          uid: process.getuid(), gid: process.getgid(), publicKey,
+          identity: { accountId: 'test', scopeId: 'test', deviceId: 'test', configRevision: '1', domains: ['personal'] },
+        }, () => { throw new Error('unexpected Service provisioning'); }).catch(error => {
+          if (error.message !== 'INSTALLED_SERVICE_SUPERVISOR_PROTOCOL_INVALID') throw error;
+        });
+      ` },
+      bundle: true, write: false, format: 'esm', platform: 'node',
+      external: ['./composition.js', './service.js', './worker.js'],
+    });
+    const role = spawn(process.execPath, ['--input-type=module', '-e', bootstrap.outputFiles[0].text], {
+      env: { PATRICK_SUPERVISOR_FD: '3' }, stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
+    });
+    const channel = role.stdio[3] as Socket;
+    channel.setTimeout(3000, () => channel.destroy(new Error('Service handshake test timed out')));
+    const exited = once(role, 'close');
+    let errors = '';
+    role.stderr!.setEncoding('utf8').on('data', chunk => { errors += chunk; });
+    try {
+      channel.end('{"type":"ready","version":1}\n');
+      let response = '';
+      for await (const chunk of channel) response += chunk.toString();
+      expect(await exited, errors).toEqual([0, null]);
+      expect(JSON.parse(response)).toMatchObject({ type: 'hello', version: 1, challenge: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    } finally {
+      channel.destroy();
+      role.kill();
+    }
+  },
+);
+
 test('proves the service listener serves the registered endpoint before admitting a role', async ({ onTestFinished }) => {
   const root = await mkdtemp('/private/tmp/patrick-svc-listener-');
   onTestFinished(() => rm(root, { recursive: true, force: true }));
