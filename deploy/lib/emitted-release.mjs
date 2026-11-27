@@ -1210,7 +1210,7 @@ function syncDirectory(path, id, fingerprint = physical) {
   } finally { closeSync(fd); }
 }
 
-export async function publishStagedDeployment(receipt, token, confirmPublication) {
+export async function publishStagedDeployment(receipt, token, confirmPublication, revalidatePublication) {
   const record = verified.get(receipt);
   const stage = staged.get(token);
   check(record?.publication && stage?.receipt === receipt && receipt.profile === 'deployment-complete',
@@ -1239,6 +1239,7 @@ export async function publishStagedDeployment(receipt, token, confirmPublication
         const dir = join(source, local);
         syncDirectory(dir, capture.nodes.get(dir), stable);
       }
+      if (revalidatePublication) await revalidatePublication();
       checkPublication(lease, record);
       recheck(capture.boundary);
       recheck(capture.nodes, stable);

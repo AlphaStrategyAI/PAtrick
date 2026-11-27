@@ -3,7 +3,8 @@ import type { InstallPreviewResult } from '../runtime/install-preview.js';
 import type * as FirstInstall from '../runtime/install-preview.js';
 import type { LifecycleReceipt } from '../runtime/lifecycle-journal.js';
 import type { runUninstall } from '../host/uninstall.js';
-import type { UpgradePreview } from '../runtime/lifecycle-generation.js';
+import type { runInstalledUpgradeRelease } from '../runtime/composition.js';
+import type { UpgradePreview, UpgradeReleaseReceipt } from '../runtime/lifecycle-generation.js';
 import type { createMaintenanceCutReader } from '../runtime/maintenance-readback.js';
 import type { RegisteredHost, HostIdentity, DoctorCheck } from '../lib/doctor.mjs';
 export type CliCommand = 'init' | 'doctor' | 'install' | 'start' | 'stop' | 'backup' | 'restore' | 'upgrade' | 'uninstall';
@@ -20,6 +21,7 @@ export type CliResult = {
   installPreview?: Omit<Extract<InstallPreviewResult, { status: 'preview' }>, 'status'>;
   installSession?: Omit<Extract<InstallPreviewResult, { status: 'session-observed' }>, 'status'>;
   upgradePreview?: UpgradePreview;
+  upgradeRelease?: UpgradeReleaseReceipt;
   operationId?: string; generationId?: string; vaultId?: string; vaultInitPreview?: VaultInitCliPreview;
   lifecycleReceipt?: LifecycleReceipt; prerequisites?: readonly string[];
   uninstallPreview?: { labels: readonly string[] };
@@ -32,7 +34,8 @@ export function createPatrickCli(
   host?: RegisteredHost, checkLiveStorage?: () => CliResult | undefined,
   firstInstall?: Pick<typeof FirstInstall, 'bindInstallPreviewEnrollment' | 'installBootstrapRequirements' |
     'observeInstallSession' | 'prepareFirstInstallGeneration' | 'previewFirstInstall' | 'runFirstInstallRelease'> &
-    { runUninstall?: typeof runUninstall; createMaintenanceCutReader?: typeof createMaintenanceCutReader },
+    { runUninstall?: typeof runUninstall; createMaintenanceCutReader?: typeof createMaintenanceCutReader;
+      runInstalledUpgradeRelease?: typeof runInstalledUpgradeRelease },
   previewUpgrade?: (packageSha256: string) => Promise<UpgradePreview | undefined>,
 ): {
   run(argv: readonly string[]): Promise<CliResult>;

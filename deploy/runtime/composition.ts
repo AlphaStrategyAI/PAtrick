@@ -19,7 +19,11 @@ import { createLifecycleJournalReader } from './lifecycle-journal.js';
 import { assertMaintenanceRecoverySet, createMaintenanceCutReader } from './maintenance-readback.js';
 export { createMaintenanceCutReader } from './maintenance-readback.js';
 import { runUninstall } from '../host/uninstall.js';
-import { createInstalledUpgradePreview, type GenerationEnrollment, type UpgradePreview } from './lifecycle-generation.js';
+import {
+  createInstalledUpgradePreview, runInstalledUpgradeRelease as runGenerationUpgradeRelease,
+  type GenerationEnrollment, type UpgradePreview, type UpgradeReleaseEnrollment,
+} from './lifecycle-generation.js';
+export { installedUpgradePlanSha256 } from './lifecycle-generation.js';
 import { closeSync, existsSync, openSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { readFile } from 'node:fs/promises';
@@ -112,10 +116,15 @@ type ProvisionedPorts = Readonly<{
 }>;
 
 const provisioned = new WeakMap<RuntimeProvisioning, ProvisionedPorts>();
+export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: 'execute' | 'readback', validate: () => void) {
+  validate();
+  return runGenerationUpgradeRelease(registration, action, validate, createMaintenanceCutReader(registration.cut));
+}
+
 const firstInstall = Object.freeze({
   bindInstallPreviewEnrollment, installBootstrapRequirements, observeInstallSession,
   prepareFirstInstallGeneration, previewFirstInstall, runFirstInstallRelease, runUninstall,
-  createLifecycleJournalReader, createMaintenanceCutReader,
+  createLifecycleJournalReader, createMaintenanceCutReader, runInstalledUpgradeRelease,
 });
 
 export function requireRuntimeProvisioning(provisioning: RuntimeProvisioning): ProvisionedPorts {
@@ -1080,6 +1089,7 @@ function provisionRuntime(input: RuntimeProvisioningInput, selectedAnswersPath?:
     get installOperations() { return ownCapability(hostCapabilities, 'installOperations'); },
     get uninstallOperations() { return ownCapability(hostCapabilities, 'uninstallOperations'); },
     get upgradeCutReadbacks() { return ownCapability(hostCapabilities, 'upgradeCutReadbacks'); },
+    get upgradeReleaseOperations() { return ownCapability(hostCapabilities, 'upgradeReleaseOperations'); },
     ...(registeredRecovery ? { recovery: registeredRecovery } : {}),
     identity,
     captureHost: registrationData.captureHost,
@@ -1179,6 +1189,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
   if (!publicVaultInit) validateNestedIdentities(host, provisioning.registration.identity);
   if (!host.backupReadback && Object.getOwnPropertyNames(host.lifecycleReadbacks ?? {}).length === 0 &&
     Object.getOwnPropertyNames(host.upgradeCutReadbacks ?? {}).length === 0 &&
+    Object.getOwnPropertyNames(host.upgradeReleaseOperations ?? {}).length === 0 &&
     Object.getOwnPropertyNames(host.installOperations ?? {}).length === 0 &&
     Object.getOwnPropertyNames(host.uninstallOperations ?? {}).length === 0 && !publicVaultInit) assertCliRecoveryCurrent();
   return createPatrickCli(host, (): CliResult | undefined => {
@@ -1198,7 +1209,7 @@ export function createRuntimeCli(provisioning: RuntimeProvisioning) {
 type FirstInstallCliRegistration = Readonly<Pick<RegisteredHost,
   'identity' | 'captureHost' | 'serviceUid' | 'profile' | 'dataRoot' | 'minimumFreeBytes' |
   'origin' | 'rpId' | 'dependencies' | 'installPreviews' | 'installOperations' | 'uninstallOperations' |
-  'lifecycleReadbacks' | 'upgradeCutReadbacks'>>;
+  'lifecycleReadbacks' | 'upgradeCutReadbacks' | 'upgradeReleaseOperations'>>;
 
 export function createFirstInstallCli(registration: FirstInstallCliRegistration) {
   const { identity, captureHost, serviceUid, profile, dataRoot, minimumFreeBytes, origin, rpId, dependencies } = registration;
@@ -1209,6 +1220,7 @@ export function createFirstInstallCli(registration: FirstInstallCliRegistration)
     get uninstallOperations() { return ownCapability(registration, 'uninstallOperations'); },
     get lifecycleReadbacks() { return ownCapability(registration, 'lifecycleReadbacks'); },
     get upgradeCutReadbacks() { return ownCapability(registration, 'upgradeCutReadbacks'); },
+    get upgradeReleaseOperations() { return ownCapability(registration, 'upgradeReleaseOperations'); },
     runtime: firstInstall,
   });
   return createPatrickCli(host, undefined, firstInstall);

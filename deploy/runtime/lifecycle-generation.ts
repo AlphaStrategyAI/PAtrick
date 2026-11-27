@@ -1,14 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { createPublicKey, verify } from 'node:crypto';
+import { createPublicKey, randomUUID, verify } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync,
-  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+  readFileSync, realpathSync, renameSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalize, readRegularFile, sha256 } from '../lib/release.mjs';
-import { createInstalledRootOwner, deriveRuntimeStaging, leased, verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
+import { createInstalledRootOwner, deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime,
+  verifyEmittedRuntimeCandidate, withPublishedDeployment } from '../lib/emitted-release.mjs';
 import type { AdmittedDeployment, DarwinTarget, EmittedReleaseExpectation, EmittedReleaseTrustPolicy, ExclusiveRuntimeStaging, RuntimeLease } from '../lib/emitted-release.mjs';
 import { bindRegistration, projectIdentity, type HostIdentity } from '../lib/doctor.mjs';
 import { isLifecycleRecordName } from './lifecycle-journal.js';
+import type { createMaintenanceCutReader, MaintenanceCutReadbackRegistration } from './maintenance-readback.js';
 
 type Lease = RuntimeLease;
 
@@ -58,6 +60,16 @@ export type UpgradePreview = Readonly<{
   currentSchema: number; targetSchema: number; packageSha256: string; manifestSha256: string;
   planSha256: string; activationAuthorized: false;
 }>;
+export type UpgradeReleaseEnrollment = Readonly<{
+  enrollment: GenerationEnrollment;
+  owner?: ExclusiveRuntimeStaging;
+  cut: MaintenanceCutReadbackRegistration;
+  targetSchema: number;
+  stagingNode: GenerationNode;
+}>;
+type UpgradeCutPlan = Omit<MaintenanceCutReadbackRegistration['subject'], 'claimSha256' | 'planSha256'>;
+type UpgradeCutReader = ReturnType<typeof createMaintenanceCutReader>;
+export type UpgradeReleaseReceipt = Readonly<{ packageSha256: string; manifestSha256: string; cutManifestSha256: string }>;
 type UpgradePreviewStorage = Readonly<{ dataRoot: string; databasePath: string; credentialDirectory: string }>;
 type RecordBody = { format: 'patrick-installed-selection-record-v1'; authorization: SignedGenerationOrder; node: GenerationNode };
 type Entry = { order: GenerationOrder; sha256: string };
@@ -297,10 +309,45 @@ function syncDirectory(path: string, expected: GenerationNode) {
   } finally { closeSync(fd); }
 }
 
+function recordUpgradePublication(path: string, contents: Buffer, parent: GenerationNode, guard: () => void) {
+  const scratch = path + '.' + randomUUID() + '.tmp';
+  const fd = openSync(scratch, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  try {
+    const node = pin(fstatSync(fd, { bigint: true }));
+    writeFileSync(fd, contents);
+    fsyncSync(fd);
+    guard();
+    checkNode(scratch, node, false);
+    requireValue(!lstatSync(path, { throwIfNoEntry: false }));
+    renameSync(scratch, path);
+    syncDirectory(dirname(path), parent);
+  } finally { closeSync(fd); }
+}
+
 export function canRestoreOldRelease(input: {
   snapshotVerified: unknown; writerStopped: unknown; writesSinceSwitch: unknown;
 }): boolean {
   return input.snapshotVerified === true && input.writerStopped === true && input.writesSinceSwitch === 0;
+}
+
+export function installedUpgradePlanSha256(previewSha256: string, nextGeneration: string, cut: UpgradeCutPlan) {
+  hash(previewSha256);
+  token(nextGeneration);
+  return digest({ format: 'patrick-installed-upgrade-plan-v1', previewSha256, nextGeneration, cut });
+}
+
+function describeUpgrade(installationId: string, current: Entry, targetSchema: number,
+  candidate: Awaited<ReturnType<typeof verifyEmittedRuntimeCandidate>>): UpgradePreview {
+  const generation = current.order.generation;
+  const { min, max } = candidate.schema;
+  requireValue(generation.schema >= min && Number.isSafeInteger(targetSchema) &&
+    targetSchema >= generation.schema && targetSchema <= max);
+  const plan = {
+    installationId, currentGenerationId: generation.id, currentSelectionSha256: current.sha256,
+    currentPackageSha256: generation.packageSha256, currentSchema: generation.schema, targetSchema,
+    packageSha256: candidate.packageSha256, manifestSha256: candidate.manifestSha256, activationAuthorized: false as const,
+  };
+  return { ...plan, planSha256: digest({ format: 'patrick-upgrade-preview-v1', ...plan }) };
 }
 
 /**
@@ -641,16 +688,104 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
         storage.databasePath === join(dataRoot, 'service.sqlite') && storage.credentialDirectory === join(dataRoot, 'credentials'));
       const candidate = await verifyEmittedRuntimeCandidate(join(e.root, 'packages', packageSha256 + '.json'),
         { ...release, staging: deriveRuntimeStaging(lease, lease.root) });
-      const { min, max } = candidate.schema;
-      requireValue(generation.schema >= min && targetSchema >= generation.schema && targetSchema <= max);
       await verifyObservation(lease, state);
-      const plan = {
-        installationId: e.installationId, currentGenerationId: generation.id, currentSelectionSha256: current.sha256,
-        currentPackageSha256: generation.packageSha256, currentSchema: generation.schema, targetSchema,
-        packageSha256: candidate.packageSha256, manifestSha256: candidate.manifestSha256, activationAuthorized: false as const,
-      };
-      return { ...plan, planSha256: digest({ format: 'patrick-upgrade-preview-v1', ...plan }) };
+      return describeUpgrade(e.installationId, current, targetSchema, candidate);
     }, true, enrolled);
+  }
+  async function prepareUpgradeRelease(targetSchema: number, stagingNode: GenerationNode,
+    cut: MaintenanceCutReadbackRegistration, action: 'execute' | 'readback', backup: UpgradeCutReader) {
+    const { claimSha256, planSha256, ...cutPlan } = cut.subject;
+    const { installationId, generationId, selectionSha256, releaseSha256, upgradeOperationId } = cutPlan;
+    const nextGeneration = cut.lifecycle.plan.nextGeneration;
+    token(nextGeneration);
+    token(upgradeOperationId);
+    hash(claimSha256);
+    requireValue(installationId === e.installationId && canonicalize(projectIdentity(cut.target.identity)) === canonicalize(identity));
+    const release = releases.get(releaseSha256);
+    requireValue(release?.expected.profile === 'deployment-complete');
+    const stagingRoot = join(e.root, 'staging');
+    const releasesRoot = join(e.root, 'releases');
+    const destination = join(stagingRoot, '.upgrade-' + upgradeOperationId);
+    const publicationRecord = destination + '.published.json';
+    const published = join(releasesRoot, releaseSha256);
+    let attempted = false;
+    try {
+      const prepare = (checkWriters: () => void) => leased(owner, async lease => {
+        const guard = () => {
+          checkWriters();
+          boundary(lease);
+          const info = checkNode(stagingRoot, stagingNode, true);
+          requireValue(stagingNode.device === e.stores.releases.device && (info.mode & 0o7777n) === 0o700n);
+        };
+        const state = await readState(lease);
+        const { current } = state;
+        guard();
+        requireValue(current && !state.pending && current.sha256 === selectionSha256 &&
+          current.order.generation.id === generationId && current.order.generation.packageSha256 !== releaseSha256 &&
+          generationId.toLowerCase() !== nextGeneration.toLowerCase());
+        await withGeneration(lease, current.order.generation, async () => {});
+        const staging = deriveRuntimeStaging(lease, lease.root, { stagingRoot, releasesRoot });
+        const candidate = await verifyEmittedRuntimeCandidate(join(e.root, 'packages', releaseSha256 + '.json'), { ...release, staging });
+        const preview = describeUpgrade(installationId, current, targetSchema, candidate);
+        requireValue(installedUpgradePlanSha256(preview.planSha256, nextGeneration, cutPlan) === planSha256);
+        const observeCut = async () => {
+          const observed = await readState(lease);
+          requireValue(observed.current?.sha256 === selectionSha256 && !observed.pending);
+          const observedCut = await backup.read();
+          guard();
+          physical(current.order.generation);
+          return observedCut;
+        };
+        const initialCut = await observeCut();
+        const confirmCut = async () => requireValue(canonicalize(await observeCut()) === canonicalize(initialCut));
+        const access = { hubGroup: e.hubOwner?.gid, serviceGroup: serviceOwner?.gid };
+        if (lstatSync(destination, { throwIfNoEntry: false })) return { status: 'interrupted' as const };
+        if (!lstatSync(published, { throwIfNoEntry: false })) {
+          requireValue(!lstatSync(publicationRecord, { throwIfNoEntry: false }));
+          if (action === 'readback') return { status: 'pending' as const };
+          const free = statfsSync(stagingRoot, { bigint: true });
+          const needed = candidate.materials.reduce((total, file) => total + BigInt(file.bytes), 0n);
+          requireValue(free.bsize > 0n && free.bavail * free.bsize >= needed);
+          attempted = true;
+          const stage = await stageVerifiedEmittedRuntime(candidate, { staging, destination, ...access });
+          await publishStagedDeployment(candidate, stage, guard, confirmCut);
+        }
+        const receipt = { packageSha256: releaseSha256, manifestSha256: candidate.manifestSha256, cutManifestSha256: initialCut.manifestHash };
+        const result = await withPublishedDeployment(candidate, { staging, releasesRoot, ...access }, async () => {
+          await confirmCut();
+          guard();
+          const releaseNode = pin(stat(published));
+          const effectiveReceipt = bytes({
+            format: 'patrick-upgrade-publication-v1', claimSha256, planSha256,
+            fenceReceiptId: initialCut.fenceReceiptId, releaseNode, receipt,
+          });
+          const existing = lstatSync(publicationRecord, { bigint: true, throwIfNoEntry: false });
+          if (existing) {
+            requireValue((checkNode(publicationRecord, pin(existing), false).mode & 0o7777n) === 0o600n);
+            const observed = await readRegularFile(publicationRecord, recordLimit, { root: stagingRoot, validate: guard });
+            requireValue(observed.equals(effectiveReceipt));
+            if (action === 'execute') {
+              attempted = true;
+              syncDirectory(stagingRoot, stagingNode);
+            }
+            return { status: 'published' as const, receipt };
+          }
+          if (action === 'readback') return { status: 'interrupted' as const };
+          attempted = true;
+          syncDirectory(stagingRoot, stagingNode);
+          syncDirectory(releasesRoot, e.stores.releases);
+          checkNode(published, releaseNode, true);
+          recordUpgradePublication(publicationRecord, effectiveReceipt, stagingNode, guard);
+          return { status: 'published' as const, receipt };
+        });
+        await confirmCut();
+        return result;
+      }, true, enrolled);
+      return await (action === 'execute' ? withStoppedWriters(prepare) : prepare(() => {}));
+    } catch (error) {
+      if (attempted) return { status: 'interrupted' as const };
+      throw error;
+    }
   }
   async function selectReserved(envelope: string, checkRole?: () => void) {
     enrolled();
@@ -790,7 +925,15 @@ function generationStorage(registration: GenerationEnrollment, suppliedOwner?: E
   function select(envelope: string) {
     return withStoppedWriters(guard => selectReserved(envelope, guard));
   }
-  return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade, withStoppedWriters };
+  return { store: Object.freeze({ order, observe, select, useConfirmed }), previewUpgrade, prepareUpgradeRelease, withStoppedWriters };
+}
+
+export function runInstalledUpgradeRelease(registration: UpgradeReleaseEnrollment, action: 'execute' | 'readback',
+  validate: () => void, backup: UpgradeCutReader) {
+  requireValue(action === 'execute' || action === 'readback');
+  validate();
+  const { enrollment, owner, cut, targetSchema, stagingNode } = registration;
+  return generationStorage(enrollment, owner, undefined, validate).prepareUpgradeRelease(targetSchema, stagingNode, cut, action, backup);
 }
 
 export function createGenerationStore(registration: GenerationEnrollment, owner: ExclusiveRuntimeStaging | undefined, signer: GenerationRecordSigner) {

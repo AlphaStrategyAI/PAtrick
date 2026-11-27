@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { generateKeyPairSync, sign, verify } from 'node:crypto';
 import { closeSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -8,13 +8,16 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildSync } from 'esbuild';
 import { afterEach, expect, test } from 'vitest';
+import { openDatabase } from '@patrick/storage';
+import { createRecoveryOperations } from '../../packages/host/src/recovery/operations.js';
 import { canonicalize, sha256 } from '../../deploy/lib/release.mjs';
 import { deriveRuntimeStaging, leased, publishStagedDeployment, stageVerifiedEmittedRuntime, verifyEmittedRuntimeCandidate } from '../../deploy/lib/emitted-release.mjs';
 import type { ExclusiveRuntimeStaging } from '../../deploy/lib/emitted-release.mjs';
 import { createInstalledCli } from '../../deploy/runtime/cli.js';
-import { createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
-import { canRestoreOldRelease, createGenerationReader, createGenerationStore } from '../../deploy/runtime/lifecycle-generation';
+import { createFirstInstallCli, createRuntimeProvisioning } from '../../deploy/runtime/composition.js';
+import { canRestoreOldRelease, createGenerationReader, createGenerationStore, installedUpgradePlanSha256 } from '../../deploy/runtime/lifecycle-generation';
 import type { GenerationEnrollment, GenerationOrder, InstalledGeneration } from '../../deploy/runtime/lifecycle-generation';
+import { createLifecycleJournal, type LifecycleRegistration } from '../../deploy/runtime/lifecycle-journal.js';
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -224,6 +227,115 @@ async function installedUpgradeFixture(mismatchedStorage?: 'databasePath' | 'cre
   const args = ['upgrade', '--release', expected.packageSha256];
   return { ...h, cli, args, current: current!, expected, targetSchema, dataRoot };
 }
+
+test.skipIf(inputs.length === 0)('a registered upgrade publishes a signed successor against the frozen cut and supports readback', async () => {
+  const fixture = await installedUpgradeFixture();
+  const { expected, targetSchema, current, root, args, owner, e } = fixture;
+  const preview = (await fixture.cli.run(args)).upgradePreview!;
+  const keys = generateKeyPairSync('ed25519');
+  const authority = {
+    keyId: 'upgrade-fixture',
+    async sign(bytes: Uint8Array) { return sign(null, bytes, keys.privateKey).toString('base64'); },
+    async verify(bytes: Uint8Array, signature: string, keyId: string) {
+      return keyId === this.keyId && verify(null, bytes, keys.publicKey, Buffer.from(signature, 'base64'));
+    },
+  };
+  const operationsRoot = directory(fixture.fixture, 'operations');
+  const sets = directory(fixture.fixture, 'sets');
+  const handoff = directory(fixture.fixture, 'handoff');
+  const service = openDatabase(join(fixture.dataRoot, 'service.sqlite'));
+  const hub = openDatabase(join(fixture.dataRoot, 'hub.sqlite'));
+  const answers = new DatabaseSync(join(handoff, 'local-answers.sqlite'));
+  answers.exec('CREATE TABLE answers (answer TEXT)');
+  answers.close();
+  const scope = { setId: 'before-upgrade', domains: [{ domain: 'personal', writerEpoch: 'old',
+    withdrawal: { seq: 0, hash: sha256(Buffer.alloc(0)) } }], versionLocks: { source: 'fixture' }, resources: [{ kind: 'handoff' as const, root: handoff }] };
+  const backupRequest = { operationId: 'backup', targetId: 'cut', mode: 'backup' as const };
+  const backup = createRecoveryOperations({ root: operationsRoot, authority, targets: { cut: {
+    identity: e.identity, backup: { scope, options: { root: sets, authority, databases: { service, hub },
+      freeze: { async acquire() { return { cutId: 'drained', ingressFrozen: true, claimsFrozen: true, receiptsFrozen: true,
+        effectsFrozen: true, executionTreesStopped: true, uncertainCallsJournaled: true, durableHandoff: true, async release() {} }; } } },
+    },
+  } } });
+  let captured;
+  try {
+    await backup.reserve(backupRequest);
+    captured = await backup.run(backupRequest);
+  } finally { service.close(); hub.close(); }
+  if (captured.status !== 'completed') throw new Error('missing fixture cut');
+  const base = {
+    installationId: e.installationId, generationId: current.order.generation.id, selectionSha256: current.sha256,
+    upgradeOperationId: 'upgrade', releaseSha256: expected.packageSha256, fenceEpoch: 'fence',
+    operationId: backupRequest.operationId, targetId: backupRequest.targetId, setId: scope.setId, cutId: 'drained',
+  };
+  const nextGeneration = 'successor';
+  const planSha256 = installedUpgradePlanSha256(preview.planSha256, nextGeneration, base);
+  const request = { operationId: 'upgrade', command: 'upgrade' as const, targetId: expected.packageSha256,
+    expectedGeneration: base.generationId, planSha256 };
+  const journalPath = join(root, 'history');
+  const publicAuthority = { keyId: authority.keyId, verify: authority.verify };
+  const journalRoot = (path: string) => {
+    const info = lstatSync(path);
+    return { path, device: info.dev, inode: info.ino };
+  };
+  const lifecycle: LifecycleRegistration = {
+    root: journalRoot(journalPath), identity: { ...e.identity, installationId: e.installationId },
+    plan: { command: request.command, targetId: request.targetId, expectedGeneration: request.expectedGeneration, planSha256,
+      nextGeneration, releaseSha256: expected.packageSha256 },
+    authority: publicAuthority, evidence: { version: 'fixture', async observe(): Promise<never> { throw Error('unexpected terminal'); } },
+  };
+  const journal = createLifecycleJournal(() => lifecycle, authority);
+  await journal.reserve(request);
+  const claim = await journal.claim(request);
+  if (claim.status !== 'claimed') throw new Error('missing fixture claim');
+  const subject = { ...base, planSha256, claimSha256: claim.subject.claimSha256 };
+  let fenced = false;
+  const cut = {
+    subject, lifecycle, journalRoot: journalRoot(operationsRoot), journalAuthority: publicAuthority,
+    target: { root: sets, scope, authority: publicAuthority, identity: e.identity },
+    async readContinuousFence() {
+      return fenced ? { subject, status: 'closed_and_fenced' as const, fenceReceiptId: 'closed',
+        currentFenceEpoch: subject.fenceEpoch, manifestHash: captured.outcome.manifestHash,
+        localAnswersSha256: sha256(readFileSync(join(handoff, 'local-answers.sqlite'))) } : undefined;
+    },
+  };
+  const operation = { enrollment: e, owner, cut, targetSchema, stagingNode: node(join(root, 'staging')) };
+  const cli = (lifecycleReadback = lifecycle) => createFirstInstallCli({
+    identity: e.identity, captureHost: hostname(), serviceUid: process.geteuid!(), profile: 'test',
+    dataRoot: fixture.dataRoot, minimumFreeBytes: 1, upgradeReleaseOperations: { upgrade: operation },
+    lifecycleReadbacks: { upgrade: lifecycleReadback }, upgradeCutReadbacks: { upgrade: cut },
+  });
+  const readback = [...args, '--readback', '--operation', 'upgrade'];
+  const execute = [...args, '--execute', '--operation', 'upgrade'];
+  const releasePath = join(root, 'releases', expected.packageSha256);
+  const pointerBefore = readFileSync(join(root, 'current'));
+  const sourceBefore = sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')));
+  expect(await cli().run(execute)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+  expect(lstatSync(releasePath, { throwIfNoEntry: false })).toBeUndefined();
+  fenced = true;
+  const differentLifecycle = { ...lifecycle, root: journalRoot(operationsRoot) };
+  for (const command of [execute, readback]) {
+    expect(await cli(differentLifecycle).run(command)).toMatchObject({ status: 'blocked', code: 'HOST_IDENTITY_MISMATCH' });
+  }
+  expect(await cli().run(readback)).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_PENDING' });
+  const published = await cli().run(execute);
+  expect(published).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_PUBLISHED', upgradeRelease: {
+    packageSha256: expected.packageSha256, manifestSha256: preview.manifestSha256, cutManifestSha256: captured.outcome.manifestHash,
+  } });
+  const releaseNode = node(releasePath);
+  expect(await cli().run(readback)).toMatchObject({ code: 'UPGRADE_RELEASE_PUBLISHED' });
+  const publicationRecord = join(root, 'staging', '.upgrade-upgrade.published.json');
+  if (lstatSync(publicationRecord, { throwIfNoEntry: false })) unlinkSync(publicationRecord);
+  expect(await cli().run(readback)).toMatchObject({ status: 'uncertain', code: 'UPGRADE_RELEASE_INTERRUPTED' });
+  expect(lstatSync(publicationRecord, { throwIfNoEntry: false })).toBeUndefined();
+  expect(await cli().run(execute)).toEqual(published);
+  expect(await cli().run(readback)).toMatchObject({ code: 'UPGRADE_RELEASE_PUBLISHED' });
+  expect(node(releasePath)).toEqual(releaseNode);
+  expect(readFileSync(join(root, 'current'))).toEqual(pointerBefore);
+  expect(sha256(readFileSync(join(fixture.dataRoot, 'service.sqlite')))).toBe(sourceBefore);
+  fenced = false;
+  expect(await cli().run(readback)).toMatchObject({ status: 'blocked', code: 'UPGRADE_RELEASE_ADMISSION_FAILED' });
+}, 180_000);
 
 test.skipIf(inputs.length === 0)('installed upgrade previews a pinned signed successor from the confirmed generation', async () => {
   const fixture = await installedUpgradeFixture();

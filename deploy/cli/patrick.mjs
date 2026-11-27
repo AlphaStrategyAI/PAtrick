@@ -213,17 +213,21 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
     const upgradeCutReadbacks = request.command === 'upgrade' && request.action === 'readback' && request.operation
       ? host?.upgradeCutReadbacks : undefined;
     const upgradeCutSelected = upgradeCutReadbacks && Object.hasOwn(upgradeCutReadbacks, request.operation);
+    const upgradeReleaseOperations = request.command === 'upgrade' && request.action !== 'preview' && request.operation
+      ? host?.upgradeReleaseOperations : undefined;
+    const upgradeReleaseSelected = upgradeReleaseOperations && Object.hasOwn(upgradeReleaseOperations, request.operation);
     const lifecycleReadbacks = request.action === 'readback' && lifecycleCommands.has(request.command)
       ? host?.lifecycleReadbacks : undefined;
     const lifecycle = legacyVaultReadback ? legacyVaultReadback.registration
-      : lifecycleReadbacks && !vaultInit && !installSelected && !uninstallSelected && Object.hasOwn(lifecycleReadbacks, request.operation)
+      : lifecycleReadbacks && !vaultInit && !installSelected && !uninstallSelected && !upgradeReleaseSelected &&
+        Object.hasOwn(lifecycleReadbacks, request.operation)
         ? typedInit ? Object.getOwnPropertyDescriptor(lifecycleReadbacks, request.operation)?.value
           : lifecycleReadbacks[request.operation] : undefined;
     const lifecycleTarget = lifecycle?.plan?.targetId;
     const requestedTarget = request.command === 'init' ? request.vault
       : request.command === 'install' || request.command === 'upgrade' ? request.release : lifecycleTarget;
     const lifecycleSelected = lifecycleTarget && lifecycle.plan.command === request.command && lifecycleTarget === requestedTarget;
-    if (!coldTargetSelected && !lifecycleSelected && !upgradeCutSelected && !vaultInit?.publicRead &&
+    if (!coldTargetSelected && !lifecycleSelected && !upgradeCutSelected && !upgradeReleaseSelected && !vaultInit?.publicRead &&
       !((installSelected || uninstallSelected) && request.action === 'readback')) {
       const blocked = checkLiveStorage?.();
       if (blocked) return blocked;
@@ -318,12 +322,52 @@ export function createPatrickCli(host, checkLiveStorage, firstInstall, previewUp
         const result = await reader.read({ operationId: request.operation, command: request.command,
           targetId: lifecycleTarget, expectedGeneration, planSha256 });
         validate();
-        if (!upgradeCutSelected || result.status !== 'running_or_uncertain') return projectLifecycle(request, context, result);
+        if (!upgradeCutSelected || result.status !== 'running_or_uncertain') {
+          return projectLifecycle(request, context, result);
+        }
         upgradeLifecycle = { registration: selected, validate };
       } catch {
         let code = 'LIFECYCLE_READBACK_FAILED';
         try { validate(); } catch { code = 'HOST_IDENTITY_MISMATCH'; }
         return response(request, 'blocked', code, 'Inspect the signed records and independent evidence through the trusted controller.', context);
+      }
+    }
+    if (upgradeReleaseSelected) {
+      const selected = { ...context, operationId: request.operation };
+      const run = firstInstall?.runInstalledUpgradeRelease;
+      if (typeof run !== 'function') return response(request, 'unavailable', 'UPGRADE_RELEASE_RUNTIME_REQUIRED',
+        'Provision the installed upgrade release controller.', selected);
+      try {
+        const cutReadbacks = host.upgradeCutReadbacks;
+        const journalReadbacks = host.lifecycleReadbacks;
+        const binding = bindRegistration(() => {
+          if (host.upgradeReleaseOperations !== upgradeReleaseOperations || host.upgradeCutReadbacks !== cutReadbacks ||
+              host.lifecycleReadbacks !== journalReadbacks) throw new Error('HOST_IDENTITY_MISMATCH');
+          const descriptor = Object.getOwnPropertyDescriptor(upgradeReleaseOperations, request.operation);
+          if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('HOST_IDENTITY_MISMATCH');
+          const cut = Object.getOwnPropertyDescriptor(descriptor.value ?? {}, 'cut')?.value;
+          const journal = Object.getOwnPropertyDescriptor(cut ?? {}, 'lifecycle')?.value;
+          const registeredCut = Object.getOwnPropertyDescriptor(cutReadbacks ?? {}, request.operation);
+          const registeredJournal = Object.getOwnPropertyDescriptor(journalReadbacks ?? {}, request.operation);
+          if (!cut || !journal || (registeredCut && registeredCut.value !== cut) ||
+              (registeredJournal && registeredJournal.value !== journal)) throw new Error('HOST_IDENTITY_MISMATCH');
+          return descriptor.value;
+        });
+        const { enrollment, cut } = binding.value;
+        if (!sameIdentity(identity, enrollment.identity) || cut.subject.upgradeOperationId !== request.operation ||
+            cut.subject.releaseSha256 !== request.release) throw new Error('HOST_IDENTITY_MISMATCH');
+        const validate = () => { binding.validate(); hostBinding.validate(); };
+        const result = await run(binding.value, request.action, validate);
+        validate();
+        if (result.status === 'published') return response(request, 'uncertain', 'UPGRADE_RELEASE_PUBLISHED',
+          'Prepare the successor data generation from the verified cut.', { ...selected, upgradeRelease: result.receipt });
+        if (result.status === 'interrupted') return response(request, 'uncertain', 'UPGRADE_RELEASE_INTERRUPTED',
+          'Reconcile retained staging or retry publication for this operation through the enrolled controller.', selected);
+        return response(request, 'uncertain', 'UPGRADE_RELEASE_PENDING', 'Publish the enrolled candidate from the verified cut.', selected);
+      } catch (error) {
+        const code = Object.getOwnPropertyDescriptor(error ?? {}, 'message')?.value === 'HOST_IDENTITY_MISMATCH'
+          ? 'HOST_IDENTITY_MISMATCH' : 'UPGRADE_RELEASE_ADMISSION_FAILED';
+        return response(request, 'blocked', code, 'Reconcile the approved plan, signed candidate and maintenance cut.', selected);
       }
     }
     if (upgradeCutSelected) {
