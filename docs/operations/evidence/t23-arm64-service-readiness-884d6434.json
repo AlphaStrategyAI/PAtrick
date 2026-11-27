@@ -1,0 +1,28 @@
+{
+  "format": "patrick-t23-arm64-service-readiness-v1",
+  "observedOn": "2026-11-27",
+  "architecture": "arm64",
+  "target": "registered MacBook Pro",
+  "scope": "isolated-acceptance",
+  "sourceCommit": "884d643425cc970b6e1fc58245b2e4e08708c917",
+  "previousCommit": "d7f1043bbe0e75d59361cbe0946ffede5ef8174d",
+  "sourceSnapshotSha256": "42967e7407fd91e46f6bc6f1a7aa6c7c6039d44f66c5d7be2ac12d88969a7378",
+  "inventorySha256": "4ec48ec76be4fd5d4d8a663e9b157cf65bf5a866e590de2f23f67e008d26302d",
+  "packageSha256": "53e58d69091284362bb1cbc38dab0ca31e89b472e96ae44e593e8785bc5dba7b",
+  "manifestSha256": "85cfab13d7cf176e1f1605481903d4e24786a3b1b7f7d64010c96412c2011213",
+  "signerScope": "isolated-test-key",
+  "matchingNativeBuilds": 2,
+  "passedPresigningScenarios": 4,
+  "verifiedMaterialFiles": 489,
+  "verificationRejected": ["wrong-signer", "wrong-package-sha256", "wrong-architecture"],
+  "supervisorReadinessRegression": {
+    "clockAdvancedMs": 10001,
+    "before": "INSTALLED_SERVICE_SUPERVISOR_READY_TIMEOUT",
+    "after": "hello-received",
+    "startupBudgetMs": 60000,
+    "selectionBudgetMs": 10000
+  },
+  "isolatedGenerationTestsPassed": 40,
+  "hostedRunId": 45952711628,
+  "outstanding": ["research-canary", "signed-generation-selection", "system-trust-enrollment", "system-upgrade", "system-reboot", "system-uninstall-preservation"]
+}
